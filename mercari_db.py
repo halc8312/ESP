@@ -19,6 +19,10 @@ def create_driver(headless: bool = True):
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     
+    # ★追加: これがないとDocker内でクラッシュすることがある
+    options.add_argument("--remote-debugging-port=9222")
+    options.add_argument("--window-size=1280,1024")
+    
     # RenderでインストールしたChromeの場所を指定
     chrome_binary_path = os.environ.get("CHROME_BINARY_LOCATION")
     if chrome_binary_path:
