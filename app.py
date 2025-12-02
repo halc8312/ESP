@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, request, make_response
+from flask import Flask, render_template_string, request, make_response, send_from_directory
 from sqlalchemy import (
     create_engine,
     Column,
@@ -14,6 +14,9 @@ from datetime import datetime
 from urllib.parse import urlencode, urlsplit, urlunsplit  # URLパラメータ & 正規化用
 import csv
 import io
+import os
+import requests
+import shutil
 
 # mercari_db.py からスクレイピング関数を import
 from mercari_db import scrape_search_result
@@ -159,6 +162,50 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
 # ==============================
 
 app = Flask(__name__)
+
+# ==============================
+# 画像保存設定
+# ==============================
+# staticフォルダの中に images フォルダを作る
+IMAGE_FOLDER = os.path.join('static', 'images')
+os.makedirs(IMAGE_FOLDER, exist_ok=True)
+
+
+def cache_mercari_image(mercari_url, product_id, index):
+    """
+    メルカリの画像をダウンロードし、ローカルのファイル名を返す。
+    失敗した場合は None を返す。
+    """
+    if not mercari_url:
+        return None
+        
+    # ファイル名: mercari_{ID}_{連番}.jpg
+    filename = f"mercari_{product_id}_{index}.jpg"
+    local_path = os.path.join(IMAGE_FOLDER, filename)
+    
+    # すでに保存済みならダウンロードしない
+    if os.path.exists(local_path):
+        return filename
+
+    try:
+        # メルカリから画像をダウンロード
+        # User-Agentを指定しないと拒否されることがある
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Referer': 'https://jp.mercari.com/'
+        }
+        resp = requests.get(mercari_url, headers=headers, stream=True, timeout=10)
+        
+        if resp.status_code == 200:
+            with open(local_path, 'wb') as f:
+                resp.raw.decode_content = True
+                shutil.copyfileobj(resp.raw, f)
+            return filename
+    except Exception as e:
+        print(f"Image download failed: {e}")
+    
+    return None
+
 
 PAGE_SIZE = 50
 
@@ -424,7 +471,7 @@ DETAIL_TEMPLATE = """
                 <a href="{{ url }}" target="_blank">
                     <img src="{{ url }}" alt="image {{ loop.index }}">
                 </a>
-            {% endfor %}
+            {% for %}
         </div>
     {% else %}
         <p>(画像なし)</p>
@@ -762,47 +809,33 @@ def _parse_ids_and_params(session):
 @app.route("/export/shopify")
 def export_shopify():
     """
-    Shopify の公式インポート仕様（最新版）に沿った CSV を出力。
-    - Status列を追加 (active)
-    - ヘッダー名をサンプルCSV (product_template) に準拠
+    Shopify 用 CSV 出力（修正版）
+    - JPYをそのまま出力（ドル換算なし）
+    - 全行に必須項目（Price, Inventory quantity等）を埋める
+    - メルカリの画像をダウンロードして自サーバーのURLに置き換える
     """
     session = SessionLocal()
     try:
         products, markup, qty = _parse_ids_and_params(session)
-        # 為替レート（JPY -> USD）
-        try:
-            exchange_rate = float(request.args.get("rate", "155.0"))
-        except ValueError:
-            exchange_rate = 155.0
+        # ※為替レート(rate)の取得は削除します
+
+        # 現在のアプリのURLルートを取得（例: https://my-app.onrender.com）
+        # request.url_root は末尾に / がつくので調整
+        base_url = request.url_root.rstrip('/')
 
         output = io.StringIO()
         writer = csv.writer(output)
 
-        # サンプルCSVに合わせたヘッダー定義
         header = [
-            "URL handle",              # 旧 Handle
-            "Title",
-            "Description",             # 旧 Body (HTML)
-            "Vendor",
-            "Type",
-            "Tags",
-            "Published on online store", # 旧 Published
-            "Status",                  # ★新規追加: active, draft, archived
-            "Option1 Name",
-            "Option1 Value",
-            "Variant SKU",
-            "Variant Grams",
-            "Variant Inventory Tracker",
-            "Variant Inventory Qty",
-            "Variant Inventory Policy",
-            "Variant Fulfillment Service",
-            "Variant Price",
-            "Variant Compare At Price",
-            "Variant Requires Shipping",
-            "Variant Taxable",
-            "Image Src",
-            "Image Position",
-            "Image Alt Text",
+            "Title", "URL handle", "Description", "Vendor", "Product category",
+            "Type", "Tags", "Published on online store", "Status", "SKU", "Barcode",
+            "Option1 name", "Option1 value", "Option2 name", "Option2 value", "Option3 name", "Option3 value",
+            "Price", "Compare-at price", "Cost per item", "Charge tax", "Tax code",
+            "Unit price total measure", "Unit price total measure unit", "Unit price base measure", "Unit price base measure unit",
+            "Inventory tracker", "Inventory quantity", "Continue selling when out of stock",
+            "Weight value (grams)", "Weight unit for display", "Requires shipping", "Fulfillment service",
+            "Product image URL", "Image position", "Image alt text", "Variant image URL",
+            "Gift card", "SEO title", "SEO description"
         ]
         writer.writerow(header)
 
@@ -815,78 +848,113 @@ def export_shopify():
             desc_clean = description.replace("\r\n", "\n").replace("\r", "\n")
             desc_html = desc_clean.replace("\n", "<br>")
 
-            # 価格計算 (円 -> ドル)
-            base_price_yen = None
+            # ★修正1: 価格は日本円のまま出力（マークアップのみ適用）
+            price_val = ""
+            base_price = None
             if snap and snap.price is not None:
-                base_price_yen = snap.price
+                base_price = snap.price
             elif p.last_price is not None:
-                base_price_yen = p.last_price
+                base_price = p.last_price
+            
+            if base_price:
+                # 単純に円 × マークアップ
+                val = int(base_price * markup)
+                price_val = str(val)
 
-            price_usd = ""
-            if base_price_yen:
-                try:
-                    price_usd = "{:.2f}".format((base_price_yen / exchange_rate) * markup)
-                except Exception:
-                    price_usd = ""
-
-            # 画像URL
-            image_urls = []
+            # ★ 画像処理の変更箇所 ★
+            original_image_urls = []
             if snap and snap.image_urls:
-                image_urls = [u for u in snap.image_urls.split("|") if u]
+                original_image_urls = [u for u in snap.image_urls.split("|") if u]
 
             handle = f"mercari-{p.id}"
             sku = f"MER-{p.id}"
 
-            # 画像枚数分ループ（最低1行は出す）
-            loop_count = max(len(image_urls), 1)
+            loop_count = max(len(original_image_urls), 1)
             for i in range(loop_count):
-                img_url = image_urls[i] if i < len(image_urls) else ""
+                original_url = original_image_urls[i] if i < len(original_image_urls) else ""
+                
+                # ここで画像をダウンロードし、自分のサーバーのURLに変換する
+                my_server_image_url = ""
+                if original_url:
+                    cached_filename = cache_mercari_image(original_url, p.id, i)
+                    if cached_filename:
+                        # 変換後: https://my-app.onrender.com/static/images/mercari_123_0.jpg
+                        my_server_image_url = f"{base_url}/static/images/{cached_filename}"
+                    else:
+                        # ダウンロード失敗時は元のURLを入れておく（ダメ元で）
+                        my_server_image_url = original_url
+
                 is_first = (i == 0)
 
+                # 1行目だけに入れるべき情報
                 row_title = title if is_first else ""
                 row_body = desc_html if is_first else ""
-                row_price = price_usd if is_first else ""
-                row_qty = qty if is_first else ""
-                
-                # 1行目のみ値を入れ、2行目以降（画像のみの行）は空にする項目
-                # Statusは全行に入れても問題ないが、通常は商品定義行(is_first)にあればよい
-                # ここでは念のため親行(is_first)に設定
-                
-                row_status = "active" if is_first else "" 
-                row_published = "TRUE" if is_first else ""
+                row_tags = "Imported" if is_first else ""
+
+                # ★修正2: 全行に入れるべき情報（エラー回避のため）
+                # これにより、どの行が読み込まれても「この商品は在庫1、価格X円、手動配送」と認識させます
+                row_handle = handle
+                row_option1_name = "Title"
+                row_option1_value = "Default Title"
+                row_price = price_val  # 全行に価格を入れる
+                row_inventory_tracker = "shopify"
+                row_inventory_qty = qty # 全行に在庫数を入れる
+                row_continue_selling = "deny"
+                row_sku = sku
+                row_published = "TRUE"
+                row_status = "active"
+                row_requires_shipping = "TRUE"
+                row_fulfillment = "manual"
+                row_taxable = "FALSE"
+                row_weight_val = "0"
+                row_weight_unit = "g"
+                row_gift_card = "FALSE"
 
                 row = [
-                    handle,                # URL handle
-                    row_title,             # Title
-                    row_body,              # Description
-                    "Mercari",             # Vendor
-                    "",                    # Type
-                    "Imported",            # Tags
-                    row_published,         # Published on online store
-                    row_status,            # Status (active)
-                    "Title",               # Option1 Name
-                    "Default Title",       # Option1 Value
-                    sku if is_first else "",        # Variant SKU
-                    "0",                            # Variant Grams
-                    "shopify" if is_first else "",  # Inventory Tracker
-                    row_qty,                        # Variant Inventory Qty
-                    "deny" if is_first else "",     # Inventory Policy
-                    "manual" if is_first else "",   # Fulfillment Service
-                    row_price,             # Variant Price
-                    "",                    # Variant Compare At Price
-                    "TRUE" if is_first else "",     # Requires Shipping
-                    "FALSE" if is_first else "",    # Taxable
-                    img_url,               # Image Src
-                    i + 1 if img_url else "",  # Image Position
-                    "",                    # Image Alt Text
+                    row_title,              # Title (1行目のみ)
+                    row_handle,             # URL handle
+                    row_body,               # Description (1行目のみ)
+                    "Mercari",              # Vendor
+                    "",                     # Product category
+                    "",                     # Type
+                    row_tags,               # Tags
+                    row_published,          # Published
+                    row_status,             # Status
+                    row_sku,                # SKU
+                    "",                     # Barcode
+                    row_option1_name,       # Option1 name
+                    row_option1_value,      # Option1 value
+                    "", "", "", "",         # Option2, 3
+                    row_price,              # Price (★全行)
+                    "",                     # Compare-at
+                    "",                     # Cost per item
+                    row_taxable,            # Charge tax
+                    "",                     # Tax code
+                    "", "", "", "",         # Unit prices
+                    row_inventory_tracker,  # Inventory tracker
+                    row_inventory_qty,      # Inventory quantity (★全行)
+                    row_continue_selling,   # Continue selling
+                    row_weight_val,         # Weight value
+                    row_weight_unit,        # Weight unit
+                    row_requires_shipping,  # Requires shipping
+                    row_fulfillment,        # Fulfillment service
+                    my_server_image_url,    # Product image URL (★修正: 自サーバーのURLに置き換え)
+                    i + 1 if my_server_image_url else "", # Image position
+                    "",                     # Image alt text
+                    "",                     # Variant image URL
+                    row_gift_card,          # Gift card
+                    "", "",                 # SEO
                 ]
                 writer.writerow(row)
 
         data = "\ufeff" + output.getvalue()
         resp = make_response(data)
         resp.headers["Content-Type"] = "text/csv; charset=utf-8"
-        resp.headers["Content-Disposition"] = 'attachment; filename="shopify_export.csv"'
+        resp.headers["Content-Disposition"] = 'attachment; filename="shopify_export_fixed.csv"'
         return resp
+    except Exception as e:
+        print(e)
+        return str(e), 500
     finally:
         session.close()
 
@@ -1014,4 +1082,6 @@ def export_ebay():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    # ローカル実行時は debug=True
+    # Renderでは PORT 環境変数が設定されるので、それを利用
+    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

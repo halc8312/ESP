@@ -1,0 +1,7 @@
+Flask
+SQLAlchemy
+requests
+pandas
+gunicorn
+selenium
+webdriver-manager
