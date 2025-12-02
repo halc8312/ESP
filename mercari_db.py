@@ -7,6 +7,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 import time
 import re
+import os
 
 
 def create_driver(headless: bool = True):
@@ -16,6 +17,12 @@ def create_driver(headless: bool = True):
         options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    
+    # RenderでインストールしたChromeの場所を指定
+    chrome_binary_path = os.environ.get("CHROME_BINARY_LOCATION")
+    if chrome_binary_path:
+        options.binary_location = chrome_binary_path
 
     driver = webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
