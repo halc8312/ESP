@@ -762,10 +762,9 @@ def _parse_ids_and_params(session):
 @app.route("/export/shopify")
 def export_shopify():
     """
-    Shopify の公式インポート仕様に沿った CSV を出力。
-    - Handle で商品を識別
-    - 画像は「1画像 = 1行」で、同じ Handle を使って紐付ける
-    - 価格は (JPY / rate) * markup で USD に変換
+    Shopify の公式インポート仕様（最新版）に沿った CSV を出力。
+    - Status列を追加 (active)
+    - ヘッダー名をサンプルCSV (product_template) に準拠
     """
     session = SessionLocal()
     try:
@@ -779,14 +778,16 @@ def export_shopify():
         output = io.StringIO()
         writer = csv.writer(output)
 
+        # サンプルCSVに合わせたヘッダー定義
         header = [
-            "Handle",
+            "URL handle",              # 旧 Handle
             "Title",
-            "Body (HTML)",
+            "Description",             # 旧 Body (HTML)
             "Vendor",
             "Type",
             "Tags",
-            "Published",
+            "Published on online store", # 旧 Published
+            "Status",                  # ★新規追加: active, draft, archived
             "Option1 Name",
             "Option1 Value",
             "Variant SKU",
@@ -846,21 +847,29 @@ def export_shopify():
                 row_body = desc_html if is_first else ""
                 row_price = price_usd if is_first else ""
                 row_qty = qty if is_first else ""
+                
+                # 1行目のみ値を入れ、2行目以降（画像のみの行）は空にする項目
+                # Statusは全行に入れても問題ないが、通常は商品定義行(is_first)にあればよい
+                # ここでは念のため親行(is_first)に設定
+                
+                row_status = "active" if is_first else "" 
+                row_published = "TRUE" if is_first else ""
 
                 row = [
-                    handle,                # Handle
+                    handle,                # URL handle
                     row_title,             # Title
-                    row_body,              # Body (HTML)
+                    row_body,              # Description
                     "Mercari",             # Vendor
                     "",                    # Type
                     "Imported",            # Tags
-                    "TRUE",                # Published
+                    row_published,         # Published on online store
+                    row_status,            # Status (active)
                     "Title",               # Option1 Name
                     "Default Title",       # Option1 Value
-                    sku if is_first else "",  # Variant SKU
-                    "0",                   # Variant Grams
+                    sku if is_first else "",        # Variant SKU
+                    "0",                            # Variant Grams
                     "shopify" if is_first else "",  # Inventory Tracker
-                    row_qty,               # Variant Inventory Qty
+                    row_qty,                        # Variant Inventory Qty
                     "deny" if is_first else "",     # Inventory Policy
                     "manual" if is_first else "",   # Fulfillment Service
                     row_price,             # Variant Price
