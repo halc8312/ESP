@@ -1,17 +1,17 @@
-# ベースイメージ（Python 3.9 を使用）
+# ベースイメージ（Python 3.9 slim）
 FROM python:3.9-slim
 
-# 1. 必要なシステムライブラリとChromeをインストール
-#    (wget, gnupg, unzip などを入れ、Googleの公式リポジトリからChromeを入れる)
+# 1. 必要なツールとChromeをインストール
+#    (apt-keyを使わず、直接.debファイルをダウンロードしてインストールする方法に変更)
 RUN apt-get update && apt-get install -y \
     wget \
-    gnupg \
-    unzip \
     curl \
-    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list' \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
+    unzip \
+    gnupg \
+    ca-certificates \
+    && wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    && apt-get install -y ./google-chrome-stable_current_amd64.deb \
+    && rm google-chrome-stable_current_amd64.deb \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -26,7 +26,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 5. 環境変数の設定
-#    Pythonコードがこのパスを見てChromeを使います
+#    Chromeのインストール先は通常 /usr/bin/google-chrome になります
 ENV CHROME_BINARY_LOCATION=/usr/bin/google-chrome
 ENV PORT=5000
 
