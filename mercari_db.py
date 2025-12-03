@@ -11,23 +11,25 @@ import os
 import shutil
 
 def create_driver(headless: bool = True):
-    """Chrome WebDriver を生成（Render/Docker環境 完全対策版）"""
+    """Chrome WebDriver を生成（Render/Docker環境 完全対策 + UA偽装版）"""
     options = Options()
 
     # --- 基本設定 ---
     if headless:
         options.add_argument("--headless=new")
 
+    # --- ボット対策回避（User-Agent偽装） ★ここが重要 ---
+    # 一般的なWindows PCのChromeになりすます
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    options.add_argument(f'--user-agent={user_agent}')
+
     # --- Docker/Renderでのクラッシュを防ぐ必須オプション群 ---
-    # ★最重要: メモリ不足対策
     options.add_argument("--disable-dev-shm-usage") 
-    # ★最重要: 権限問題対策
     options.add_argument("--no-sandbox")
-    # ★重要: プロセス分離によるクラッシュを防ぐ（Renderなどの軽量コンテナで有効）
     options.add_argument("--single-process")
     options.add_argument("--disable-zygote")
     
-    # --- グラフィック・機能制限（安定化・高速化） ---
+    # --- グラフィック・機能制限 ---
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-infobars")
@@ -36,45 +38,43 @@ def create_driver(headless: bool = True):
     
     # --- ネットワーク・ポート設定 ---
     options.add_argument("--remote-debugging-port=9222")
-    options.add_argument("--window-size=1280,1024")
+    options.add_argument("--window-size=1920,1080") # 画面サイズも一般的なPCに合わせる
     options.add_argument("--disable-browser-side-navigation")
     
-    # --- ユーザーデータディレクトリの設定（権限エラー回避の最終手段）---
-    # Chromeが一時ファイルを作る場所を、確実に書き込める場所に指定します
+    # --- 自動化フラグの隠蔽（ボット検知回避） ---
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+
+    # --- ユーザーデータディレクトリ ---
     user_data_dir = os.path.join(os.getcwd(), "chrome_user_data")
     if os.path.exists(user_data_dir):
         try:
-            shutil.rmtree(user_data_dir) # 前回のゴミがあれば消す
+            shutil.rmtree(user_data_dir)
         except:
             pass
     options.add_argument(f"--user-data-dir={user_data_dir}")
 
-    # --- バイナリ場所の指定 ---
-    # Dockerfileで設定した環境変数 CHROME_BINARY_LOCATION を読み込む
+    # --- バイナリ場所 ---
     chrome_binary_path = os.environ.get("CHROME_BINARY_LOCATION")
     if chrome_binary_path:
         if os.path.exists(chrome_binary_path):
             options.binary_location = chrome_binary_path
-            print(f"DEBUG: Using Chrome binary at {chrome_binary_path}")
         else:
-            print(f"DEBUG: Configured binary path {chrome_binary_path} not found.")
-            # 見つからない場合は標準パスを探してみる（保険）
             default_path = "/usr/bin/google-chrome"
             if os.path.exists(default_path):
                 options.binary_location = default_path
-                print(f"DEBUG: Found Chrome at default path {default_path}")
 
-    # --- ドライバー起動 ---
     try:
         driver = webdriver.Chrome(
             service=Service(ChromeDriverManager().install()),
             options=options,
         )
+        # navigator.webdriver フラグを消す（高度なボット対策回避）
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         return driver
     except Exception as e:
         print(f"CRITICAL ERROR in create_driver: {e}")
-        # 詳細なエラー情報を出すためにオプションの中身を表示
-        print(f"DEBUG: Options arguments: {options.arguments}")
         raise e
 
 
@@ -94,12 +94,14 @@ def scrape_item_detail(driver, url: str):
     # body が出るまで待機
     try:
         wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        time.sleep(1) # 少し待つ
     except Exception:
         pass
 
     # ---- タイトル ----
     try:
-        title_el = wait.until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
+        # h1が見つからない場合もあるので待機時間を短めに
+        title_el = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
         title = title_el.text.strip()
     except Exception:
         title = ""
@@ -113,8 +115,6 @@ def scrape_item_detail(driver, url: str):
 
     # ---- 価格 ----
     price = None
-
-    # 1) data-testid など属性での取得（あれば）
     try:
         price_el = driver.find_element(By.CSS_SELECTOR, "[data-testid='price']")
         price_text = price_el.text
@@ -126,7 +126,6 @@ def scrape_item_detail(driver, url: str):
     except Exception:
         price = None
 
-    # 2) ダメな場合は body テキストから拾う
     if price is None and body_text:
         m = re.search(r"[¥￥]\s*([\d,]+)", body_text)
         if not m:
@@ -137,9 +136,8 @@ def scrape_item_detail(driver, url: str):
             except ValueError:
                 price = None
 
-    # ---- ステータス（販売中 / 売り切れ）----
+    # ---- ステータス ----
     status = "unknown"
-
     try:
         sold_btns = driver.find_elements(By.XPATH, "//button[contains(., '売り切れ')]")
         buy_btns = driver.find_elements(By.XPATH, "//button[contains(., '購入手続きへ')]")
@@ -166,7 +164,6 @@ def scrape_item_detail(driver, url: str):
                 idx = after.find(marker)
                 if idx != -1 and idx < end_pos:
                     end_pos = idx
-
             desc_block = after[:end_pos].strip()
             lines = [ln.strip() for ln in desc_block.splitlines() if ln.strip()]
             cleaned_lines = []
@@ -176,7 +173,7 @@ def scrape_item_detail(driver, url: str):
                 cleaned_lines.append(ln)
             description = "\n".join(cleaned_lines)
         except:
-            description = body_text[:200] # 失敗時は適当に切り出し
+            description = body_text[:200]
 
     # ---- 商品画像 ----
     image_urls = []
@@ -210,7 +207,6 @@ def scrape_search_result(
 ):
     """
     メルカリ検索URLから複数商品をスクレイピングして list[dict] を返す。
-    search_url は外から作る（Flask 側でキーワード・価格条件などを付与）
     """
     driver = None
     try:
@@ -220,19 +216,31 @@ def scrape_search_result(
 
         print(f"DEBUG: Navigating to {search_url}")
         driver.get(search_url)
-        wait = WebDriverWait(driver, 10)
+        
+        # ★デバッグ用: 開いたページのタイトルを表示
+        print(f"DEBUG: Page Title = {driver.title}")
+        
+        wait = WebDriverWait(driver, 15) # 待機時間を少し延長
         try:
             wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
         except Exception:
-            pass
+            print("DEBUG: Timeout waiting for body")
 
-        # スクロールして商品を読み込む
+        # スクロール
         for i in range(max_scroll):
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
+            time.sleep(3) # 待ち時間を2→3秒へ延長
 
+        # リンク取得
+        # セレクタを少し広めに取る（構造変化対策）
         links = driver.find_elements(By.CSS_SELECTOR, "a[href*='/item/']")
-        print("検索ページで見つかったリンク数:", len(links))
+        
+        # もし見つからなかった場合、別のセレクタも試す（保険）
+        if len(links) == 0:
+             print("DEBUG: No links found with 'a[href*=/item/]', trying list selector...")
+             links = driver.find_elements(By.CSS_SELECTOR, "li[data-testid='item-cell'] a")
+
+        print(f"DEBUG: Found {len(links)} links on search page.")
 
         item_urls = []
         seen = set()
@@ -252,18 +260,27 @@ def scrape_search_result(
             if len(item_urls) >= max_items:
                 break
 
-        print("詳細ページを見に行く件数:", len(item_urls))
+        print(f"DEBUG: Going to scrape {len(item_urls)} items.")
 
         for url in item_urls:
+            print(f"DEBUG: Scraping item {url}")
             data = scrape_item_detail(driver, url)
+            if data["title"]: # タイトルが取れていれば成功とみなす
+                 print(f"DEBUG: Success -> {data['title']}")
+            else:
+                 print("DEBUG: Failed to get title (Bot block?)")
+            
             items.append(data)
-            time.sleep(1.5)  # サイト負荷対策
+            time.sleep(3)  # アクセス間隔を少し広げる
 
         return items
 
     except Exception as e:
         print(f"CRITICAL ERROR during scraping: {e}")
-        return [] # エラー時は空リストを返してサーバーを落とさない
+        # エラーの詳細（スタックトレース）を表示
+        import traceback
+        traceback.print_exc()
+        return []
     finally:
         if driver:
             try:
