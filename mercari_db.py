@@ -11,22 +11,49 @@ import os
 
 
 def create_driver(headless: bool = True):
-    """Chrome WebDriver を生成"""
+    """Chrome WebDriver を生成（Docker環境対応・安定化版）"""
     options = Options()
+    
+    # --- ヘッドレスモード設定 ---
+    # Render上では必ずヘッドレスで動かす
     if headless:
         options.add_argument("--headless=new")
+
+    # --- クラッシュ防止・安定化オプション（Docker必須）---
+    # サンドボックス解除（Dockerなどのコンテナ環境で必須）
     options.add_argument("--no-sandbox")
+    
+    # メモリ不足対策（共有メモリではなくディスクを使用。これがないと即クラッシュする）
     options.add_argument("--disable-dev-shm-usage")
+    
+    # GPU無効化
     options.add_argument("--disable-gpu")
     
-    # ★追加: これがないとDocker内でクラッシュすることがある
+    # 拡張機能無効化
+    options.add_argument("--disable-extensions")
+    
+    # 自動化通知バー非表示
+    options.add_argument("--disable-infobars")
+    
+    # --- ポート・ウィンドウ設定 ---
+    # デバッグポート指定（DevToolsActivePortエラー回避に重要）
     options.add_argument("--remote-debugging-port=9222")
+    # ウィンドウサイズ固定
     options.add_argument("--window-size=1280,1024")
     
-    # RenderでインストールしたChromeの場所を指定
+    # --- その他の回避策（エラー頻発時の対策）---
+    options.add_argument("--disable-browser-side-navigation")
+    options.add_argument("--disable-setuid-sandbox")
+    options.add_argument("--disable-software-rasterizer")
+    
+    # --- バイナリ場所の指定 ---
+    # Dockerfileで設定した環境変数 CHROME_BINARY_LOCATION を読み込む
     chrome_binary_path = os.environ.get("CHROME_BINARY_LOCATION")
-    if chrome_binary_path:
+    if chrome_binary_path and os.path.exists(chrome_binary_path):
         options.binary_location = chrome_binary_path
+        print(f"DEBUG: Using Chrome binary at {chrome_binary_path}")
+    else:
+        print("DEBUG: CHROME_BINARY_LOCATION not set or file not found. Using default path.")
 
     driver = webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
