@@ -26,6 +26,7 @@ def create_driver(headless: bool = True):
     options.add_argument("--disable-gpu")
     
     # --- 安定化・エラー回避 ---
+    # ※ --single-process は最新Chromeでクラッシュの原因になるため削除済み
     options.add_argument("--disable-software-rasterizer")
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-infobars")
@@ -45,27 +46,21 @@ def create_driver(headless: bool = True):
     user_data_dir = f"/tmp/chrome_data_{uuid.uuid4()}"
     options.add_argument(f"--user-data-dir={user_data_dir}")
 
-    # --- バイナリ場所の自動探索 ---
-    # 1. 環境変数 (CHROME_BINARY_LOCATION)
-    # 2. 標準パス (/usr/bin/google-chrome) ※aptで入れた場合ここ
-    # 3. その他 (/opt/...)
-    binary_candidates = [
-        os.environ.get("CHROME_BINARY_LOCATION"),
-        "/usr/bin/google-chrome",
-        "/usr/bin/google-chrome-stable",
-        "/opt/google/chrome/google-chrome"
-    ]
+    # --- バイナリ場所の指定 ---
+    # Dockerfileで設定した環境変数 CHROME_BINARY_LOCATION を優先
+    chrome_binary_path = os.environ.get("CHROME_BINARY_LOCATION")
     
-    binary_found = False
-    for path in binary_candidates:
-        if path and os.path.exists(path):
-            options.binary_location = path
-            print(f"DEBUG: Found Chrome binary at {path}")
-            binary_found = True
-            break
-    
-    if not binary_found:
-        print("DEBUG: Chrome binary not found in known paths. Letting Selenium auto-detect.")
+    if chrome_binary_path and os.path.exists(chrome_binary_path):
+        options.binary_location = chrome_binary_path
+        print(f"DEBUG: Using Chrome binary at {chrome_binary_path}")
+    else:
+        # 見つからない場合は標準パス（/usr/bin/google-chrome）を使用
+        default_path = "/usr/bin/google-chrome"
+        if os.path.exists(default_path):
+            options.binary_location = default_path
+            print("DEBUG: Using default Chrome path /usr/bin/google-chrome")
+        else:
+            print("DEBUG: Chrome binary not found in expected paths. Letting Selenium auto-detect.")
 
     # --- ドライバー起動 ---
     try:
