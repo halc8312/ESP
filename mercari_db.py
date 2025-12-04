@@ -12,67 +12,56 @@ import shutil
 import uuid
 
 def create_driver(headless: bool = True):
-    """Chrome WebDriver を生成（Render/Docker環境 安定版）"""
+    """Chrome WebDriver を生成（Render/Docker Google Chrome版）"""
     options = Options()
 
     # --- 基本設定 ---
     if headless:
         options.add_argument("--headless=new")
 
-    # --- 必須オプション ---
-    # Docker環境でのメモリ不足と権限エラーを防ぐための必須設定
+    # --- 必須オプション（Docker環境用） ---
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     
-    # --- 安定化・エラー回避 ---
-    # ※ --single-process は最新Chromeでクラッシュの原因になるため削除済み
-    options.add_argument("--disable-software-rasterizer")
+    # --- 安定化設定 ---
+    options.add_argument("--window-size=1280,1024")
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-infobars")
-    options.add_argument("--window-size=1280,1024")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-default-apps")
+    options.add_argument("--no-first-run")
     
-    # --- ボット対策回避（User-Agent偽装）---
+    # --- User-Agent ---
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     options.add_argument(f'--user-agent={user_agent}')
-    
-    # 自動化フラグの隠蔽
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
 
-    # --- ユーザーデータディレクトリ（競合回避） ---
-    # 実行ごとにランダムなディレクトリを作成し、権限エラーとロック競合を防ぐ
+    # --- ユーザーデータディレクトリ ---
     user_data_dir = f"/tmp/chrome_data_{uuid.uuid4()}"
     options.add_argument(f"--user-data-dir={user_data_dir}")
 
-    # --- バイナリ場所の指定 ---
-    # Dockerfileで設定した環境変数 CHROME_BINARY_LOCATION を優先
-    chrome_binary_path = os.environ.get("CHROME_BINARY_LOCATION")
+    # --- バイナリ場所 ---
+    # Dockerfileで入れた Google Chrome の場所を指定
+    # 環境変数または標準パス
+    chrome_binary = os.environ.get("CHROME_BINARY_LOCATION", "/usr/bin/google-chrome")
     
-    if chrome_binary_path and os.path.exists(chrome_binary_path):
-        options.binary_location = chrome_binary_path
-        print(f"DEBUG: Using Chrome binary at {chrome_binary_path}")
+    if os.path.exists(chrome_binary):
+        options.binary_location = chrome_binary
+        print(f"DEBUG: Using Chrome binary at {chrome_binary}")
     else:
-        # 見つからない場合は標準パス（/usr/bin/google-chrome）を使用
-        default_path = "/usr/bin/google-chrome"
-        if os.path.exists(default_path):
-            options.binary_location = default_path
-            print("DEBUG: Using default Chrome path /usr/bin/google-chrome")
-        else:
-            print("DEBUG: Chrome binary not found in expected paths. Letting Selenium auto-detect.")
+        print(f"DEBUG: Binary not found at {chrome_binary}, letting Selenium search.")
 
     # --- ドライバー起動 ---
     try:
+        # webdriver_managerを使って、インストールされているChromeに合うドライバを自動取得
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
         
-        # navigator.webdriver フラグを消す（高度なボット対策回避）
+        # ボット対策回避
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         return driver
     except Exception as e:
         print(f"CRITICAL ERROR in create_driver: {e}")
-        # 起動失敗時はゴミを残さないように掃除
         try:
             shutil.rmtree(user_data_dir)
         except:
@@ -93,7 +82,6 @@ def scrape_item_detail(driver, url: str):
 
     wait = WebDriverWait(driver, 10)
 
-    # body が出るまで待機
     try:
         wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
         time.sleep(1)
@@ -211,14 +199,12 @@ def scrape_search_result(
     """
     driver = None
     try:
-        print("DEBUG: Starting scrape_search_result")
+        print("DEBUG: Starting scrape_search_result (Google Chrome Stable)")
         driver = create_driver(headless=headless)
         items = []
 
         print(f"DEBUG: Navigating to {search_url}")
         driver.get(search_url)
-        
-        # ページタイトルの確認（アクセスブロック検知用）
         print(f"DEBUG: Page Title = {driver.title}")
         
         wait = WebDriverWait(driver, 15)
@@ -286,10 +272,7 @@ def scrape_search_result(
                     if arg.startswith("--user-data-dir="):
                         user_data_dir = arg.split("=", 1)[1]
                         break
-                
                 driver.quit()
-
-                # ディレクトリ削除
                 if user_data_dir and os.path.exists(user_data_dir):
                     shutil.rmtree(user_data_dir)
             except:
