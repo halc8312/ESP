@@ -1,35 +1,29 @@
-# ★変更: 軽量版(slim)だとライブラリ不足でクラッシュしやすいため、
-#         安定している通常版(python:3.9)を使用します。
+# ベースイメージ
 FROM python:3.9
 
-# 1. 必要なツールとChromeをインストール
-#    .debファイルを直接 apt-get install することで、
-#    Chromeに必要な依存ライブラリ(フォントや映像処理系)を自動で全て入れてくれます。
+# 1. Chromium と ChromeDriver をインストール
+#    OS標準のパッケージを使うことで、ライブラリの不整合によるクラッシュを根絶します
 RUN apt-get update && apt-get install -y \
-    wget \
-    curl \
-    unzip \
-    gnupg \
-    && wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
-    && apt-get install -y ./google-chrome-stable_current_amd64.deb \
-    && rm google-chrome-stable_current_amd64.deb \
+    chromium \
+    chromium-driver \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. 作業ディレクトリの設定
+# 2. 作業ディレクトリ
 WORKDIR /app
 
-# 3. Pythonライブラリのインストール
+# 3. Pythonライブラリ
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 4. ソースコードをコピー
+# 4. ソースコード
 COPY . .
 
-# 5. 環境変数の設定
-#    apt-getでインストールした場合、通常はこのパスになります
-ENV CHROME_BINARY_LOCATION=/usr/bin/google-chrome
+# 5. 環境変数
+#    Chromiumの場所を指定
+ENV CHROME_BIN=/usr/bin/chromium
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 ENV PORT=5000
 
-# 6. アプリの起動コマンド
+# 6. 起動コマンド
 CMD gunicorn app:app --bind 0.0.0.0:$PORT
