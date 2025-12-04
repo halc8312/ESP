@@ -8,49 +8,55 @@ from webdriver_manager.chrome import ChromeDriverManager
 import time
 import re
 import os
+import shutil
+import uuid
 
 def create_driver(headless: bool = True):
-    """Chrome WebDriver を生成（Docker環境・パイプ接続対応版）"""
+    """Chrome WebDriver を生成（Render/Docker 低メモリ環境最適化版）"""
     options = Options()
 
     # --- 基本設定 ---
     if headless:
         options.add_argument("--headless=new")
 
-    # --- 必須オプション（Docker環境用） ---
+    # --- メモリ不足・クラッシュ対策（必須） ---
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
+    options.add_argument("--disable-software-rasterizer") # 描画負荷軽減
     
-    # --- ★重要: ポート接続ではなくパイプ接続を使う ---
-    # これが「DevToolsActivePort」エラーの特効薬です
-    options.add_argument("--remote-debugging-pipe")
+    # --- 通信安定化（DevToolsActivePortエラー対策） ---
+    options.add_argument("--remote-debugging-pipe") 
     
-    # --- 安定化設定 ---
+    # --- 画面・機能の軽量化 ---
     options.add_argument("--window-size=1280,1024")
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-infobars")
-    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-notifications")
     options.add_argument("--disable-default-apps")
     options.add_argument("--no-first-run")
-    options.add_argument("--disable-features=VizDisplayCompositor")
     
+    # 最近のChromeで追加された「検索エンジン選択画面」を無効化（これが起動をブロックすることがある）
+    options.add_argument("--disable-search-engine-choice-screen")
+
+    # --- 読み込み戦略（高速化・タイムアウト回避） ---
+    # 画像などの全リソース読み込みを待たずにDOMが揃ったらOKとする
+    options.page_load_strategy = 'eager'
+
     # --- User-Agent ---
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     options.add_argument(f'--user-agent={user_agent}')
 
-    # --- 自動化フラグの隠蔽 ---
+    # --- 自動化フラグ隠蔽 ---
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
 
-    # --- ユーザーデータディレクトリについて ---
-    # ★修正: Docker内ではデフォルトの /tmp を使わせるのが一番安全です。
-    # 無理に指定すると権限エラーの原因になるため削除しました。
+    # --- ユーザーデータディレクトリ（競合回避） ---
+    # デフォルトの /tmp を使わせるのが一番安全なので指定しない（削除）
 
     # --- バイナリ場所 ---
     chrome_binary = os.environ.get("CHROME_BINARY_LOCATION", "/usr/bin/google-chrome")
-    
     if os.path.exists(chrome_binary):
         options.binary_location = chrome_binary
         print(f"DEBUG: Using Chrome binary at {chrome_binary}")
@@ -66,8 +72,6 @@ def create_driver(headless: bool = True):
         return driver
     except Exception as e:
         print(f"CRITICAL ERROR in create_driver: {e}")
-        # 詳細なログを出すためにchromedriverのログパスを表示などの処理も可能ですが
-        # まずはシンプルにパイプ接続を試します
         raise e
 
 
@@ -84,9 +88,9 @@ def scrape_item_detail(driver, url: str):
 
     wait = WebDriverWait(driver, 10)
 
+    # eagerモードなのでbodyの出現を軽く待つ
     try:
         wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        time.sleep(1)
     except Exception:
         pass
 
@@ -107,15 +111,15 @@ def scrape_item_detail(driver, url: str):
     # ---- 価格 ----
     price = None
     try:
-        price_el = driver.find_element(By.CSS_SELECTOR, "[data-testid='price']")
-        price_text = price_el.text
-        m = re.search(r"[¥￥]\s*([\d,]+)", price_text)
-        if not m:
-            m = re.search(r"([\d,]+)", price_text)
-        if m:
-            price = int(m.group(1).replace(",", ""))
+        # メルカリのクラス名は頻繁に変わるため、data-testidがあれば優先
+        price_el = driver.find_elements(By.CSS_SELECTOR, "[data-testid='price']")
+        if price_el:
+            price_text = price_el[0].text
+            m = re.search(r"[¥￥]\s*([\d,]+)", price_text) or re.search(r"([\d,]+)", price_text)
+            if m:
+                price = int(m.group(1).replace(",", ""))
     except Exception:
-        price = None
+        pass
 
     if price is None and body_text:
         m = re.search(r"[¥￥]\s*([\d,]+)", body_text)
@@ -130,45 +134,36 @@ def scrape_item_detail(driver, url: str):
     # ---- ステータス ----
     status = "unknown"
     try:
-        sold_btns = driver.find_elements(By.XPATH, "//button[contains(., '売り切れ')]")
-        buy_btns = driver.find_elements(By.XPATH, "//button[contains(., '購入手続きへ')]")
-        if sold_btns:
-            status = "sold"
-        elif buy_btns:
-            status = "on_sale"
+        if "売り切れ" in body_text or "Sold" in body_text:
+             # ボタンチェックも念のため
+             sold_btns = driver.find_elements(By.XPATH, "//button[contains(., '売り切れ')]")
+             if sold_btns:
+                 status = "sold"
+        
+        if status == "unknown" and ("購入手続きへ" in body_text or "Buy this item" in body_text):
+             status = "on_sale"
     except Exception:
         pass
 
-    if status == "unknown" and body_text:
-        if "売り切れました" in body_text:
-            status = "sold"
-        elif "購入手続きへ" in body_text:
-            status = "on_sale"
-
     # ---- 商品説明 ----
     description = ""
-    if "商品の説明" in body_text:
-        try:
+    try:
+        if "商品の説明" in body_text:
             after = body_text.split("商品の説明", 1)[1]
             end_pos = len(after)
-            for marker in ["商品の情報", "商品情報", "商品の特徴", "出品者", "コメント ("]:
+            for marker in ["商品の情報", "商品情報", "出品者", "コメント"]:
                 idx = after.find(marker)
                 if idx != -1 and idx < end_pos:
                     end_pos = idx
-            desc_block = after[:end_pos].strip()
-            lines = [ln.strip() for ln in desc_block.splitlines() if ln.strip()]
-            cleaned_lines = []
-            for ln in lines:
-                if any(x in ln for x in ["分前", "時間前", "日前"]):
-                    continue
-                cleaned_lines.append(ln)
-            description = "\n".join(cleaned_lines)
-        except:
-            description = body_text[:200]
+            description = after[:end_pos].strip()
+    except:
+        description = body_text[:200]
 
     # ---- 商品画像 ----
     image_urls = []
     try:
+        # 画像取得も少し待つ
+        time.sleep(1) 
         img_elements = driver.find_elements(
             By.CSS_SELECTOR,
             "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']",
@@ -201,7 +196,7 @@ def scrape_search_result(
     """
     driver = None
     try:
-        print("DEBUG: Starting scrape_search_result")
+        print("DEBUG: Starting scrape_search_result (Low Memory Config)")
         driver = create_driver(headless=headless)
         items = []
 
@@ -209,6 +204,7 @@ def scrape_search_result(
         driver.get(search_url)
         print(f"DEBUG: Page Title = {driver.title}")
         
+        # ページロード戦略をeagerにしたので、bodyが出るまで明示的に少し待つ
         wait = WebDriverWait(driver, 15)
         try:
             wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
@@ -217,12 +213,11 @@ def scrape_search_result(
 
         for i in range(max_scroll):
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(3)
+            time.sleep(2) # スクロール待機は少し短くてもOK
 
-        # リンク取得
         links = driver.find_elements(By.CSS_SELECTOR, "a[href*='/item/']")
         if len(links) == 0:
-             print("DEBUG: No links found with 'a[href*=/item/]', trying list selector...")
+             print("DEBUG: No links found, trying list selector...")
              links = driver.find_elements(By.CSS_SELECTOR, "li[data-testid='item-cell'] a")
 
         print(f"DEBUG: Found {len(links)} links on search page.")
@@ -232,16 +227,10 @@ def scrape_search_result(
 
         for link in links:
             href = link.get_attribute("href")
-            if not href:
+            if not href or "/item/" not in href or href in seen:
                 continue
-            if "/item/" not in href:
-                continue
-            if href in seen:
-                continue
-
             seen.add(href)
             item_urls.append(href)
-
             if len(item_urls) >= max_items:
                 break
 
@@ -253,10 +242,10 @@ def scrape_search_result(
             if data["title"]: 
                  print(f"DEBUG: Success -> {data['title']}")
             else:
-                 print("DEBUG: Failed to get title (Bot block?)")
+                 print("DEBUG: Failed to get title")
             
             items.append(data)
-            time.sleep(3)
+            time.sleep(1) # 負荷対策
 
         return items
 
