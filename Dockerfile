@@ -1,11 +1,16 @@
-# ベースイメージ
+# ベースイメージ（安定版）
 FROM python:3.9
 
-# 1. Chromium と ChromeDriver をインストール
-#    OS標準のパッケージを使うことで、ライブラリの不整合によるクラッシュを根絶します
+# 1. 必要なツールとGoogle Chrome Stableをインストール
+#    apt-get install ./...deb を使うことで、依存ライブラリも自動解決させます
 RUN apt-get update && apt-get install -y \
-    chromium \
-    chromium-driver \
+    wget \
+    curl \
+    unzip \
+    gnupg \
+    && wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    && apt-get install -y ./google-chrome-stable_current_amd64.deb \
+    && rm google-chrome-stable_current_amd64.deb \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -20,9 +25,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 5. 環境変数
-#    Chromiumの場所を指定
-ENV CHROME_BIN=/usr/bin/chromium
-ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
+#    Google Chromeの標準パス
+ENV CHROME_BINARY_LOCATION=/usr/bin/google-chrome
 ENV PORT=5000
 
 # 6. 起動コマンド
