@@ -40,11 +40,11 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key
 WORKDIR /app
 
 # 依存関係ファイルのコピーとインストール
-COPY requirements.txt.
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ソースコードのコピー
-COPY..
+COPY ..
 
 # --- セキュリティ対策: 非rootユーザーの作成 ---
 # Chromeはrootでの実行を嫌うため、専用ユーザーを作成
