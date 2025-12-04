@@ -9,16 +9,13 @@ ENV PYTHONDONTWRITEBYTECODE=1
 
 # --- システム依存関係のインストール ---
 # 1. wget, gnupg, unzip: Chrome/Driverのダウンロード用
-# 2. Chromeの依存ライブラリ群: ここが最も重要。
-#    libnss3, libgconf-2-4, libfontconfig1 など、Renderネイティブ環境に不足しがちなものを網羅
+# 2. Chromeの依存ライブラリ群: 最新Debian Trixieに存在するもののみ
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
     unzip \
     curl \
     libxss1 \
-    libappindicator1 \
-    libgconf-2-4 \
     fonts-liberation \
     libasound2 \
     libnspr4 \
@@ -26,15 +23,21 @@ RUN apt-get update && apt-get install -y \
     libx11-xcb1 \
     xdg-utils \
     libgbm1 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Google Chromeのインストール ---
 # 公式リポジトリを追加してapt-getでインストール
 # これにより、将来的な依存関係の変更もaptが自動解決してくれる
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list' \
+RUN set -eux \
+    && mkdir -p /usr/share/keyrings \
+    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub \
+        | gpg --dearmor --yes -o /usr/share/keyrings/google-linux-signing-keyring.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-signing-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
+        > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update \
-    && apt-get install -y google-chrome-stable
+    && apt-get install -y --no-install-recommends google-chrome-stable \
+    && rm -rf /var/lib/apt/lists/*
 
 # --- アプリケーションのセットアップ ---
 WORKDIR /app
