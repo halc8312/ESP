@@ -19,12 +19,11 @@ def create_driver(headless: bool = True):
     if headless:
         options.add_argument("--headless=new")
 
-    # --- 必須オプション（これだけで動くことが多い）---
+    # --- 必須オプション ---
+    # Docker環境でのメモリ不足と権限エラーを防ぐための必須設定
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    
-    # ★重要: クラッシュの原因になるため single-process は削除しました
     
     # --- 安定化・エラー回避 ---
     options.add_argument("--disable-software-rasterizer")
@@ -36,16 +35,20 @@ def create_driver(headless: bool = True):
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     options.add_argument(f'--user-agent={user_agent}')
     
+    # 自動化フラグの隠蔽
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
 
     # --- ユーザーデータディレクトリ（競合回避） ---
+    # 実行ごとにランダムなディレクトリを作成し、権限エラーとロック競合を防ぐ
     user_data_dir = f"/tmp/chrome_data_{uuid.uuid4()}"
     options.add_argument(f"--user-data-dir={user_data_dir}")
 
     # --- バイナリ場所の自動探索 ---
-    # 環境変数を優先しつつ、なければ標準パスを探す
+    # 1. 環境変数 (CHROME_BINARY_LOCATION)
+    # 2. 標準パス (/usr/bin/google-chrome) ※aptで入れた場合ここ
+    # 3. その他 (/opt/...)
     binary_candidates = [
         os.environ.get("CHROME_BINARY_LOCATION"),
         "/usr/bin/google-chrome",
@@ -62,19 +65,19 @@ def create_driver(headless: bool = True):
             break
     
     if not binary_found:
-        print("DEBUG: Chrome binary not found in standard paths. Letting Selenium auto-detect.")
+        print("DEBUG: Chrome binary not found in known paths. Letting Selenium auto-detect.")
 
-    # --- ログ設定（エラー時の詳細用） ---
-    service = Service(ChromeDriverManager().install())
-    
-    # 起動試行
+    # --- ドライバー起動 ---
     try:
+        service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
-        # navigator.webdriver フラグを消す
+        
+        # navigator.webdriver フラグを消す（高度なボット対策回避）
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         return driver
     except Exception as e:
         print(f"CRITICAL ERROR in create_driver: {e}")
+        # 起動失敗時はゴミを残さないように掃除
         try:
             shutil.rmtree(user_data_dir)
         except:
@@ -95,6 +98,7 @@ def scrape_item_detail(driver, url: str):
 
     wait = WebDriverWait(driver, 10)
 
+    # body が出るまで待機
     try:
         wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
         time.sleep(1)
@@ -218,6 +222,8 @@ def scrape_search_result(
 
         print(f"DEBUG: Navigating to {search_url}")
         driver.get(search_url)
+        
+        # ページタイトルの確認（アクセスブロック検知用）
         print(f"DEBUG: Page Title = {driver.title}")
         
         wait = WebDriverWait(driver, 15)
@@ -279,10 +285,17 @@ def scrape_search_result(
     finally:
         if driver:
             try:
-                # user-data-dir の掃除用
+                # user-data-dir の掃除
                 user_data_dir = None
-                for arg in driver.capabilities.get('chrome', {}).get('userDataDir', ''):
-                    pass
+                for arg in driver.options.arguments:
+                    if arg.startswith("--user-data-dir="):
+                        user_data_dir = arg.split("=", 1)[1]
+                        break
+                
                 driver.quit()
+
+                # ディレクトリ削除
+                if user_data_dir and os.path.exists(user_data_dir):
+                    shutil.rmtree(user_data_dir)
             except:
                 pass
