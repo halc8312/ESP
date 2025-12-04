@@ -2,7 +2,7 @@
 FROM python:3.9
 
 # 1. 必要なパッケージとChromeのインストール
-# Debian 12 (Bookworm) に対応させるため、古いライブラリ(libappindicator1等)を除外
+# fonts-kacst (アラビア語フォント) はエラーになるため削除しました
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
@@ -10,7 +10,6 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     fonts-ipafont-gothic \
     fonts-wqy-zenhei \
-    fonts-kacst \
     fonts-freefont-ttf \
     libxss1 \
     libgbm1 \
