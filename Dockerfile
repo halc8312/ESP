@@ -1,8 +1,7 @@
-# ベースイメージ（安定版）
+# ベースイメージ
 FROM python:3.9
 
-# 1. 必要なツールとGoogle Chrome Stableをインストール
-#    apt-get install ./...deb を使うことで、依存ライブラリも自動解決させます
+# 1. Google Chrome Stableのインストール
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
@@ -25,11 +24,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 5. 環境変数
-#    Google Chromeの標準パス
 ENV CHROME_BINARY_LOCATION=/usr/bin/google-chrome
 ENV PORT=5000
 
-# 6. 起動コマンド
-# タイムアウトを120秒に延長
-CMD gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120
-
+# 6. 起動コマンド（★重要修正）
+#    --workers 1 : 並列処理を1つにしてメモリ消費を抑える
+#    --threads 8 : その代わりスレッドを使ってリクエストをさばく
+#    --timeout 120 : 処理待ち時間を延ばす
+CMD gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
