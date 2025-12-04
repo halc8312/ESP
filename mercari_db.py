@@ -8,11 +8,9 @@ from webdriver_manager.chrome import ChromeDriverManager
 import time
 import re
 import os
-import shutil
-import uuid
 
 def create_driver(headless: bool = True):
-    """Chrome WebDriver を生成（Render/Docker Google Chrome版）"""
+    """Chrome WebDriver を生成（Docker環境・パイプ接続対応版）"""
     options = Options()
 
     # --- 基本設定 ---
@@ -24,6 +22,10 @@ def create_driver(headless: bool = True):
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     
+    # --- ★重要: ポート接続ではなくパイプ接続を使う ---
+    # これが「DevToolsActivePort」エラーの特効薬です
+    options.add_argument("--remote-debugging-pipe")
+    
     # --- 安定化設定 ---
     options.add_argument("--window-size=1280,1024")
     options.add_argument("--disable-extensions")
@@ -31,18 +33,22 @@ def create_driver(headless: bool = True):
     options.add_argument("--disable-background-networking")
     options.add_argument("--disable-default-apps")
     options.add_argument("--no-first-run")
+    options.add_argument("--disable-features=VizDisplayCompositor")
     
     # --- User-Agent ---
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     options.add_argument(f'--user-agent={user_agent}')
 
-    # --- ユーザーデータディレクトリ ---
-    user_data_dir = f"/tmp/chrome_data_{uuid.uuid4()}"
-    options.add_argument(f"--user-data-dir={user_data_dir}")
+    # --- 自動化フラグの隠蔽 ---
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+
+    # --- ユーザーデータディレクトリについて ---
+    # ★修正: Docker内ではデフォルトの /tmp を使わせるのが一番安全です。
+    # 無理に指定すると権限エラーの原因になるため削除しました。
 
     # --- バイナリ場所 ---
-    # Dockerfileで入れた Google Chrome の場所を指定
-    # 環境変数または標準パス
     chrome_binary = os.environ.get("CHROME_BINARY_LOCATION", "/usr/bin/google-chrome")
     
     if os.path.exists(chrome_binary):
@@ -53,19 +59,15 @@ def create_driver(headless: bool = True):
 
     # --- ドライバー起動 ---
     try:
-        # webdriver_managerを使って、インストールされているChromeに合うドライバを自動取得
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
         
-        # ボット対策回避
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         return driver
     except Exception as e:
         print(f"CRITICAL ERROR in create_driver: {e}")
-        try:
-            shutil.rmtree(user_data_dir)
-        except:
-            pass
+        # 詳細なログを出すためにchromedriverのログパスを表示などの処理も可能ですが
+        # まずはシンプルにパイプ接続を試します
         raise e
 
 
@@ -199,7 +201,7 @@ def scrape_search_result(
     """
     driver = None
     try:
-        print("DEBUG: Starting scrape_search_result (Google Chrome Stable)")
+        print("DEBUG: Starting scrape_search_result")
         driver = create_driver(headless=headless)
         items = []
 
@@ -266,14 +268,6 @@ def scrape_search_result(
     finally:
         if driver:
             try:
-                # user-data-dir の掃除
-                user_data_dir = None
-                for arg in driver.options.arguments:
-                    if arg.startswith("--user-data-dir="):
-                        user_data_dir = arg.split("=", 1)[1]
-                        break
                 driver.quit()
-                if user_data_dir and os.path.exists(user_data_dir):
-                    shutil.rmtree(user_data_dir)
             except:
                 pass
