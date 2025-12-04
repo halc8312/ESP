@@ -1,10 +1,11 @@
+import logging
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 import time
 import re
 import os
@@ -15,63 +16,34 @@ def create_driver(headless: bool = True):
     """Chrome WebDriver を生成（Render/Docker 低メモリ環境最適化版）"""
     options = Options()
 
-    # --- 基本設定 ---
+    # --- Docker環境で必須の設定 ---
+    # サンドボックス化を無効化（Docker内では権限の問題で必須）
+    options.add_argument("--no-sandbox")
+    # 共有メモリの使用を無効化（/dev/shmのサイズ制限によるクラッシュを回避）
+    options.add_argument("--disable-dev-shm-usage")
+    # GPU無効化（Linuxサーバー環境での安定性向上）
+    options.add_argument("--disable-gpu")
+    
+    # --- ヘッドレスモードの設定 ---
     if headless:
         options.add_argument("--headless=new")
 
-    # --- メモリ不足・クラッシュ対策（必須） ---
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-software-rasterizer") # 描画負荷軽減
+    # --- その他、安定性のための設定（任意） ---
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--start-maximized")
     
-    # --- 通信安定化（DevToolsActivePortエラー対策） ---
-    options.add_argument("--remote-debugging-pipe") 
-    
-    # --- 画面・機能の軽量化 ---
-    options.add_argument("--window-size=1280,1024")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-infobars")
-    options.add_argument("--disable-notifications")
-    options.add_argument("--disable-default-apps")
-    options.add_argument("--no-first-run")
-    
-    # 最近のChromeで追加された「検索エンジン選択画面」を無効化（これが起動をブロックすることがある）
-    options.add_argument("--disable-search-engine-choice-screen")
+    # --- 重要: バイナリパスの指定 ---
+    # Dockerfileでインストールした場合、通常は自動検出されますが、
+    # もしエラーが出る場合は以下のように明示的に指定する場合もあります。
+    # options.binary_location = "/usr/bin/google-chrome"
 
-    # --- 読み込み戦略（高速化・タイムアウト回避） ---
-    # 画像などの全リソース読み込みを待たずにDOMが揃ったらOKとする
-    options.page_load_strategy = 'eager'
-
-    # --- User-Agent ---
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    options.add_argument(f'--user-agent={user_agent}')
-
-    # --- 自動化フラグ隠蔽 ---
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
-
-    # --- ユーザーデータディレクトリ（競合回避） ---
-    # デフォルトの /tmp を使わせるのが一番安全なので指定しない（削除）
-
-    # --- バイナリ場所 ---
-    chrome_binary = os.environ.get("CHROME_BINARY_LOCATION", "/usr/bin/google-chrome")
-    if os.path.exists(chrome_binary):
-        options.binary_location = chrome_binary
-        print(f"DEBUG: Using Chrome binary at {chrome_binary}")
-    else:
-        print(f"DEBUG: Binary not found at {chrome_binary}, letting Selenium search.")
-
-    # --- ドライバー起動 ---
     try:
+        # Docker内のChromeバージョンに合わせてドライバを自動インストール
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
-        
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         return driver
     except Exception as e:
-        print(f"CRITICAL ERROR in create_driver: {e}")
+        logging.error(f"Failed to initialize WebDriver: {e}")
         raise e
 
 
@@ -156,7 +128,8 @@ def scrape_item_detail(driver, url: str):
                 if idx != -1 and idx < end_pos:
                     end_pos = idx
             description = after[:end_pos].strip()
-    except:
+    except Exception as e:
+        logging.debug("Failed to extract description: %s", e)
         description = body_text[:200]
 
     # ---- 商品画像 ----
@@ -258,5 +231,5 @@ def scrape_search_result(
         if driver:
             try:
                 driver.quit()
-            except:
-                pass
+            except Exception as e:
+                logging.debug("Error quitting driver: %s", e)
