@@ -9,6 +9,7 @@ import time
 import re
 import os
 import shutil
+import uuid  # ★追加: ディレクトリ名のランダム化に使用
 
 def create_driver(headless: bool = True):
     """Chrome WebDriver を生成（Render/Docker環境 完全対策 + UA偽装版）"""
@@ -18,7 +19,7 @@ def create_driver(headless: bool = True):
     if headless:
         options.add_argument("--headless=new")
 
-    # --- ボット対策回避（User-Agent偽装） ★ここが重要 ---
+    # --- ボット対策回避（User-Agent偽装） ---
     # 一般的なWindows PCのChromeになりすます
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     options.add_argument(f'--user-agent={user_agent}')
@@ -26,6 +27,8 @@ def create_driver(headless: bool = True):
     # --- Docker/Renderでのクラッシュを防ぐ必須オプション群 ---
     options.add_argument("--disable-dev-shm-usage") 
     options.add_argument("--no-sandbox")
+    
+    # ★重要: メモリの少ないコンテナ環境でのクラッシュを防ぐ
     options.add_argument("--single-process")
     options.add_argument("--disable-zygote")
     
@@ -37,22 +40,20 @@ def create_driver(headless: bool = True):
     options.add_argument("--disable-popup-blocking")
     
     # --- ネットワーク・ポート設定 ---
-    options.add_argument("--remote-debugging-port=9222")
-    options.add_argument("--window-size=1920,1080") # 画面サイズも一般的なPCに合わせる
+    # ★修正: ポート指定(--remote-debugging-port)は削除しました。
+    # 競合してクラッシュする原因になるため、自動割り当てに任せます。
+    
+    options.add_argument("--window-size=1280,1024")
     options.add_argument("--disable-browser-side-navigation")
     
-    # --- 自動化フラグの隠蔽（ボット検知回避） ---
+    # --- 自動化フラグの隠蔽 ---
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
 
-    # --- ユーザーデータディレクトリ ---
-    user_data_dir = os.path.join(os.getcwd(), "chrome_user_data")
-    if os.path.exists(user_data_dir):
-        try:
-            shutil.rmtree(user_data_dir)
-        except:
-            pass
+    # --- ユーザーデータディレクトリ（競合回避） ---
+    # ★修正: 実行ごとにランダムなディレクトリを作成し、権限エラーとロック競合を防ぐ
+    user_data_dir = f"/tmp/chrome_data_{uuid.uuid4()}"
     options.add_argument(f"--user-data-dir={user_data_dir}")
 
     # --- バイナリ場所 ---
@@ -61,6 +62,7 @@ def create_driver(headless: bool = True):
         if os.path.exists(chrome_binary_path):
             options.binary_location = chrome_binary_path
         else:
+            # 見つからない場合は標準パスを探す
             default_path = "/usr/bin/google-chrome"
             if os.path.exists(default_path):
                 options.binary_location = default_path
@@ -70,11 +72,16 @@ def create_driver(headless: bool = True):
             service=Service(ChromeDriverManager().install()),
             options=options,
         )
-        # navigator.webdriver フラグを消す（高度なボット対策回避）
+        # navigator.webdriver フラグを消す
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         return driver
     except Exception as e:
         print(f"CRITICAL ERROR in create_driver: {e}")
+        # 失敗時にゴミを残さない
+        try:
+            shutil.rmtree(user_data_dir)
+        except:
+            pass
         raise e
 
 
@@ -284,6 +291,11 @@ def scrape_search_result(
     finally:
         if driver:
             try:
+                # 終了時にディレクトリ掃除をするために取得しておく
+                user_data_dir = None
+                for arg in driver.capabilities.get('chrome', {}).get('userDataDir', ''):
+                     # capsから取れればベストだが、オプションから取るのが確実
+                     pass
                 driver.quit()
             except:
                 pass
