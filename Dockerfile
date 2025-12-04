@@ -44,7 +44,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ソースコードのコピー
-COPY ..
+COPY . .
 
 # --- セキュリティ対策: 非rootユーザーの作成 ---
 # Chromeはrootでの実行を嫌うため、専用ユーザーを作成
