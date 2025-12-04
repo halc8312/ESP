@@ -1,41 +1,56 @@
-# ベースイメージ
-FROM python:3.9
+# ベースイメージ: Python 3.9 (Debian BusterベースのSlim版)
+# Alpine Linuxはglibc非互換の問題が多いため、SeleniumにはDebian/Ubuntu系が推奨される
+FROM python:3.9-slim-buster
 
-# 1. 必要なパッケージとChromeのインストール
-# fonts-kacst (アラビア語フォント) はエラーになるため削除しました
+# Pythonのバッファリングを無効化（ログを即時出力）
+ENV PYTHONUNBUFFERED=1
+#.pycファイルの生成を抑制
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# --- システム依存関係のインストール ---
+# 1. wget, gnupg, unzip: Chrome/Driverのダウンロード用
+# 2. Chromeの依存ライブラリ群: ここが最も重要。
+#    libnss3, libgconf-2-4, libfontconfig1 など、Renderネイティブ環境に不足しがちなものを網羅
 RUN apt-get update && apt-get install -y \
     wget \
-    curl \
-    unzip \
     gnupg \
-    fonts-ipafont-gothic \
-    fonts-wqy-zenhei \
-    fonts-freefont-ttf \
+    unzip \
+    curl \
     libxss1 \
-    libgbm1 \
-    libnss3 \
+    libappindicator1 \
+    libgconf-2-4 \
+    fonts-liberation \
     libasound2 \
-    libatk-bridge2.0-0 \
-    libgtk-3-0 \
-    && wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
-    && apt-get install -y ./google-chrome-stable_current_amd64.deb \
-    && rm google-chrome-stable_current_amd64.deb \
-    && apt-get clean \
+    libnspr4 \
+    libnss3 \
+    libx11-xcb1 \
+    xdg-utils \
+    libgbm1 \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. 作業ディレクトリ
+# --- Google Chromeのインストール ---
+# 公式リポジトリを追加してapt-getでインストール
+# これにより、将来的な依存関係の変更もaptが自動解決してくれる
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list' \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable
+
+# --- アプリケーションのセットアップ ---
 WORKDIR /app
 
-# 3. Pythonライブラリ
-COPY requirements.txt .
+# 依存関係ファイルのコピーとインストール
+COPY requirements.txt.
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 4. ソースコード
-COPY . .
+# ソースコードのコピー
+COPY..
 
-# 5. 環境変数
-ENV CHROME_BINARY_LOCATION=/usr/bin/google-chrome
-ENV PORT=5000
+# --- セキュリティ対策: 非rootユーザーの作成 ---
+# Chromeはrootでの実行を嫌うため、専用ユーザーを作成
+RUN useradd -m myuser
+USER myuser
 
-# 6. 起動コマンド
-CMD gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
+# アプリケーション起動コマンド
+# ポートはRenderが環境変数PORTで指定する場合があるが、Dockerfile内で明示も可能
+CMD ["python", "mercari_db.py"]
