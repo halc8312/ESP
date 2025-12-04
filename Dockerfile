@@ -30,4 +30,6 @@ ENV CHROME_BINARY_LOCATION=/usr/bin/google-chrome
 ENV PORT=5000
 
 # 6. 起動コマンド
-CMD gunicorn app:app --bind 0.0.0.0:$PORT
+# タイムアウトを120秒に延長
+CMD gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120
+
