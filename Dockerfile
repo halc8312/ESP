@@ -1,6 +1,6 @@
-# ベースイメージ: Python 3.9 (Debian BusterベースのSlim版)
+# ベースイメージ: Python 3.11 (Debian BookwormベースのSlim版)
 # Alpine Linuxはglibc非互換の問題が多いため、SeleniumにはDebian/Ubuntu系が推奨される
-FROM python:3.9-slim-buster
+FROM python:3.11-slim
 
 # Pythonのバッファリングを無効化（ログを即時出力）
 ENV PYTHONUNBUFFERED=1
