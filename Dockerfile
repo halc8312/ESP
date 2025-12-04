@@ -2,7 +2,7 @@
 FROM python:3.9
 
 # 1. 必要なパッケージとChromeのインストール
-# Chromeのヘッドレス起動に必要なライブラリ(libgbm1等)と日本語フォントを追加
+# Debian 12 (Bookworm) に対応させるため、古いライブラリ(libappindicator1等)を除外
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
@@ -13,8 +13,6 @@ RUN apt-get update && apt-get install -y \
     fonts-kacst \
     fonts-freefont-ttf \
     libxss1 \
-    libappindicator1 \
-    libindicator7 \
     libgbm1 \
     libnss3 \
     libasound2 \
@@ -41,5 +39,4 @@ ENV CHROME_BINARY_LOCATION=/usr/bin/google-chrome
 ENV PORT=5000
 
 # 6. 起動コマンド
-# メモリ節約のためworkerは1つ、スレッド並列で処理
 CMD gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
