@@ -28,15 +28,7 @@ def create_driver(headless: bool = True):
     if headless:
         options.add_argument("--headless=new")
 
-    # --- その他、安定性のための設定（任意） ---
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--start-maximized")
-    
-    # --- 重要: バイナリパスの指定 ---
-    # Dockerfileでインストールした場合、通常は自動検出されますが、
-    # もしエラーが出る場合は以下のように明示的に指定する場合もあります。
-    # options.binary_location = "/usr/bin/google-chrome"
-
+    # DockerfileでインストールしたChrome/ChromeDriverは通常、自動検出される
     try:
         # Docker内のChromeバージョンに合わせてドライバを自動インストール
         service = Service(ChromeDriverManager().install())
