@@ -830,18 +830,13 @@ def _parse_ids_and_params(session):
 @app.route("/export/shopify")
 def export_shopify():
     """
-    Shopify 用 CSV 出力（修正版）
-    - JPYをそのまま出力（ドル換算なし）
-    - 全行に必須項目（Price, Inventory quantity等）を埋める
-    - メルカリの画像をダウンロードして自サーバーのURLに置き換える
+    Shopify 用 CSV 出力（仕様準拠版）
+    - 1行目に商品情報と1枚目の画像を記載
+    - 2行目以降は Handle と画像URLのみを記載して画像を追加
     """
     session = SessionLocal()
     try:
         products, markup, qty = _parse_ids_and_params(session)
-        # ※為替レート(rate)の取得は削除します
-
-        # 現在のアプリのURLルートを取得（例: https://my-app.onrender.com）
-        # request.url_root は末尾に / がつくので調整
         base_url = request.url_root.rstrip('/')
 
         output = io.StringIO()
@@ -859,119 +854,62 @@ def export_shopify():
             "Gift card", "SEO title", "SEO description"
         ]
         writer.writerow(header)
+        
+        # ヘッダーのインデックスを事前に取得しておくと便利
+        handle_idx = header.index("URL handle")
+        img_url_idx = header.index("Product image URL")
+        img_pos_idx = header.index("Image position")
 
         for p in products:
             snap = p.snapshots[-1] if p.snapshots else None
 
-            # タイトル・説明
             title = snap.title if snap and snap.title else (p.last_title or "")
             description = snap.description if snap and snap.description else ""
-            desc_clean = description.replace("\r\n", "\n").replace("\r", "\n")
-            desc_html = desc_clean.replace("\n", "<br>")
+            desc_html = description.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
 
-            # ★修正1: 価格は日本円のまま出力（マークアップのみ適用）
             price_val = ""
-            base_price = None
-            if snap and snap.price is not None:
-                base_price = snap.price
-            elif p.last_price is not None:
-                base_price = p.last_price
-            
+            base_price = snap.price if snap and snap.price is not None else p.last_price
             if base_price:
-                # 単純に円 × マークアップ
-                val = int(base_price * markup)
-                price_val = str(val)
-
-            # ★ 画像処理の変更箇所 ★
-            original_image_urls = []
-            if snap and snap.image_urls:
-                original_image_urls = [u for u in snap.image_urls.split("|") if u]
+                price_val = str(int(base_price * markup))
 
             handle = f"mercari-{p.id}"
             sku = f"MER-{p.id}"
 
-            loop_count = max(len(original_image_urls), 1)
-            for i in range(loop_count):
-                original_url = original_image_urls[i] if i < len(original_image_urls) else ""
-                
-                # ここで画像をダウンロードし、自分のサーバーのURLに変換する
-                my_server_image_url = ""
-                if original_url:
+            # 画像URLを自サーバーのURLに変換
+            my_server_image_urls = []
+            if snap and snap.image_urls:
+                original_image_urls = [u for u in snap.image_urls.split("|") if u]
+                for i, original_url in enumerate(original_image_urls):
                     cached_filename = cache_mercari_image(original_url, p.id, i)
                     if cached_filename:
-                        # 変換後: https://my-app.onrender.com/media/mercari_123_0.jpg
-                        my_server_image_url = f"{base_url}/media/{cached_filename}"
-                    else:
-                        # ダウンロード失敗時は元のURLを入れておく（ダメ元で）
-                        my_server_image_url = original_url
+                        my_server_image_urls.append(f"{base_url}/media/{cached_filename}")
 
-                is_first = (i == 0)
+            # --- 1行目（商品本体）のデータを作成 ---
+            first_image_url = my_server_image_urls[0] if my_server_image_urls else ""
+            row = [
+                title, handle, desc_html, "Mercari", "", "", "Imported", 
+                "TRUE", "active", sku, "", "Title", "Default Title", 
+                "", "", "", "", price_val, "", "", "FALSE", "", "", "", "", "", 
+                "shopify", qty, "deny", "0", "g", "TRUE", "manual",
+                first_image_url, "1" if first_image_url else "", "", "", "FALSE", "", ""
+            ]
+            writer.writerow(row)
 
-                # 1行目だけに入れるべき情報
-                row_title = title if is_first else ""
-                row_body = desc_html if is_first else ""
-                row_tags = "Imported" if is_first else ""
-
-                # ★修正2: 全行に入れるべき情報（エラー回避のため）
-                # これにより、どの行が読み込まれても「この商品は在庫1、価格X円、手動配送」と認識させます
-                row_handle = handle
-                row_option1_name = "Title"
-                row_option1_value = "Default Title"
-                row_price = price_val  # 全行に価格を入れる
-                row_inventory_tracker = "shopify"
-                row_inventory_qty = qty # 全行に在庫数を入れる
-                row_continue_selling = "deny"
-                row_sku = sku
-                row_published = "TRUE"
-                row_status = "active"
-                row_requires_shipping = "TRUE"
-                row_fulfillment = "manual"
-                row_taxable = "FALSE"
-                row_weight_val = "0"
-                row_weight_unit = "g"
-                row_gift_card = "FALSE"
-
-                row = [
-                    row_title,              # Title (1行目のみ)
-                    row_handle,             # URL handle
-                    row_body,               # Description (1行目のみ)
-                    "Mercari",              # Vendor
-                    "",                     # Product category
-                    "",                     # Type
-                    row_tags,               # Tags
-                    row_published,          # Published
-                    row_status,             # Status
-                    row_sku,                # SKU
-                    "",                     # Barcode
-                    row_option1_name,       # Option1 name
-                    row_option1_value,      # Option1 value
-                    "", "", "", "",         # Option2, 3
-                    row_price,              # Price (★全行)
-                    "",                     # Compare-at
-                    "",                     # Cost per item
-                    row_taxable,            # Charge tax
-                    "",                     # Tax code
-                    "", "", "", "",         # Unit prices
-                    row_inventory_tracker,  # Inventory tracker
-                    row_inventory_qty,      # Inventory quantity (★全行)
-                    row_continue_selling,   # Continue selling
-                    row_weight_val,         # Weight value
-                    row_weight_unit,        # Weight unit
-                    row_requires_shipping,  # Requires shipping
-                    row_fulfillment,        # Fulfillment service
-                    my_server_image_url,    # Product image URL (★修正: 自サーバーのURLに置き換え)
-                    i + 1 if my_server_image_url else "", # Image position
-                    "",                     # Image alt text
-                    "",                     # Variant image URL
-                    row_gift_card,          # Gift card
-                    "", "",                 # SEO
-                ]
-                writer.writerow(row)
+            # --- 2行目以降（追加画像）のデータを作成 ---
+            if len(my_server_image_urls) > 1:
+                for i in range(1, len(my_server_image_urls)):
+                    # 空の行を作成
+                    additional_image_row = [""] * len(header)
+                    # Handle と Image URL, Position のみ設定
+                    additional_image_row[handle_idx] = handle
+                    additional_image_row[img_url_idx] = my_server_image_urls[i]
+                    additional_image_row[img_pos_idx] = i + 1
+                    writer.writerow(additional_image_row)
 
         data = "\ufeff" + output.getvalue()
         resp = make_response(data)
         resp.headers["Content-Type"] = "text/csv; charset=utf-8"
-        resp.headers["Content-Disposition"] = 'attachment; filename="shopify_export_fixed.csv"'
+        resp.headers["Content-Disposition"] = 'attachment; filename="shopify_export_final.csv"'
         return resp
     except Exception as e:
         print(e)
