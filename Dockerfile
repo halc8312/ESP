@@ -56,4 +56,5 @@ USER myuser
 
 # アプリケーション起動コマンド
 # Gunicornを使ってFlaskアプリ(app.pyの中のapp)を起動
-CMD ["gunicorn", "app:app"]
+# --timeout 300: 処理が5分までかかってもタイムアウトしないように設定
+CMD ["gunicorn", "--timeout", "300", "app:app"]
