@@ -28,6 +28,15 @@ def create_driver(headless: bool = True):
     if headless:
         options.add_argument("--headless=new")
 
+    # --- Bot検知対策 ---
+    # 一般的なUser-Agentを設定
+    user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
+    options.add_argument(f'user-agent={user_agent}')
+    # WebDriverであるという情報を隠す
+    options.add_argument('--disable-blink-features=AutomationControlled')
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+
     # DockerfileでインストールしたChrome/ChromeDriverは通常、自動検出される
     try:
         # Docker内のChromeバージョンに合わせてドライバを自動インストール
