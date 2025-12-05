@@ -179,9 +179,17 @@ app = Flask(__name__)
 # ==============================
 # 画像保存設定
 # ==============================
-# staticフォルダの中に images フォルダを作る
-IMAGE_FOLDER = os.path.join('static', 'images')
-os.makedirs(IMAGE_FOLDER, exist_ok=True)
+# Renderの永続ディスクを利用するため、環境変数でパスを指定できるようにします。
+# なければローカルの `static/images` を使用します。
+IMAGE_STORAGE_PATH = os.environ.get("IMAGE_STORAGE_PATH", os.path.join('static', 'images'))
+os.makedirs(IMAGE_STORAGE_PATH, exist_ok=True)
+
+# --- 画像配信用のルート ---
+# 永続ディスクに保存した画像を配信するためのエンドポイント
+@app.route("/media/<path:filename>")
+def serve_image(filename):
+    return send_from_directory(IMAGE_STORAGE_PATH, filename)
+# -------------------------
 
 
 def cache_mercari_image(mercari_url, product_id, index):
@@ -194,7 +202,7 @@ def cache_mercari_image(mercari_url, product_id, index):
         
     # ファイル名: mercari_{ID}_{連番}.jpg
     filename = f"mercari_{product_id}_{index}.jpg"
-    local_path = os.path.join(IMAGE_FOLDER, filename)
+    local_path = os.path.join(IMAGE_STORAGE_PATH, filename)
     
     # すでに保存済みならダウンロードしない
     if os.path.exists(local_path):
@@ -484,7 +492,7 @@ DETAIL_TEMPLATE = """
                 <a href="{{ url }}" target="_blank">
                     <img src="{{ url }}" alt="image {{ loop.index }}">
                 </a>
-            {% for %}
+            {% endfor %}
         </div>
     {% else %}
         <p>(画像なし)</p>
@@ -891,8 +899,8 @@ def export_shopify():
                 if original_url:
                     cached_filename = cache_mercari_image(original_url, p.id, i)
                     if cached_filename:
-                        # 変換後: https://my-app.onrender.com/static/images/mercari_123_0.jpg
-                        my_server_image_url = f"{base_url}/static/images/{cached_filename}"
+                        # 変換後: https://my-app.onrender.com/media/mercari_123_0.jpg
+                        my_server_image_url = f"{base_url}/media/{cached_filename}"
                     else:
                         # ダウンロード失敗時は元のURLを入れておく（ダメ元で）
                         my_server_image_url = original_url
