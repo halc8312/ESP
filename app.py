@@ -688,12 +688,12 @@ def scrape_run():
 
     # ===== ここから実際のスクレイピング処理 =====
     try:
-        # headless=False にするとブラウザが見える（True にすると裏で動く）
+        # headless=True にして、サーバー環境でGUIなしでブラウザを動かす
         items = scrape_search_result(
             search_url=search_url,
             max_items=limit,
             max_scroll=3,
-            headless=False,
+            headless=True,
         )
         new_count, updated_count = save_scraped_items_to_db(items, site="mercari")
         error_msg = ""
