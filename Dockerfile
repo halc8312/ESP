@@ -55,5 +55,5 @@ RUN useradd -m myuser
 USER myuser
 
 # アプリケーション起動コマンド
-# ポートはRenderが環境変数PORTで指定する場合があるが、Dockerfile内で明示も可能
-CMD ["python", "mercari_db.py"]
+# Gunicornを使ってFlaskアプリ(app.pyの中のapp)を起動
+CMD ["gunicorn", "app:app"]
