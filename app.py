@@ -65,9 +65,22 @@ class ProductSnapshot(Base):
 # DB 接続設定（WAL 有効）
 # ==============================
 
-engine = create_engine("sqlite:///mercari.db", echo=False)
-with engine.connect() as conn:
-    conn.execute(text("PRAGMA journal_mode=WAL"))
+# Renderの永続ディスクを利用する場合、そのパスを環境変数で指定します。
+# 環境変数 `DATABASE_URL` が設定されていればそれを使用し、
+# なければローカル開発用にカレントディレクトリの `mercari.db` を使用します。
+database_url = os.environ.get("DATABASE_URL", "sqlite:///mercari.db")
+
+# --- デバッグ用ログ ---
+# Renderのログで実際にどのデータベースパスが使われているか確認します。
+print(f"DEBUG: Using database URL: {database_url}")
+# --- ここまで ---
+
+engine = create_engine(database_url, echo=False)
+
+# SQLiteの場合のみWALモードを有効化
+if "sqlite" in engine.url.drivername:
+    with engine.connect() as conn:
+        conn.execute(text("PRAGMA journal_mode=WAL"))
 
 SessionLocal = sessionmaker(bind=engine)
 Base.metadata.create_all(engine)
