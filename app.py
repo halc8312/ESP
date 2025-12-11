@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, request, make_response, send_from_directory
+from flask import Flask, render_template_string, request, make_response, send_from_directory, redirect, url_for, session
 from sqlalchemy import (
     create_engine,
     Column,
@@ -7,19 +7,24 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Text,
+    Boolean,
     text,
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from datetime import datetime
 from urllib.parse import urlencode, urlsplit, urlunsplit  # URLパラメータ & 正規化用
+import time
 import csv
 import io
 import os
 import requests
 import shutil
+import smtplib
+from email.mime.text import MIMEText
+from email.header import Header
 
 # mercari_db.py からスクレイピング関数を import
-from mercari_db import scrape_search_result
+from scrapers import scrape_search_result
 
 # ==============================
 # SQLAlchemy モデル定義
@@ -28,10 +33,37 @@ from mercari_db import scrape_search_result
 Base = declarative_base()
 
 
+class Shop(Base):
+    __tablename__ = "shops"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    platform = Column(String, default="shopify") # "shopify", "ebay"
+    
+    # Shopify-specific
+    api_key = Column(String)
+    api_secret = Column(String)
+    shop_url = Column(String) # e.g., "your-store.myshopify.com"
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    products = relationship("Product", back_populates="shop")
+
+class Template(Base):
+    __tablename__ = "templates"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
+    content_html = Column(Text)
+    content_text = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Product(Base):
     __tablename__ = "products"
 
     id = Column(Integer, primary_key=True)
+    
+    shop_id = Column(Integer, ForeignKey("shops.id"))
+
     site = Column(String, nullable=False, index=True)
     source_url = Column(String, nullable=False, unique=True, index=True)
 
@@ -39,9 +71,21 @@ class Product(Base):
     last_price = Column(Integer)
     last_status = Column(String)
 
+    # --- Editable fields for Shopify/eBay ---
+    edited_title = Column(String)
+    edited_price = Column(Integer)
+    edited_description = Column(Text)
+    tags = Column(String) # comma-separated
+    
+    # --- Change Tracking ---
+    last_checked_at = Column(DateTime)
+    has_changed = Column(Boolean, default=False)
+    # ----------------------------------------
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
+    shop = relationship("Shop", back_populates="products")
     snapshots = relationship("ProductSnapshot", back_populates="product")
 
 
@@ -65,7 +109,7 @@ class ProductSnapshot(Base):
 # DB 接続設定（WAL 有効）
 # ==============================
 
-# Renderの永続ディスクを利用する場合、そのパスを環境変数で指定します。
+# Renderの永続ディスクを利用する場合、そのパスを環境変数で指定できるようにします。
 # 環境変数 `DATABASE_URL` が設定されていればそれを使用し、
 # なければローカル開発用にカレントディレクトリの `mercari.db` を使用します。
 database_url = os.environ.get("DATABASE_URL", "sqlite:///mercari.db")
@@ -99,7 +143,7 @@ def normalize_url(raw_url: str) -> str:
         return raw_url
 
 
-def save_scraped_items_to_db(items, site: str = "mercari"):
+def save_scraped_items_to_db(items, site: str = "mercari", shop_id: int = None):
     """
     mercari_db.scrape_search_result() が返した items(list[dict]) を
     Product / ProductSnapshot に保存する。
@@ -108,6 +152,15 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
     now = datetime.utcnow()
     new_count = 0
     updated_count = 0
+    
+    if shop_id is None:
+        print("Warning: shop_id is not provided to save_scraped_items_to_db")
+        # フォールバックとして最初のショップを選ぶなどもあり得る
+        shop = session.query(Shop).first()
+        if not shop:
+             print("Error: No shops found in DB. Cannot save products.")
+             return 0, 0
+        shop_id = shop.id
 
     try:
         for item in items:
@@ -117,6 +170,9 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
 
             url = normalize_url(raw_url)
 
+            # 既存の Product を shop_id と URL で検索
+            product = session.query(Product).filter_by(source_url=url, shop_id=shop_id).one_or_none()
+
             title = item.get("title") or ""
             price = item.get("price")
             status = item.get("status") or ""
@@ -124,6 +180,30 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
             image_urls = item.get("image_urls") or []
             image_urls_str = "|".join(image_urls)
 
+
+            if product is None:
+                # 新規作成
+                product = Product(
+                    shop_id=shop_id,
+                    site=site,
+                    source_url=url,
+                    last_title=title,
+                    last_price=price,
+                    last_status=status,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(product)
+                session.flush()  # ID 発行
+                new_count += 1
+            else:
+                # 更新
+                product.last_title = title
+                product.last_price = price
+                product.last_status = status
+                product.updated_at = now
+                updated_count += 1
+            
             # 既存の Product を検索
             product = session.query(Product).filter_by(source_url=url).one_or_none()
 
@@ -171,876 +251,105 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
 
 
 # ==============================
-# Flask アプリ
+# サポート機能
 # ==============================
+def send_support_email(subject, from_email, message):
+    """サポートリクエストをメールで送信する"""
+    to_email = os.environ.get("SUPPORT_EMAIL_TO") # 送信先 (中川様)
+    smtp_host = os.environ.get("SMTP_HOST")
+    smtp_port = int(os.environ.get("SMTP_PORT", 587))
+    smtp_user = os.environ.get("SMTP_USER")
+    smtp_pass = os.environ.get("SMTP_PASS")
 
-app = Flask(__name__)
-
-# ==============================
-# 画像保存設定
-# ==============================
-# Renderの永続ディスクを利用するため、環境変数でパスを指定できるようにします。
-# なければローカルの `static/images` を使用します。
-IMAGE_STORAGE_PATH = os.environ.get("IMAGE_STORAGE_PATH", os.path.join('static', 'images'))
-os.makedirs(IMAGE_STORAGE_PATH, exist_ok=True)
-
-# --- 画像配信用のルート ---
-# 永続ディスクに保存した画像を配信するためのエンドポイント
-@app.route("/media/<path:filename>")
-def serve_image(filename):
-    return send_from_directory(IMAGE_STORAGE_PATH, filename)
-# -------------------------
-
-
-def cache_mercari_image(mercari_url, product_id, index):
-    """
-    メルカリの画像をダウンロードし、ローカルのファイル名を返す。
-    失敗した場合は None を返す。
-    """
-    if not mercari_url:
-        return None
-        
-    # ファイル名: mercari_{ID}_{連番}.jpg
-    filename = f"mercari_{product_id}_{index}.jpg"
-    local_path = os.path.join(IMAGE_STORAGE_PATH, filename)
-    
-    # すでに保存済みならダウンロードしない
-    if os.path.exists(local_path):
-        return filename
+    if not all([to_email, smtp_host, smtp_port, smtp_user, smtp_pass]):
+        print("ERROR: SMTP environment variables are not fully configured.")
+        return False
 
     try:
-        # メルカリから画像をダウンロード
-        # User-Agentを指定しないと拒否されることがある
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Referer': 'https://jp.mercari.com/'
-        }
-        resp = requests.get(mercari_url, headers=headers, stream=True, timeout=10)
+        body = f"返信先: {from_email or '指定なし'}\\n\\n---\\n\\n{message}"
         
-        if resp.status_code == 200:
-            with open(local_path, 'wb') as f:
-                resp.raw.decode_content = True
-                shutil.copyfileobj(resp.raw, f)
-            return filename
+        msg = MIMEText(body, 'plain', 'utf-8')
+        msg['Subject'] = Header(subject, 'utf-8')
+        msg['From'] = smtp_user
+        msg['To'] = to_email
+
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+        
+        return True
     except Exception as e:
-        print(f"Image download failed: {e}")
-    
-    return None
+        print(f"Failed to send email: {e}")
+        return False
 
+@app.route("/support", methods=["GET", "POST"])
+def support():
+    if request.method == "POST":
+        subject = request.form.get("subject")
+        message = request.form.get("message")
+        from_email = request.form.get("from_email")
 
-PAGE_SIZE = 50
+        success = send_support_email(subject, from_email, message)
 
-# 一覧テンプレート（為替レート＋eBayパラメータ付き）
-INDEX_TEMPLATE = """
-<!doctype html>
-<html lang="ja">
-<head>
-    <meta charset="utf-8">
-    <title>商品一覧（mercari.db）</title>
-    <style>
-        body { font-family: sans-serif; }
-        table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #ccc; padding: 4px 8px; font-size: 13px; vertical-align: top; }
-        th { background: #f0f0f0; }
-        img { max-height: 80px; }
-        .actions {
-            margin: 8px 0;
-            padding: 8px;
-            background: #f7f7f7;
-            border: 1px solid #ddd;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            align-items: flex-start;
-        }
-        .actions > div {
-            min-width: 160px;
-            max-width: 230px;
-        }
-        .actions label {
-            display: block;
-            font-size: 12px;
-            margin-bottom: 2px;
-        }
-        .actions input[type="number"],
-        .actions input[type="text"] {
-            width: 100%;
-            box-sizing: border-box;
-        }
-        .filters { margin: 8px 0 16px 0; padding: 8px; background: #eef7ff; border: 1px solid #bcd; }
-        .filters label { margin-right: 12px; }
-        .pagination { margin-top: 12px; display: flex; gap: 12px; align-items: center; }
-        .pagination a { text-decoration: none; color: #06c; }
-        .nav { margin-bottom: 10px; }
-        .nav a { margin-right: 15px; font-weight: bold; }
-    </style>
-</head>
-<body>
-    <div class="nav">
-        <a href="{{ url_for('index') }}">商品一覧</a>
-        <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
-    </div>
+        if success:
+            # flash("メッセージを送信しました。")
+            pass
+        else:
+            # flash("メッセージの送信に失敗しました。管理者にご確認ください。", "danger")
+            pass
 
-    <h1>商品一覧（{{ selected_site or "全サイト" }} / {{ selected_status or "全ステータス" }}）</h1>
+        return redirect(url_for('support'))
 
-    <!-- フィルタフォーム -->
-    <form method="GET" action="{{ url_for('index') }}">
-        <div class="filters">
-            <label>
-                サイト:
-                <select name="site">
-                    <option value="">(すべて)</option>
-                    {% for s in sites %}
-                        <option value="{{ s }}" {% if s == selected_site %}selected{% endif %}>{{ s }}</option>
-                    {% endfor %}
-                </select>
-            </label>
-            <label>
-                ステータス:
-                <select name="status">
-                    <option value="">(すべて)</option>
-                    {% for st in statuses %}
-                        <option value="{{ st }}" {% if st == selected_status %}selected{% endif %}>{{ st }}</option>
-                    {% endfor %}
-                </select>
-            </label>
-            <button type="submit">フィルタ</button>
-        </div>
-    </form>
-
-    <!-- エクスポート用フォーム -->
-    <form method="GET">
-        <div class="actions">
-            <div>
-                <label>価格倍率 (markup)</label>
-                <input type="number" name="markup" value="{{ default_markup }}" step="0.01">
-                <span style="font-size: 11px; color: #555;">1.0=そのまま / 1.2=20%上乗せ</span>
-            </div>
-            <div>
-                <label>在庫数 (Quantity)</label>
-                <input type="number" name="qty" value="{{ default_qty }}" step="1" min="0">
-            </div>
-            <div>
-                <label>為替レート (JPY → USD)</label>
-                <input type="number" name="rate" value="{{ default_rate }}" step="0.01">
-                <span style="font-size: 11px; color: #555;">1ドルあたりの円（例: 155）</span>
-            </div>
-            <div>
-                <label>eBay カテゴリID (Category)</label>
-                <input type="text" name="ebay_category_id" value="{{ default_ebay_category_id }}" placeholder="例: 183454">
-            </div>
-            <div>
-                <label>eBay ConditionID</label>
-                <input type="text" name="ebay_condition_id" value="{{ default_ebay_condition_id }}" placeholder="新品=1000 / 中古=3000">
-            </div>
-            <div>
-                <label>PaymentProfileName</label>
-                <input type="text" name="ebay_payment_profile" value="{{ default_ebay_payment_profile }}" placeholder="例: payAddress">
-            </div>
-            <div>
-                <label>ReturnProfileName</label>
-                <input type="text" name="ebay_return_profile" value="{{ default_ebay_return_profile }}" placeholder="例: return Buyer pays for shipping">
-            </div>
-            <div>
-                <label>ShippingProfileName</label>
-                <input type="text" name="ebay_shipping_profile" value="{{ default_ebay_shipping_profile }}" placeholder="例: [US DDP] $132.01–$198">
-            </div>
-            <div>
-                <label>PayPalEmailAddress</label>
-                <input type="text" name="ebay_paypal_email" value="{{ default_ebay_paypal_email }}" placeholder="例: your-paypal@example.com">
-            </div>
-
-            <div style="flex-basis: 100%; margin-top: 8px;">
-                <button type="submit" formaction="{{ url_for('export_shopify') }}">
-                    Shopify 風 CSV
-                </button>
-                <button type="submit" formaction="{{ url_for('export_ebay') }}">
-                    eBay File Exchange 用 CSV
-                </button>
-            </div>
-        </div>
-
-        <table>
-            <tr>
-                <th>選択</th>
-                <th>ID</th>
-                <th>サイト</th>
-                <th>サムネイル</th>
-                <th>商品名</th>
-                <th>価格</th>
-                <th>ステータス</th>
-                <th>画像枚数</th>
-                <th>元URL</th>
-                <th>詳細</th>
-                <th>最終更新</th>
-            </tr>
-            {% for p in products %}
-                {% set snap = p.snapshots[-1] if p.snapshots else None %}
-                {% set thumb_url = None %}
-                {% set image_count = 0 %}
-                {% if snap and snap.image_urls %}
-                    {% set urls = snap.image_urls.split('|') %}
-                    {% set image_count = urls|length %}
-                    {% if urls and urls[0] %}
-                        {% set thumb_url = urls[0] %}
-                    {% endif %}
-                {% endif %}
-            <tr>
-                <td>
-                    <input type="checkbox" name="id" value="{{ p.id }}">
-                </td>
-                <td>{{ p.id }}</td>
-                <td>{{ p.site }}</td>
-                <td>
-                    {% if thumb_url %}
-                        <img src="{{ thumb_url }}" alt="thumb">
-                    {% endif %}
-                </td>
-                <td>{{ p.last_title }}</td>
-                <td>
-                    {% if p.last_price is not none %}
-                        ¥{{ "{:,}".format(p.last_price) }}
-                    {% endif %}
-                </td>
-                <td>{{ p.last_status }}</td>
-                <td>{{ image_count }}</td>
-                <td><a href="{{ p.source_url }}" target="_blank">開く</a></td>
-                <td><a href="{{ url_for('product_detail', product_id=p.id) }}">詳細</a></td>
-                <td>{{ p.updated_at }}</td>
-            </tr>
-            {% endfor %}
-        </table>
-
-        <div class="pagination">
-            {% if has_prev %}
-                <a href="{{ url_for('index', page=page-1, site=selected_site, status=selected_status) }}">&laquo; 前のページ</a>
-            {% endif %}
-            <span>ページ {{ page }} / {{ total_pages }}</span>
-            {% if has_next %}
-                <a href="{{ url_for('index', page=page+1, site=selected_site, status=selected_status) }}">次のページ &raquo;</a>
-            {% endif %}
-        </div>
-    </form>
-</body>
-</html>
-"""
-
-# 詳細テンプレート
-DETAIL_TEMPLATE = """
-<!doctype html>
-<html lang="ja">
-<head>
-    <meta charset="utf-8">
-    <title>商品詳細 - {{ product.last_title }}</title>
-    <style>
-        body { font-family: sans-serif; max-width: 900px; margin: 0 auto; }
-        .meta { margin-bottom: 16px; }
-        .meta dt { font-weight: bold; }
-        .meta dd { margin: 0 0 8px 0; }
-        .images { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
-        .images img { max-width: 200px; max-height: 200px; object-fit: contain; border: 1px solid #ccc; padding: 4px; background: #fafafa; }
-        pre.description { white-space: pre-wrap; background: #f8f8f8; padding: 8px; border: 1px solid #ddd; }
-        a { color: #06c; }
-    </style>
-</head>
-<body>
-    <h1>商品詳細</h1>
-    <p><a href="{{ url_for('index') }}">&laquo; 一覧に戻る</a></p>
-
-    <dl class="meta">
-        <dt>ID</dt>
-        <dd>{{ product.id }}</dd>
-
-        <dt>サイト</dt>
-        <dd>{{ product.site }}</dd>
-
-        <dt>商品名</dt>
-        <dd>{{ product.last_title }}</dd>
-
-        <dt>価格</dt>
-        <dd>
-            {% if snapshot and snapshot.price is not none %}
-                ¥{{ "{:,}".format(snapshot.price) }}
-            {% elif product.last_price is not none %}
-                ¥{{ "{:,}".format(product.last_price) }}
-            {% else %}
-                -
-            {% endif %}
-        </dd>
-
-        <dt>ステータス</dt>
-        <dd>{{ snapshot.status if snapshot else product.last_status }}</dd>
-
-        <dt>元URL</dt>
-        <dd><a href="{{ product.source_url }}" target="_blank">{{ product.source_url }}</a></dd>
-
-        <dt>最終スクレイピング日時</dt>
-        <dd>{{ snapshot.scraped_at if snapshot else product.updated_at }}</dd>
-    </dl>
-
-    <h2>商品説明</h2>
-    {% if snapshot and snapshot.description %}
-        <pre class="description">{{ snapshot.description }}</pre>
-    {% else %}
-        <p>(説明なし)</p>
-    {% endif %}
-
-    <h2>画像（{{ images|length }}枚）</h2>
-    {% if images %}
-        <div class="images">
-            {% for url in images %}
-                <a href="{{ url }}" target="_blank">
-                    <img src="{{ url }}" alt="image {{ loop.index }}">
-                </a>
-            {% endfor %}
-        </div>
-    {% else %}
-        <p>(画像なし)</p>
-    {% endif %}
-</body>
-</html>
-"""
-
-
-@app.route("/")
-def index():
-    session = SessionLocal()
-    try:
-        selected_site = request.args.get("site", "").strip() or ""
-        selected_status = request.args.get("status", "").strip() or ""
-        page_str = request.args.get("page", "1")
-
-        try:
-            page = int(page_str)
-            if page < 1:
-                page = 1
-        except ValueError:
-            page = 1
-
-        query = session.query(Product)
-        if selected_site:
-            query = query.filter(Product.site == selected_site)
-        if selected_status:
-            query = query.filter(Product.last_status == selected_status)
-
-        total_count = query.count()
-        total_pages = max((total_count + PAGE_SIZE - 1) // PAGE_SIZE, 1)
-        if page > total_pages:
-            page = total_pages
-
-        products = (
-            query.order_by(Product.id.desc())
-            .offset((page - 1) * PAGE_SIZE)
-            .limit(PAGE_SIZE)
-            .all()
-        )
-
-        site_rows = session.query(Product.site).distinct().all()
-        status_rows = session.query(Product.last_status).distinct().all()
-        sites = sorted({row[0] for row in site_rows if row[0]})
-        statuses = sorted({row[0] for row in status_rows if row[0]})
-
-        has_prev = page > 1
-        has_next = page < total_pages
-
-        return render_template_string(
-            INDEX_TEMPLATE,
-            products=products,
-            sites=sites,
-            statuses=statuses,
-            selected_site=selected_site,
-            selected_status=selected_status,
-            default_markup=1.0,
-            default_qty=1,
-            default_rate=155.0,          # デフォルト為替レート
-            default_ebay_category_id="",
-            default_ebay_condition_id="3000",          # デフォルト: 中古
-            default_ebay_payment_profile="",
-            default_ebay_return_profile="",
-            default_ebay_shipping_profile="",
-            default_ebay_paypal_email="",
-            page=page,
-            total_pages=total_pages,
-            has_prev=has_prev,
-            has_next=has_next,
-        )
-    finally:
-        session.close()
-
-
-@app.route("/product/<int:product_id>")
-def product_detail(product_id):
-    session = SessionLocal()
-    try:
-        product = session.query(Product).get(product_id)
-        if not product:
-            return "Not found", 404
-
-        snapshot = product.snapshots[-1] if product.snapshots else None
-        images = []
-        if snapshot and snapshot.image_urls:
-            images = [u for u in snapshot.image_urls.split("|") if u]
-
-        return render_template_string(
-            DETAIL_TEMPLATE,
-            product=product,
-            snapshot=snapshot,
-            images=images,
-        )
-    finally:
-        session.close()
-
-
-# =========================================================
-# スクレイピング設定フォーム
-# =========================================================
-
-@app.route("/scrape", methods=["GET"])
-def scrape_form():
+    # 他のテンプレートと同様のナビゲーションバーを持つHTML
     html = """
-    <html>
+    <!doctype html>
+    <html lang="ja">
     <head>
         <meta charset="utf-8">
-        <title>スクレイピング設定</title>
-        <style>
-            body { font-family: sans-serif; max-width: 700px; margin: 0 auto; padding: 20px; }
-            label { display: block; margin-top: 12px; font-weight: bold; }
-            input[type='text'], input[type='number'], select {
-                width: 100%;
-                padding: 8px;
-                margin-top: 4px;
-                box-sizing: border-box;
-            }
-            button {
-                margin-top: 20px;
-                padding: 10px 20px;
-                font-size: 16px;
-                background: #06c;
-                color: #fff;
-                border: none;
-                cursor: pointer;
-            }
-            button:hover { background: #0056b3; }
-            .box {
-                border: 1px solid #ccc;
-                padding: 20px;
-                background: #f8f8f8;
-                margin-top: 20px;
-            }
-        </style>
+        <title>サポート</title>
+        <link href="{{ url_for('static', filename='bootstrap/css/bootstrap.min.css') }}" rel="stylesheet">
     </head>
-    <body>
-        <h1>スクレイピング実行</h1>
-        <p><a href="{{ url_for('index') }}">← 商品一覧に戻る</a></p>
-
-        <div class="box">
-            <form method="POST" action="{{ url_for('scrape_run') }}">
-
-                <label>キーワード</label>
-                <input type="text" name="keyword" value="スニーカー" required>
-
-                <label>価格 min（任意）</label>
-                <input type="number" name="price_min">
-
-                <label>価格 max（任意）</label>
-                <input type="number" name="price_max">
-
-                <label>ソート順</label>
-                <select name="sort">
-                    <option value="created_desc">新着順</option>
-                    <option value="price_asc">価格：安い順</option>
-                    <option value="price_desc">価格：高い順</option>
-                </select>
-
-                <label>カテゴリID（任意、メルカリカテゴリID）</label>
-                <input type="text" name="category" placeholder="例：1">
-
-                <label>最大取得件数</label>
-                <input type="number" name="limit" value="10" min="1">
-
-                <button type="submit">スクレイピング実行</button>
-            </form>
+    <body class="p-3">
+        <div class="container">
+             <nav class="navbar navbar-expand-lg navbar-light bg-light mb-3">
+                <div class="container-fluid">
+                    <a class="navbar-brand" href="/">E-Com Tool</a>
+                    <div class="collapse navbar-collapse">
+                        <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+                            <li class="nav-item"><a class="nav-link" href="{{ url_for('index') }}">商品一覧</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{{ url_for('scrape_form') }}">新規スクレイピング</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{{ url_for('list_templates') }}">説明文テンプレート</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{{ url_for('list_shops') }}">ショップ管理</a></li>
+                            <li class="nav-item"><a class="nav-link active" href="{{ url_for('support') }}">サポート</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </nav>
+            <h1>サポート</h1>
+            <p>システムに関するお問い合わせはこちらからお願いします。</p>
+            <div class="card">
+                <div class="card-body">
+                    <form method="POST">
+                        <div class="mb-3">
+                            <label for="subject" class="form-label">件名</label>
+                            <input type="text" name="subject" id="subject" class="form-control" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="from_email" class="form-label">返信先メールアドレス（任意）</label>
+                            <input type="email" name="from_email" id="from_email" class="form-control">
+                        </div>
+                        <div class="mb-3">
+                            <label for="message" class="form-label">お問い合わせ内容</label>
+                            <textarea name="message" id="message" class="form-control" rows="8" required></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary">送信</button>
+                    </form>
+                </div>
+            </div>
         </div>
+        <script src="{{ url_for('static', filename='bootstrap/js/bootstrap.bundle.min.js') }}"></script>
     </body>
     </html>
     """
     return render_template_string(html)
-
-
-@app.route("/scrape/run", methods=["POST"])
-def scrape_run():
-    # フォームからの入力を取得
-    keyword = request.form.get("keyword", "")
-    price_min = request.form.get("price_min")
-    price_max = request.form.get("price_max")
-    sort = request.form.get("sort", "created_desc")
-    category = request.form.get("category")
-    limit = int(request.form.get("limit", 10))
-
-    # メルカリ用の検索URLを組み立てる
-    params = {}
-    if keyword:
-        params["keyword"] = keyword
-    if price_min:
-        params["price_min"] = price_min
-    if price_max:
-        params["price_max"] = price_max
-    if sort:
-        params["sort"] = sort
-    if category:
-        params["category_id"] = category
-
-    base = "https://jp.mercari.com/search?"
-    query = urlencode(params)
-    search_url = base + query
-
-    # ===== ここから実際のスクレイピング処理 =====
-    try:
-        # headless=True にして、サーバー環境でGUIなしでブラウザを動かす
-        items = scrape_search_result(
-            search_url=search_url,
-            max_items=limit,
-            max_scroll=3,
-            headless=True,
-        )
-        new_count, updated_count = save_scraped_items_to_db(items, site="mercari")
-        error_msg = ""
-    except Exception as e:
-        items = []
-        new_count = updated_count = 0
-        error_msg = str(e)
-
-    # 結果表示
-    html = """
-    <html>
-    <head><meta charset="utf-8"><title>スクレイピング結果</title>
-    <style>
-        body { font-family: sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; }
-        table { border-collapse: collapse; width: 100%; margin-top: 16px; }
-        th, td { border: 1px solid #ccc; padding: 4px 8px; font-size: 13px; vertical-align: top; }
-        th { background: #f0f0f0; }
-        .error { color: red; font-weight: bold; }
-    </style>
-    </head>
-    <body>
-        <h1>スクレイピング結果</h1>
-        <p><a href="{{ url_for('scrape_form') }}">← 条件を変更して再スクレイピング</a> |
-           <a href="{{ url_for('index') }}">商品一覧を見る →</a></p>
-
-        <h3>使用した検索URL:</h3>
-        <pre style="background:#f0f0f0; padding:12px; overflow-x: auto;">{{ search_url }}</pre>
-
-        <h3>設定パラメータ:</h3>
-        <ul>
-            <li>キーワード: {{ keyword }}</li>
-            <li>価格範囲: {{ price_min }} 〜 {{ price_max }}</li>
-            <li>ソート: {{ sort }}</li>
-            <li>カテゴリ: {{ category }}</li>
-            <li>取得件数(max_items): {{ limit }}</li>
-        </ul>
-
-        {% if error_msg %}
-            <p class="error">スクレイピング中にエラーが発生しました: {{ error_msg }}</p>
-        {% else %}
-            <p>スクレイピング取得件数: {{ items|length }} 件</p>
-            <p>DB 新規登録: {{ new_count }} 件 / 更新: {{ updated_count }} 件</p>
-
-            {% if items %}
-                <h3>取得した商品（プレビュー）</h3>
-                <table>
-                    <tr>
-                        <th>#</th>
-                        <th>タイトル</th>
-                        <th>価格</th>
-                        <th>ステータス</th>
-                        <th>URL</th>
-                    </tr>
-                    {% for it in items %}
-                    <tr>
-                        <td>{{ loop.index }}</td>
-                        <td>{{ it.title }}</td>
-                        <td>
-                            {% if it.price is not none %}
-                                ¥{{ "{:,}".format(it.price) }}
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                        <td>{{ it.status }}</td>
-                        <td><a href="{{ it.url }}" target="_blank">開く</a></td>
-                    </tr>
-                    {% endfor %}
-                </table>
-            {% endif %}
-        {% endif %}
-    </body>
-    </html>
-    """
-
-    return render_template_string(
-        html,
-        search_url=search_url,
-        keyword=keyword,
-        price_min=price_min,
-        price_max=price_max,
-        sort=sort,
-        category=category,
-        limit=limit,
-        items=items,
-        new_count=new_count,
-        updated_count=updated_count,
-        error_msg=error_msg,
-    )
-
-
-# ==============================
-# CSVエクスポート機能
-# ==============================
-
-def _parse_ids_and_params(session):
-    ids = request.args.getlist("id")
-    markup_str = request.args.get("markup", "1.0")
-    qty_str = request.args.get("qty", "1")
-
-    try:
-        markup = float(markup_str)
-    except ValueError:
-        markup = 1.0
-
-    try:
-        qty = int(qty_str)
-    except ValueError:
-        qty = 1
-
-    query = session.query(Product)
-    if ids:
-        int_ids = []
-        for v in ids:
-            try:
-                int_ids.append(int(v))
-            except ValueError:
-                continue
-        if int_ids:
-            query = query.filter(Product.id.in_(int_ids))
-
-    products = query.all()
-    return products, markup, qty
-
-
-@app.route("/export/shopify")
-def export_shopify():
-    """
-    Shopify 用 CSV 出力（仕様準拠版）
-    - 1行目に商品情報と1枚目の画像を記載
-    - 2行目以降は Handle と画像URLのみを記載して画像を追加
-    """
-    session = SessionLocal()
-    try:
-        products, markup, qty = _parse_ids_and_params(session)
-        base_url = request.url_root.rstrip('/')
-
-        output = io.StringIO()
-        writer = csv.writer(output)
-
-        header = [
-            "Title", "URL handle", "Description", "Vendor", "Product category",
-            "Type", "Tags", "Published on online store", "Status", "SKU", "Barcode",
-            "Option1 name", "Option1 value", "Option2 name", "Option2 value", "Option3 name", "Option3 value",
-            "Price", "Compare-at price", "Cost per item", "Charge tax", "Tax code",
-            "Unit price total measure", "Unit price total measure unit", "Unit price base measure", "Unit price base measure unit",
-            "Inventory tracker", "Inventory quantity", "Continue selling when out of stock",
-            "Weight value (grams)", "Weight unit for display", "Requires shipping", "Fulfillment service",
-            "Product image URL", "Image position", "Image alt text", "Variant image URL",
-            "Gift card", "SEO title", "SEO description"
-        ]
-        writer.writerow(header)
-        
-        # ヘッダーのインデックスを事前に取得しておくと便利
-        handle_idx = header.index("URL handle")
-        img_url_idx = header.index("Product image URL")
-        img_pos_idx = header.index("Image position")
-
-        for p in products:
-            snap = p.snapshots[-1] if p.snapshots else None
-
-            title = snap.title if snap and snap.title else (p.last_title or "")
-            description = snap.description if snap and snap.description else ""
-            desc_html = description.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
-
-            price_val = ""
-            base_price = snap.price if snap and snap.price is not None else p.last_price
-            if base_price:
-                price_val = str(int(base_price * markup))
-
-            handle = f"mercari-{p.id}"
-            sku = f"MER-{p.id}"
-
-            # 画像URLを自サーバーのURLに変換
-            my_server_image_urls = []
-            if snap and snap.image_urls:
-                original_image_urls = [u for u in snap.image_urls.split("|") if u]
-                for i, original_url in enumerate(original_image_urls):
-                    cached_filename = cache_mercari_image(original_url, p.id, i)
-                    if cached_filename:
-                        my_server_image_urls.append(f"{base_url}/media/{cached_filename}")
-
-            # --- 1行目（商品本体）のデータを作成 ---
-            first_image_url = my_server_image_urls[0] if my_server_image_urls else ""
-            row = [
-                title, handle, desc_html, "Mercari", "", "", "Imported", 
-                "TRUE", "active", sku, "", "Title", "Default Title", 
-                "", "", "", "", price_val, "", "", "FALSE", "", "", "", "", "", 
-                "shopify", qty, "deny", "0", "g", "TRUE", "manual",
-                first_image_url, "1" if first_image_url else "", "", "", "FALSE", "", ""
-            ]
-            writer.writerow(row)
-
-            # --- 2行目以降（追加画像）のデータを作成 ---
-            if len(my_server_image_urls) > 1:
-                for i in range(1, len(my_server_image_urls)):
-                    # 空の行を作成
-                    additional_image_row = [""] * len(header)
-                    # Handle と Image URL, Position のみ設定
-                    additional_image_row[handle_idx] = handle
-                    additional_image_row[img_url_idx] = my_server_image_urls[i]
-                    additional_image_row[img_pos_idx] = i + 1
-                    writer.writerow(additional_image_row)
-
-        data = "\ufeff" + output.getvalue()
-        resp = make_response(data)
-        resp.headers["Content-Type"] = "text/csv; charset=utf-8"
-        resp.headers["Content-Disposition"] = 'attachment; filename="shopify_export_final.csv"'
-        return resp
-    except Exception as e:
-        print(e)
-        return str(e), 500
-    finally:
-        session.close()
-
-
-@app.route("/export/ebay")
-def export_ebay():
-    """
-    eBay File Exchange 用 CSV を出力。
-    - ヘッダに UTF-8 指定: Action(SiteID=US|Country=JP|Currency=USD|Version=1193|CC=UTF-8)
-    - 価格は (JPY / rate) * markup で USD に変換
-    - Brand / Card Condition など最低限の Item Specifics を埋める
-    - Business Policies を使う場合は Shipping/Return/Payment のProfile名を入力して利用
-    """
-    session = SessionLocal()
-    try:
-        products, markup, qty = _parse_ids_and_params(session)
-
-        ebay_category_id = request.args.get("ebay_category_id", "").strip()
-        ebay_condition_id = request.args.get("ebay_condition_id", "").strip() or "3000"
-        paypal_email = request.args.get("ebay_paypal_email", "").strip()
-        payment_profile = request.args.get("ebay_payment_profile", "").strip()
-        return_profile = request.args.get("ebay_return_profile", "").strip()
-        shipping_profile = request.args.get("ebay_shipping_profile", "").strip()
-
-        # ConditionID は数値のみ許可（新品1000 / 中古3000など）
-        if not ebay_condition_id.isdigit():
-            ebay_condition_id = "3000"
-
-        # 為替レート（JPY -> USD）
-        try:
-            exchange_rate = float(request.args.get("rate", "155.0"))
-        except ValueError:
-            exchange_rate = 155.0
-
-        output = io.StringIO()
-        writer = csv.writer(output)
-
-        header = [
-            "Action(SiteID=US|Country=JP|Currency=USD|Version=1193|CC=UTF-8)",
-            "CustomLabel",
-            "StartPrice",
-            "ConditionID",
-            "Title",
-            "Description",
-            "PicURL",
-            "Category",
-            "Format",
-            "Duration",
-            "Location",
-            "ShippingProfileName",
-            "ReturnProfileName",
-            "PaymentProfileName",
-            "C:Brand",
-            "C:Card Condition",
-        ]
-        writer.writerow(header)
-
-        BRAND_DEFAULT = "Unbranded"
-        CARD_CONDITION_DEFAULT = "Used"
-
-        for p in products:
-            snap = p.snapshots[-1] if p.snapshots else None
-
-            # タイトル（80文字制限）
-            title_src = snap.title if snap and snap.title else (p.last_title or "")
-            title = (title_src or "")[:80]
-
-            # 説明：改行→<br>、セル内改行除去
-            description_src = snap.description if snap and snap.description else ""
-            if not description_src:
-                description_src = title_src
-            desc_clean = description_src.replace("\r\n", "\n").replace("\r", "\n")
-            description_html = desc_clean.replace("\n", "<br>")
-
-            # 価格計算 (円 -> ドル)
-            base_price_yen = None
-            if snap and snap.price is not None:
-                base_price_yen = snap.price
-            elif p.last_price is not None:
-                base_price_yen = p.last_price
-
-            start_price = ""
-            if base_price_yen:
-                try:
-                    usd_val = (base_price_yen / exchange_rate) * markup
-                    start_price = "{:.2f}".format(usd_val)
-                except Exception:
-                    start_price = ""
-
-            # 画像 (複数ある場合は | 区切り)
-            image_urls = []
-            if snap and snap.image_urls:
-                image_urls = [u for u in snap.image_urls.split("|") if u]
-            pic_url = "|".join(image_urls) if image_urls else ""
-
-            custom_label = f"MERCARI-{p.id}"
-
-            row = [
-                "Add",                 # Action
-                custom_label,          # CustomLabel
-                start_price,           # StartPrice
-                ebay_condition_id,     # ConditionID
-                title,                 # Title
-                description_html,      # Description
-                pic_url,               # PicURL
-                ebay_category_id,      # Category
-                "FixedPriceItem",      # Format
-                "GTC",                 # Duration
-                "Japan",               # Location
-                shipping_profile,      # ShippingProfileName
-                return_profile,        # ReturnProfileName
-                payment_profile,       # PaymentProfileName
-                BRAND_DEFAULT,         # C:Brand
-                CARD_CONDITION_DEFAULT # C:Card Condition
-            ]
-            writer.writerow(row)
-
-        data = "\ufeff" + output.getvalue()
-        resp = make_response(data)
-        resp.headers["Content-Type"] = "text/csv; charset=utf-8"
-        resp.headers["Content-Disposition"] = 'attachment; filename="ebay_export.csv"'
-        return resp
-    finally:
-        session.close()
-
-
-if __name__ == "__main__":
-    # ローカル実行時は debug=True
-    # Renderでは PORT 環境変数が設定されるので、それを利用
-    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

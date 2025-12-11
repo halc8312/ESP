@@ -1,0 +1,242 @@
+import logging
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import time
+import re
+import os
+
+class BaseScraper:
+    """
+    すべてのスクレイパーの基底クラス。
+    共通のインターフェースを定義（将来的には）。
+    """
+    def __init__(self, headless: bool = True):
+        self.headless = headless
+        self.driver = None
+
+    def create_driver(self):
+        """Chrome WebDriver を生成"""
+        options = Options()
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        if self.headless:
+            options.add_argument("--headless=new")
+        
+        user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
+        options.add_argument(f'user-agent={user_agent}')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+
+        try:
+            service = Service(ChromeDriverManager().install())
+            self.driver = webdriver.Chrome(service=service, options=options)
+            return self.driver
+        except Exception as e:
+            logging.error(f"Failed to initialize WebDriver: {e}")
+            raise e
+            
+    def close_driver(self):
+        if self.driver:
+            try:
+                self.driver.quit()
+            except Exception as e:
+                logging.debug("Error quitting driver: %s", e)
+
+    def scrape_item_detail(self, url: str):
+        """[要オーバーライド] 1つの商品ページから詳細情報を取得"""
+        raise NotImplementedError
+
+    def run(self, **kwargs):
+        """[要オーバーライド] スクレイピングを実行するメイン処理"""
+        raise NotImplementedError
+
+
+class MercariScraper(BaseScraper):
+    """メルカリ専用のスクレイピング処理"""
+
+    def scrape_item_detail(self, url: str):
+        """1つの商品ページから詳細情報を取得して dict で返す"""
+        try:
+            self.driver.get(url)
+        except Exception as e:
+            print(f"Error accessing {url}: {e}")
+            return {
+                "url": url, "title": "", "price": None, "status": "error", 
+                "description": "", "image_urls": []
+            }
+
+        wait = WebDriverWait(self.driver, 10)
+
+        try:
+            wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        except Exception:
+            pass
+
+        # ---- タイトル ----
+        try:
+            title_el = WebDriverWait(self.driver, 5).until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
+            title = title_el.text.strip()
+        except Exception:
+            title = ""
+
+        # ---- ページ全体のテキスト ----
+        try:
+            body_el = self.driver.find_element(By.TAG_NAME, "body")
+            body_text = body_el.text
+        except Exception:
+            body_text = ""
+
+        # ---- 価格 ----
+        price = None
+        try:
+            price_el = self.driver.find_elements(By.CSS_SELECTOR, "[data-testid='price']")
+            if price_el:
+                price_text = price_el[0].text
+                m = re.search(r"[¥￥]\s*([\d,]+)", price_text) or re.search(r"([\d,]+)", price_text)
+                if m:
+                    price = int(m.group(1).replace(",", ""))
+        except Exception:
+            pass
+
+        if price is None and body_text:
+            m = re.search(r"[¥￥]\s*([\d,]+)", body_text)
+            if not m:
+                m = re.search(r"([\d,]+)\s*円", body_text)
+            if m:
+                try:
+                    price = int(m.group(1).replace(",", ""))
+                except ValueError:
+                    price = None
+
+        # ---- ステータス ----
+        status = "unknown"
+        try:
+            if "売り切れ" in body_text or "Sold" in body_text:
+                 sold_btns = self.driver.find_elements(By.XPATH, "//button[contains(., '売り切れ')]")
+                 if sold_btns:
+                     status = "sold"
+            
+            if status == "unknown" and ("購入手続きへ" in body_text or "Buy this item" in body_text):
+                 status = "on_sale"
+        except Exception:
+            pass
+
+        # ---- 商品説明 ----
+        description = ""
+        try:
+            if "商品の説明" in body_text:
+                after = body_text.split("商品の説明", 1)[1]
+                end_pos = len(after)
+                for marker in ["商品の情報", "商品情報", "出品者", "コメント"]:
+                    idx = after.find(marker)
+                    if idx != -1 and idx < end_pos:
+                        end_pos = idx
+                description = after[:end_pos].strip()
+        except Exception as e:
+            logging.debug("Failed to extract description: %s", e)
+            description = body_text[:200]
+
+        # ---- 商品画像 ----
+        image_urls = []
+        try:
+            time.sleep(1) 
+            img_elements = self.driver.find_elements(
+                By.CSS_SELECTOR,
+                "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']",
+            )
+            for img in img_elements:
+                src = img.get_attribute("src")
+                if src and src not in image_urls:
+                    image_urls.append(src)
+        except Exception:
+            pass
+
+        return {
+            "url": url,
+            "title": title,
+            "price": price,
+            "status": status,
+            "description": description,
+            "image_urls": image_urls,
+        }
+
+    def run(self, search_url: str, max_items: int = 5, max_scroll: int = 3):
+        """メルカリ検索URLから複数商品をスクレイピングして list[dict] を返す。"""
+        items = []
+        try:
+            print("DEBUG: Starting MercariScraper.run()")
+            self.create_driver()
+            
+            print(f"DEBUG: Navigating to {search_url}")
+            self.driver.get(search_url)
+            print(f"DEBUG: Page Title = {self.driver.title}")
+            
+            wait = WebDriverWait(self.driver, 15)
+            try:
+                wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            except Exception:
+                print("DEBUG: Timeout waiting for body")
+
+            for i in range(max_scroll):
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(2)
+
+            links = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/item/']")
+            if len(links) == 0:
+                 print("DEBUG: No links found, trying list selector...")
+                 links = self.driver.find_elements(By.CSS_SELECTOR, "li[data-testid='item-cell'] a")
+
+            print(f"DEBUG: Found {len(links)} links on search page.")
+
+            item_urls = []
+            seen = set()
+
+            for link in links:
+                href = link.get_attribute("href")
+                if not href or "/item/" not in href or href in seen:
+                    continue
+                seen.add(href)
+                item_urls.append(href)
+                if len(item_urls) >= max_items:
+                    break
+
+            print(f"DEBUG: Going to scrape {len(item_urls)} items.")
+
+            for url in item_urls:
+                print(f"DEBUG: Scraping item {url}")
+                data = self.scrape_item_detail(url)
+                if data["title"]: 
+                     print(f"DEBUG: Success -> {data['title']}")
+                else:
+                     print("DEBUG: Failed to get title")
+                
+                items.append(data)
+                time.sleep(1)
+
+            return items
+
+        except Exception as e:
+            print(f"CRITICAL ERROR during scraping: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+        finally:
+            self.close_driver()
+
+
+# --- For external call ---
+def scrape_search_result(search_url: str, max_items: int = 5, headless: bool = True):
+    """
+    外部から呼び出すための後方互換性を保った関数。
+    将来的には app.py 側もクラスベースの呼び出しに統一したい。
+    """
+    # NOTE: max_scrollはここで固定
+    scraper = MercariScraper(headless=headless)
+    return scraper.run(search_url=search_url, max_items=max_items, max_scroll=3)
