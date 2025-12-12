@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, request, make_response, send_from_directory
+from flask import Flask, render_template_string, request, make_response, send_from_directory, redirect, url_for
 from sqlalchemy import (
     create_engine,
     Column,
@@ -9,7 +9,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker, subqueryload
 from datetime import datetime
 from urllib.parse import urlencode, urlsplit, urlunsplit  # URLパラメータ & 正規化用
 import csv
@@ -39,6 +39,11 @@ class Product(Base):
     last_price = Column(Integer)
     last_status = Column(String)
 
+    # ユーザーによる編集内容を保存するカラム
+    custom_title = Column(String)
+    custom_price = Column(Integer)
+    custom_description = Column(Text)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
@@ -59,6 +64,16 @@ class ProductSnapshot(Base):
     image_urls = Column(Text)
 
     product = relationship("Product", back_populates="snapshots")
+
+
+class DescriptionTemplate(Base):
+    __tablename__ = "description_templates"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 # ==============================
@@ -177,6 +192,112 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
 app = Flask(__name__)
 
 # ==============================
+# テンプレート管理
+# ==============================
+
+TEMPLATES_TEMPLATE = """
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <title>説明文テンプレート管理</title>
+    <style>
+        body { font-family: sans-serif; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ccc; padding: 4px 8px; font-size: 13px; vertical-align: top; }
+        th { background: #f0f0f0; }
+        .nav { margin-bottom: 10px; }
+        .nav a { margin-right: 15px; font-weight: bold; }
+        .template-form {
+            border: 1px solid #ccc;
+            padding: 16px;
+            margin-top: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <a href="{{ url_for('index') }}">商品一覧</a>
+        <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
+        <a href="{{ url_for('manage_templates') }}">テンプレート管理</a>
+    </div>
+
+    <h1>説明文テンプレート管理</h1>
+
+    <h2>登録済みテンプレート</h2>
+    <table>
+        <tr>
+            <th>ID</th>
+            <th>テンプレート名</th>
+            <th>内容 (抜粋)</th>
+            <th>操作</th>
+        </tr>
+        {% for t in templates %}
+        <tr>
+            <td>{{ t.id }}</td>
+            <td>{{ t.name }}</td>
+            <td>{{ t.content[:50] if t.content else '' }}...</td>
+            <td>
+                <form method="POST" action="{{ url_for('delete_template', template_id=t.id) }}" style="display:inline;">
+                    <button type="submit" onclick="return confirm('本当に削除しますか？');">削除</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <div class="template-form">
+        <h2>新規テンプレート作成</h2>
+        <form method="POST" action="{{ url_for('manage_templates') }}">
+            <div>
+                <label>テンプレート名</label>
+                <input type="text" name="name" required style="width: 300px;">
+            </div>
+            <div style="margin-top: 8px;">
+                <label>テンプレート内容</label>
+                <textarea name="content" rows="10" required style="width: 100%; box-sizing: border-box;"></textarea>
+            </div>
+            <div style="margin-top: 8px;">
+                <button type="submit">作成</button>
+            </div>
+        </form>
+    </div>
+</body>
+</html>
+"""
+
+@app.route("/templates", methods=["GET", "POST"])
+def manage_templates():
+    session = SessionLocal()
+    try:
+        if request.method == "POST":
+            name = request.form.get("name")
+            content = request.form.get("content")
+            if name and content:
+                new_template = DescriptionTemplate(name=name, content=content)
+                session.add(new_template)
+                session.commit()
+            return redirect(url_for('manage_templates'))
+
+        templates = session.query(DescriptionTemplate).order_by(DescriptionTemplate.id).all()
+        return render_template_string(TEMPLATES_TEMPLATE, templates=templates)
+    finally:
+        session.close()
+
+@app.route("/templates/<int:template_id>/delete", methods=["POST"])
+def delete_template(template_id):
+    session = SessionLocal()
+    try:
+        template = session.query(DescriptionTemplate).filter_by(id=template_id).one_or_none()
+        if template:
+            session.delete(template)
+            session.commit()
+    finally:
+        session.close()
+    return redirect(url_for('manage_templates'))
+
+
+# ==============================
 # 画像保存設定
 # ==============================
 # Renderの永続ディスクを利用するため、環境変数でパスを指定できるようにします。
@@ -243,6 +364,7 @@ INDEX_TEMPLATE = """
         th, td { border: 1px solid #ccc; padding: 4px 8px; font-size: 13px; vertical-align: top; }
         th { background: #f0f0f0; }
         img { max-height: 80px; }
+        .changed { background-color: #fff8e1 !important; } /* 変更があった行をハイライト */
         .actions {
             margin: 8px 0;
             padding: 8px;
@@ -279,6 +401,7 @@ INDEX_TEMPLATE = """
     <div class="nav">
         <a href="{{ url_for('index') }}">商品一覧</a>
         <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
+        <a href="{{ url_for('manage_templates') }}">テンプレート管理</a>
     </div>
 
     <h1>商品一覧（{{ selected_site or "全サイト" }} / {{ selected_status or "全ステータス" }}）</h1>
@@ -304,6 +427,13 @@ INDEX_TEMPLATE = """
                     {% endfor %}
                 </select>
             </label>
+            <label>
+                変更:
+                <select name="change_filter">
+                    <option value="">(すべて)</option>
+                    <option value="changed" {% if selected_change_filter == 'changed' %}selected{% endif %}>変更ありのみ</option>
+                </select>
+            </label>
             <button type="submit">フィルタ</button>
         </div>
     </form>
@@ -313,8 +443,13 @@ INDEX_TEMPLATE = """
         <div class="actions">
             <div>
                 <label>価格倍率 (markup)</label>
-                <input type="number" name="markup" value="{{ default_markup }}" step="0.01">
+                <input type="number" id="markup" name="markup" value="{{ default_markup }}" step="0.01" oninput="updateProfitMargin()">
                 <span style="font-size: 11px; color: #555;">1.0=そのまま / 1.2=20%上乗せ</span>
+            </div>
+            <div>
+                <label>利益率 (%)</label>
+                <input type="number" id="profit_margin" step="1" oninput="updateMarkup()">
+                <span style="font-size: 11px; color: #555;">価格倍率と連動します</span>
             </div>
             <div>
                 <label>在庫数 (Quantity)</label>
@@ -357,6 +492,12 @@ INDEX_TEMPLATE = """
                 <button type="submit" formaction="{{ url_for('export_ebay') }}">
                     eBay File Exchange 用 CSV
                 </button>
+                <button type="submit" formaction="{{ url_for('export_stock_update') }}">
+                    Shopify 在庫更新CSV
+                </button>
+                <button type="submit" formaction="{{ url_for('export_price_update') }}">
+                    Shopify 価格更新CSV
+                </button>
             </div>
         </div>
 
@@ -375,17 +516,7 @@ INDEX_TEMPLATE = """
                 <th>最終更新</th>
             </tr>
             {% for p in products %}
-                {% set snap = p.snapshots[-1] if p.snapshots else None %}
-                {% set thumb_url = None %}
-                {% set image_count = 0 %}
-                {% if snap and snap.image_urls %}
-                    {% set urls = snap.image_urls.split('|') %}
-                    {% set image_count = urls|length %}
-                    {% if urls and urls[0] %}
-                        {% set thumb_url = urls[0] %}
-                    {% endif %}
-                {% endif %}
-            <tr>
+                <tr class="{{ 'changed' if p.has_changed else '' }}">
                 <td>
                     <input type="checkbox" name="id" value="{{ p.id }}">
                 </td>
@@ -405,7 +536,7 @@ INDEX_TEMPLATE = """
                 <td>{{ p.last_status }}</td>
                 <td>{{ image_count }}</td>
                 <td><a href="{{ p.source_url }}" target="_blank">開く</a></td>
-                <td><a href="{{ url_for('product_detail', product_id=p.id) }}">詳細</a></td>
+                <td><a href="{{ url_for('product_detail', product_id=p.id) }}">編集</a></td>
                 <td>{{ p.updated_at }}</td>
             </tr>
             {% endfor %}
@@ -421,6 +552,41 @@ INDEX_TEMPLATE = """
             {% endif %}
         </div>
     </form>
+    <script>
+        function updateProfitMargin() {
+            const markupInput = document.getElementById('markup');
+            const profitMarginInput = document.getElementById('profit_margin');
+            const markup = parseFloat(markupInput.value);
+            if (!isNaN(markup) && markup > 0) {
+                // 利益率 = (売上 - 仕入) / 売上
+                // markup = 売上 / 仕入
+                // 利益率 = (markup - 1) / markup * 100
+                const profitMargin = ((markup - 1) / markup) * 100;
+                profitMarginInput.value = profitMargin.toFixed(0);
+            } else {
+                profitMarginInput.value = '';
+            }
+        }
+
+        function updateMarkup() {
+            const markupInput = document.getElementById('markup');
+            const profitMarginInput = document.getElementById('profit_margin');
+            const profitMargin = parseFloat(profitMarginInput.value);
+            if (!isNaN(profitMargin) && profitMargin < 100) {
+                // markup = 1 / (1 - (利益率 / 100))
+                const markup = 1 / (1 - (profitMargin / 100));
+                markupInput.value = markup.toFixed(2);
+            } else {
+                markupInput.value = '';
+            }
+        }
+
+        // ページ読み込み時に初期値を設定
+        document.addEventListener('DOMContentLoaded', function() {
+            // markupの値から利益率を計算して表示
+            updateProfitMargin();
+        });
+    </script>
 </body>
 </html>
 """
@@ -431,72 +597,100 @@ DETAIL_TEMPLATE = """
 <html lang="ja">
 <head>
     <meta charset="utf-8">
-    <title>商品詳細 - {{ product.last_title }}</title>
+    <title>商品編集 - {{ product.last_title }}</title>
     <style>
         body { font-family: sans-serif; max-width: 900px; margin: 0 auto; }
-        .meta { margin-bottom: 16px; }
-        .meta dt { font-weight: bold; }
-        .meta dd { margin: 0 0 8px 0; }
+        .nav { margin-bottom: 10px; }
+        .nav a { margin-right: 15px; font-weight: bold; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-weight: bold; margin-bottom: 4px; }
+        .form-group input, .form-group textarea, .form-group select {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 4px;
+        }
+        .form-group textarea { min-height: 200px; }
+        .original-info {
+            font-size: 12px;
+            color: #555;
+            background: #f4f4f4;
+            padding: 8px;
+            border: 1px solid #ddd;
+            margin-top: 4px;
+        }
         .images { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
-        .images img { max-width: 200px; max-height: 200px; object-fit: contain; border: 1px solid #ccc; padding: 4px; background: #fafafa; }
-        pre.description { white-space: pre-wrap; background: #f8f8f8; padding: 8px; border: 1px solid #ddd; }
-        a { color: #06c; }
+        .images img { max-width: 150px; max-height: 150px; border: 1px solid #ccc; }
     </style>
 </head>
 <body>
-    <h1>商品詳細</h1>
+    <div class="nav">
+        <a href="{{ url_for('index') }}">商品一覧</a>
+        <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
+        <a href="{{ url_for('manage_templates') }}">テンプレート管理</a>
+    </div>
+
+    <h1>商品編集</h1>
     <p><a href="{{ url_for('index') }}">&laquo; 一覧に戻る</a></p>
 
-    <dl class="meta">
-        <dt>ID</dt>
-        <dd>{{ product.id }}</dd>
+    <form method="POST">
+        <div class="form-group">
+            <label for="title">商品名</label>
+            <input type="text" id="title" name="title" value="{{ product.custom_title or product.last_title or '' }}">
+            <div class="original-info">
+                <strong>元の名前:</strong> {{ product.last_title or '(なし)' }}
+            </div>
+        </div>
 
-        <dt>サイト</dt>
-        <dd>{{ product.site }}</dd>
+        <div class="form-group">
+            <label for="price">価格</label>
+            <input type="number" id="price" name="price" value="{{ product.custom_price or product.last_price or '' }}">
+            <div class="original-info">
+                <strong>元の価格:</strong> ¥{{ "{:,}".format(product.last_price) if product.last_price is not none else '(なし)' }}
+            </div>
+        </div>
 
-        <dt>商品名</dt>
-        <dd>{{ product.last_title }}</dd>
+        <div class="form-group">
+            <label for="template">説明文テンプレート</label>
+            <select id="template" onchange="applyTemplate()">
+                <option value="">(テンプレートを選択)</option>
+                {% for t in templates %}
+                <option value="{{ t.content | e }}">{{ t.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
 
-        <dt>価格</dt>
-        <dd>
-            {% if snapshot and snapshot.price is not none %}
-                ¥{{ "{:,}".format(snapshot.price) }}
-            {% elif product.last_price is not none %}
-                ¥{{ "{:,}".format(product.last_price) }}
-            {% else %}
-                -
-            {% endif %}
-        </dd>
+        <div class="form-group">
+            <label for="description">商品説明</label>
+            <textarea id="description" name="description">{{ product.custom_description or (snapshot.description if snapshot else '') }}</textarea>
+            <div class="original-info">
+                <strong>元の説明(抜粋):</strong><br>
+                {{ (snapshot.description[:200] + '...') if snapshot and snapshot.description else '(なし)' }}
+            </div>
+        </div>
 
-        <dt>ステータス</dt>
-        <dd>{{ snapshot.status if snapshot else product.last_status }}</dd>
-
-        <dt>元URL</dt>
-        <dd><a href="{{ product.source_url }}" target="_blank">{{ product.source_url }}</a></dd>
-
-        <dt>最終スクレイピング日時</dt>
-        <dd>{{ snapshot.scraped_at if snapshot else product.updated_at }}</dd>
-    </dl>
-
-    <h2>商品説明</h2>
-    {% if snapshot and snapshot.description %}
-        <pre class="description">{{ snapshot.description }}</pre>
-    {% else %}
-        <p>(説明なし)</p>
-    {% endif %}
+        <button type="submit">保存</button>
+    </form>
 
     <h2>画像（{{ images|length }}枚）</h2>
     {% if images %}
         <div class="images">
             {% for url in images %}
-                <a href="{{ url }}" target="_blank">
-                    <img src="{{ url }}" alt="image {{ loop.index }}">
-                </a>
+                <img src="{{ url }}" alt="image {{ loop.index }}">
             {% endfor %}
         </div>
     {% else %}
         <p>(画像なし)</p>
     {% endif %}
+
+    <script>
+        function applyTemplate() {
+            var select = document.getElementById('template');
+            var content = select.value;
+            if (content) {
+                document.getElementById('description').value = content;
+            }
+        }
+    </script>
 </body>
 </html>
 """
@@ -506,86 +700,134 @@ DETAIL_TEMPLATE = """
 def index():
     session = SessionLocal()
     try:
-        selected_site = request.args.get("site", "").strip() or ""
-        selected_status = request.args.get("status", "").strip() or ""
-        page_str = request.args.get("page", "1")
+        page = int(request.args.get("page", 1))
 
-        try:
-            page = int(page_str)
-            if page < 1:
-                page = 1
-        except ValueError:
-            page = 1
+        # フィルタリング条件の取得
+        selected_site = request.args.get("site")
+        selected_status = request.args.get("status")
+        selected_change_filter = request.args.get("change_filter")
 
+        # サイトとステータスのリストを取得
+        sites = [s[0] for s in session.query(Product.site).distinct().all()]
+        statuses = [s[0] for s in session.query(Product.last_status).distinct().all()]
+
+        # 基本的なクエリ
         query = session.query(Product)
         if selected_site:
             query = query.filter(Product.site == selected_site)
         if selected_status:
             query = query.filter(Product.last_status == selected_status)
 
-        total_count = query.count()
-        total_pages = max((total_count + PAGE_SIZE - 1) // PAGE_SIZE, 1)
-        if page > total_pages:
-            page = total_pages
+        # パフォーマンスのためにスナップショットをEager Loadingする
+        all_products = query.options(subqueryload(Product.snapshots)).order_by(Product.updated_at.desc()).all()
 
-        products = (
-            query.order_by(Product.id.desc())
-            .offset((page - 1) * PAGE_SIZE)
-            .limit(PAGE_SIZE)
-            .all()
-        )
+        # 変更があったかどうかをPython側で判定
+        products_to_display = []
+        for p in all_products:
+            p.has_changed = False
+            # スナップショットが2つ以上ないと変更のしようがない
+            if len(p.snapshots) >= 2:
+                # scraped_atで降順ソート
+                sorted_snapshots = sorted(p.snapshots, key=lambda s: s.scraped_at, reverse=True)
+                latest = sorted_snapshots[0]
+                previous = sorted_snapshots[1]
+                
+                # 価格またはステータスが変更されていたらフラグを立てる
+                if latest.price != previous.price or latest.status != previous.status:
+                    p.has_changed = True
+            
+            # 「変更ありのみ」フィルタが有効な場合は、変更があった商品だけリストに追加
+            if selected_change_filter == 'changed':
+                if p.has_changed:
+                    products_to_display.append(p)
+            else:
+                products_to_display.append(p)
 
-        site_rows = session.query(Product.site).distinct().all()
-        status_rows = session.query(Product.last_status).distinct().all()
-        sites = sorted({row[0] for row in site_rows if row[0]})
-        statuses = sorted({row[0] for row in status_rows if row[0]})
+        # フィルタ後のリストに対してページネーションを適用
+        total_items = len(products_to_display)
+        total_pages = (total_items + PAGE_SIZE - 1) // PAGE_SIZE
+        offset = (page - 1) * PAGE_SIZE
+        
+        paginated_products = products_to_display[offset : offset + PAGE_SIZE]
 
         has_prev = page > 1
         has_next = page < total_pages
 
+        # デフォルト値
+        defaults = {
+            "markup": request.args.get("markup", "1.2"),
+            "qty": request.args.get("qty", "1"),
+            "rate": request.args.get("rate", "155"),
+            "ebay_category_id": request.args.get("ebay_category_id", ""),
+            "ebay_condition_id": request.args.get("ebay_condition_id", "3000"),
+            "ebay_payment_profile": request.args.get("ebay_payment_profile", ""),
+            "ebay_return_profile": request.args.get("ebay_return_profile", ""),
+            "ebay_shipping_profile": request.args.get("ebay_shipping_profile", ""),
+            "ebay_paypal_email": request.args.get("ebay_paypal_email", ""),
+        }
+
         return render_template_string(
             INDEX_TEMPLATE,
-            products=products,
+            products=paginated_products,
             sites=sites,
             statuses=statuses,
             selected_site=selected_site,
             selected_status=selected_status,
-            default_markup=1.0,
-            default_qty=1,
-            default_rate=155.0,          # デフォルト為替レート
-            default_ebay_category_id="",
-            default_ebay_condition_id="3000",          # デフォルト: 中古
-            default_ebay_payment_profile="",
-            default_ebay_return_profile="",
-            default_ebay_shipping_profile="",
-            default_ebay_paypal_email="",
+            selected_change_filter=selected_change_filter,
             page=page,
             total_pages=total_pages,
             has_prev=has_prev,
             has_next=has_next,
+            default_markup=defaults["markup"],
+            default_qty=defaults["qty"],
+            default_rate=defaults["rate"],
+            default_ebay_category_id=defaults["ebay_category_id"],
+            default_ebay_condition_id=defaults["ebay_condition_id"],
+            default_ebay_payment_profile=defaults["ebay_payment_profile"],
+            default_ebay_return_profile=defaults["ebay_return_profile"],
+            default_ebay_shipping_profile=defaults["ebay_shipping_profile"],
+            default_ebay_paypal_email=defaults["ebay_paypal_email"],
         )
     finally:
         session.close()
 
 
-@app.route("/product/<int:product_id>")
+@app.route("/product/<int:product_id>", methods=["GET", "POST"])
 def product_detail(product_id):
     session = SessionLocal()
     try:
-        product = session.query(Product).get(product_id)
+        product = session.query(Product).filter_by(id=product_id).one_or_none()
         if not product:
-            return "Not found", 404
+            return "Product not found", 404
 
-        snapshot = product.snapshots[-1] if product.snapshots else None
+        if request.method == "POST":
+            # フォームから送信されたデータで product を更新
+            product.custom_title = request.form.get("title")
+            
+            price_str = request.form.get("price")
+            product.custom_price = int(price_str) if price_str.isdigit() else None
+            
+            product.custom_description = request.form.get("description")
+            product.updated_at = datetime.utcnow()
+            
+            session.commit()
+            return redirect(url_for('product_detail', product_id=product.id))
+
+        snapshot = (
+            session.query(ProductSnapshot)
+            .filter_by(product_id=product.id)
+            .order_by(ProductSnapshot.scraped_at.desc())
+            .first()
+        )
+        
+        templates = session.query(DescriptionTemplate).order_by(DescriptionTemplate.name).all()
+
         images = []
         if snapshot and snapshot.image_urls:
-            images = [u for u in snapshot.image_urls.split("|") if u]
+            images = snapshot.image_urls.split("|")
 
         return render_template_string(
-            DETAIL_TEMPLATE,
-            product=product,
-            snapshot=snapshot,
-            images=images,
+            DETAIL_TEMPLATE, product=product, snapshot=snapshot, images=images, templates=templates
         )
     finally:
         session.close()
@@ -595,7 +837,7 @@ def product_detail(product_id):
 # スクレイピング設定フォーム
 # =========================================================
 
-@app.route("/scrape", methods=["GET"])
+@app.route("/scrape", methods=["GET", "POST"])
 def scrape_form():
     html = """
     <html>
@@ -1036,6 +1278,81 @@ def export_ebay():
         resp.headers["Content-Type"] = "text/csv; charset=utf-8"
         resp.headers["Content-Disposition"] = 'attachment; filename="ebay_export.csv"'
         return resp
+    finally:
+        session.close()
+
+
+@app.route("/export_stock_update")
+def export_stock_update():
+    """Shopifyの在庫更新用のCSVを生成する"""
+    session = SessionLocal()
+    try:
+        product_ids = request.args.getlist("id", type=int)
+        if not product_ids:
+            return "商品が選択されていません。", 400
+
+        # 在庫数のデフォルト値を取得
+        default_qty = request.args.get("qty", "1", type=int)
+
+        products = session.query(Product).filter(Product.id.in_(product_ids)).all()
+
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=["Handle", "Variant Inventory Qty"])
+        writer.writeheader()
+
+        for product in products:
+            # 在庫ステータスに応じて在庫数を決定
+            # 'sold' なら 0、そうでなければ指定された在庫数
+            inventory_qty = 0 if product.last_status == 'sold' else default_qty
+            
+            writer.writerow({
+                "Handle": f"mercari-{product.id}",
+                "Variant Inventory Qty": inventory_qty,
+            })
+
+        output.seek(0)
+        response = make_response(output.getvalue())
+        response.headers["Content-Disposition"] = "attachment; filename=shopify_stock_update.csv"
+        response.headers["Content-type"] = "text/csv"
+        return response
+    finally:
+        session.close()
+
+@app.route("/export_price_update")
+def export_price_update():
+    """Shopifyの価格更新用のCSVを生成する"""
+    session = SessionLocal()
+    try:
+        product_ids = request.args.getlist("id", type=int)
+        if not product_ids:
+            return "商品が選択されていません。", 400
+
+        # 価格倍率を取得
+        markup = request.args.get("markup", "1.0", type=float)
+
+        products = session.query(Product).filter(Product.id.in_(product_ids)).all()
+
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=["Handle", "Variant Price"])
+        writer.writeheader()
+
+        for product in products:
+            # 編集後の価格(custom_price)を優先し、なければ元の価格(last_price)を使用
+            price = product.custom_price if product.custom_price is not None else product.last_price
+            
+            # 価格にマークアップを適用
+            final_price = int(price * markup) if price is not None else 0
+
+            writer.writerow({
+                "Handle": f"mercari-{product.id}",
+                "Variant Price": final_price,
+            })
+
+        output.seek(0)
+        response = make_response(output.getvalue())
+        response.headers["Content-Disposition"] = "attachment; filename=shopify_price_update.csv"
+        response.headers["Content-type"] = "text/csv"
+        return response
     finally:
         session.close()
 
