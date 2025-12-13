@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, request, make_response, send_from_directory, redirect, url_for
+from flask import Flask, render_template_string, request, make_response, send_from_directory, redirect, url_for, session, has_request_context
 from sqlalchemy import (
     create_engine,
     Column,
@@ -18,9 +18,10 @@ import io
 import os
 import requests
 import shutil
+import hashlib
 
 # mercari_db.py からスクレイピング関数を import
-from mercari_db import scrape_search_result
+from mercari_db import scrape_search_result, scrape_single_item
 
 # ==============================
 # SQLAlchemy モデル定義
@@ -29,12 +30,25 @@ from mercari_db import scrape_search_result
 Base = declarative_base()
 
 
+class Shop(Base):
+    __tablename__ = "shops"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    products = relationship("Product", back_populates="shop")
+
+
 class Product(Base):
     __tablename__ = "products"
 
     id = Column(Integer, primary_key=True)
     site = Column(String, nullable=False, index=True)
+    shop_id = Column(Integer, ForeignKey("shops.id"), nullable=True) # 店舗ID
     source_url = Column(String, nullable=False, unique=True, index=True)
+
+    shop = relationship("Shop", back_populates="products")
 
     last_title = Column(String)
     last_price = Column(Integer)
@@ -133,12 +147,16 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
     mercari_db.scrape_search_result() が返した items(list[dict]) を
     Product / ProductSnapshot に保存する。
     """
-    session = SessionLocal()
+    session_db = SessionLocal()
     now = datetime.utcnow()
     new_count = 0
     updated_count = 0
 
     try:
+        current_shop_id = None
+        if has_request_context():
+            current_shop_id = session.get('current_shop_id')
+
         for item in items:
             raw_url = item.get("url", "")
             if not raw_url:
@@ -154,21 +172,28 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
             image_urls_str = "|".join(image_urls)
 
             # 既存の Product を検索
-            product = session.query(Product).filter_by(source_url=url).one_or_none()
+            product = session_db.query(Product).filter_by(source_url=url).one_or_none()
 
             if product is None:
+                # SKU自動生成 (MER- + URLのMD5ハッシュ先頭10文字)
+                sku_hash = hashlib.md5(url.encode('utf-8')).hexdigest()[:10].upper()
+                generated_sku = f"MER-{sku_hash}"
+
                 # 新規作成
                 product = Product(
                     site=site,
+                    shop_id=current_shop_id, # 現在のショップIDを紐付け
                     source_url=url,
                     last_title=title,
                     last_price=price,
                     last_status=status,
+                    sku=generated_sku,
+                    taxable=False,
                     created_at=now,
                     updated_at=now,
                 )
-                session.add(product)
-                session.flush()  # ID 発行
+                session_db.add(product)
+                session_db.flush()  # ID 発行
                 new_count += 1
             else:
                 # 更新
@@ -187,16 +212,16 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
                 description=description,
                 image_urls=image_urls_str,
             )
-            session.add(snapshot)
+            session_db.add(snapshot)
 
-        session.commit()
+        session_db.commit()
         return new_count, updated_count
     except Exception as e:
-        session.rollback()
+        session_db.rollback()
         print("DB 保存エラー:", e)
         return 0, 0
     finally:
-        session.close()
+        session_db.close()
 
 
 # ==============================
@@ -204,10 +229,84 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
 # ==============================
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-this")
 
 # ==============================
 # テンプレート管理
 # ==============================
+
+SHOPS_TEMPLATE = """
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <title>ショップ管理</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+        th { background: #f0f0f0; }
+        .nav { margin-bottom: 20px; padding: 10px; background: #eee; border-radius: 5px; display: flex; align-items: center; justify-content: space-between; }
+        .nav a { margin-right: 15px; font-weight: bold; text-decoration: none; color: #333; }
+        .current-shop { font-weight: bold; color: #0066cc; }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <div>
+            <a href="{{ url_for('index') }}">商品一覧</a>
+            <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
+            <a href="{{ url_for('manage_templates') }}">テンプレート</a>
+            <a href="{{ url_for('manage_shops') }}">ショップ管理</a>
+        </div>
+        <div>
+            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
+                <select name="shop_id" onchange="this.form.submit()">
+                    <option value="">(ショップ未選択)</option>
+                    {% for s in all_shops %}
+                        <option value="{{ s.id }}" {% if current_shop_id == s.id %}selected{% endif %}>
+                            {{ s.name }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </form>
+        </div>
+    </div>
+
+    <h1>ショップ管理</h1>
+
+    <div style="border:1px solid #ccc; padding:15px; background:#f9f9f9;">
+        <h3>新規ショップ追加</h3>
+        <form method="POST">
+            <input type="text" name="name" placeholder="ショップ名 (例: 文具店A)" required>
+            <button type="submit">追加</button>
+        </form>
+    </div>
+
+    <h3>登録済みショップ</h3>
+    <table>
+        <tr>
+            <th>ID</th>
+            <th>ショップ名</th>
+            <th>商品数</th>
+            <th>操作</th>
+        </tr>
+        {% for s in shops %}
+        <tr>
+            <td>{{ s.id }}</td>
+            <td>{{ s.name }}</td>
+            <td>{{ s.product_count }}</td>
+            <td>
+                <form method="POST" action="{{ url_for('delete_shop', shop_id=s.id) }}" style="display:inline;">
+                    <button type="submit" onclick="return confirm('削除すると紐付いている商品も影響を受けます。本当によろしいですか？');">削除</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>
+"""
 
 TEMPLATES_TEMPLATE = """
 <!doctype html>
@@ -220,8 +319,8 @@ TEMPLATES_TEMPLATE = """
         table { border-collapse: collapse; width: 100%; }
         th, td { border: 1px solid #ccc; padding: 4px 8px; font-size: 13px; vertical-align: top; }
         th { background: #f0f0f0; }
-        .nav { margin-bottom: 10px; }
-        .nav a { margin-right: 15px; font-weight: bold; }
+        .nav { margin-bottom: 20px; padding: 10px; background: #eee; border-radius: 5px; display: flex; align-items: center; justify-content: space-between; }
+        .nav a { margin-right: 15px; font-weight: bold; text-decoration: none; color: #333; }
         .template-form {
             border: 1px solid #ccc;
             padding: 16px;
@@ -231,9 +330,24 @@ TEMPLATES_TEMPLATE = """
 </head>
 <body>
     <div class="nav">
-        <a href="{{ url_for('index') }}">商品一覧</a>
-        <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
-        <a href="{{ url_for('manage_templates') }}">テンプレート管理</a>
+        <div>
+            <a href="{{ url_for('index') }}">商品一覧</a>
+            <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
+            <a href="{{ url_for('manage_templates') }}">テンプレート</a>
+            <a href="{{ url_for('manage_shops') }}">ショップ管理</a>
+        </div>
+        <div>
+            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
+                <select name="shop_id" onchange="this.form.submit()">
+                    <option value="">(ショップ未選択)</option>
+                    {% for s in all_shops %}
+                        <option value="{{ s.id }}" {% if current_shop_id == s.id %}selected{% endif %}>
+                            {{ s.name }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </form>
+        </div>
     </div>
 
     <h1>説明文テンプレート管理</h1>
@@ -280,23 +394,101 @@ TEMPLATES_TEMPLATE = """
 </html>
 """
 
+from flask import session # Import session
+
+@app.route("/shops", methods=["GET", "POST"])
+def manage_shops():
+    session_db = SessionLocal()
+    try:
+        if request.method == "POST":
+            name = request.form.get("name")
+            if name:
+                new_shop = Shop(name=name)
+                session_db.add(new_shop)
+                try:
+                    session_db.commit()
+                except Exception:
+                    session_db.rollback() # 重複など
+            return redirect(url_for('manage_shops'))
+
+        shops = session_db.query(Shop).all()
+        # 各ショップの商品数をカウント
+        shop_data = []
+        for s in shops:
+            count = session_db.query(Product).filter_by(shop_id=s.id).count()
+            s.product_count = count
+            shop_data.append(s)
+
+        current_shop_id = session.get('current_shop_id')
+        
+        return render_template_string(
+            SHOPS_TEMPLATE, 
+            shops=shop_data,
+            all_shops=shops, # ナビゲーション用
+            current_shop_id=current_shop_id
+        )
+    finally:
+        session_db.close()
+
+@app.route("/shops/<int:shop_id>/delete", methods=["POST"])
+def delete_shop(shop_id):
+    session_db = SessionLocal()
+    try:
+        shop = session_db.query(Shop).filter_by(id=shop_id).one_or_none()
+        if shop:
+            # 商品の紐付けを解除するか、削除するか？今回は紐付け解除(None)にする
+            products = session_db.query(Product).filter_by(shop_id=shop_id).all()
+            for p in products:
+                p.shop_id = None
+            session_db.delete(shop)
+            session_db.commit()
+            
+            if session.get('current_shop_id') == shop_id:
+                session.pop('current_shop_id', None)
+                
+    finally:
+        session_db.close()
+    return redirect(url_for('manage_shops'))
+
+@app.route("/set_current_shop", methods=["POST"])
+def set_current_shop():
+    shop_id = request.form.get("shop_id")
+    if shop_id:
+        session['current_shop_id'] = int(shop_id)
+    else:
+        session.pop('current_shop_id', None)
+    
+    # リファラがあればそこに戻る、なければindex
+    return redirect(request.referrer or url_for('index'))
+
+
 @app.route("/templates", methods=["GET", "POST"])
 def manage_templates():
-    session = SessionLocal()
+    session_db = SessionLocal()
     try:
         if request.method == "POST":
             name = request.form.get("name")
             content = request.form.get("content")
             if name and content:
                 new_template = DescriptionTemplate(name=name, content=content)
-                session.add(new_template)
-                session.commit()
+                session_db.add(new_template)
+                session_db.commit()
             return redirect(url_for('manage_templates'))
 
-        templates = session.query(DescriptionTemplate).order_by(DescriptionTemplate.id).all()
-        return render_template_string(TEMPLATES_TEMPLATE, templates=templates)
+        templates = session_db.query(DescriptionTemplate).order_by(DescriptionTemplate.id).all()
+        
+        # ナビゲーション用
+        all_shops = session_db.query(Shop).all()
+        current_shop_id = session.get('current_shop_id')
+
+        return render_template_string(
+            TEMPLATES_TEMPLATE, 
+            templates=templates,
+            all_shops=all_shops,
+            current_shop_id=current_shop_id
+        )
     finally:
-        session.close()
+        session_db.close()
 
 @app.route("/templates/<int:template_id>/delete", methods=["POST"])
 def delete_template(template_id):
@@ -407,15 +599,30 @@ INDEX_TEMPLATE = """
         .filters label { margin-right: 12px; }
         .pagination { margin-top: 12px; display: flex; gap: 12px; align-items: center; }
         .pagination a { text-decoration: none; color: #06c; }
-        .nav { margin-bottom: 10px; }
-        .nav a { margin-right: 15px; font-weight: bold; }
+        .nav { margin-bottom: 20px; padding: 10px; background: #eee; border-radius: 5px; display: flex; align-items: center; justify-content: space-between; }
+        .nav a { margin-right: 15px; font-weight: bold; text-decoration: none; color: #333; }
     </style>
 </head>
 <body>
     <div class="nav">
-        <a href="{{ url_for('index') }}">商品一覧</a>
-        <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
-        <a href="{{ url_for('manage_templates') }}">テンプレート管理</a>
+        <div>
+            <a href="{{ url_for('index') }}">商品一覧</a>
+            <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
+            <a href="{{ url_for('manage_templates') }}">テンプレート</a>
+            <a href="{{ url_for('manage_shops') }}">ショップ管理</a>
+        </div>
+        <div>
+            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
+                <select name="shop_id" onchange="this.form.submit()">
+                    <option value="">(ショップ未選択)</option>
+                    {% for s in all_shops %}
+                        <option value="{{ s.id }}" {% if current_shop_id == s.id %}selected{% endif %}>
+                            {{ s.name }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </form>
+        </div>
     </div>
 
     <h1>商品一覧（{{ selected_site or "全サイト" }} / {{ selected_status or "全ステータス" }}）</h1>
@@ -614,8 +821,8 @@ DETAIL_TEMPLATE = """
     <title>商品編集 - {{ product.last_title }}</title>
     <style>
         body { font-family: sans-serif; max-width: 900px; margin: 0 auto; padding-bottom: 50px; }
-        .nav { margin-bottom: 10px; }
-        .nav a { margin-right: 15px; font-weight: bold; }
+        .nav { margin-bottom: 20px; padding: 10px; background: #eee; border-radius: 5px; display: flex; align-items: center; justify-content: space-between; }
+        .nav a { margin-right: 15px; font-weight: bold; text-decoration: none; color: #333; }
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         .form-section { border: 1px solid #ccc; padding: 16px; border-radius: 5px; margin-top: 20px; }
         .form-section h2 { margin-top: 0; font-size: 16px; border-bottom: 1px solid #ddd; padding-bottom: 8px; }
@@ -642,9 +849,24 @@ DETAIL_TEMPLATE = """
 </head>
 <body>
     <div class="nav">
-        <a href="{{ url_for('index') }}">商品一覧</a>
-        <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
-        <a href="{{ url_for('manage_templates') }}">テンプレート管理</a>
+        <div>
+            <a href="{{ url_for('index') }}">商品一覧</a>
+            <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
+            <a href="{{ url_for('manage_templates') }}">テンプレート</a>
+            <a href="{{ url_for('manage_shops') }}">ショップ管理</a>
+        </div>
+        <div>
+            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
+                <select name="shop_id" onchange="this.form.submit()">
+                    <option value="">(ショップ未選択)</option>
+                    {% for s in all_shops %}
+                        <option value="{{ s.id }}" {% if current_shop_id == s.id %}selected{% endif %}>
+                            {{ s.name }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </form>
+        </div>
     </div>
 
     <h1>商品編集</h1>
@@ -653,6 +875,17 @@ DETAIL_TEMPLATE = """
     <form method="POST">
         <div class="form-section">
             <h2>基本情報</h2>
+            
+            <div class="form-group">
+                <label for="shop_id">所属ショップ</label>
+                <select id="shop_id" name="shop_id">
+                    <option value="">(共通 / 未所属)</option>
+                    {% for s in all_shops %}
+                        <option value="{{ s.id }}" {% if product.shop_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
             <div class="form-group">
                 <label for="title">商品名 (Title)</label>
                 <input type="text" id="title" name="title" value="{{ product.custom_title or product.last_title or '' }}">
@@ -780,7 +1013,7 @@ DETAIL_TEMPLATE = """
 
 @app.route("/")
 def index():
-    session = SessionLocal()
+    session_db = SessionLocal()
     try:
         page = int(request.args.get("page", 1))
 
@@ -790,11 +1023,20 @@ def index():
         selected_change_filter = request.args.get("change_filter")
 
         # サイトとステータスのリストを取得
-        sites = [s[0] for s in session.query(Product.site).distinct().all()]
-        statuses = [s[0] for s in session.query(Product.last_status).distinct().all()]
+        sites = [s[0] for s in session_db.query(Product.site).distinct().all()]
+        statuses = [s[0] for s in session_db.query(Product.last_status).distinct().all()]
+        
+        # ナビゲーション用
+        all_shops = session_db.query(Shop).all()
+        current_shop_id = session.get('current_shop_id')
 
         # 基本的なクエリ
-        query = session.query(Product)
+        query = session_db.query(Product)
+        
+        # ショップフィルタ
+        if current_shop_id:
+            query = query.filter(Product.shop_id == current_shop_id)
+        
         if selected_site:
             query = query.filter(Product.site == selected_site)
         if selected_status:
@@ -869,20 +1111,26 @@ def index():
             default_ebay_return_profile=defaults["ebay_return_profile"],
             default_ebay_shipping_profile=defaults["ebay_shipping_profile"],
             default_ebay_paypal_email=defaults["ebay_paypal_email"],
+            all_shops=all_shops,
+            current_shop_id=current_shop_id
         )
     finally:
-        session.close()
+        session_db.close()
 
 
 @app.route("/product/<int:product_id>", methods=["GET", "POST"])
 def product_detail(product_id):
-    session = SessionLocal()
+    session_db = SessionLocal()
     try:
-        product = session.query(Product).filter_by(id=product_id).one_or_none()
+        product = session_db.query(Product).filter_by(id=product_id).one_or_none()
         if not product:
             return "Product not found", 404
 
         if request.method == "POST":
+            # --- 所属ショップ ---
+            shop_id_str = request.form.get("shop_id")
+            product.shop_id = int(shop_id_str) if shop_id_str else None
+
             # --- 基本情報 ---
             product.custom_title = request.form.get("title")
             product.custom_description = request.form.get("description")
@@ -912,27 +1160,36 @@ def product_detail(product_id):
             # --- 更新日時 ---
             product.updated_at = datetime.utcnow()
             
-            session.commit()
+            session_db.commit()
             return redirect(url_for('product_detail', product_id=product.id))
 
         snapshot = (
-            session.query(ProductSnapshot)
+            session_db.query(ProductSnapshot)
             .filter_by(product_id=product.id)
             .order_by(ProductSnapshot.scraped_at.desc())
             .first()
         )
         
-        templates = session.query(DescriptionTemplate).order_by(DescriptionTemplate.name).all()
+        templates = session_db.query(DescriptionTemplate).order_by(DescriptionTemplate.name).all()
 
         images = []
         if snapshot and snapshot.image_urls:
             images = snapshot.image_urls.split("|")
+            
+        all_shops = session_db.query(Shop).all()
+        current_shop_id = session.get('current_shop_id')
 
         return render_template_string(
-            DETAIL_TEMPLATE, product=product, snapshot=snapshot, images=images, templates=templates
+            DETAIL_TEMPLATE, 
+            product=product, 
+            snapshot=snapshot, 
+            images=images, 
+            templates=templates,
+            all_shops=all_shops,
+            current_shop_id=current_shop_id
         )
     finally:
-        session.close()
+        session_db.close()
 
 
 # =========================================================
@@ -978,6 +1235,16 @@ def scrape_form():
         <p><a href="{{ url_for('index') }}">← 商品一覧に戻る</a></p>
 
         <div class="box">
+            <h3 style="margin-top:0;">方法1: URLを直接指定 (単品抽出)</h3>
+            <form method="POST" action="{{ url_for('scrape_run') }}">
+                <label>商品URL</label>
+                <input type="text" name="target_url" placeholder="https://jp.mercari.com/item/m123456789" required style="width:100%;">
+                <button type="submit">URLからスクレイピング実行</button>
+            </form>
+        </div>
+
+        <div class="box">
+            <h3 style="margin-top:0;">方法2: 検索条件から抽出 (一括抽出)</h3>
             <form method="POST" action="{{ url_for('scrape_run') }}">
 
                 <label>キーワード</label>
@@ -1014,45 +1281,63 @@ def scrape_form():
 @app.route("/scrape/run", methods=["POST"])
 def scrape_run():
     # フォームからの入力を取得
+    target_url = request.form.get("target_url")
+    
     keyword = request.form.get("keyword", "")
     price_min = request.form.get("price_min")
     price_max = request.form.get("price_max")
     sort = request.form.get("sort", "created_desc")
     category = request.form.get("category")
-    limit = int(request.form.get("limit", 10))
+    limit_str = request.form.get("limit", "10")
+    limit = int(limit_str) if limit_str.isdigit() else 10
 
-    # メルカリ用の検索URLを組み立てる
-    params = {}
-    if keyword:
-        params["keyword"] = keyword
-    if price_min:
-        params["price_min"] = price_min
-    if price_max:
-        params["price_max"] = price_max
-    if sort:
-        params["sort"] = sort
-    if category:
-        params["category_id"] = category
+    search_url = ""
+    items = []
+    new_count = 0
+    updated_count = 0
+    error_msg = ""
 
-    base = "https://jp.mercari.com/search?"
-    query = urlencode(params)
-    search_url = base + query
+    if target_url:
+        # --- 単品抽出モード ---
+        search_url = target_url
+        try:
+            items = scrape_single_item(target_url, headless=True)
+            new_count, updated_count = save_scraped_items_to_db(items, site="mercari")
+        except Exception as e:
+            error_msg = str(e)
+    else:
+        # --- 検索抽出モード ---
+        # メルカリ用の検索URLを組み立てる
+        params = {}
+        if keyword:
+            params["keyword"] = keyword
+        if price_min:
+            params["price_min"] = price_min
+        if price_max:
+            params["price_max"] = price_max
+        if sort:
+            params["sort"] = sort
+        if category:
+            params["category_id"] = category
 
-    # ===== ここから実際のスクレイピング処理 =====
-    try:
-        # headless=True にして、サーバー環境でGUIなしでブラウザを動かす
-        items = scrape_search_result(
-            search_url=search_url,
-            max_items=limit,
-            max_scroll=3,
-            headless=True,
-        )
-        new_count, updated_count = save_scraped_items_to_db(items, site="mercari")
-        error_msg = ""
-    except Exception as e:
-        items = []
-        new_count = updated_count = 0
-        error_msg = str(e)
+        base = "https://jp.mercari.com/search?"
+        query = urlencode(params)
+        search_url = base + query
+
+        # ===== ここから実際のスクレイピング処理 =====
+        try:
+            # headless=True にして、サーバー環境でGUIなしでブラウザを動かす
+            items = scrape_search_result(
+                search_url=search_url,
+                max_items=limit,
+                max_scroll=3,
+                headless=True,
+            )
+            new_count, updated_count = save_scraped_items_to_db(items, site="mercari")
+        except Exception as e:
+            items = []
+            new_count = updated_count = 0
+            error_msg = str(e)
 
     # 結果表示
     html = """
@@ -1141,7 +1426,7 @@ def scrape_run():
 # CSVエクスポート機能
 # ==============================
 
-def _parse_ids_and_params(session):
+def _parse_ids_and_params(session_db):
     ids = request.args.getlist("id")
     markup_str = request.args.get("markup", "1.0")
     qty_str = request.args.get("qty", "1")
@@ -1156,7 +1441,14 @@ def _parse_ids_and_params(session):
     except ValueError:
         qty = 1
 
-    query = session.query(Product)
+    query = session_db.query(Product)
+    
+    # ショップフィルタ (セッションに設定されていれば)
+    if has_request_context():
+        current_shop_id = session.get('current_shop_id')
+        if current_shop_id:
+            query = query.filter(Product.shop_id == current_shop_id)
+
     if ids:
         int_ids = []
         for v in ids:
@@ -1174,18 +1466,34 @@ def _parse_ids_and_params(session):
 @app.route("/export/shopify")
 def export_shopify():
     """Shopifyの新規登録・更新用のCSVを生成する"""
-    session = SessionLocal()
+    session_db = SessionLocal()
     try:
         product_ids = request.args.getlist("id", type=int)
-        if not product_ids:
-            return "商品が選択されていません。", 400
+        
+        # クエリ構築
+        query = session_db.query(Product)
+        
+        # ショップフィルタ
+        current_shop_id = session.get('current_shop_id')
+        if current_shop_id:
+            query = query.filter(Product.shop_id == current_shop_id)
+            
+        if product_ids:
+             query = query.filter(Product.id.in_(product_ids))
+        elif not product_ids and not current_shop_id:
+             # ID指定もショップ指定もない場合は全件出力しないほうが安全だが、
+             # 従来の挙動に合わせておくなら全件か、エラーにするか。
+             # ここでは「ID指定があればそれ、なければショップの全件、どちらもなければ全件」とする
+             pass
+
+        products = query.all()
+        if not products:
+            return "対象の商品がありません。", 400
 
         # 価格倍率・在庫数のデフォルト値を取得
         markup = request.args.get("markup", "1.0", type=float)
         default_qty = request.args.get("qty", "1", type=int)
-
-        products = session.query(Product).filter(Product.id.in_(product_ids)).all()
-
+        
         output = io.StringIO()
         
         # Shopify CSVのヘッダーを定義
@@ -1203,7 +1511,7 @@ def export_shopify():
 
         for product in products:
             snapshot = (
-                session.query(ProductSnapshot)
+                session_db.query(ProductSnapshot)
                 .filter_by(product_id=product.id)
                 .order_by(ProductSnapshot.scraped_at.desc())
                 .first()
@@ -1287,7 +1595,7 @@ def export_shopify():
         response.headers["Content-type"] = "text/csv"
         return response
     finally:
-        session.close()
+        session_db.close()
 
 
 @app.route("/export_ebay")
@@ -1299,9 +1607,9 @@ def export_ebay():
     - Brand / Card Condition など最低限の Item Specifics を埋める
     - Business Policies を使う場合は Shipping/Return/Payment のProfile名を入力して利用
     """
-    session = SessionLocal()
+    session_db = SessionLocal()
     try:
-        products, markup, qty = _parse_ids_and_params(session)
+        products, markup, qty = _parse_ids_and_params(session_db)
 
         ebay_category_id = request.args.get("ebay_category_id", "").strip()
         ebay_condition_id = request.args.get("ebay_condition_id", "").strip() or "3000"
@@ -1409,22 +1717,32 @@ def export_ebay():
         resp.headers["Content-Disposition"] = 'attachment; filename="ebay_export.csv"'
         return resp
     finally:
-        session.close()
+        session_db.close()
 
 
 @app.route("/export_stock_update")
 def export_stock_update():
     """Shopifyの在庫更新用のCSVを生成する"""
-    session = SessionLocal()
+    session_db = SessionLocal()
     try:
         product_ids = request.args.getlist("id", type=int)
-        if not product_ids:
-            return "商品が選択されていません。", 400
+        
+        query = session_db.query(Product)
+        
+        # ショップフィルタ
+        current_shop_id = session.get('current_shop_id')
+        if current_shop_id:
+            query = query.filter(Product.shop_id == current_shop_id)
+            
+        if product_ids:
+            query = query.filter(Product.id.in_(product_ids))
+            
+        products = query.all()
+        if not products:
+             return "対象の商品がありません。", 400
 
         # 在庫数のデフォルト値を取得
         default_qty = request.args.get("qty", "1", type=int)
-
-        products = session.query(Product).filter(Product.id.in_(product_ids)).all()
 
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=["Handle", "Variant Inventory Qty"])
@@ -1446,21 +1764,31 @@ def export_stock_update():
         response.headers["Content-type"] = "text/csv"
         return response
     finally:
-        session.close()
+        session_db.close()
 
 @app.route("/export_price_update")
 def export_price_update():
     """Shopifyの価格更新用のCSVを生成する"""
-    session = SessionLocal()
+    session_db = SessionLocal()
     try:
         product_ids = request.args.getlist("id", type=int)
-        if not product_ids:
-            return "商品が選択されていません。", 400
+        
+        query = session_db.query(Product)
+        
+        # ショップフィルタ
+        current_shop_id = session.get('current_shop_id')
+        if current_shop_id:
+            query = query.filter(Product.shop_id == current_shop_id)
+            
+        if product_ids:
+            query = query.filter(Product.id.in_(product_ids))
+            
+        products = query.all()
+        if not products:
+             return "対象の商品がありません。", 400
 
         # 価格倍率を取得
         markup = request.args.get("markup", "1.0", type=float)
-
-        products = session.query(Product).filter(Product.id.in_(product_ids)).all()
 
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=["Handle", "Variant Price"])
@@ -1484,7 +1812,80 @@ def export_price_update():
         response.headers["Content-type"] = "text/csv"
         return response
     finally:
-        session.close()
+        session_db.close()
+
+
+@app.cli.command("update-products")
+def update_products():
+    """全商品の価格と在庫ステータスを再チェックして更新するCLIコマンド"""
+    import time
+    
+    session_db = SessionLocal()
+    try:
+        products = session_db.query(Product).filter(Product.status != 'sold').all()
+        total = len(products)
+        print(f"Start updating {total} products...")
+        
+        updated_count = 0
+        
+        for i, product in enumerate(products, 1):
+            url = product.source_url
+            print(f"[{i}/{total}] ShopID:{product.shop_id} | Checking: {url}")
+            
+            try:
+                # 単品スクレイピング実行
+                # リストで返ってくるので先頭を取得
+                items = scrape_single_item(url, headless=True)
+                
+                if not items:
+                    print(f"  -> Failed to scrape.")
+                    continue
+                    
+                item = items[0]
+                new_price = item.get("price")
+                new_status = item.get("status") or "unknown"
+                new_title = item.get("title") or ""
+                
+                # 変更検知 (価格 or ステータス)
+                # 注意: last_priceがNoneの場合なども考慮
+                price_changed = (new_price is not None) and (product.last_price != new_price)
+                status_changed = (new_status != "unknown") and (product.last_status != new_status)
+                
+                if price_changed or status_changed:
+                    print(f"  -> CHANGED! Price: {product.last_price}->{new_price}, Status: {product.last_status}->{new_status}")
+                    
+                    # Product情報の更新
+                    product.last_price = new_price
+                    product.last_status = new_status
+                    product.last_title = new_title # タイトルも一応更新
+                    product.updated_at = datetime.utcnow()
+                    
+                    # スナップショット保存
+                    snapshot = ProductSnapshot(
+                        product_id=product.id,
+                        scraped_at=datetime.utcnow(),
+                        title=new_title,
+                        price=new_price,
+                        status=new_status,
+                        description=item.get("description") or "",
+                        image_urls="|".join(item.get("image_urls") or [])
+                    )
+                    session_db.add(snapshot)
+                    updated_count += 1
+                else:
+                    print("  -> No change.")
+                    
+                # 連続アクセス負荷軽減
+                time.sleep(2)
+                
+            except Exception as e:
+                print(f"  -> Error: {e}")
+                
+        session_db.commit()
+        print(f"Finished. Total updated: {updated_count}")
+        
+    finally:
+        session_db.close()
 
 
 if __name__ == "__main__":

@@ -234,3 +234,35 @@ def scrape_search_result(
                 driver.quit()
             except Exception as e:
                 logging.debug("Error quitting driver: %s", e)
+
+
+def scrape_single_item(url: str, headless: bool = True):
+    """
+    指定された商品URLを1件だけスクレイピングして list[dict] で返す。
+    save_scraped_items_to_db にそのまま渡せるようにリストに包んでいる。
+    """
+    driver = None
+    try:
+        print(f"DEBUG: Starting scrape_single_item for {url}")
+        driver = create_driver(headless=headless)
+        
+        data = scrape_item_detail(driver, url)
+        
+        if data["title"]:
+            print(f"DEBUG: Success -> {data['title']}")
+        else:
+            print("DEBUG: Failed to get title")
+
+        return [data]
+
+    except Exception as e:
+        print(f"CRITICAL ERROR during single scraping: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except Exception as e:
+                logging.debug("Error quitting driver: %s", e)
