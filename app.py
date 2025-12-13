@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     Text,
     text,
+    Boolean,
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker, subqueryload
 from datetime import datetime
@@ -43,6 +44,19 @@ class Product(Base):
     custom_title = Column(String)
     custom_price = Column(Integer)
     custom_description = Column(Text)
+
+    # Shopify項目追加 (Step 1)
+    status = Column(String, default='draft') # active or draft
+    custom_vendor = Column(String)
+    custom_handle = Column(String)
+    tags = Column(String) # comma separated
+    seo_title = Column(String)
+    seo_description = Column(String)
+    sku = Column(String)
+    grams = Column(Integer)
+    taxable = Column(Boolean, default=False)
+    country_of_origin = Column(String)
+    hs_code = Column(String)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
@@ -599,15 +613,19 @@ DETAIL_TEMPLATE = """
     <meta charset="utf-8">
     <title>商品編集 - {{ product.last_title }}</title>
     <style>
-        body { font-family: sans-serif; max-width: 900px; margin: 0 auto; }
+        body { font-family: sans-serif; max-width: 900px; margin: 0 auto; padding-bottom: 50px; }
         .nav { margin-bottom: 10px; }
         .nav a { margin-right: 15px; font-weight: bold; }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .form-section { border: 1px solid #ccc; padding: 16px; border-radius: 5px; margin-top: 20px; }
+        .form-section h2 { margin-top: 0; font-size: 16px; border-bottom: 1px solid #ddd; padding-bottom: 8px; }
         .form-group { margin-bottom: 12px; }
-        .form-group label { display: block; font-weight: bold; margin-bottom: 4px; }
+        .form-group label { display: block; font-weight: bold; margin-bottom: 4px; font-size: 13px; }
         .form-group input, .form-group textarea, .form-group select {
             width: 100%;
             box-sizing: border-box;
-            padding: 4px;
+            padding: 6px;
+            font-size: 14px;
         }
         .form-group textarea { min-height: 200px; }
         .original-info {
@@ -633,54 +651,118 @@ DETAIL_TEMPLATE = """
     <p><a href="{{ url_for('index') }}">&laquo; 一覧に戻る</a></p>
 
     <form method="POST">
-        <div class="form-group">
-            <label for="title">商品名</label>
-            <input type="text" id="title" name="title" value="{{ product.custom_title or product.last_title or '' }}">
-            <div class="original-info">
-                <strong>元の名前:</strong> {{ product.last_title or '(なし)' }}
+        <div class="form-section">
+            <h2>基本情報</h2>
+            <div class="form-group">
+                <label for="title">商品名 (Title)</label>
+                <input type="text" id="title" name="title" value="{{ product.custom_title or product.last_title or '' }}">
+            </div>
+
+            <div class="form-group">
+                <label for="status">ステータス (Status)</label>
+                <select id="status" name="status">
+                    <option value="active" {% if product.status == 'active' %}selected{% endif %}>有効 (Active)</option>
+                    <option value="draft" {% if product.status == 'draft' %}selected{% endif %}>下書き (Draft)</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="template">説明文テンプレート</label>
+                <select id="template" onchange="applyTemplate()">
+                    <option value="">(テンプレートを選択)</option>
+                    {% for t in templates %}
+                    <option value="{{ t.content | e }}">{{ t.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="description">商品説明 (Body HTML)</label>
+                <textarea id="description" name="description">{{ product.custom_description or (snapshot.description if snapshot else '') }}</textarea>
             </div>
         </div>
 
-        <div class="form-group">
-            <label for="price">価格</label>
-            <input type="number" id="price" name="price" value="{{ product.custom_price or product.last_price or '' }}">
-            <div class="original-info">
-                <strong>元の価格:</strong> ¥{{ "{:,}".format(product.last_price) if product.last_price is not none else '(なし)' }}
+        <div class="form-grid">
+            <div class="form-section">
+                <h2>価格と在庫</h2>
+                <div class="form-group">
+                    <label for="price">価格 (Price)</label>
+                    <input type="number" id="price" name="price" value="{{ product.custom_price or product.last_price or '' }}">
+                </div>
+                <div class="form-group">
+                    <label for="sku">SKU</label>
+                    <input type="text" id="sku" name="sku" value="{{ product.sku or '' }}">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="taxable" {% if product.taxable %}checked{% endif %}>
+                        税金を請求する (Taxable)
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h2>分類</h2>
+                <div class="form-group">
+                    <label for="vendor">販売元 (Vendor)</label>
+                    <input type="text" id="vendor" name="vendor" value="{{ product.custom_vendor or product.site or '' }}">
+                </div>
+                <div class="form-group">
+                    <label for="tags">タグ (Tags)</label>
+                    <input type="text" id="tags" name="tags" value="{{ product.tags or '' }}" placeholder="カンマ区切りで入力">
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h2>配送</h2>
+                <div class="form-group">
+                    <label for="grams">重量 (Grams)</label>
+                    <input type="number" id="grams" name="grams" value="{{ product.grams or '' }}" placeholder="例: 500">
+                </div>
+                <div class="form-group">
+                    <label for="country_of_origin">原産国 (Country of Origin)</label>
+                    <input type="text" id="country_of_origin" name="country_of_origin" value="{{ product.country_of_origin or '' }}" placeholder="例: JP">
+                </div>
+                <div class="form-group">
+                    <label for="hs_code">HSコード (HS Code)</label>
+                    <input type="text" id="hs_code" name="hs_code" value="{{ product.hs_code or '' }}" placeholder="例: 9608.30">
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h2>SEO</h2>
+                <div class="form-group">
+                    <label for="handle">URLハンドル (Handle)</label>
+                    <input type="text" id="handle" name="handle" value="{{ product.custom_handle or ('mercari-' + product.id|string) }}">
+                </div>
+                <div class="form-group">
+                    <label for="seo_title">ページタイトル (SEO Title)</label>
+                    <input type="text" id="seo_title" name="seo_title" value="{{ product.seo_title or '' }}" placeholder="60文字以内推奨">
+                </div>
+                <div class="form-group">
+                    <label for="seo_description">メタディスクリプション (SEO Description)</label>
+                    <textarea id="seo_description" name="seo_description" rows="4">{{ product.seo_description or '' }}</textarea>
+                </div>
             </div>
         </div>
 
-        <div class="form-group">
-            <label for="template">説明文テンプレート</label>
-            <select id="template" onchange="applyTemplate()">
-                <option value="">(テンプレートを選択)</option>
-                {% for t in templates %}
-                <option value="{{ t.content | e }}">{{ t.name }}</option>
-                {% endfor %}
-            </select>
+        <div style="margin-top: 20px;">
+            <button type="submit">保存</button>
         </div>
-
-        <div class="form-group">
-            <label for="description">商品説明</label>
-            <textarea id="description" name="description">{{ product.custom_description or (snapshot.description if snapshot else '') }}</textarea>
-            <div class="original-info">
-                <strong>元の説明(抜粋):</strong><br>
-                {{ (snapshot.description[:200] + '...') if snapshot and snapshot.description else '(なし)' }}
-            </div>
-        </div>
-
-        <button type="submit">保存</button>
     </form>
 
-    <h2>画像（{{ images|length }}枚）</h2>
-    {% if images %}
-        <div class="images">
-            {% for url in images %}
-                <img src="{{ url }}" alt="image {{ loop.index }}">
-            {% endfor %}
-        </div>
-    {% else %}
-        <p>(画像なし)</p>
-    {% endif %}
+    <div class="form-section">
+        <h2>画像（{{ images|length }}枚）</h2>
+        {% if images %}
+            <div class="images">
+                {% for url in images %}
+                    <img src="{{ url }}" alt="image {{ loop.index }}">
+                {% endfor %}
+            </div>
+        {% else %}
+            <p>(画像なし)</p>
+        {% endif %}
+    </div>
 
     <script>
         function applyTemplate() {
@@ -801,13 +883,33 @@ def product_detail(product_id):
             return "Product not found", 404
 
         if request.method == "POST":
-            # フォームから送信されたデータで product を更新
+            # --- 基本情報 ---
             product.custom_title = request.form.get("title")
-            
+            product.custom_description = request.form.get("description")
+            product.status = request.form.get("status")
+
+            # --- 価格と在庫 ---
             price_str = request.form.get("price")
             product.custom_price = int(price_str) if price_str.isdigit() else None
+            product.sku = request.form.get("sku")
+            product.taxable = 'taxable' in request.form
+
+            # --- 分類 ---
+            product.custom_vendor = request.form.get("vendor")
+            product.tags = request.form.get("tags")
             
-            product.custom_description = request.form.get("description")
+            # --- 配送 ---
+            grams_str = request.form.get("grams")
+            product.grams = int(grams_str) if grams_str.isdigit() else None
+            product.country_of_origin = request.form.get("country_of_origin")
+            product.hs_code = request.form.get("hs_code")
+
+            # --- SEO ---
+            product.custom_handle = request.form.get("handle")
+            product.seo_title = request.form.get("seo_title")
+            product.seo_description = request.form.get("seo_description")
+
+            # --- 更新日時 ---
             product.updated_at = datetime.utcnow()
             
             session.commit()
@@ -1071,96 +1173,124 @@ def _parse_ids_and_params(session):
 
 @app.route("/export/shopify")
 def export_shopify():
-    """
-    Shopify 用 CSV 出力（仕様準拠版）
-    - 1行目に商品情報と1枚目の画像を記載
-    - 2行目以降は Handle と画像URLのみを記載して画像を追加
-    """
+    """Shopifyの新規登録・更新用のCSVを生成する"""
     session = SessionLocal()
     try:
-        products, markup, qty = _parse_ids_and_params(session)
-        base_url = request.url_root.rstrip('/')
+        product_ids = request.args.getlist("id", type=int)
+        if not product_ids:
+            return "商品が選択されていません。", 400
+
+        # 価格倍率・在庫数のデフォルト値を取得
+        markup = request.args.get("markup", "1.0", type=float)
+        default_qty = request.args.get("qty", "1", type=int)
+
+        products = session.query(Product).filter(Product.id.in_(product_ids)).all()
 
         output = io.StringIO()
-        writer = csv.writer(output)
-
-        header = [
-            "Title", "URL handle", "Description", "Vendor", "Product category",
-            "Type", "Tags", "Published on online store", "Status", "SKU", "Barcode",
-            "Option1 name", "Option1 value", "Option2 name", "Option2 value", "Option3 name", "Option3 value",
-            "Price", "Compare-at price", "Cost per item", "Charge tax", "Tax code",
-            "Unit price total measure", "Unit price total measure unit", "Unit price base measure", "Unit price base measure unit",
-            "Inventory tracker", "Inventory quantity", "Continue selling when out of stock",
-            "Weight value (grams)", "Weight unit for display", "Requires shipping", "Fulfillment service",
-            "Product image URL", "Image position", "Image alt text", "Variant image URL",
-            "Gift card", "SEO title", "SEO description"
-        ]
-        writer.writerow(header)
         
-        # ヘッダーのインデックスを事前に取得しておくと便利
-        handle_idx = header.index("URL handle")
-        img_url_idx = header.index("Product image URL")
-        img_pos_idx = header.index("Image position")
+        # Shopify CSVのヘッダーを定義
+        fieldnames = [
+            "Handle", "Title", "Body (HTML)", "Vendor", "Status", "Tags",
+            "Published", "SEO Title", "SEO Description",
+            "Option1 Name", "Option1 Value",
+            "Variant SKU", "Variant Grams", "Variant Inventory Tracker",
+            "Variant Inventory Qty", "Variant Inventory Policy", "Variant Fulfillment Service",
+            "Variant Price", "Variant Requires Shipping", "Variant Taxable",
+            "Image Src", "Image Position", "Country of Origin", "HS Code"
+        ]
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
 
-        for p in products:
-            snap = p.snapshots[-1] if p.snapshots else None
+        for product in products:
+            snapshot = (
+                session.query(ProductSnapshot)
+                .filter_by(product_id=product.id)
+                .order_by(ProductSnapshot.scraped_at.desc())
+                .first()
+            )
 
-            title = snap.title if snap and snap.title else (p.last_title or "")
-            description = snap.description if snap and snap.description else ""
-            desc_html = description.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
+            # --- 値の準備 ---
+            # 編集後の内容(custom_)を優先する
+            title = product.custom_title or product.last_title or ""
+            price = product.custom_price if product.custom_price is not None else product.last_price
+            description = product.custom_description or (snapshot.description if snapshot else "")
+            vendor = product.custom_vendor or product.site.capitalize()
+            handle = product.custom_handle or f"mercari-{product.id}"
+            
+            # 価格にマークアップを適用
+            final_price = int(price * markup) if price is not None else 0
 
-            price_val = ""
-            base_price = snap.price if snap and snap.price is not None else p.last_price
-            if base_price:
-                price_val = str(int(base_price * markup))
+            # 在庫数
+            inventory_qty = 0 if product.last_status == 'sold' else default_qty
 
-            handle = f"mercari-{p.id}"
-            sku = f"MER-{p.id}"
+            # 画像URLの処理
+            image_urls = []
+            if snapshot and snapshot.image_urls:
+                # 永続ディスクにキャッシュした画像を使うようにURLを変換する
+                base_url = request.url_root.rstrip('/')
+                
+                original_urls = snapshot.image_urls.split("|")
+                for i, mercari_url in enumerate(original_urls):
+                    # 画像をダウンロードしてローカルファイル名を取得
+                    local_filename = cache_mercari_image(mercari_url, product.id, i)
+                    if local_filename:
+                        # 完全なURLを生成
+                        full_url = f"{base_url}/media/{local_filename}"
+                        image_urls.append(full_url)
+            
+            # --- 1行目 (商品本体) の書き出し ---
+            row = {}
+            # --- 商品レベル ---
+            row["Handle"] = handle
+            row["Title"] = title
+            row["Body (HTML)"] = description.replace("\\n", "<br>")
+            row["Vendor"] = vendor
+            row["Published"] = "true" if product.status == 'active' else 'false'
+            row["Status"] = product.status
+            row["Tags"] = product.tags or ""
+            row["SEO Title"] = product.seo_title or ""
+            row["SEO Description"] = product.seo_description or ""
+            
+            # --- バリエーション (1行目) ---
+            # (複数バリエーション未対応なので、Optionは空欄)
+            row["Variant SKU"] = product.sku or ""
+            row["Variant Grams"] = product.grams or ""
+            row["Variant Inventory Tracker"] = "shopify"
+            row["Variant Inventory Qty"] = inventory_qty
+            row["Variant Inventory Policy"] = "deny"
+            row["Variant Fulfillment Service"] = "manual"
+            row["Variant Price"] = final_price
+            row["Variant Requires Shipping"] = "true"
+            row["Variant Taxable"] = "true" if product.taxable else "false"
+            row["Country of Origin"] = product.country_of_origin or ""
+            row["HS Code"] = product.hs_code or ""
 
-            # 画像URLを自サーバーのURLに変換
-            my_server_image_urls = []
-            if snap and snap.image_urls:
-                original_image_urls = [u for u in snap.image_urls.split("|") if u]
-                for i, original_url in enumerate(original_image_urls):
-                    cached_filename = cache_mercari_image(original_url, p.id, i)
-                    if cached_filename:
-                        my_server_image_urls.append(f"{base_url}/media/{cached_filename}")
-
-            # --- 1行目（商品本体）のデータを作成 ---
-            first_image_url = my_server_image_urls[0] if my_server_image_urls else ""
-            row = [
-                title, handle, desc_html, "Mercari", "", "", "Imported", 
-                "TRUE", "active", sku, "", "Title", "Default Title", 
-                "", "", "", "", price_val, "", "", "FALSE", "", "", "", "", "", 
-                "shopify", qty, "deny", "0", "g", "TRUE", "manual",
-                first_image_url, "1" if first_image_url else "", "", "", "FALSE", "", ""
-            ]
+            # --- 画像 (1枚目) ---
+            if image_urls:
+                row["Image Src"] = image_urls[0]
+                row["Image Position"] = 1
+            
             writer.writerow(row)
 
-            # --- 2行目以降（追加画像）のデータを作成 ---
-            if len(my_server_image_urls) > 1:
-                for i in range(1, len(my_server_image_urls)):
-                    # 空の行を作成
-                    additional_image_row = [""] * len(header)
-                    # Handle と Image URL, Position のみ設定
-                    additional_image_row[handle_idx] = handle
-                    additional_image_row[img_url_idx] = my_server_image_urls[i]
-                    additional_image_row[img_pos_idx] = i + 1
-                    writer.writerow(additional_image_row)
+            # --- 2枚目以降の画像行を書き出し ---
+            if len(image_urls) > 1:
+                for i, img_url in enumerate(image_urls[1:], start=2):
+                    writer.writerow({
+                        "Handle": handle,
+                        "Image Src": img_url,
+                        "Image Position": i,
+                    })
 
-        data = "\ufeff" + output.getvalue()
-        resp = make_response(data)
-        resp.headers["Content-Type"] = "text/csv; charset=utf-8"
-        resp.headers["Content-Disposition"] = 'attachment; filename="shopify_export_final.csv"'
-        return resp
-    except Exception as e:
-        print(e)
-        return str(e), 500
+        output.seek(0)
+        response = make_response(output.getvalue())
+        response.headers["Content-Disposition"] = "attachment; filename=shopify_products.csv"
+        response.headers["Content-type"] = "text/csv"
+        return response
     finally:
         session.close()
 
 
-@app.route("/export/ebay")
+@app.route("/export_ebay")
 def export_ebay():
     """
     eBay File Exchange 用 CSV を出力。
