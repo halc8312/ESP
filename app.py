@@ -50,32 +50,59 @@ class Product(Base):
 
     shop = relationship("Shop", back_populates="products")
 
+    # スクレイピング情報の履歴・キャッシュ（代表値として保持）
     last_title = Column(String)
     last_price = Column(Integer)
     last_status = Column(String)
 
-    # ユーザーによる編集内容を保存するカラム
+    # ユーザーによる編集内容 (Product Level)
     custom_title = Column(String)
-    custom_price = Column(Integer)
     custom_description = Column(Text)
-
-    # Shopify項目追加 (Step 1)
+    
+    # Shopify項目 (Product Level)
     status = Column(String, default='draft') # active or draft
     custom_vendor = Column(String)
     custom_handle = Column(String)
     tags = Column(String) # comma separated
     seo_title = Column(String)
     seo_description = Column(String)
-    sku = Column(String)
-    grams = Column(Integer)
-    taxable = Column(Boolean, default=False)
-    country_of_origin = Column(String)
-    hs_code = Column(String)
+    
+    # Options (Variant管理用)
+    option1_name = Column(String, default="Title")
+    option2_name = Column(String)
+    option3_name = Column(String)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
-    snapshots = relationship("ProductSnapshot", back_populates="product")
+    snapshots = relationship("ProductSnapshot", back_populates="product", cascade="all, delete-orphan")
+    variants = relationship("Variant", back_populates="product", cascade="all, delete-orphan")
+
+
+class Variant(Base):
+    __tablename__ = "variants"
+    
+    id = Column(Integer, primary_key=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    
+    # Option Values
+    option1_value = Column(String, default="Default Title")
+    option2_value = Column(String)
+    option3_value = Column(String)
+    
+    # Variant Specifics
+    sku = Column(String)
+    price = Column(Integer) # Variant Price
+    inventory_qty = Column(Integer, default=0)
+    grams = Column(Integer)
+    taxable = Column(Boolean, default=False)
+    country_of_origin = Column(String)
+    hs_code = Column(String)
+    
+    # 管理用
+    position = Column(Integer, default=1)
+    
+    product = relationship("Product", back_populates="variants")
 
 
 class ProductSnapshot(Base):
@@ -187,14 +214,27 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
                     last_title=title,
                     last_price=price,
                     last_status=status,
-                    sku=generated_sku,
-                    taxable=False,
+                    # sku=generated_sku, # Productには持たせない
+                    # taxable=False,     # Productには持たせない
                     created_at=now,
                     updated_at=now,
                 )
                 session_db.add(product)
                 session_db.flush()  # ID 発行
                 new_count += 1
+                
+                # デフォルトバリエーション作成
+                default_variant = Variant(
+                    product_id=product.id,
+                    option1_value="Default Title",
+                    sku=generated_sku,
+                    price=price,
+                    taxable=False,
+                    inventory_qty=1 if status != 'sold' else 0,
+                    position=1
+                )
+                session_db.add(default_variant)
+
             else:
                 # 更新
                 product.last_title = title
@@ -202,6 +242,18 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
                 product.last_status = status
                 product.updated_at = now
                 updated_count += 1
+                
+                # Default Titleバリエーションがあれば価格と在庫を同期
+                # (ユーザーがバリエーション構成を変えていない場合のみ追従させる)
+                default_variant = session_db.query(Variant).filter_by(
+                    product_id=product.id, 
+                    option1_value="Default Title"
+                ).first()
+                
+                if default_variant:
+                    if price is not None:
+                        default_variant.price = price
+                    default_variant.inventory_qty = 0 if status == 'sold' else (default_variant.inventory_qty or 1)
 
             snapshot = ProductSnapshot(
                 product_id=product.id,
@@ -820,7 +872,7 @@ DETAIL_TEMPLATE = """
     <meta charset="utf-8">
     <title>商品編集 - {{ product.last_title }}</title>
     <style>
-        body { font-family: sans-serif; max-width: 900px; margin: 0 auto; padding-bottom: 50px; }
+        body { font-family: sans-serif; max-width: 1100px; margin: 0 auto; padding-bottom: 50px; }
         .nav { margin-bottom: 20px; padding: 10px; background: #eee; border-radius: 5px; display: flex; align-items: center; justify-content: space-between; }
         .nav a { margin-right: 15px; font-weight: bold; text-decoration: none; color: #333; }
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
@@ -835,14 +887,14 @@ DETAIL_TEMPLATE = """
             font-size: 14px;
         }
         .form-group textarea { min-height: 200px; }
-        .original-info {
-            font-size: 12px;
-            color: #555;
-            background: #f4f4f4;
-            padding: 8px;
-            border: 1px solid #ddd;
-            margin-top: 4px;
-        }
+        
+        /* バリエーションテーブル用 */
+        .variant-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .variant-table th, .variant-table td { border: 1px solid #ddd; padding: 6px; text-align: center; }
+        .variant-table th { background: #f9f9f9; }
+        .variant-table input[type="text"], .variant-table input[type="number"] { width: 100%; box-sizing: border-box; padding: 4px; }
+        .variant-table input.short { width: 60px; }
+        
         .images { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
         .images img { max-width: 150px; max-height: 150px; border: 1px solid #ccc; }
     </style>
@@ -873,6 +925,7 @@ DETAIL_TEMPLATE = """
     <p><a href="{{ url_for('index') }}">&laquo; 一覧に戻る</a></p>
 
     <form method="POST">
+        <!-- 上部：基本情報 -->
         <div class="form-section">
             <h2>基本情報</h2>
             
@@ -915,25 +968,74 @@ DETAIL_TEMPLATE = """
             </div>
         </div>
 
-        <div class="form-grid">
-            <div class="form-section">
-                <h2>価格と在庫</h2>
-                <div class="form-group">
-                    <label for="price">価格 (Price)</label>
-                    <input type="number" id="price" name="price" value="{{ product.custom_price or product.last_price or '' }}">
+        <!-- 中段：バリエーション設定 -->
+        <div class="form-section">
+            <h2>バリエーション設定</h2>
+            
+            <!-- オプション名の設定 -->
+            <div style="display:flex; gap:10px; margin-bottom:10px; background:#f0f0f0; padding:10px;">
+                <div>
+                    <label style="font-size:11px;">Option1 Name</label>
+                    <input type="text" name="option1_name" value="{{ product.option1_name or 'Title' }}" style="width:120px;">
                 </div>
-                <div class="form-group">
-                    <label for="sku">SKU</label>
-                    <input type="text" id="sku" name="sku" value="{{ product.sku or '' }}">
+                <div>
+                    <label style="font-size:11px;">Option2 Name</label>
+                    <input type="text" name="option2_name" value="{{ product.option2_name or '' }}" style="width:120px;" placeholder="(例: Size)">
                 </div>
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" name="taxable" {% if product.taxable %}checked{% endif %}>
-                        税金を請求する (Taxable)
-                    </label>
+                <div>
+                    <label style="font-size:11px;">Option3 Name</label>
+                    <input type="text" name="option3_name" value="{{ product.option3_name or '' }}" style="width:120px;">
                 </div>
             </div>
 
+            <table class="variant-table">
+                <thead>
+                    <tr>
+                        <th style="width:15%">Opt1 Value</th>
+                        <th style="width:15%">Opt2 Value</th>
+                        <th style="width:15%">Price</th>
+                        <th style="width:15%">SKU</th>
+                        <th style="width:10%">在庫</th>
+                        <th style="width:10%">重量(g)</th>
+                        <th>税 / HS / Origin</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for v in variants %}
+                    <tr>
+                        <td>
+                            <input type="hidden" name="v_ids" value="{{ v.id }}">
+                            <input type="text" name="v_opt1_{{ v.id }}" value="{{ v.option1_value or '' }}">
+                        </td>
+                        <td>
+                            <input type="text" name="v_opt2_{{ v.id }}" value="{{ v.option2_value or '' }}">
+                        </td>
+                        <td>
+                            <input type="number" name="v_price_{{ v.id }}" value="{{ v.price or '' }}">
+                        </td>
+                        <td>
+                            <input type="text" name="v_sku_{{ v.id }}" value="{{ v.sku or '' }}">
+                        </td>
+                        <td>
+                            <input type="number" name="v_qty_{{ v.id }}" value="{{ v.inventory_qty }}" class="short">
+                        </td>
+                        <td>
+                            <input type="number" name="v_grams_{{ v.id }}" value="{{ v.grams or '' }}" class="short">
+                        </td>
+                        <td style="text-align:left; font-size:11px;">
+                            <label><input type="checkbox" name="v_tax_{{ v.id }}" {% if v.taxable %}checked{% endif %}> 課税</label><br>
+                            HS: <input type="text" name="v_hs_{{ v.id }}" value="{{ v.hs_code or '' }}" style="width:60px;"><br>
+                            Org: <input type="text" name="v_org_{{ v.id }}" value="{{ v.country_of_origin or '' }}" style="width:40px;">
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <p style="font-size:12px; color:#666;">※ Option Valueを変更する場合は、必ずOption Nameも適切に設定してください。</p>
+        </div>
+
+        <!-- 下段：その他 -->
+        <div class="form-grid">
             <div class="form-section">
                 <h2>分類</h2>
                 <div class="form-group">
@@ -943,22 +1045,6 @@ DETAIL_TEMPLATE = """
                 <div class="form-group">
                     <label for="tags">タグ (Tags)</label>
                     <input type="text" id="tags" name="tags" value="{{ product.tags or '' }}" placeholder="カンマ区切りで入力">
-                </div>
-            </div>
-
-            <div class="form-section">
-                <h2>配送</h2>
-                <div class="form-group">
-                    <label for="grams">重量 (Grams)</label>
-                    <input type="number" id="grams" name="grams" value="{{ product.grams or '' }}" placeholder="例: 500">
-                </div>
-                <div class="form-group">
-                    <label for="country_of_origin">原産国 (Country of Origin)</label>
-                    <input type="text" id="country_of_origin" name="country_of_origin" value="{{ product.country_of_origin or '' }}" placeholder="例: JP">
-                </div>
-                <div class="form-group">
-                    <label for="hs_code">HSコード (HS Code)</label>
-                    <input type="text" id="hs_code" name="hs_code" value="{{ product.hs_code or '' }}" placeholder="例: 9608.30">
                 </div>
             </div>
 
@@ -980,7 +1066,7 @@ DETAIL_TEMPLATE = """
         </div>
 
         <div style="margin-top: 20px;">
-            <button type="submit">保存</button>
+            <button type="submit" style="padding:10px 20px; font-size:16px; background:#0066cc; color:fff; border:none; cursor:pointer;">保存</button>
         </div>
     </form>
 
@@ -1131,31 +1217,60 @@ def product_detail(product_id):
             shop_id_str = request.form.get("shop_id")
             product.shop_id = int(shop_id_str) if shop_id_str else None
 
-            # --- 基本情報 ---
+            # --- 基本情報 (Product) ---
             product.custom_title = request.form.get("title")
             product.custom_description = request.form.get("description")
             product.status = request.form.get("status")
 
-            # --- 価格と在庫 ---
-            price_str = request.form.get("price")
-            product.custom_price = int(price_str) if price_str.isdigit() else None
-            product.sku = request.form.get("sku")
-            product.taxable = 'taxable' in request.form
+            # --- オプション名 (Product) ---
+            product.option1_name = request.form.get("option1_name")
+            product.option2_name = request.form.get("option2_name")
+            product.option3_name = request.form.get("option3_name")
 
-            # --- 分類 ---
+            # --- 分類 (Product) ---
             product.custom_vendor = request.form.get("vendor")
             product.tags = request.form.get("tags")
-            
-            # --- 配送 ---
-            grams_str = request.form.get("grams")
-            product.grams = int(grams_str) if grams_str.isdigit() else None
-            product.country_of_origin = request.form.get("country_of_origin")
-            product.hs_code = request.form.get("hs_code")
 
-            # --- SEO ---
+            # --- SEO (Product) ---
             product.custom_handle = request.form.get("handle")
             product.seo_title = request.form.get("seo_title")
             product.seo_description = request.form.get("seo_description")
+            
+            # --- バリエーション更新 ---
+            v_ids = request.form.getlist("v_ids")
+            for v_id_str in v_ids:
+                try:
+                    v_id = int(v_id_str)
+                    variant = session_db.query(Variant).filter_by(id=v_id, product_id=product.id).first()
+                    if variant:
+                        # Option Values
+                        variant.option1_value = request.form.get(f"v_opt1_{v_id}")
+                        variant.option2_value = request.form.get(f"v_opt2_{v_id}")
+                        
+                        # Price
+                        p_val = request.form.get(f"v_price_{v_id}")
+                        variant.price = int(p_val) if p_val and p_val.isdigit() else None
+                        
+                        # SKU
+                        variant.sku = request.form.get(f"v_sku_{v_id}")
+                        
+                        # Qty
+                        q_val = request.form.get(f"v_qty_{v_id}")
+                        variant.inventory_qty = int(q_val) if q_val and q_val.isdigit() else 0
+                        
+                        # Grams
+                        g_val = request.form.get(f"v_grams_{v_id}")
+                        variant.grams = int(g_val) if g_val and g_val.isdigit() else None
+                        
+                        # Taxable
+                        variant.taxable = (request.form.get(f"v_tax_{v_id}") == 'on')
+                        
+                        # HS / Origin
+                        variant.hs_code = request.form.get(f"v_hs_{v_id}")
+                        variant.country_of_origin = request.form.get(f"v_org_{v_id}")
+                        
+                except ValueError:
+                    continue
 
             # --- 更新日時 ---
             product.updated_at = datetime.utcnow()
@@ -1178,6 +1293,9 @@ def product_detail(product_id):
             
         all_shops = session_db.query(Shop).all()
         current_shop_id = session.get('current_shop_id')
+        
+        # バリエーション取得 (position順)
+        variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
 
         return render_template_string(
             DETAIL_TEMPLATE, 
@@ -1186,7 +1304,8 @@ def product_detail(product_id):
             images=images, 
             templates=templates,
             all_shops=all_shops,
-            current_shop_id=current_shop_id
+            current_shop_id=current_shop_id,
+            variants=variants
         )
     finally:
         session_db.close()
@@ -1481,9 +1600,6 @@ def export_shopify():
         if product_ids:
              query = query.filter(Product.id.in_(product_ids))
         elif not product_ids and not current_shop_id:
-             # ID指定もショップ指定もない場合は全件出力しないほうが安全だが、
-             # 従来の挙動に合わせておくなら全件か、エラーにするか。
-             # ここでは「ID指定があればそれ、なければショップの全件、どちらもなければ全件」とする
              pass
 
         products = query.all()
@@ -1501,6 +1617,8 @@ def export_shopify():
             "Handle", "Title", "Body (HTML)", "Vendor", "Status", "Tags",
             "Published", "SEO Title", "SEO Description",
             "Option1 Name", "Option1 Value",
+            "Option2 Name", "Option2 Value",
+            "Option3 Name", "Option3 Value",
             "Variant SKU", "Variant Grams", "Variant Inventory Tracker",
             "Variant Inventory Qty", "Variant Inventory Policy", "Variant Fulfillment Service",
             "Variant Price", "Variant Requires Shipping", "Variant Taxable",
@@ -1517,70 +1635,89 @@ def export_shopify():
                 .first()
             )
 
-            # --- 値の準備 ---
-            # 編集後の内容(custom_)を優先する
+            # 基本情報
             title = product.custom_title or product.last_title or ""
-            price = product.custom_price if product.custom_price is not None else product.last_price
             description = product.custom_description or (snapshot.description if snapshot else "")
             vendor = product.custom_vendor or product.site.capitalize()
             handle = product.custom_handle or f"mercari-{product.id}"
             
-            # 価格にマークアップを適用
-            final_price = int(price * markup) if price is not None else 0
-
-            # 在庫数
-            inventory_qty = 0 if product.last_status == 'sold' else default_qty
-
-            # 画像URLの処理
+            # 画像URLリスト
             image_urls = []
             if snapshot and snapshot.image_urls:
-                # 永続ディスクにキャッシュした画像を使うようにURLを変換する
                 base_url = request.url_root.rstrip('/')
-                
                 original_urls = snapshot.image_urls.split("|")
                 for i, mercari_url in enumerate(original_urls):
-                    # 画像をダウンロードしてローカルファイル名を取得
                     local_filename = cache_mercari_image(mercari_url, product.id, i)
                     if local_filename:
-                        # 完全なURLを生成
                         full_url = f"{base_url}/media/{local_filename}"
                         image_urls.append(full_url)
             
-            # --- 1行目 (商品本体) の書き出し ---
-            row = {}
-            # --- 商品レベル ---
-            row["Handle"] = handle
-            row["Title"] = title
-            row["Body (HTML)"] = description.replace("\\n", "<br>")
-            row["Vendor"] = vendor
-            row["Published"] = "true" if product.status == 'active' else 'false'
-            row["Status"] = product.status
-            row["Tags"] = product.tags or ""
-            row["SEO Title"] = product.seo_title or ""
-            row["SEO Description"] = product.seo_description or ""
-            
-            # --- バリエーション (1行目) ---
-            # (複数バリエーション未対応なので、Optionは空欄)
-            row["Variant SKU"] = product.sku or ""
-            row["Variant Grams"] = product.grams or ""
-            row["Variant Inventory Tracker"] = "shopify"
-            row["Variant Inventory Qty"] = inventory_qty
-            row["Variant Inventory Policy"] = "deny"
-            row["Variant Fulfillment Service"] = "manual"
-            row["Variant Price"] = final_price
-            row["Variant Requires Shipping"] = "true"
-            row["Variant Taxable"] = "true" if product.taxable else "false"
-            row["Country of Origin"] = product.country_of_origin or ""
-            row["HS Code"] = product.hs_code or ""
+            # バリエーション取得
+            variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
+            if not variants:
+                # 万が一バリエーションがない場合はスキップするか、ダミーを作る
+                continue
 
-            # --- 画像 (1枚目) ---
-            if image_urls:
-                row["Image Src"] = image_urls[0]
-                row["Image Position"] = 1
-            
-            writer.writerow(row)
+            # --- バリエーションループ ---
+            for i, variant in enumerate(variants):
+                row = {}
+                row["Handle"] = handle
+                
+                # 1行目のみ親情報を埋める
+                if i == 0:
+                    row["Title"] = title
+                    row["Body (HTML)"] = description.replace("\\n", "<br>")
+                    row["Vendor"] = vendor
+                    row["Published"] = "true" if product.status == 'active' else 'false'
+                    row["Status"] = product.status
+                    row["Tags"] = product.tags or ""
+                    row["SEO Title"] = product.seo_title or ""
+                    row["SEO Description"] = product.seo_description or ""
+                    
+                    # オプション名は親情報として1行目に必須
+                    row["Option1 Name"] = product.option1_name or "Title"
+                    row["Option2 Name"] = product.option2_name or ""
+                    row["Option3 Name"] = product.option3_name or ""
+                    
+                    # 1枚目の画像
+                    if image_urls:
+                        row["Image Src"] = image_urls[0]
+                        row["Image Position"] = 1
+                
+                # バリエーション情報
+                row["Option1 Value"] = variant.option1_value
+                row["Option2 Value"] = variant.option2_value
+                row["Option3 Value"] = variant.option3_value
+                
+                row["Variant SKU"] = variant.sku or ""
+                row["Variant Grams"] = variant.grams or ""
+                row["Variant Inventory Tracker"] = "shopify"
+                
+                # 在庫: soldなら0、そうでなければ指定値(Default) または Variant個別の値
+                # 優先順位: 売り切れ判定(0) > Variant個別設定 > デフォルト指定
+                if product.last_status == 'sold':
+                    final_qty = 0
+                else:
+                    final_qty = variant.inventory_qty if variant.inventory_qty is not None else default_qty
+                    
+                row["Variant Inventory Qty"] = final_qty
+                row["Variant Inventory Policy"] = "deny"
+                row["Variant Fulfillment Service"] = "manual"
+                
+                # 価格計算
+                base_price = variant.price
+                final_price = int(base_price * markup) if base_price is not None else 0
+                row["Variant Price"] = final_price
+                
+                row["Variant Requires Shipping"] = "true"
+                row["Variant Taxable"] = "true" if variant.taxable else "false"
+                row["Country of Origin"] = variant.country_of_origin or ""
+                row["HS Code"] = variant.hs_code or ""
+                
+                writer.writerow(row)
 
-            # --- 2枚目以降の画像行を書き出し ---
+            # --- 追加画像 (2枚目以降) ---
+            # バリエーション行の消費が終わった後に画像だけの行を追加
             if len(image_urls) > 1:
                 for i, img_url in enumerate(image_urls[1:], start=2):
                     writer.writerow({
@@ -1745,18 +1882,28 @@ def export_stock_update():
         default_qty = request.args.get("qty", "1", type=int)
 
         output = io.StringIO()
-        writer = csv.DictWriter(output, fieldnames=["Handle", "Variant Inventory Qty"])
+        fieldnames = ["Handle", "Option1 Value", "Option2 Value", "Option3 Value", "Variant Inventory Qty"]
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
         writer.writeheader()
 
         for product in products:
-            # 在庫ステータスに応じて在庫数を決定
-            # 'sold' なら 0、そうでなければ指定された在庫数
-            inventory_qty = 0 if product.last_status == 'sold' else default_qty
+            handle = product.custom_handle or f"mercari-{product.id}"
+            variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
             
-            writer.writerow({
-                "Handle": f"mercari-{product.id}",
-                "Variant Inventory Qty": inventory_qty,
-            })
+            for variant in variants:
+                # 在庫ステータスに応じて在庫数を決定
+                if product.last_status == 'sold':
+                    final_qty = 0
+                else:
+                    final_qty = variant.inventory_qty if variant.inventory_qty is not None else default_qty
+                
+                writer.writerow({
+                    "Handle": handle,
+                    "Option1 Value": variant.option1_value,
+                    "Option2 Value": variant.option2_value,
+                    "Option3 Value": variant.option3_value,
+                    "Variant Inventory Qty": final_qty,
+                })
 
         output.seek(0)
         response = make_response(output.getvalue())
@@ -1791,20 +1938,26 @@ def export_price_update():
         markup = request.args.get("markup", "1.0", type=float)
 
         output = io.StringIO()
-        writer = csv.DictWriter(output, fieldnames=["Handle", "Variant Price"])
+        fieldnames = ["Handle", "Option1 Value", "Option2 Value", "Option3 Value", "Variant Price"]
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
         writer.writeheader()
 
         for product in products:
-            # 編集後の価格(custom_price)を優先し、なければ元の価格(last_price)を使用
-            price = product.custom_price if product.custom_price is not None else product.last_price
+            handle = product.custom_handle or f"mercari-{product.id}"
+            variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
             
-            # 価格にマークアップを適用
-            final_price = int(price * markup) if price is not None else 0
+            for variant in variants:
+                price = variant.price
+                # 価格にマークアップを適用
+                final_price = int(price * markup) if price is not None else 0
 
-            writer.writerow({
-                "Handle": f"mercari-{product.id}",
-                "Variant Price": final_price,
-            })
+                writer.writerow({
+                    "Handle": handle,
+                    "Option1 Value": variant.option1_value,
+                    "Option2 Value": variant.option2_value,
+                    "Option3 Value": variant.option3_value,
+                    "Variant Price": final_price,
+                })
 
         output.seek(0)
         response = make_response(output.getvalue())
@@ -1854,12 +2007,23 @@ def update_products():
                 if price_changed or status_changed:
                     print(f"  -> CHANGED! Price: {product.last_price}->{new_price}, Status: {product.last_status}->{new_status}")
                     
-                    # Product情報の更新
+                    # Product情報の更新 (代表値)
                     product.last_price = new_price
                     product.last_status = new_status
-                    product.last_title = new_title # タイトルも一応更新
+                    product.last_title = new_title 
                     product.updated_at = datetime.utcnow()
                     
+                    # Default Title バリエーションの同期
+                    default_variant = session_db.query(Variant).filter_by(
+                        product_id=product.id, 
+                        option1_value="Default Title"
+                    ).first()
+                    
+                    if default_variant:
+                        if new_price is not None:
+                            default_variant.price = new_price
+                        default_variant.inventory_qty = 0 if new_status == 'sold' else (default_variant.inventory_qty or 1)
+
                     # スナップショット保存
                     snapshot = ProductSnapshot(
                         product_id=product.id,
@@ -1880,6 +2044,8 @@ def update_products():
                 
             except Exception as e:
                 print(f"  -> Error: {e}")
+                import traceback
+                traceback.print_exc()
                 
         session_db.commit()
         print(f"Finished. Total updated: {updated_count}")
