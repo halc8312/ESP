@@ -48,8 +48,115 @@ def create_driver(headless: bool = True):
         raise e
 
 
+def scrape_shops_product(driver, url: str):
+    """メルカリShopsの商品ページ用スクレイピング"""
+    try:
+        driver.get(url)
+    except Exception as e:
+        print(f"Error accessing {url}: {e}")
+        return {
+            "url": url, "title": "", "price": None, "status": "error", 
+            "description": "", "image_urls": []
+        }
+
+    wait = WebDriverWait(driver, 10)
+    try:
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        time.sleep(2) # Shopsはロードが遅いことがあるため待機
+    except Exception:
+        pass
+
+    # ---- タイトル ----
+    title = ""
+    try:
+        # Shopsは h1 が商品名であることが多いが、クラス名が変わる可能性あり
+        # data-testid='product-name' があればベスト
+        title_el = driver.find_elements(By.CSS_SELECTOR, "[data-testid='product-name']")
+        if not title_el:
+            title_el = driver.find_elements(By.TAG_NAME, "h1")
+        
+        if title_el:
+            title = title_el[0].text.strip()
+    except Exception:
+        pass
+
+    # ---- 価格 ----
+    price = None
+    try:
+        # data-testid='product-price' を探す
+        price_els = driver.find_elements(By.CSS_SELECTOR, "[data-testid='product-price']")
+        if price_els:
+            price_text = price_els[0].text
+            m = re.search(r"([\d,]+)", price_text)
+            if m:
+                price = int(m.group(1).replace(",", ""))
+    except Exception:
+        pass
+    
+    # 予備の価格取得ロジック
+    if price is None:
+        try:
+            # 画面内の「円」を含む大きな数字を探す（荒技）
+            body_text = driver.find_element(By.TAG_NAME, "body").text
+            m = re.search(r"([\d,]+)\s*円", body_text)
+            if m:
+                price = int(m.group(1).replace(",", ""))
+        except Exception:
+            pass
+
+    # ---- 説明文 ----
+    description = ""
+    try:
+        desc_els = driver.find_elements(By.CSS_SELECTOR, "[data-testid='product-description']")
+        if desc_els:
+            description = desc_els[0].text.strip()
+        else:
+            # 見つからない場合はbodyから抽出を試みる（精度低）
+            pass
+    except Exception:
+        pass
+
+    # ---- 画像 ----
+    image_urls = []
+    try:
+        # Shopsの画像は swiper などのライブラリで表示されていることが多い
+        # img タグ全体から特定ドメインを含むものを探す
+        imgs = driver.find_elements(By.TAG_NAME, "img")
+        for img in imgs:
+            src = img.get_attribute("src")
+            if src and "mercari" in src and "static" in src:
+                # サムネイルを除外したいが、まずは全部取る
+                if src not in image_urls:
+                    image_urls.append(src)
+    except Exception:
+        pass
+
+    # ---- ステータス ----
+    status = "on_sale" # Shopsは基本在庫ありだが...
+    try:
+        body_text = driver.find_element(By.TAG_NAME, "body").text
+        if "売り切れ" in body_text or "在庫なし" in body_text:
+            status = "sold"
+    except Exception:
+        pass
+
+    return {
+        "url": url,
+        "title": title,
+        "price": price,
+        "status": status,
+        "description": description,
+        "image_urls": image_urls,
+    }
+
+
 def scrape_item_detail(driver, url: str):
     """1つの商品ページから詳細情報を取得して dict で返す"""
+    
+    # Shops URL判定
+    if "/shops/product/" in url:
+        return scrape_shops_product(driver, url)
+
     try:
         driver.get(url)
     except Exception as e:
