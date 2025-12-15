@@ -1432,8 +1432,7 @@ def product_detail(product_id):
 
 @app.route("/scrape", methods=["GET", "POST"])
 def scrape_form():
-    html = """
-<!doctype html>
+    html = """<!doctype html>
 <html lang="ja">
 <head>
     <meta charset="utf-8">
@@ -1508,8 +1507,7 @@ def scrape_form():
         </form>
     </div>
 </body>
-</html>
-"""
+</html>"""
     return render_template_string(html)
 
 
