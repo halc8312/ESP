@@ -158,6 +158,15 @@ def scrape_shops_product(driver, url: str):
     except Exception:
         pass
 
+    # ---- ステータス ----
+    status = "on_sale"
+    try:
+        body_text = driver.find_element(By.TAG_NAME, "body").text
+        if "売り切れ" in body_text or "在庫なし" in body_text:
+            status = "sold"
+    except Exception:
+        pass
+
     return {
         "url": url,
         "title": title,
