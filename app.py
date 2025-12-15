@@ -1433,82 +1433,83 @@ def product_detail(product_id):
 @app.route("/scrape", methods=["GET", "POST"])
 def scrape_form():
     html = """
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <title>スクレイピング設定</title>
-        <style>
-            body { font-family: sans-serif; max-width: 700px; margin: 0 auto; padding: 20px; }
-            label { display: block; margin-top: 12px; font-weight: bold; }
-            input[type='text'], input[type='number'], select {
-                width: 100%;
-                padding: 8px;
-                margin-top: 4px;
-                box-sizing: border-box;
-            }
-            button {
-                margin-top: 20px;
-                padding: 10px 20px;
-                font-size: 16px;
-                background: #06c;
-                color: #fff;
-                border: none;
-                cursor: pointer;
-            }
-            button:hover { background: #0056b3; }
-            .box {
-                border: 1px solid #ccc;
-                padding: 20px;
-                background: #f8f8f8;
-                margin-top: 20px;
-            }
-        </style>
-    </head>
-    <body>
-        <h1>スクレイピング実行</h1>
-        <p><a href="{{ url_for('index') }}">← 商品一覧に戻る</a></p>
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <title>スクレイピング設定</title>
+    <style>
+        body { font-family: sans-serif; max-width: 700px; margin: 0 auto; padding: 20px; }
+        label { display: block; margin-top: 12px; font-weight: bold; }
+        input[type='text'], input[type='number'], select {
+            width: 100%;
+            padding: 8px;
+            margin-top: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #06c;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover { background: #0056b3; }
+        .box {
+            border: 1px solid #ccc;
+            padding: 20px;
+            background: #f8f8f8;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>スクレイピング実行</h1>
+    <p><a href="{{ url_for('index') }}">← 商品一覧に戻る</a></p>
 
-        <div class="box">
-            <h3 style="margin-top:0;">方法1: URLを直接指定 (単品抽出)</h3>
-            <form method="POST" action="{{ url_for('scrape_run') }}">
-                <label>商品URL</label>
-                <input type="text" name="target_url" placeholder="https://jp.mercari.com/item/m123456789" required style="width:100%;">
-                <button type="submit">URLからスクレイピング実行</button>
-            </form>
-        </div>
+    <div class="box">
+        <h3 style="margin-top:0;">方法1: URLを直接指定 (単品抽出)</h3>
+        <form method="POST" action="{{ url_for('scrape_run') }}">
+            <label>商品URL</label>
+            <input type="text" name="target_url" placeholder="https://jp.mercari.com/item/m123456789" required style="width:100%;">
+            <button type="submit">URLからスクレイピング実行</button>
+        </form>
+    </div>
 
-        <div class="box">
-            <h3 style="margin-top:0;">方法2: 検索条件から抽出 (一括抽出)</h3>
-            <form method="POST" action="{{ url_for('scrape_run') }}">
+    <div class="box">
+        <h3 style="margin-top:0;">方法2: 検索条件から抽出 (一括抽出)</h3>
+        <form method="POST" action="{{ url_for('scrape_run') }}">
 
-                <label>キーワード</label>
-                <input type="text" name="keyword" value="スニーカー" required>
+            <label>キーワード</label>
+            <input type="text" name="keyword" value="スニーカー" required>
 
-                <label>価格 min（任意）</label>
-                <input type="number" name="price_min">
+            <label>価格 min（任意）</label>
+            <input type="number" name="price_min">
 
-                <label>価格 max（任意）</label>
-                <input type="number" name="price_max">
+            <label>価格 max（任意）</label>
+            <input type="number" name="price_max">
 
-                <label>ソート順</label>
-                <select name="sort">
-                    <option value="created_desc">新着順</option>
-                    <option value="price_asc">価格：安い順</option>
-                    <option value="price_desc">価格：高い順</option>
-                </select>
+            <label>ソート順</label>
+            <select name="sort">
+                <option value="created_desc">新着順</option>
+                <option value="price_asc">価格：安い順</option>
+                <option value="price_desc">価格：高い順</option>
+            </select>
 
-                <label>カテゴリID（任意、メルカリカテゴリID）</label>
-                <input type="text" name="category" placeholder="例：1">
+            <label>カテゴリID（任意、メルカリカテゴリID）</label>
+            <input type="text" name="category" placeholder="例：1">
 
-                <label>最大取得件数</label>
-                <input type="number" name="limit" value="10" min="1">
+            <label>最大取得件数</label>
+            <input type="number" name="limit" value="10" min="1">
 
-                <button type="submit">スクレイピング実行</button>
-            </form>
-        </div>
-    </body>
-    </html>
-    """
+            <button type="submit">スクレイピング実行</button>
+        </form>
+    </div>
+</body>
+</html>
+"""
     return render_template_string(html)
 
 
