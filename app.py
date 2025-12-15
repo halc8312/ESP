@@ -894,6 +894,9 @@ DETAIL_TEMPLATE = """
         .variant-table th { background: #f9f9f9; }
         .variant-table input[type="text"], .variant-table input[type="number"] { width: 100%; box-sizing: border-box; padding: 4px; }
         .variant-table input.short { width: 60px; }
+        .del-btn { background: #d9534f; color: white; border: none; padding: 4px 8px; cursor: pointer; border-radius: 3px; }
+        .add-btn { background: #5cb85c; color: white; border: none; padding: 8px 16px; cursor: pointer; border-radius: 3px; margin-top: 8px; font-weight: bold;}
+        .deleted-row { display: none; background-color: #fdd; }
         
         .images { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
         .images img { max-width: 150px; max-height: 150px; border: 1px solid #ccc; }
@@ -925,6 +928,9 @@ DETAIL_TEMPLATE = """
     <p><a href="{{ url_for('index') }}">&laquo; 一覧に戻る</a></p>
 
     <form method="POST">
+        <!-- 削除対象IDリスト -->
+        <input type="hidden" name="delete_v_ids" id="delete_v_ids" value="">
+        
         <!-- 上部：基本情報 -->
         <div class="form-section">
             <h2>基本情報</h2>
@@ -988,7 +994,7 @@ DETAIL_TEMPLATE = """
                 </div>
             </div>
 
-            <table class="variant-table">
+            <table class="variant-table" id="variantTable">
                 <thead>
                     <tr>
                         <th style="width:15%">Opt1 Value</th>
@@ -998,11 +1004,12 @@ DETAIL_TEMPLATE = """
                         <th style="width:10%">在庫</th>
                         <th style="width:10%">重量(g)</th>
                         <th>税 / HS / Origin</th>
+                        <th style="width:50px;">操作</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for v in variants %}
-                    <tr>
+                    <tr id="row-{{ v.id }}">
                         <td>
                             <input type="hidden" name="v_ids" value="{{ v.id }}">
                             <input type="text" name="v_opt1_{{ v.id }}" value="{{ v.option1_value or '' }}">
@@ -1027,11 +1034,15 @@ DETAIL_TEMPLATE = """
                             HS: <input type="text" name="v_hs_{{ v.id }}" value="{{ v.hs_code or '' }}" style="width:60px;"><br>
                             Org: <input type="text" name="v_org_{{ v.id }}" value="{{ v.country_of_origin or '' }}" style="width:40px;">
                         </td>
+                        <td>
+                            <button type="button" class="del-btn" onclick="markDelete({{ v.id }})">削除</button>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
-            <p style="font-size:12px; color:#666;">※ Option Valueを変更する場合は、必ずOption Nameも適切に設定してください。</p>
+            
+            <button type="button" class="add-btn" onclick="addVariantRow()">＋ バリエーションを追加</button>
         </div>
 
         <!-- 下段：その他 -->
@@ -1066,7 +1077,7 @@ DETAIL_TEMPLATE = """
         </div>
 
         <div style="margin-top: 20px;">
-            <button type="submit" style="padding:10px 20px; font-size:16px; background:#0066cc; color:fff; border:none; cursor:pointer;">保存</button>
+            <button type="submit">保存</button>
         </div>
     </form>
 
@@ -1077,8 +1088,7 @@ DETAIL_TEMPLATE = """
                 {% for url in images %}
                     <img src="{{ url }}" alt="image {{ loop.index }}">
                 {% endfor %}
-            </div>
-        {% else %}
+            {% else %}
             <p>(画像なし)</p>
         {% endif %}
     </div>
@@ -1091,11 +1101,66 @@ DETAIL_TEMPLATE = """
                 document.getElementById('description').value = content;
             }
         }
+
+        // 削除対象IDを保持するリスト
+        var deleteIds = [];
+
+        function markDelete(id) {
+            if (confirm('このバリエーションを削除しますか？（保存時に反映されます）')) {
+                deleteIds.push(id);
+                document.getElementById('delete_v_ids').value = deleteIds.join(',');
+                document.getElementById('row-' + id).style.display = 'none';
+                document.getElementById('row-' + id).classList.add('deleted-row');
+            }
+        }
+
+        var newIndex = 0;
+
+        function addVariantRow() {
+            newIndex++;
+            var idx = newIndex;
+            var table = document.getElementById('variantTable').getElementsByTagName('tbody')[0];
+            var newRow = table.insertRow();
+            
+            newRow.innerHTML = `
+                <td>
+                    <input type="hidden" name="new_v_indices" value="${idx}">
+                    <input type="text" name="new_v_opt1_${idx}" value="">
+                </td>
+                <td>
+                    <input type="text" name="new_v_opt2_${idx}" value="">
+                </td>
+                <td>
+                    <input type="number" name="new_v_price_${idx}" value="">
+                </td>
+                <td>
+                    <input type="text" name="new_v_sku_${idx}" value="">
+                </td>
+                <td>
+                    <input type="number" name="new_v_qty_${idx}" value="1" class="short">
+                </td>
+                <td>
+                    <input type="number" name="new_v_grams_${idx}" value="" class="short">
+                </td>
+                <td style="text-align:left; font-size:11px;">
+                    <label><input type="checkbox" name="new_v_tax_${idx}"> 課税</label><br>
+                    HS: <input type="text" name="new_v_hs_${idx}" value="" style="width:60px;"><br>
+                    Org: <input type="text" name="new_v_org_${idx}" value="JP" style="width:40px;">
+                </td>
+                <td>
+                    <button type="button" class="del-btn" onclick="removeNewRow(this)">取消</button>
+                </td>
+            `;
+        }
+
+        function removeNewRow(btn) {
+            var row = btn.parentNode.parentNode;
+            row.parentNode.removeChild(row);
+        }
     </script>
 </body>
 </html>
-"""
-
+"
 
 @app.route("/")
 def index():
@@ -1236,7 +1301,16 @@ def product_detail(product_id):
             product.seo_title = request.form.get("seo_title")
             product.seo_description = request.form.get("seo_description")
             
-            # --- バリエーション更新 ---
+            # --- バリエーション削除 ---
+            delete_ids_str = request.form.get("delete_v_ids", "")
+            if delete_ids_str:
+                for del_id in delete_ids_str.split(","):
+                    if del_id.isdigit():
+                        v_to_del = session_db.query(Variant).filter_by(id=int(del_id), product_id=product.id).first()
+                        if v_to_del:
+                            session_db.delete(v_to_del)
+
+            # --- バリエーション更新 (既存) ---
             v_ids = request.form.getlist("v_ids")
             for v_id_str in v_ids:
                 try:
@@ -1270,6 +1344,47 @@ def product_detail(product_id):
                         variant.country_of_origin = request.form.get(f"v_org_{v_id}")
                         
                 except ValueError:
+                    continue
+
+            # --- バリエーション新規作成 ---
+            new_indices = request.form.getlist("new_v_indices")
+            for idx in new_indices:
+                try:
+                    # 必須項目チェック（例えばOption1が空なら追加しないなど）
+                    # 今回は空でも追加する方針
+                    new_variant = Variant(
+                        product_id=product.id,
+                        option1_value=request.form.get(f"new_v_opt1_{idx}"),
+                        option2_value=request.form.get(f"new_v_opt2_{idx}"),
+                        option3_value=request.form.get(f"new_v_opt3_{idx}"), # テンプレートにはinputないが念のため
+                        sku=request.form.get(f"new_v_sku_{idx}"),
+                        hs_code=request.form.get(f"new_v_hs_{idx}"),
+                        country_of_origin=request.form.get(f"new_v_org_{idx}"),
+                        taxable=(request.form.get(f"new_v_tax_{idx}") == 'on')
+                    )
+                    
+                    # 数値項目の処理
+                    p_val = request.form.get(f"new_v_price_{idx}")
+                    if p_val and p_val.isdigit():
+                        new_variant.price = int(p_val)
+                        
+                    q_val = request.form.get(f"new_v_qty_{idx}")
+                    if q_val and q_val.isdigit():
+                        new_variant.inventory_qty = int(q_val)
+                    else:
+                        new_variant.inventory_qty = 0 # Default
+                        
+                    g_val = request.form.get(f"new_v_grams_{idx}")
+                    if g_val and g_val.isdigit():
+                        new_variant.grams = int(g_val)
+                        
+                    # position設定（末尾に追加）
+                    # 厳密なMAX取得はしていないが、とりあえず追加
+                    
+                    session_db.add(new_variant)
+                    
+                except Exception as e:
+                    print(f"Error adding variant {idx}: {e}")
                     continue
 
             # --- 更新日時 ---
