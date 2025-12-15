@@ -544,14 +544,14 @@ def manage_templates():
 
 @app.route("/templates/<int:template_id>/delete", methods=["POST"])
 def delete_template(template_id):
-    session = SessionLocal()
+    session_db = SessionLocal()
     try:
-        template = session.query(DescriptionTemplate).filter_by(id=template_id).one_or_none()
+        template = session_db.query(DescriptionTemplate).filter_by(id=template_id).one_or_none()
         if template:
-            session.delete(template)
-            session.commit()
+            session_db.delete(template)
+            session_db.commit()
     finally:
-        session.close()
+        session_db.close()
     return redirect(url_for('manage_templates'))
 
 
