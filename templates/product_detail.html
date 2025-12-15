@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <title>商品編集 - {{ product.last_title }}</title>
+    <style>
+        body { font-family: sans-serif; max-width: 1100px; margin: 0 auto; padding-bottom: 50px; }
+        .nav { margin-bottom: 20px; padding: 10px; background: #eee; border-radius: 5px; display: flex; align-items: center; justify-content: space-between; }
+        .nav a { margin-right: 15px; font-weight: bold; text-decoration: none; color: #333; }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .form-section { border: 1px solid #ccc; padding: 16px; border-radius: 5px; margin-top: 20px; }
+        .form-section h2 { margin-top: 0; font-size: 16px; border-bottom: 1px solid #ddd; padding-bottom: 8px; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-weight: bold; margin-bottom: 4px; font-size: 13px; }
+        .form-group input, .form-group textarea, .form-group select {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 6px;
+            font-size: 14px;
+        }
+        .form-group textarea { min-height: 200px; }
+        
+        /* バリエーションテーブル用 */
+        .variant-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .variant-table th, .variant-table td { border: 1px solid #ddd; padding: 6px; text-align: center; }
+        .variant-table th { background: #f9f9f9; }
+        .variant-table input[type="text"], .variant-table input[type="number"] { width: 100%; box-sizing: border-box; padding: 4px; }
+        .variant-table input.short { width: 60px; }
+        .del-btn { background: #d9534f; color: white; border: none; padding: 4px 8px; cursor: pointer; border-radius: 3px; }
+        .add-btn { background: #5cb85c; color: white; border: none; padding: 8px 16px; cursor: pointer; border-radius: 3px; margin-top: 8px; font-weight: bold;}
+        .deleted-row { display: none; background-color: #fdd; }
+        
+        .images { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+        .images img { max-width: 150px; max-height: 150px; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <div>
+            <a href="{{ url_for('index') }}">商品一覧</a>
+            <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
+            <a href="{{ url_for('manage_templates') }}">テンプレート</a>
+            <a href="{{ url_for('manage_shops') }}">ショップ管理</a>
+        </div>
+        <div>
+            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
+                <select name="shop_id" onchange="this.form.submit()">
+                    <option value="">(ショップ未選択)</option>
+                    {% for s in all_shops %}
+                        <option value="{{ s.id }}" {% if current_shop_id == s.id %}selected{% endif %}>
+                            {{ s.name }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </form>
+        </div>
+    </div>
+
+    <h1>商品編集</h1>
+    <p><a href="{{ url_for('index') }}">&laquo; 一覧に戻る</a></p>
+
+    <form method="POST">
+        <!-- 削除対象IDリスト -->
+        <input type="hidden" name="delete_v_ids" id="delete_v_ids" value="">
+        
+        <!-- 上部：基本情報 -->
+        <div class="form-section">
+            <h2>基本情報</h2>
+            
+            <div class="form-group">
+                <label for="shop_id">所属ショップ</label>
+                <select id="shop_id" name="shop_id">
+                    <option value="">(共通 / 未所属)</option>
+                    {% for s in all_shops %}
+                        <option value="{{ s.id }}" {% if product.shop_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="title">商品名 (Title)</label>
+                <input type="text" id="title" name="title" value="{{ product.custom_title or product.last_title or '' }}">
+            </div>
+
+            <div class="form-group">
+                <label for="status">ステータス (Status)</label>
+                <select id="status" name="status">
+                    <option value="active" {% if product.status == 'active' %}selected{% endif %}>有効 (Active)</option>
+                    <option value="draft" {% if product.status == 'draft' %}selected{% endif %}>下書き (Draft)</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="template">説明文テンプレート</label>
+                <select id="template" onchange="applyTemplate()">
+                    <option value="">(テンプレートを選択)</option>
+                    {% for t in templates %}
+                    <option value="{{ t.content | e }}">{{ t.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="description">商品説明 (Body HTML)</label>
+                <textarea id="description" name="description">{{ product.custom_description or (snapshot.description if snapshot else '') }}</textarea>
+            </div>
+        </div>
+
+        <!-- 中段：バリエーション設定 -->
+        <div class="form-section">
+            <h2>バリエーション設定</h2>
+            
+            <!-- オプション名の設定 -->
+            <div style="display:flex; gap:10px; margin-bottom:10px; background:#f0f0f0; padding:10px;">
+                <div>
+                    <label style="font-size:11px;">Option1 Name</label>
+                    <input type="text" name="option1_name" value="{{ product.option1_name or 'Title' }}" style="width:120px;">
+                </div>
+                <div>
+                    <label style="font-size:11px;">Option2 Name</label>
+                    <input type="text" name="option2_name" value="{{ product.option2_name or '' }}" style="width:120px;" placeholder="(例: Size)">
+                </div>
+                <div>
+                    <label style="font-size:11px;">Option3 Name</label>
+                    <input type="text" name="option3_name" value="{{ product.option3_name or '' }}" style="width:120px;">
+                </div>
+            </div>
+
+            <table class="variant-table" id="variantTable">
+                <thead>
+                    <tr>
+                        <th style="width:15%">Opt1 Value</th>
+                        <th style="width:15%">Opt2 Value</th>
+                        <th style="width:15%">Price</th>
+                        <th style="width:15%">SKU</th>
+                        <th style="width:10%">在庫</th>
+                        <th style="width:10%">重量(g)</th>
+                        <th>税 / HS / Origin</th>
+                        <th style="width:50px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for v in variants %}
+                    <tr id="row-{{ v.id }}">
+                        <td>
+                            <input type="hidden" name="v_ids" value="{{ v.id }}">
+                            <input type="text" name="v_opt1_{{ v.id }}" value="{{ v.option1_value or '' }}">
+                        </td>
+                        <td>
+                            <input type="text" name="v_opt2_{{ v.id }}" value="{{ v.option2_value or '' }}">
+                        </td>
+                        <td>
+                            <input type="number" name="v_price_{{ v.id }}" value="{{ v.price or '' }}">
+                        </td>
+                        <td>
+                            <input type="text" name="v_sku_{{ v.id }}" value="{{ v.sku or '' }}">
+                        </td>
+                        <td>
+                            <input type="number" name="v_qty_{{ v.id }}" value="{{ v.inventory_qty }}" class="short">
+                        </td>
+                        <td>
+                            <input type="number" name="v_grams_{{ v.id }}" value="{{ v.grams or '' }}" class="short">
+                        </td>
+                        <td style="text-align:left; font-size:11px;">
+                            <label><input type="checkbox" name="v_tax_{{ v.id }}" {% if v.taxable %}checked{% endif %}> 課税</label><br>
+                            HS: <input type="text" name="v_hs_{{ v.id }}" value="{{ v.hs_code or '' }}" style="width:60px;"><br>
+                            Org: <input type="text" name="v_org_{{ v.id }}" value="{{ v.country_of_origin or '' }}" style="width:40px;">
+                        </td>
+                        <td>
+                            <button type="button" class="del-btn" onclick="markDelete({{ v.id }})">削除</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            
+            <button type="button" class="add-btn" onclick="addVariantRow()">＋ バリエーションを追加</button>
+        </div>
+
+        <!-- 下段：その他 -->
+        <div class="form-grid">
+            <div class="form-section">
+                <h2>分類</h2>
+                <div class="form-group">
+                    <label for="vendor">販売元 (Vendor)</label>
+                    <input type="text" id="vendor" name="vendor" value="{{ product.custom_vendor or product.site or '' }}">
+                </div>
+                <div class="form-group">
+                    <label for="tags">タグ (Tags)</label>
+                    <input type="text" id="tags" name="tags" value="{{ product.tags or '' }}" placeholder="カンマ区切りで入力">
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h2>SEO</h2>
+                <div class="form-group">
+                    <label for="handle">URLハンドル (Handle)</label>
+                    <input type="text" id="handle" name="handle" value="{{ product.custom_handle or ('mercari-' + product.id|string) }}">
+                </div>
+                <div class="form-group">
+                    <label for="seo_title">ページタイトル (SEO Title)</label>
+                    <input type="text" id="seo_title" name="seo_title" value="{{ product.seo_title or '' }}" placeholder="60文字以内推奨">
+                </div>
+                <div class="form-group">
+                    <label for="seo_description">メタディスクリプション (SEO Description)</label>
+                    <textarea id="seo_description" name="seo_description" rows="4">{{ product.seo_description or '' }}</textarea>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top: 20px;">
+            <button type="submit">保存</button>
+        </div>
+    </form>
+
+    <div class="form-section">
+        <h2>画像（{{ images|length }}枚）</h2>
+        {% if images %}
+            <div class="images">
+                {% for url in images %}
+                    <img src="{{ url }}" alt="image {{ loop.index }}">
+                {% endfor %}
+            </div>
+        {% else %}
+            <p>(画像なし)</p>
+        {% endif %}
+    </div>
+
+    <script>
+        function applyTemplate() {
+            var select = document.getElementById('template');
+            var content = select.value;
+            if (content) {
+                document.getElementById('description').value = content;
+            }
+        }
+
+        // 削除対象IDを保持するリスト
+        var deleteIds = [];
+
+        function markDelete(id) {
+            if (confirm('このバリエーションを削除しますか？（保存時に反映されます）')) {
+                deleteIds.push(id);
+                document.getElementById('delete_v_ids').value = deleteIds.join(',');
+                document.getElementById('row-' + id).style.display = 'none';
+                document.getElementById('row-' + id).classList.add('deleted-row');
+            }
+        }
+
+        var newIndex = 0;
+
+        function addVariantRow() {
+            newIndex++;
+            var idx = newIndex;
+            var table = document.getElementById('variantTable').getElementsByTagName('tbody')[0];
+            var newRow = table.insertRow();
+            
+            newRow.innerHTML = `
+                <td>
+                    <input type="hidden" name="new_v_indices" value="${idx}">
+                    <input type="text" name="new_v_opt1_${idx}" value="">
+                </td>
+                <td>
+                    <input type="text" name="new_v_opt2_${idx}" value="">
+                </td>
+                <td>
+                    <input type="number" name="new_v_price_${idx}" value="">
+                </td>
+                <td>
+                    <input type="text" name="new_v_sku_${idx}" value="">
+                </td>
+                <td>
+                    <input type="number" name="new_v_qty_${idx}" value="1" class="short">
+                </td>
+                <td>
+                    <input type="number" name="new_v_grams_${idx}" value="" class="short">
+                </td>
+                <td style="text-align:left; font-size:11px;">
+                    <label><input type="checkbox" name="new_v_tax_${idx}"> 課税</label><br>
+                    HS: <input type="text" name="new_v_hs_${idx}" value="" style="width:60px;"><br>
+                    Org: <input type="text" name="new_v_org_${idx}" value="JP" style="width:40px;">
+                </td>
+                <td>
+                    <button type="button" class="del-btn" onclick="removeNewRow(this)">取消</button>
+                </td>
+            `;
+        }
+
+        function removeNewRow(btn) {
+            var row = btn.parentNode.parentNode;
+            row.parentNode.removeChild(row);
+        }
+    </script>
+</body>
+</html>
