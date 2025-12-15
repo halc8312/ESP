@@ -131,12 +131,30 @@ def scrape_shops_product(driver, url: str):
     except Exception:
         pass
 
-    # ---- ステータス ----
-    status = "on_sale" # Shopsは基本在庫ありだが...
+    # ---- バリエーション（簡易取得） ----
+    variants = []
     try:
-        body_text = driver.find_element(By.TAG_NAME, "body").text
-        if "売り切れ" in body_text or "在庫なし" in body_text:
-            status = "sold"
+        # 選択肢のボタン/ラベルを探す (Shopsの構造は可変なので複数を試す)
+        # ケース1: data-testid="variant-type" のような要素内のテキスト
+        # ケース2: 特定のクラスを持つボタン群
+        
+        # 試しに一般的な "種類" や "サイズ" のセクションを探す
+        variant_sections = driver.find_elements(By.XPATH, "//div[contains(text(), '種類') or contains(text(), 'サイズ') or contains(text(), 'カラー')]/..//button")
+        
+        # もし見つからなければ、data-testidで探す（仮定）
+        if not variant_sections:
+            variant_sections = driver.find_elements(By.CSS_SELECTOR, "[data-testid='product-variant-item']")
+
+        seen_opts = set()
+        for el in variant_sections:
+            text_val = el.text.strip()
+            if text_val and text_val not in seen_opts:
+                seen_opts.add(text_val)
+                variants.append({
+                    "option1_value": text_val,
+                    "price": price, # 個別価格取得は困難なので代表価格を入れる
+                    "inventory_qty": 1 # 在庫ありと仮定
+                })
     except Exception:
         pass
 
@@ -147,6 +165,7 @@ def scrape_shops_product(driver, url: str):
         "status": status,
         "description": description,
         "image_urls": image_urls,
+        "variants": variants # 追加
     }
 
 

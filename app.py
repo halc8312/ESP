@@ -89,17 +89,34 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
                 session_db.flush()  # ID 発行
                 new_count += 1
                 
-                # デフォルトバリエーション作成
-                default_variant = Variant(
-                    product_id=product.id,
-                    option1_value="Default Title",
-                    sku=generated_sku,
-                    price=price,
-                    taxable=False,
-                    inventory_qty=1 if status != 'sold' else 0,
-                    position=1
-                )
-                session_db.add(default_variant)
+                # バリエーション作成
+                scraped_variants = item.get("variants")
+                if scraped_variants:
+                    # メルカリShopsなどでバリエーションが取得できた場合
+                    product.option1_name = "Variation" # 仮の名前
+                    for i, v_data in enumerate(scraped_variants, 1):
+                        new_variant = Variant(
+                            product_id=product.id,
+                            option1_value=v_data.get("option1_value", f"Option {i}"),
+                            sku=f"{generated_sku}-{i}", # SKUをユニーク化
+                            price=v_data.get("price", price),
+                            taxable=False,
+                            inventory_qty=v_data.get("inventory_qty", 1),
+                            position=i
+                        )
+                        session_db.add(new_variant)
+                else:
+                    # 通常商品（単一バリエーション）
+                    default_variant = Variant(
+                        product_id=product.id,
+                        option1_value="Default Title",
+                        sku=generated_sku,
+                        price=price,
+                        taxable=False,
+                        inventory_qty=1 if status != 'sold' else 0,
+                        position=1
+                    )
+                    session_db.add(default_variant)
 
             else:
                 # 更新
