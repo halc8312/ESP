@@ -22,21 +22,27 @@ class Shop(Base):
     __tablename__ = "shops"
 
     id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False, unique=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False) # 所有者
+    name = Column(String, nullable=False) # ユーザーごとにユニークであれば良いが、シンプルにグローバルユニークのままにするか、user_idと複合ユニークにするか。一旦nameはグローバルユニークの制約を外す方が無難だが、Existing logic relies on name. Let's keep name unique for now or just remove unique constraint if we want same shop names for diff users. Let's start with simple: user_id added.
+
+    name = Column(String, nullable=False) 
     created_at = Column(DateTime, default=datetime.utcnow)
     
     products = relationship("Product", back_populates="shop")
+    user = relationship("User") # Link to User
 
 
 class Product(Base):
     __tablename__ = "products"
 
     id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False) # 所有者
     site = Column(String, nullable=False, index=True)
     shop_id = Column(Integer, ForeignKey("shops.id"), nullable=True) # 店舗ID
-    source_url = Column(String, nullable=False, unique=True, index=True)
+    source_url = Column(String, nullable=False, index=True) # Global unique might be tricky if two users scrape same item. Remove unique constraint on source_url to allow multiple users to track same item independently.
 
     shop = relationship("Shop", back_populates="products")
+    user = relationship("User")
 
     # スクレイピング情報の履歴・キャッシュ（代表値として保持）
     last_title = Column(String)

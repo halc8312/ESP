@@ -133,21 +133,24 @@ def normalize_url(raw_url: str) -> str:
     except Exception:
         return raw_url
 
-def save_scraped_items_to_db(items, site: str = "mercari"):
+def save_scraped_items_to_db(items, user_id: int, site: str = "mercari"):
     """
     mercari_db.scrape_search_result() が返した items(list[dict]) を
     Product / ProductSnapshot に保存する。
     """
+    if not items:
+        return 0, 0
+
     session_db = SessionLocal()
-    now = datetime.utcnow()
     new_count = 0
     updated_count = 0
+    now = datetime.utcnow()
+
+    # contextからcurrent_shop_idを取得（Flask-Loginが必要）など
+    # ここでは session から取る形にする
+    current_shop_id = session.get('current_shop_id') if has_request_context() else None
 
     try:
-        current_shop_id = None
-        if has_request_context():
-            current_shop_id = session.get('current_shop_id')
-
         for item in items:
             raw_url = item.get("url", "")
             if not raw_url:
@@ -162,8 +165,8 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
             image_urls = item.get("image_urls") or []
             image_urls_str = "|".join(image_urls)
 
-            # 既存の Product を検索
-            product = session_db.query(Product).filter_by(source_url=url).one_or_none()
+            # 既存の Product を検索 (User + URL)
+            product = session_db.query(Product).filter_by(source_url=url, user_id=user_id).one_or_none()
 
             if product is None:
                 # SKU自動生成 (MER- + URLのMD5ハッシュ先頭10文字)
@@ -172,6 +175,7 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
 
                 # 新規作成
                 product = Product(
+                    user_id=user_id, # 所有者
                     site=site,
                     shop_id=current_shop_id, # 現在のショップIDを紐付け
                     source_url=url,
@@ -305,15 +309,19 @@ def manage_shops():
         if request.method == "POST":
             name = request.form.get("name")
             if name:
-                new_shop = Shop(name=name)
-                session_db.add(new_shop)
-                try:
-                    session_db.commit()
-                except Exception:
-                    session_db.rollback()
+                # Check duplication for this user
+                existing = session_db.query(Shop).filter_by(user_id=current_user.id, name=name).first()
+                if not existing:
+                    new_shop = Shop(name=name, user_id=current_user.id)
+                    session_db.add(new_shop)
+                    try:
+                        session_db.commit()
+                    except Exception:
+                        session_db.rollback()
             return redirect(url_for('manage_shops'))
 
-        shops = session_db.query(Shop).all()
+        # Filter by user
+        shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         shop_data = []
         for s in shops:
             count = session_db.query(Product).filter_by(shop_id=s.id).count()
@@ -336,7 +344,8 @@ def manage_shops():
 def delete_shop(shop_id):
     session_db = SessionLocal()
     try:
-        shop = session_db.query(Shop).filter_by(id=shop_id).one_or_none()
+        # User constraint
+        shop = session_db.query(Shop).filter_by(id=shop_id, user_id=current_user.id).one_or_none()
         if shop:
             products = session_db.query(Product).filter_by(shop_id=shop_id).all()
             for p in products:
@@ -353,8 +362,15 @@ def delete_shop(shop_id):
 @login_required
 def set_current_shop():
     shop_id = request.form.get("shop_id")
+    # Verify ownership before setting session
     if shop_id:
-        session['current_shop_id'] = int(shop_id)
+        session_db = SessionLocal()
+        try:
+            shop = session_db.query(Shop).filter_by(id=shop_id, user_id=current_user.id).first()
+            if shop:
+                session['current_shop_id'] = int(shop_id)
+        finally:
+            session_db.close()
     else:
         session.pop('current_shop_id', None)
     return redirect(request.referrer or url_for('index'))
@@ -374,7 +390,9 @@ def manage_templates():
             return redirect(url_for('manage_templates'))
 
         templates = session_db.query(DescriptionTemplate).order_by(DescriptionTemplate.id).all()
-        all_shops = session_db.query(Shop).all()
+        # Only show user's shops for context if needed, but template is global for now? 
+        # Requirement was Shop/Product isolation. Let's filter Shop list in dropdown.
+        all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         current_shop_id = session.get('current_shop_id')
 
         return render_template(
@@ -409,12 +427,15 @@ def index():
         selected_status = request.args.get("status")
         selected_change_filter = request.args.get("change_filter")
 
-        sites = [s[0] for s in session_db.query(Product.site).distinct().all()]
-        statuses = [s[0] for s in session_db.query(Product.last_status).distinct().all()]
-        all_shops = session_db.query(Shop).all()
+        # Filter query by user_id
+        base_query = session_db.query(Product).filter(Product.user_id == current_user.id)
+
+        sites = [s[0] for s in base_query.with_entities(Product.site).distinct().all()]
+        statuses = [s[0] for s in base_query.with_entities(Product.last_status).distinct().all()]
+        all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         current_shop_id = session.get('current_shop_id')
 
-        query = session_db.query(Product)
+        query = base_query
         if current_shop_id:
             query = query.filter(Product.shop_id == current_shop_id)
         if selected_site:
@@ -492,14 +513,20 @@ def index():
 def product_detail(product_id):
     session_db = SessionLocal()
     try:
-        product = session_db.query(Product).filter_by(id=product_id).one_or_none()
+        # User constraint
+        product = session_db.query(Product).filter_by(id=product_id, user_id=current_user.id).one_or_none()
         if not product:
-            return "Product not found", 404
+            return "Product not found or access denied", 404
 
         if request.method == "POST":
             # --- 所属ショップ ---
             shop_id_str = request.form.get("shop_id")
-            product.shop_id = int(shop_id_str) if shop_id_str else None
+            if shop_id_str:
+                # Verify shop ownership
+                s = session_db.query(Shop).filter_by(id=int(shop_id_str), user_id=current_user.id).first()
+                product.shop_id = s.id if s else None
+            else:
+                product.shop_id = None
 
             # --- 基本情報 (Product) ---
             product.custom_title = request.form.get("title")
@@ -606,7 +633,7 @@ def product_detail(product_id):
         if snapshot and snapshot.image_urls:
             images = snapshot.image_urls.split("|")
             
-        all_shops = session_db.query(Shop).all()
+        all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         current_shop_id = session.get('current_shop_id')
         
         variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
@@ -648,13 +675,11 @@ def scrape_run():
     error_msg = ""
 
     if target_url:
-        search_url = target_url
-        try:
-            items = scrape_single_item(target_url, headless=True)
-            new_count, updated_count = save_scraped_items_to_db(items, site="mercari")
-        except Exception as e:
-            error_msg = str(e)
-    else:
+        # 単品URLスクレイピング
+        items = scrape_single_item(target_url, headless=True)
+        new_count, updated_count = save_scraped_items_to_db(items, site="mercari", user_id=current_user.id)
+        
+    else: # This block handles search results
         params = {}
         if keyword: params["keyword"] = keyword
         if price_min: params["price_min"] = price_min
@@ -694,26 +719,34 @@ def scrape_run():
         error_msg=error_msg,
     )
 
+def _parse_ids_and_params(session_db):
+    """
+    Export共通のパラメータ解析とProducts取得
+    Always filter by current_user.id
+    """
+    product_ids = request.args.getlist("id", type=int)
+    markup = request.args.get("markup", "1.0", type=float)
+    qty = request.args.get("qty", "1", type=int)
+
+    query = session_db.query(Product).filter(Product.user_id == current_user.id)
+    
+    current_shop_id = session.get('current_shop_id')
+    if current_shop_id:
+        query = query.filter(Product.shop_id == current_shop_id)
+        
+    if product_ids:
+        query = query.filter(Product.id.in_(product_ids))
+        
+    products = query.all()
+    return products, markup, qty
+
 @app.route("/export/shopify")
 def export_shopify():
     session_db = SessionLocal()
     try:
-        product_ids = request.args.getlist("id", type=int)
-        query = session_db.query(Product)
-        
-        current_shop_id = session.get('current_shop_id')
-        if current_shop_id:
-            query = query.filter(Product.shop_id == current_shop_id)
-            
-        if product_ids:
-             query = query.filter(Product.id.in_(product_ids))
-
-        products = query.all()
+        products, markup, default_qty = _parse_ids_and_params(session_db)
         if not products:
-            return "対象の商品がありません。", 400
-
-        markup = request.args.get("markup", "1.0", type=float)
-        default_qty = request.args.get("qty", "1", type=int)
+             return "対象の商品がありません。", 400
         
         output = io.StringIO()
         fieldnames = [
@@ -916,21 +949,9 @@ def export_ebay():
 def export_stock_update():
     session_db = SessionLocal()
     try:
-        product_ids = request.args.getlist("id", type=int)
-        query = session_db.query(Product)
-        
-        current_shop_id = session.get('current_shop_id')
-        if current_shop_id:
-            query = query.filter(Product.shop_id == current_shop_id)
-            
-        if product_ids:
-            query = query.filter(Product.id.in_(product_ids))
-            
-        products = query.all()
+        products, markup, default_qty = _parse_ids_and_params(session_db)
         if not products:
              return "対象の商品がありません。", 400
-
-        default_qty = request.args.get("qty", "1", type=int)
 
         output = io.StringIO()
         fieldnames = ["Handle", "Option1 Value", "Option2 Value", "Option3 Value", "Variant Inventory Qty"]
@@ -967,21 +988,9 @@ def export_stock_update():
 def export_price_update():
     session_db = SessionLocal()
     try:
-        product_ids = request.args.getlist("id", type=int)
-        query = session_db.query(Product)
-        
-        current_shop_id = session.get('current_shop_id')
-        if current_shop_id:
-            query = query.filter(Product.shop_id == current_shop_id)
-            
-        if product_ids:
-            query = query.filter(Product.id.in_(product_ids))
-            
-        products = query.all()
+        products, markup, default_qty = _parse_ids_and_params(session_db)
         if not products:
              return "対象の商品がありません。", 400
-
-        markup = request.args.get("markup", "1.0", type=float)
 
         output = io.StringIO()
         fieldnames = ["Handle", "Option1 Value", "Option2 Value", "Option3 Value", "Variant Price"]
