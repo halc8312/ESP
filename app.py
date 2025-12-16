@@ -702,7 +702,7 @@ def scrape_run():
                 max_scroll=3,
                 headless=True,
             )
-            new_count, updated_count = save_scraped_items_to_db(items, site="mercari")
+            new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="mercari")
         except Exception as e:
             items = []
             new_count = updated_count = 0
