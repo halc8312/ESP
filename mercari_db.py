@@ -17,11 +17,8 @@ def create_driver(headless: bool = True):
     options = Options()
 
     # --- Docker環境で必須の設定 ---
-    # サンドボックス化を無効化（Docker内では権限の問題で必須）
     options.add_argument("--no-sandbox")
-    # 共有メモリの使用を無効化（/dev/shmのサイズ制限によるクラッシュを回避）
     options.add_argument("--disable-dev-shm-usage")
-    # GPU無効化（Linuxサーバー環境での安定性向上）
     options.add_argument("--disable-gpu")
     
     # --- ヘッドレスモードの設定 ---
@@ -29,17 +26,13 @@ def create_driver(headless: bool = True):
         options.add_argument("--headless=new")
 
     # --- Bot検知対策 ---
-    # 一般的なUser-Agentを設定
     user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
     options.add_argument(f'user-agent={user_agent}')
-    # WebDriverであるという情報を隠す
     options.add_argument('--disable-blink-features=AutomationControlled')
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
 
-    # DockerfileでインストールしたChrome/ChromeDriverは通常、自動検出される
     try:
-        # Docker内のChromeバージョンに合わせてドライバを自動インストール
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
         return driver
@@ -56,7 +49,7 @@ def scrape_shops_product(driver, url: str):
         print(f"Error accessing {url}: {e}")
         return {
             "url": url, "title": "", "price": None, "status": "error", 
-            "description": "", "image_urls": []
+            "description": "", "image_urls": [], "variants": []
         }
 
     wait = WebDriverWait(driver, 10)
@@ -69,8 +62,6 @@ def scrape_shops_product(driver, url: str):
     # ---- タイトル ----
     title = ""
     try:
-        # Shopsは h1 が商品名であることが多いが、クラス名が変わる可能性あり
-        # data-testid='product-name' があればベスト
         title_el = driver.find_elements(By.CSS_SELECTOR, "[data-testid='product-name']")
         if not title_el:
             title_el = driver.find_elements(By.TAG_NAME, "h1")
@@ -83,7 +74,6 @@ def scrape_shops_product(driver, url: str):
     # ---- 価格 ----
     price = None
     try:
-        # data-testid='product-price' を探す
         price_els = driver.find_elements(By.CSS_SELECTOR, "[data-testid='product-price']")
         if price_els:
             price_text = price_els[0].text
@@ -96,7 +86,6 @@ def scrape_shops_product(driver, url: str):
     # 予備の価格取得ロジック
     if price is None:
         try:
-            # 画面内の「円」を含む大きな数字を探す（荒技）
             body_text = driver.find_element(By.TAG_NAME, "body").text
             m = re.search(r"([\d,]+)\s*円", body_text)
             if m:
@@ -111,7 +100,6 @@ def scrape_shops_product(driver, url: str):
         if desc_els:
             description = desc_els[0].text.strip()
         else:
-            # 見つからない場合はbodyから抽出を試みる（精度低）
             pass
     except Exception:
         pass
@@ -119,13 +107,10 @@ def scrape_shops_product(driver, url: str):
     # ---- 画像 ----
     image_urls = []
     try:
-        # Shopsの画像は swiper などのライブラリで表示されていることが多い
-        # img タグ全体から特定ドメインを含むものを探す
         imgs = driver.find_elements(By.TAG_NAME, "img")
         for img in imgs:
             src = img.get_attribute("src")
             if src and "mercari" in src and "static" in src:
-                # サムネイルを除外したいが、まずは全部取る
                 if src not in image_urls:
                     image_urls.append(src)
     except Exception:
@@ -133,54 +118,105 @@ def scrape_shops_product(driver, url: str):
 
     # ---- バリエーション（簡易取得） ----
     variants = []
+    item_data_update = {}
     try:
-        # 探索するセレクタのリスト (上から順に試す)
-        selectors = [
-            # パターン1: data-testid に variant を含む要素内のボタンやテキスト
-            "div[data-testid*='variant'] button",
-            "div[data-testid*='selector'] button",
-            
-            # パターン2: 一般的なラベル（種類・サイズ・カラー）の親要素内のボタン
-            "//div[contains(text(), '種類')]/..//button",
-            "//div[contains(text(), 'サイズ')]/..//button",
-            "//div[contains(text(), 'カラー')]/..//button",
-            "//span[contains(text(), '種類')]/..//button",
-            "//span[contains(text(), 'サイズ')]/..//button",
-            
-            # パターン3: 特定のクラス名（推測）や属性
-            "button[aria-haspopup='listbox']", # ドロップダウンの場合
-            "div[role='radiogroup'] div[role='radio']" # ラジオボタン形式
-        ]
+        # トラブルシューティング: Shopsのバリエーション取得 (DOM構造解析に基づく)
+        # ラベル(span/p) -> 親(div) -> 兄弟(div) -> 子要素(div/a) 
+        # テキストには価格や在庫情報が含まれるためクリーニングが必要
+        def extract_options(label_texts):
+            found_options = []
+            for label_text in label_texts:
+                xpath = f"//*[contains(text(), '{label_text}')]"
+                labels = driver.find_elements(By.XPATH, xpath)
+                
+                for label in labels:
+                    try:
+                        # Skip if script or style
+                        if label.tag_name in ['script', 'style']: continue
+                        
+                        # 親の兄弟要素（コンテナ）を探す
+                        parent = label.find_element(By.XPATH, "..")
+                        container = driver.execute_script("return arguments[0].nextElementSibling", parent)
+                        
+                        if container:
+                            # コンテナ内の直下の子要素をオプション候補とする
+                            children = container.find_elements(By.XPATH, "./*")
+                            if children:
+                                for child in children:
+                                    raw_text = child.text.strip()
+                                    if not raw_text: continue
+                                    
+                                    # 1行目を取得（価格や在庫情報は改行されることが多いが、念のためRegexで掃除）
+                                    val = raw_text.split('\n')[0].strip()
+                                    
+                                    # Regex cleaning
+                                    val = re.sub(r'[¥￥]\s*[\d,]+', '', val) # Remove price
+                                    val = re.sub(r'[\d,]+\s*円', '', val)    # Remove price
+                                    val = re.sub(r'残り\d+点', '', val)      # Remove stock info
+                                    val = re.sub(r'売り切れ', '', val)       # Remove status
+                                    val = re.sub(r'在庫なし', '', val)       # Remove status
+                                    val = val.strip()
 
-        found_elements = []
-        for sel in selectors:
-            if sel.startswith("//"):
-                found_elements = driver.find_elements(By.XPATH, sel)
-            else:
-                found_elements = driver.find_elements(By.CSS_SELECTOR, sel)
-            
-            if found_elements and len(found_elements) > 1:
-                # 複数見つかった場合、それがバリエーション選択肢である可能性が高い
-                break
-        
-        # それでも見つからなければ、data-testid='product-variant-item' (旧来)
-        if not found_elements:
-             found_elements = driver.find_elements(By.CSS_SELECTOR, "[data-testid='product-variant-item']")
+                                    # いいね！ボタンなどを除外
+                                    if "いいね" in val or "シェア" in val or "もっと見る" in val or not val: continue
+                                    
+                                    if val and val not in found_options:
+                                        found_options.append(val)
+                                
+                                if found_options:
+                                    return found_options
+                    except:
+                        continue
+            return found_options
 
-        seen_opts = set()
-        for el in found_elements:
-            text_val = el.text.strip()
-            # 空文字や「選択中」などの余計な文言を除外したいが、まずはそのまま
-            if text_val and text_val not in seen_opts:
-                seen_opts.add(text_val)
+        colors = extract_options(['カラー', 'Color'])
+        types = extract_options(['種類', 'サイズ', 'Size'])
+
+        print(f"DEBUG Colors found: {colors}")
+        print(f"DEBUG Types found: {types}")
+
+        # 色と種類を組み合わせてバリエーションを作成
+        if colors and types:
+            option1_name = "カラー"
+            option2_name = "サイズ/種類"
+            for color in colors:
+                for type_val in types:
+                    variants.append({
+                        "option1_name": option1_name,
+                        "option1_value": color,
+                        "option2_name": option2_name,
+                        "option2_value": type_val,
+                        "price": price,
+                        "inventory_qty": 1 
+                    })
+            item_data_update = {"option1_name": option1_name, "option2_name": option2_name}
+            
+        elif colors: # 色だけの場合
+            option1_name = "カラー"
+            for color in colors:
                 variants.append({
-                    "option1_value": text_val,
-                    "price": price, 
+                    "option1_name": option1_name,
+                    "option1_value": color,
+                    "price": price,
                     "inventory_qty": 1
                 })
-    except Exception:
-        pass
+            item_data_update = {"option1_name": option1_name}
 
+        elif types: # 種類だけの場合
+            option1_name = "種類" # デフォルト
+            for type_val in types:
+                variants.append({
+                    "option1_name": option1_name,
+                    "option1_value": type_val,
+                    "price": price,
+                    "inventory_qty": 1
+                })
+            item_data_update = {"option1_name": option1_name}
+
+    except Exception as e:
+        print(f"Error extracting variants: {e}")
+        pass
+    
     # ---- ステータス ----
     status = "on_sale"
     try:
@@ -190,15 +226,20 @@ def scrape_shops_product(driver, url: str):
     except Exception:
         pass
 
-    return {
+    # Update item_data with found option names
+    item_data = {
         "url": url,
         "title": title,
         "price": price,
         "status": status,
         "description": description,
         "image_urls": image_urls,
-        "variants": variants # 追加
+        "variants": variants
     }
+    item_data.update(item_data_update)
+    return item_data
+
+
 
 
 def scrape_item_detail(driver, url: str):
@@ -214,7 +255,7 @@ def scrape_item_detail(driver, url: str):
         print(f"Error accessing {url}: {e}")
         return {
             "url": url, "title": "", "price": None, "status": "error", 
-            "description": "", "image_urls": []
+            "description": "", "image_urls": [], "variants": []
         }
 
     wait = WebDriverWait(driver, 10)
@@ -307,6 +348,46 @@ def scrape_item_detail(driver, url: str):
     except Exception:
         pass
 
+    # ---- バリエーション（一般出品） ----
+    variants = []
+    try:
+        # 一般出品は「商品の情報」欄などにサイズや色が書かれているが、
+        # 選択式のUI（ボタン）がある場合はそれを優先
+        selectors = [
+             "mer-item-thumbnail ~ div button", # 新UI
+             "//div[contains(text(), '種類')]/..//button",
+             "//div[contains(text(), 'サイズ')]/..//button",
+             "//div[contains(text(), 'カラー')]/..//button",
+             "//p[contains(text(), 'サイズ')]/..//button",
+             "//p[contains(text(), 'カラー')]/..//button",
+             "button[aria-haspopup='listbox']",
+             "div[role='radiogroup'] div[role='radio']",
+             "div[data-testid='product-variant-selector'] button"
+        ]
+        
+        found_elements = []
+        for sel in selectors:
+            if sel.startswith("//"):
+                found_elements = driver.find_elements(By.XPATH, sel)
+            else:
+                found_elements = driver.find_elements(By.CSS_SELECTOR, sel)
+            
+            if found_elements and len(found_elements) > 1:
+                break
+                
+        seen_opts = set()
+        for el in found_elements:
+            text_val = el.text.strip()
+            if text_val and text_val not in seen_opts:
+                seen_opts.add(text_val)
+                variants.append({
+                    "option1_value": text_val,
+                    "price": price, 
+                    "inventory_qty": 1
+                })
+    except Exception:
+        pass
+
     return {
         "url": url,
         "title": title,
@@ -314,6 +395,7 @@ def scrape_item_detail(driver, url: str):
         "status": status,
         "description": description,
         "image_urls": image_urls,
+        "variants": variants
     }
 
 
@@ -343,43 +425,63 @@ def scrape_search_result(
         except Exception:
             print("DEBUG: Timeout waiting for body")
 
-        for i in range(max_scroll):
+        # Try to collect enough links to satisfy max_items
+        links = []
+        scroll_attempts = 0
+        while len(links) < max_items * 2 and scroll_attempts < max_scroll * 2: # Fetch more potential links
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2) # スクロール待機は少し短くてもOK
+            time.sleep(2)
+            
+            new_links = driver.find_elements(By.CSS_SELECTOR, "a[href*='/item/']")
+            if not new_links:
+                new_links = driver.find_elements(By.CSS_SELECTOR, "li[data-testid='item-cell'] a")
+            
+            if not new_links:
+                # No items found via either selector, stop scrolling/searching
+                break
 
-        links = driver.find_elements(By.CSS_SELECTOR, "a[href*='/item/']")
-        if len(links) == 0:
-             print("DEBUG: No links found, trying list selector...")
-             links = driver.find_elements(By.CSS_SELECTOR, "li[data-testid='item-cell'] a")
+            # Simple dedup based on current view
+            current_hrefs = {l.get_attribute("href") for l in links}
+            for nl in new_links:
+                h = nl.get_attribute("href")
+                if h and "/item/" in h and h not in current_hrefs:
+                    links.append(nl)
+            
+            if len(links) >= max_items * 1.5: # buffer
+                break
+                
+            scroll_attempts += 1
 
-        print(f"DEBUG: Found {len(links)} links on search page.")
-
+        print(f"DEBUG: Found {len(links)} unique links on search page.")
+        
         item_urls = []
         seen = set()
-
         for link in links:
             href = link.get_attribute("href")
             if not href or "/item/" not in href or href in seen:
                 continue
             seen.add(href)
             item_urls.append(href)
-            if len(item_urls) >= max_items:
-                break
 
-        print(f"DEBUG: Going to scrape {len(item_urls)} items.")
-
+        filtered_items = []
         for url in item_urls:
+            if len(filtered_items) >= max_items:
+                break
+                
             print(f"DEBUG: Scraping item {url}")
-            data = scrape_item_detail(driver, url)
-            if data["title"]: 
-                 print(f"DEBUG: Success -> {data['title']}")
-            else:
-                 print("DEBUG: Failed to get title")
-            
-            items.append(data)
-            time.sleep(1) # 負荷対策
-
-        return items
+            try:
+                data = scrape_item_detail(driver, url)
+                if data["title"] and data["status"] != "error":
+                     print(f"DEBUG: Success -> {data['title']}")
+                     filtered_items.append(data)
+                else:
+                     print("DEBUG: Failed to get valid data (empty title or error)")
+            except Exception as e:
+                print(f"DEBUG: Error scraping {url}: {e}")
+                
+            time.sleep(1) 
+        
+        return filtered_items
 
     except Exception as e:
         print(f"CRITICAL ERROR during scraping: {e}")
@@ -396,7 +498,7 @@ def scrape_search_result(
 
 def scrape_single_item(url: str, headless: bool = True):
     """
-    指定された商品URLを1件だけスクレイピングして list[dict] で返す。
+    指定された商品URLを1件だけスクレイピングして list[dict] を返す。
     save_scraped_items_to_db にそのまま渡せるようにリストに包んでいる。
     """
     driver = None

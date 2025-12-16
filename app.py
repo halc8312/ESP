@@ -21,9 +21,76 @@ from models import Shop, Product, Variant, ProductSnapshot, DescriptionTemplate
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-this")
 
+# Flask-Login setup
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+from models import Shop, Product, Variant, ProductSnapshot, DescriptionTemplate, User
+
+@login_manager.user_loader
+def load_user(user_id):
+    session_db = SessionLocal()
+    try:
+        return session_db.query(User).get(int(user_id))
+    finally:
+        session_db.close()
+
 # アプリ起動時にDB初期化（テーブル作成）
 with app.app_context():
     init_db()
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+        
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        
+        session_db = SessionLocal()
+        try:
+            user = session_db.query(User).filter_by(username=username).first()
+            if user and user.check_password(password):
+                login_user(user)
+                return redirect(url_for('index'))
+            else:
+                return render_template('login.html', error="Invalid username or password")
+        finally:
+            session_db.close()
+            
+    return render_template('login.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('login'))
+
+@app.cli.command("create-user")
+def create_user():
+    import getpass
+    username = input("Username: ")
+    password = getpass.getpass("Password: ")
+    
+    session_db = SessionLocal()
+    try:
+        if session_db.query(User).filter_by(username=username).first():
+            print("User already exists.")
+            return
+
+        new_user = User(username=username)
+        new_user.set_password(password)
+        session_db.add(new_user)
+        session_db.commit()
+        print(f"User {username} created successfully.")
+    except Exception as e:
+        print(f"Error: {e}")
+        session_db.rollback()
+    finally:
+        session_db.close()
 
 # ============================== 
 # ユーティリティ
@@ -93,11 +160,17 @@ def save_scraped_items_to_db(items, site: str = "mercari"):
                 scraped_variants = item.get("variants")
                 if scraped_variants:
                     # メルカリShopsなどでバリエーションが取得できた場合
-                    product.option1_name = "Variation" # 仮の名前
+                    # オプション名を設定
+                    product.option1_name = item.get("option1_name", "Variation")
+                    product.option2_name = item.get("option2_name") 
+                    product.option3_name = item.get("option3_name")
+
                     for i, v_data in enumerate(scraped_variants, 1):
                         new_variant = Variant(
                             product_id=product.id,
                             option1_value=v_data.get("option1_value", f"Option {i}"),
+                            option2_value=v_data.get("option2_value"), # 追加
+                            option3_value=v_data.get("option3_value"), # 追加
                             sku=f"{generated_sku}-{i}", # SKUをユニーク化
                             price=v_data.get("price", price),
                             taxable=False,
@@ -196,6 +269,7 @@ PAGE_SIZE = 50
 # ============================== 
 
 @app.route("/shops", methods=["GET", "POST"])
+@login_required
 def manage_shops():
     session_db = SessionLocal()
     try:
@@ -229,6 +303,7 @@ def manage_shops():
         session_db.close()
 
 @app.route("/shops/<int:shop_id>/delete", methods=["POST"])
+@login_required
 def delete_shop(shop_id):
     session_db = SessionLocal()
     try:
@@ -246,6 +321,7 @@ def delete_shop(shop_id):
     return redirect(url_for('manage_shops'))
 
 @app.route("/set_current_shop", methods=["POST"])
+@login_required
 def set_current_shop():
     shop_id = request.form.get("shop_id")
     if shop_id:
@@ -255,6 +331,7 @@ def set_current_shop():
     return redirect(request.referrer or url_for('index'))
 
 @app.route("/templates", methods=["GET", "POST"])
+@login_required
 def manage_templates():
     session_db = SessionLocal()
     try:
@@ -281,6 +358,7 @@ def manage_templates():
         session_db.close()
 
 @app.route("/templates/<int:template_id>/delete", methods=["POST"])
+@login_required
 def delete_template(template_id):
     session_db = SessionLocal()
     try:
@@ -293,6 +371,7 @@ def delete_template(template_id):
     return redirect(url_for('manage_templates'))
 
 @app.route("/")
+@login_required
 def index():
     session_db = SessionLocal()
     try:
@@ -380,6 +459,7 @@ def index():
         session_db.close()
 
 @app.route("/product/<int:product_id>", methods=["GET", "POST"])
+@login_required
 def product_detail(product_id):
     session_db = SessionLocal()
     try:
@@ -516,10 +596,12 @@ def product_detail(product_id):
         session_db.close()
 
 @app.route("/scrape", methods=["GET", "POST"])
+@login_required
 def scrape_form():
     return render_template("scrape_form.html")
 
 @app.route("/scrape/run", methods=["POST"])
+@login_required
 def scrape_run():
     target_url = request.form.get("target_url")
     keyword = request.form.get("keyword", "")

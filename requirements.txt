@@ -5,3 +5,6 @@ pandas
 gunicorn
 selenium
 webdriver-manager
+Flask-Login
+pytest
+pytest-flask
