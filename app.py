@@ -21,6 +21,10 @@ from models import Shop, Product, Variant, ProductSnapshot, DescriptionTemplate
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-this")
 
+# Render/Herokuなどのプロキシ環境下で正しいURLスキーム(https)を取得するための設定
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
 # Flask-Login setup
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 login_manager = LoginManager()
@@ -803,12 +807,13 @@ def export_shopify():
                     row["Tags"] = product.tags or ""
                     row["SEO Title"] = product.seo_title or ""
                     row["SEO Description"] = product.seo_description or ""
-                    row["Option1 Name"] = product.option1_name or "Title"
-                    row["Option2 Name"] = product.option2_name or ""
-                    row["Option3 Name"] = product.option3_name or ""
                     if image_urls:
                         row["Image Src"] = image_urls[0]
                         row["Image Position"] = 1
+                
+                row["Option1 Name"] = product.option1_name or "Title"
+                row["Option2 Name"] = product.option2_name or ""
+                row["Option3 Name"] = product.option3_name or ""
                 
                 row["Option1 Value"] = variant.option1_value
                 row["Option2 Value"] = variant.option2_value
