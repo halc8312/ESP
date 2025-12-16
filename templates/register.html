@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>Login - ESP</title>
+    <title>Register - ESP</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body {
@@ -52,7 +52,7 @@
         button {
             width: 100%;
             padding: 0.8rem;
-            background-color: #007bff;
+            background-color: #28a745;
             color: white;
             border: none;
             border-radius: 4px;
@@ -61,7 +61,7 @@
         }
 
         button:hover {
-            background-color: #0056b3;
+            background-color: #218838;
         }
 
         .error {
@@ -69,12 +69,26 @@
             text-align: center;
             margin-bottom: 1rem;
         }
+
+        .link {
+            text-align: center;
+            margin-top: 1rem;
+        }
+
+        .link a {
+            color: #007bff;
+            text-decoration: none;
+        }
+
+        .link a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 
 <body>
     <div class="login-container">
-        <h1>Login</h1>
+        <h1>Register</h1>
         {% if error %}
         <div class="error">{{ error }}</div>
         {% endif %}
@@ -87,11 +101,10 @@
                 <label for="password">Password</label>
                 <input type="password" id="password" name="password" required>
             </div>
-            <button type="submit">Log In</button>
+            <button type="submit">Create Account</button>
         </form>
-        <div class="link" style="text-align: center; margin-top: 1rem;">
-            Don't have an account? <a href="{{ url_for('register') }}"
-                style="color: #007bff; text-decoration: none;">Create Account</a>
+        <div class="link">
+            Already have an account? <a href="{{ url_for('login') }}">Log In</a>
         </div>
     </div>
 </body>

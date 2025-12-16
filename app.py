@@ -63,6 +63,35 @@ def login():
             
     return render_template('login.html')
 
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        
+        session_db = SessionLocal()
+        try:
+            if session_db.query(User).filter_by(username=username).first():
+                return render_template('register.html', error="Username already exists")
+            
+            new_user = User(username=username)
+            new_user.set_password(password)
+            session_db.add(new_user)
+            session_db.commit()
+            
+            # Auto login after registration
+            login_user(new_user)
+            return redirect(url_for('index'))
+        except Exception as e:
+            return render_template('register.html', error=f"Error: {e}")
+        finally:
+            session_db.close()
+            
+    return render_template('register.html')
+
 @app.route('/logout')
 @login_required
 def logout():
