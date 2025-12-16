@@ -826,9 +826,9 @@ def export_shopify():
                 row["Option2 Name"] = product.option2_name or ""
                 row["Option3 Name"] = product.option3_name or ""
                 
-                row["Option1 Value"] = variant.option1_value
-                row["Option2 Value"] = variant.option2_value
-                row["Option3 Value"] = variant.option3_value
+                row["Option1 Value"] = variant.option1_value or ""
+                row["Option2 Value"] = variant.option2_value or ""
+                row["Option3 Value"] = variant.option3_value or ""
                 row["Variant SKU"] = variant.sku or ""
                 row["Variant Grams"] = variant.grams or ""
                 row["Variant Inventory Tracker"] = "shopify"
