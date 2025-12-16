@@ -134,26 +134,49 @@ def scrape_shops_product(driver, url: str):
     # ---- バリエーション（簡易取得） ----
     variants = []
     try:
-        # 選択肢のボタン/ラベルを探す (Shopsの構造は可変なので複数を試す)
-        # ケース1: data-testid="variant-type" のような要素内のテキスト
-        # ケース2: 特定のクラスを持つボタン群
+        # 探索するセレクタのリスト (上から順に試す)
+        selectors = [
+            # パターン1: data-testid に variant を含む要素内のボタンやテキスト
+            "div[data-testid*='variant'] button",
+            "div[data-testid*='selector'] button",
+            
+            # パターン2: 一般的なラベル（種類・サイズ・カラー）の親要素内のボタン
+            "//div[contains(text(), '種類')]/..//button",
+            "//div[contains(text(), 'サイズ')]/..//button",
+            "//div[contains(text(), 'カラー')]/..//button",
+            "//span[contains(text(), '種類')]/..//button",
+            "//span[contains(text(), 'サイズ')]/..//button",
+            
+            # パターン3: 特定のクラス名（推測）や属性
+            "button[aria-haspopup='listbox']", # ドロップダウンの場合
+            "div[role='radiogroup'] div[role='radio']" # ラジオボタン形式
+        ]
+
+        found_elements = []
+        for sel in selectors:
+            if sel.startswith("//"):
+                found_elements = driver.find_elements(By.XPATH, sel)
+            else:
+                found_elements = driver.find_elements(By.CSS_SELECTOR, sel)
+            
+            if found_elements and len(found_elements) > 1:
+                # 複数見つかった場合、それがバリエーション選択肢である可能性が高い
+                break
         
-        # 試しに一般的な "種類" や "サイズ" のセクションを探す
-        variant_sections = driver.find_elements(By.XPATH, "//div[contains(text(), '種類') or contains(text(), 'サイズ') or contains(text(), 'カラー')]/..//button")
-        
-        # もし見つからなければ、data-testidで探す（仮定）
-        if not variant_sections:
-            variant_sections = driver.find_elements(By.CSS_SELECTOR, "[data-testid='product-variant-item']")
+        # それでも見つからなければ、data-testid='product-variant-item' (旧来)
+        if not found_elements:
+             found_elements = driver.find_elements(By.CSS_SELECTOR, "[data-testid='product-variant-item']")
 
         seen_opts = set()
-        for el in variant_sections:
+        for el in found_elements:
             text_val = el.text.strip()
+            # 空文字や「選択中」などの余計な文言を除外したいが、まずはそのまま
             if text_val and text_val not in seen_opts:
                 seen_opts.add(text_val)
                 variants.append({
                     "option1_value": text_val,
-                    "price": price, # 個別価格取得は困難なので代表価格を入れる
-                    "inventory_qty": 1 # 在庫ありと仮定
+                    "price": price, 
+                    "inventory_qty": 1
                 })
     except Exception:
         pass
