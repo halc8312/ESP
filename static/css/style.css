@@ -1,0 +1,335 @@
+:root {
+    --primary-color: #0066cc;
+    --primary-hover: #0052a3;
+    --secondary-color: #6c757d;
+    --success-color: #28a745;
+    --danger-color: #dc3545;
+    --background-color: #f8f9fa;
+    --card-bg: #ffffff;
+    --text-color: #333333;
+    --border-color: #dee2e6;
+    --header-bg: #ffffff;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+    --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 0;
+    line-height: 1.5;
+    font-size: 16px; /* Base size for mobile legibility */
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+h2 { font-size: 1.25rem; margin-bottom: 0.75rem; border-bottom: 2px solid var(--border-color); padding-bottom: 0.5rem; }
+
+a {
+    color: var(--primary-color);
+    text-decoration: none;
+}
+a:hover {
+    text-decoration: underline;
+}
+
+/* Layout */
+.container, body > .nav, body > h1, body > form {
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 15px;
+    padding-right: 15px;
+}
+
+/* Components */
+.card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-sm);
+}
+
+/* Navigation */
+.nav {
+    background: var(--header-bg);
+    border-bottom: 1px solid var(--border-color);
+    padding: 15px;
+    margin-bottom: 30px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 15px;
+    box-shadow: var(--shadow-sm);
+}
+.nav div {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+.nav a {
+    color: var(--text-color);
+    font-weight: 500;
+    padding: 5px 10px;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+.nav a:hover {
+    background-color: var(--background-color);
+    text-decoration: none;
+}
+
+/* Buttons */
+button, .btn {
+    display: inline-block;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: H1.5;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: middle;
+    cursor: pointer;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background-color: #e2e6ea;
+    color: var(--text-color);
+    transition: all 0.2s;
+}
+button[type="submit"] {
+    background-color: var(--primary-color);
+    color: white;
+}
+button[type="submit"]:hover {
+    background-color: var(--primary-hover);
+}
+.btn-danger, button.del-btn {
+    background-color: var(--danger-color);
+    color: white;
+}
+.btn-success, button.add-btn {
+    background-color: var(--success-color);
+    color: white;
+}
+
+/* Forms */
+input[type="text"],
+input[type="number"],
+input[type="password"],
+input[type="email"],
+select,
+textarea {
+    display: block;
+    width: 100%;
+    padding: 8px 12px;
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--text-color);
+    background-color: #fff;
+    background-clip: padding-box;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    transition: border-color .15s ease-in-out,box-shadow .15s ease-in-out;
+}
+input:focus, select:focus, textarea:focus {
+    border-color: #80bdff;
+    outline: 0;
+    box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+}
+
+label {
+    display: inline-block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    font-size: 14px;
+    color: #555;
+}
+
+/* Actions Area (Filters/Exports) */
+.actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 15px;
+    background: var(--card-bg);
+    padding: 20px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin-bottom: 20px;
+}
+.filters, .nav-filters {
+    background: #eef7ff;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #bcd;
+    margin-bottom: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    align-items: flex-end;
+}
+
+/* Tables */
+.table-responsive {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin-bottom: 20px;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: var(--card-bg);
+    font-size: 14px;
+}
+th, td {
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    vertical-align: middle;
+}
+th {
+    background-color: #f1f3f5;
+    font-weight: 600;
+    text-align: left;
+    white-space: nowrap;
+}
+tr.changed {
+    background-color: #fff8e1 !important;
+}
+
+/* Mobile Optimizations */
+@media (max-width: 768px) {
+    .nav {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .nav div {
+        flex-direction: column;
+        align-items: stretch;
+        width: 100%;
+    }
+    .nav a {
+        text-align: center;
+        background: #f8f9fa;
+        margin-bottom: 5px;
+    }
+    
+    .actions {
+        grid-template-columns: 1fr;
+    }
+    
+    .form-grid {
+        grid-template-columns: 1fr !important;
+    }
+    
+    /* Make tables card-like on very small screens? 
+       For now, just scrolling is safer for data-heavy tables, 
+       but we can hide less important columns if needed. */
+       
+    .hide-mobile {
+        display: none;
+    }
+}
+
+/* Product Detail Specifics */
+.form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+.form-section {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    padding: 20px;
+    border-radius: 8px;
+    margin-top: 20px;
+    box-shadow: var(--shadow-sm);
+}
+.form-group {
+    margin-bottom: 1rem;
+}
+.images {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 16px 0;
+}
+.images img {
+    max-width: 150px;
+    max-height: 150px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    object-fit: cover;
+}
+.pagination { 
+    margin-top: 20px; 
+    display: flex; 
+    gap: 12px; 
+    align-items: center; 
+    justify-content: center;
+}
+
+
+/* Variant Table */
+.variant-table input[type='text'], 
+.variant-table input[type='number'] {
+    padding: 4px 8px;
+    font-size: 13px;
+    height: auto;
+}
+.variant-table input.short {
+    width: 80px;
+    min-width: 60px;
+}
+.deleted-row {
+    display: none;
+    background-color: #ffebee;
+}
+
+
+/* Login/Register */
+.login-page {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    background-color: var(--background-color);
+}
+.login-container {
+    background: var(--card-bg);
+    padding: 2rem;
+    border-radius: 8px;
+    box-shadow: var(--shadow-md);
+    width: 100%;
+    max-width: 400px;
+    border: 1px solid var(--border-color);
+}
+.login-container h1 {
+    text-align: center;
+    margin-bottom: 1.5rem;
+}
+.error {
+    color: var(--danger-color);
+    text-align: center;
+    margin-bottom: 1rem;
+}
+.link {
+    text-align: center;
+    margin-top: 1rem;
+}
+

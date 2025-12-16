@@ -1,18 +1,39 @@
 <!doctype html>
 <html lang="ja">
-<head><meta charset="utf-8"><title>スクレイピング結果</title>
-<style>
-    body { font-family: sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; }
-    table { border-collapse: collapse; width: 100%; margin-top: 16px; }
-    th, td { border: 1px solid #ccc; padding: 4px 8px; font-size: 13px; vertical-align: top; }
-    th { background: #f0f0f0; }
-    .error { color: red; font-weight: bold; }
-</style>
+
+<head>
+    <meta charset="utf-8">
+    <title>スクレイピング結果</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
+
 <body>
+    <div class="nav">
+        <div>
+            <a href="{{ url_for('index') }}">商品一覧</a>
+            <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
+            <a href="{{ url_for('manage_templates') }}">テンプレート</a>
+            <a href="{{ url_for('manage_shops') }}">ショップ管理</a>
+        </div>
+        <div>
+            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
+                <select name="shop_id" onchange="this.form.submit()">
+                    <option value="">(ショップ未選択)</option>
+                    {% for s in all_shops %}
+                    <option value="{{ s.id }}" {% if current_shop_id==s.id %}selected{% endif %}>
+                        {{ s.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </form>
+        </div>
+    </div>
+
     <h1>スクレイピング結果</h1>
-    <p><a href="{{ url_for('scrape_form') }}">← 条件を変更して再スクレイピング</a> |
-        <a href="{{ url_for('index') }}">商品一覧を見る →</a></p>
+    <div style="margin-bottom: 20px;">
+        <a href="{{ url_for('scrape_form') }}">&laquo; 条件を変更して再スクレイピング</a>
+    </div>
 
     <h3>使用した検索URL:</h3>
     <pre style="background:#f0f0f0; padding:12px; overflow-x: auto;">{{ search_url }}</pre>
@@ -27,38 +48,41 @@
     </ul>
 
     {% if error_msg %}
-        <p class="error">スクレイピング中にエラーが発生しました: {{ error_msg }}</p>
+    <p class="error">スクレイピング中にエラーが発生しました: {{ error_msg }}</p>
     {% else %}
-        <p>スクレイピング取得件数: {{ items|length }} 件</p>
-        <p>DB 新規登録: {{ new_count }} 件 / 更新: {{ updated_count }} 件</p>
+    <p>スクレイピング取得件数: {{ items|length }} 件</p>
+    <p>DB 新規登録: {{ new_count }} 件 / 更新: {{ updated_count }} 件</p>
 
-        {% if items %}
-            <h3>取得した商品（プレビュー）</h3>
-            <table>
-                <tr>
-                    <th>#</th>
-                    <th>タイトル</th>
-                    <th>価格</th>
-                    <th>ステータス</th>
-                    <th>URL</th>
-                </tr>
-                {% for it in items %}
-                <tr>
-                    <td>{{ loop.index }}</td>
-                    <td>{{ it.title }}</td>
-                    <td>
-                        {% if it.price is not none %}
-                            ¥{{ "{:,}".format(it.price) }}
-                        {% else %}
-                            -
-                        {% endif %}
-                    </td>
-                    <td>{{ it.status }}</td>
-                    <td><a href="{{ it.url }}" target="_blank">開く</a></td>
-                </tr>
-                {% endfor %}
-            </table>
-        {% endif %}
+    {% if items %}
+    <h3>取得した商品（プレビュー）</h3>
+    <div class="table-responsive">
+        <table>
+            <tr>
+                <th>#</th>
+                <th>タイトル</th>
+                <th>価格</th>
+                <th>ステータス</th>
+                <th>URL</th>
+            </tr>
+            {% for it in items %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ it.title }}</td>
+                <td>
+                    {% if it.price is not none %}
+                    ¥{{ "{:,}".format(it.price) }}
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+                <td>{{ it.status }}</td>
+                <td><a href="{{ it.url }}" target="_blank">開く</a></td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+    {% endif %}
     {% endif %}
 </body>
+
 </html>
