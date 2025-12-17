@@ -194,3 +194,97 @@ def scrape_single_item(url: str, headless: bool = True):
     finally:
         if driver:
             driver.quit()
+
+
+def scrape_search_result(
+    search_url: str,
+    max_items: int = 5,
+    max_scroll: int = 3, # Not used for Yahoo pagination but kept for interface consistency
+    headless: bool = True,
+):
+    """
+    Yahoo! Shopping 検索結果から複数商品をスクレイピングする
+    """
+    driver = None
+    try:
+        print(f"DEBUG: Starting Yahoo search scrape for {search_url}")
+        driver = create_driver(headless=headless)
+        items = []
+
+        driver.get(search_url)
+        wait = WebDriverWait(driver, 15)
+        try:
+            wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        except:
+            pass
+
+        # Collect links
+        links = []
+        # Yahoo Search Result Selectors
+        # Standard: .LoopList__item a
+        # Grid: .Item__title a
+        # List: .elTitle a
+        
+        # Try to collect enough unique item links
+        page = 1
+        while len(links) < max_items:
+            # Get links on current page
+            candidates = []
+            candidates.extend(driver.find_elements(By.CSS_SELECTOR, "li.LoopList__item a"))
+            candidates.extend(driver.find_elements(By.CSS_SELECTOR, ".Item__title a"))
+            candidates.extend(driver.find_elements(By.CSS_SELECTOR, "[data-testid='item-name'] a"))
+            
+             # Deduplicate on page
+            for cand in candidates:
+                href = cand.get_attribute("href")
+                if href and "store.shopping.yahoo.co.jp" in href and href not in [l.get_attribute("href") for l in links]:
+                    links.append(cand)
+            
+            if len(links) >= max_items:
+                break
+                
+            # Pagination Logic (Next Page)
+            try:
+                # Yahoo pagination 'Next' often has class .elNext or text '次へ' or '>'
+                next_btn = driver.find_elements(By.CSS_SELECTOR, "a.elNext")
+                if not next_btn:
+                     next_btn = driver.find_elements(By.XPATH, "//a[contains(text(), '次へ')]")
+                
+                if next_btn:
+                    print(f"DEBUG: Navigating to next page {page+1}")
+                    next_btn[0].click()
+                    time.sleep(3)
+                    page += 1
+                else:
+                    break # No more pages
+            except:
+                break
+
+        print(f"DEBUG: Found {len(links)} links. Scraping top {max_items}...")
+        
+        # Scrape details
+        # Note: We can't use the 'links' elements directly effectively after navigation, 
+        # so we should store URLs first.
+        target_urls = [l.get_attribute("href") for l in links][:max_items]
+        
+        for url in target_urls:
+            print(f"DEBUG: Scraping {url}")
+            try:
+                data = scrape_item_detail(driver, url)
+                if data["title"]:
+                    print(f"DEBUG: Success -> {data['title']}")
+                    items.append(data)
+                time.sleep(1)
+            except Exception as e:
+                 print(f"Error scraping {url}: {e}")
+        
+        return items
+
+    except Exception as e:
+        print(f"Yahoo Search Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+    finally:
+        if driver:
+            driver.quit()

@@ -764,18 +764,55 @@ def scrape_run():
         if sort: params["sort"] = sort
         if category: params["category_id"] = category
 
-        base = "https://jp.mercari.com/search?"
-        query = urlencode(params)
-        search_url = base + query
+        # Determine site (default mercari)
+        site = request.form.get("site", "mercari")
+        
+        if site == "yahoo":
+            # Yahoo Search Logic
+            # Yahoo Shopping Search URL: https://shopping.yahoo.co.jp/search?p={keyword} (Simple version)
+            # Ignoring price/sort for Beta version as implementation differs
+            
+            base = "https://shopping.yahoo.co.jp/search?"
+            # Yahoo uses 'p' for keyword
+            y_params = {"p": keyword} if keyword else {}
+            # If no keyword, Yahoo search might fail or show top. 
+            
+            search_url = base + urlencode(y_params)
+            
+            try:
+                items = yahoo_db.scrape_search_result(
+                    search_url=search_url,
+                    max_items=limit,
+                    max_scroll=3,
+                    headless=True,
+                )
+                new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="yahoo")
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                items = []
+                new_count = updated_count = 0
+                error_msg = f"Yahoo Search Error: {str(e)}"
 
-        try:
-            items = scrape_search_result(
-                search_url=search_url,
-                max_items=limit,
-                max_scroll=3,
-                headless=True,
-            )
-            new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="mercari")
+        else:
+            # Mercari Search Logic (Existing)
+            base = "https://jp.mercari.com/search?"
+            query = urlencode(params)
+            search_url = base + query
+
+            try:
+                items = scrape_search_result(
+                    search_url=search_url,
+                    max_items=limit,
+                    max_scroll=3,
+                    headless=True,
+                )
+                new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="mercari")
+            except Exception as e:
+                # ... handled below in catch-all or let it bubble? 
+                # Original code had try/except block.
+                # Re-raising or handling here.
+                raise e
         except Exception as e:
             items = []
             new_count = updated_count = 0
