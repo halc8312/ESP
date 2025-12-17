@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, make_response, send_from_directory, redirect, url_for, session, has_request_context
 from sqlalchemy.orm import subqueryload
+from sqlalchemy import func
 from datetime import datetime
 from urllib.parse import urlencode, urlsplit, urlunsplit
 import csv
@@ -420,6 +421,70 @@ def delete_template(template_id):
     finally:
         session_db.close()
     return redirect(url_for('manage_templates'))
+
+@app.route("/dashboard")
+@login_required
+def dashboard():
+    session_db = SessionLocal()
+    try:
+        current_shop_id = session.get('current_shop_id')
+        
+        # Base query for user's products
+        base_query = session_db.query(Product).filter(Product.user_id == current_user.id)
+        if current_shop_id:
+            base_query = base_query.filter(Product.shop_id == current_shop_id)
+
+        # 1. Total Count
+        total_items = base_query.count()
+
+        # 2. Status Counts
+        # func.count(Product.id) is cleaner, grouping by status
+        status_counts = (
+            session_db.query(Product.last_status, func.count(Product.id))
+            .filter(Product.user_id == current_user.id)
+        )
+        if current_shop_id:
+            status_counts = status_counts.filter(Product.shop_id == current_shop_id)
+        
+        status_counts = status_counts.group_by(Product.last_status).all()
+        # Convert to dict for easy access: {'active': 10, 'sold': 2, ...}
+        status_map = {s[0]: s[1] for s in status_counts}
+
+        # 3. Sold Out / Low Stock Variants
+        # This is a bit complex. We want to find variants with qty=0 linked to our products.
+        # Join Product and Variant
+        sold_out_query = (
+            session_db.query(func.count(Variant.id))
+            .join(Product)
+            .filter(Product.user_id == current_user.id)
+            .filter(Variant.inventory_qty == 0)
+        )
+        if current_shop_id:
+            sold_out_query = sold_out_query.filter(Product.shop_id == current_shop_id)
+        
+        sold_out_count = sold_out_query.scalar()
+
+        # 4. Recent Activity (Last 5 updated)
+        recent_items = (
+            base_query
+            .order_by(Product.updated_at.desc())
+            .limit(5)
+            .all()
+        )
+
+        all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
+
+        return render_template(
+            "dashboard.html",
+            total_items=total_items,
+            status_map=status_map,
+            sold_out_count=sold_out_count,
+            recent_items=recent_items,
+            all_shops=all_shops,
+            current_shop_id=current_shop_id
+        )
+    finally:
+        session_db.close()
 
 @app.route("/")
 @login_required
