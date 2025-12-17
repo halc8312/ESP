@@ -35,7 +35,8 @@
         <h3 style="margin-top:0;">方法1: URLを直接指定 (単品抽出)</h3>
         <form method="POST" action="{{ url_for('scrape_run') }}">
             <label>商品URL</label>
-            <input type="text" name="target_url" placeholder="https://jp.mercari.com/item/m123456789" required
+            <input type="text" name="target_url"
+                placeholder="https://jp.mercari.com/item/m123456789 または https://store.shopping.yahoo.co.jp/..." required
                 style="width:100%;">
             <button type="submit">URLからスクレイピング実行</button>
         </form>

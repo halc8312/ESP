@@ -12,6 +12,7 @@ import hashlib
 
 # 独自モジュール
 from mercari_db import scrape_search_result, scrape_single_item
+import yahoo_db
 from database import SessionLocal, init_db
 from models import Shop, Product, Variant, ProductSnapshot, DescriptionTemplate
 
@@ -744,9 +745,16 @@ def scrape_run():
     error_msg = ""
 
     if target_url:
-        # 単品URLスクレイピング
-        items = scrape_single_item(target_url, headless=True)
-        new_count, updated_count = save_scraped_items_to_db(items, site="mercari", user_id=current_user.id)
+        # Check domain for switching scrapers
+        if "shopping.yahoo.co.jp" in target_url:
+            items = yahoo_db.scrape_single_item(target_url, headless=True)
+            # site="yahoo" can be passed if we want to distinguish in DB, but Product model "site" field is used.
+            # save_scraped_items_to_db defaults to "mercari". Let's check its signature.
+            new_count, updated_count = save_scraped_items_to_db(items, site="yahoo", user_id=current_user.id)
+        else:
+            # Default to Mercari
+            items = scrape_single_item(target_url, headless=True)
+            new_count, updated_count = save_scraped_items_to_db(items, site="mercari", user_id=current_user.id)
         
     else: # This block handles search results
         params = {}
