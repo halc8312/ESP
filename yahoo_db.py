@@ -28,18 +28,39 @@ def scrape_item_detail(driver, url: str):
 
     # ---- Title ----
     title = ""
-    for selector in [".mdItemName", ".elName", "h1", "[data-testid='item-name']"]:
+    # Try more generic selectors first as Yahoo has many templates
+    # .mdItemName, .elName are common classes
+    for selector in [
+        ".mdItemName", ".elName", 
+        "h1.title", "h1.name", 
+        "[data-testid='item-name']", 
+        "h1" # Last resort
+    ]:
         try:
             els = driver.find_elements(By.CSS_SELECTOR, selector)
             if els:
-                title = els[0].text.strip()
-                if title: break
+                # Yahoo titles sometimes contain newlines or extra spaces
+                t = els[0].text.replace('\n', ' ').strip()
+                if t: 
+                    title = t
+                    break
         except:
             continue
+            
+    # If title is still empty, try meta title
+    if not title:
+        try:
+            title = driver.title.split('-')[0].strip()
+        except:
+            pass
 
     # ---- Price ----
     price = None
-    for selector in [".mdItemPrice", ".elPrice", ".elItemPrice", "[data-testid='item-price']"]:
+    for selector in [
+        ".mdItemPrice", ".elPrice", ".elItemPrice", 
+        "[data-testid='item-price']",
+        ".price" # Generic fallbacks
+    ]:
         try:
             els = driver.find_elements(By.CSS_SELECTOR, selector)
             if els:
@@ -63,9 +84,10 @@ def scrape_item_detail(driver, url: str):
 
     # ---- Description ----
     description = ""
-    # Yahoo tends to put description in iframes or specific divs
-    # We will try to get the main text content roughly
-    desc_selectors = [".mdItemDescription", ".elItemInfo", "#item-info"]
+    desc_selectors = [
+        ".mdItemDescription", ".elItemInfo", "#item-info",
+        ".explanation", ".item_exp" # Older templates
+    ]
     for sel in desc_selectors:
         try:
             els = driver.find_elements(By.CSS_SELECTOR, sel)
@@ -76,7 +98,6 @@ def scrape_item_detail(driver, url: str):
             continue
             
     if not description:
-        # Fallback to meta description
         try:
             meta = driver.find_element(By.CSS_SELECTOR, "meta[name='description']")
             description = meta.get_attribute("content")
@@ -86,24 +107,54 @@ def scrape_item_detail(driver, url: str):
     # ---- Images ----
     image_urls = []
     try:
-        # Main images often in a slider or list
-        img_selectors = [
-            ".mdItemImage img", ".elItemImage img", 
-            ".libItemImage img", "#item-image img"
-        ]
-        found_imgs = []
-        for sel in img_selectors:
-            found_imgs.extend(driver.find_elements(By.CSS_SELECTOR, sel))
+        # 1. Look for main image container first
+        # Yahoo often uses .mdItemImage or .elItemImage
+        # Also check for "item_image" id
+        
+        candidates = []
+        
+        # Helper to collect images from a container
+        def collect_imgs(selector):
+            try:
+                els = driver.find_elements(By.CSS_SELECTOR, selector)
+                for el in els:
+                    src = el.get_attribute("src")
+                    # Try to get high-res if available in data attributes
+                    if not src:
+                        src = el.get_attribute("data-src") or el.get_attribute("data-original")
+                    
+                    if src: candidates.append(src)
+            except:
+                pass
+
+        collect_imgs(".mdItemImage img")
+        collect_imgs(".elItemImage img")
+        collect_imgs(".libItemImage img")
+        collect_imgs("#item-image img")
+        collect_imgs("ul.elItemImage > li > img") # Slider thumbnails often imply main images exist
+        
+        # If nothing specific found, get all images that look like product photos
+        if not candidates:
+            all_imgs = driver.find_elements(By.TAG_NAME, "img")
+            for img in all_imgs:
+                src = img.get_attribute("src")
+                if src and ("y-img.jp" in src or "shopping.c.yimg.jp" in src):
+                    candidates.append(src)
+        
+        for src in candidates:
+            # Filter logic
+            if not src: continue
+            if "icon" in src or "blank" in src or "logo" in src: continue
             
-        for img in found_imgs:
-            src = img.get_attribute("src")
-            # Filter low res or icons
-            if src and "http" in src and "y-img.jp" in src:
-                # Yahoo thumbnails often have '_A_' or similar, try to get larger if possible?
-                # For now just grab what we see
-                if src not in image_urls:
-                    image_urls.append(src)
-    except:
+            # Clean up Yahoo image URLs if possible (remove standard resizing params?)
+            # Yahoo URL example: https://item-shopping.c.yimg.jp/i/n/shopname_itemcode
+            # Thumbnails: .../i/g/... or .../i/l/... ? /n/ is usually main.
+            
+            if src not in image_urls:
+                image_urls.append(src)
+                
+    except Exception as e:
+        print(f"Image scrape error: {e}")
         pass
 
     # ---- Status (Simplified) ----
