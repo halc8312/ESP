@@ -86,6 +86,32 @@
         <div class="form-section">
             <h2>バリエーション設定</h2>
 
+            <!-- Bulk Generator Wizard -->
+            <div class="form-section" style="background: #e3f2fd; border-color: #90caf9;">
+                <h3 style="margin-top:0; font-size:14px;">⚡ バリエーション一括生成</h3>
+                <p style="font-size:12px; color:#555;">カンマ区切りで入力してください (例: S, M, L)。既存の行は削除されません。</p>
+                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                    <div>
+                        <label style="font-size:11px;">Option1 Values</label>
+                        <input type="text" id="bulk_opt1" placeholder="例: Red, Blue" style="width:150px;">
+                    </div>
+                    <div>
+                        <label style="font-size:11px;">Option2 Values</label>
+                        <input type="text" id="bulk_opt2" placeholder="例: S, M, L" style="width:150px;">
+                    </div>
+                    <div>
+                        <label style="font-size:11px;">共通価格</label>
+                        <input type="number" id="bulk_price" placeholder="" style="width:80px;">
+                    </div>
+                    <div>
+                        <label style="font-size:11px;">共通SKU接頭辞</label>
+                        <input type="text" id="bulk_sku" placeholder="MER-ITEM-" style="width:100px;">
+                    </div>
+                    <button type="button" onclick="generateVariants()"
+                        style="background:#0066cc; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer;">生成</button>
+                </div>
+            </div>
+
             <!-- オプション名の設定 -->
             <div style="display:flex; gap:10px; margin-bottom:10px; background:#f0f0f0; padding:10px;">
                 <div>
@@ -235,7 +261,7 @@
 
         var newIndex = 0;
 
-        function addVariantRow() {
+        function addVariantRow(opt1 = '', opt2 = '', price = '', sku = '') {
             newIndex++;
             var idx = newIndex;
             var table = document.getElementById('variantTable').getElementsByTagName('tbody')[0];
@@ -244,16 +270,16 @@
             newRow.innerHTML = `
                 <td>
                     <input type="hidden" name="new_v_indices" value="${idx}">
-                    <input type="text" name="new_v_opt1_${idx}" value="">
+                    <input type="text" name="new_v_opt1_${idx}" value="${opt1}">
                 </td>
                 <td>
-                    <input type="text" name="new_v_opt2_${idx}" value="">
+                    <input type="text" name="new_v_opt2_${idx}" value="${opt2}">
                 </td>
                 <td>
-                    <input type="number" name="new_v_price_${idx}" value="">
+                    <input type="number" name="new_v_price_${idx}" value="${price}">
                 </td>
                 <td>
-                    <input type="text" name="new_v_sku_${idx}" value="">
+                    <input type="text" name="new_v_sku_${idx}" value="${sku}">
                 </td>
                 <td>
                     <input type="number" name="new_v_qty_${idx}" value="1" class="short">
@@ -275,6 +301,36 @@
         function removeNewRow(btn) {
             var row = btn.parentNode.parentNode;
             row.parentNode.removeChild(row);
+        }
+
+        function generateVariants() {
+            const opt1Input = document.getElementById('bulk_opt1').value;
+            const opt2Input = document.getElementById('bulk_opt2').value;
+            const price = document.getElementById('bulk_price').value;
+            const skuPrefix = document.getElementById('bulk_sku').value;
+
+            const opt1Values = opt1Input.split(',').map(s => s.trim()).filter(s => s);
+            const opt2Values = opt2Input.split(',').map(s => s.trim()).filter(s => s);
+
+            if (opt1Values.length === 0) {
+                alert('Option1 Valuesを入力してください');
+                return;
+            }
+
+            // If opt2 empty, just loop opt1
+            if (opt2Values.length === 0) {
+                opt1Values.forEach(v1 => {
+                    let sku = skuPrefix ? skuPrefix + v1 : '';
+                    addVariantRow(v1, '', price, sku);
+                });
+            } else {
+                opt1Values.forEach(v1 => {
+                    opt2Values.forEach(v2 => {
+                        let sku = skuPrefix ? skuPrefix + v1 + '-' + v2 : '';
+                        addVariantRow(v1, v2, price, sku);
+                    });
+                });
+            }
         }
     </script>
 </body>
