@@ -1,68 +1,55 @@
-<!doctype html>
-<html lang="ja">
-<meta charset="utf-8">
-<title>ショップ管理</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
+{% extends "base.html" %}
 
-<body>
-    <div class="nav">
-        <div>
-            <a href="{{ url_for('index') }}">商品一覧</a>
-            <a href="{{ url_for('dashboard') }}">ダッシュボード</a>
-            <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
-            <a href="{{ url_for('manage_templates') }}">テンプレート</a>
-            <a href="{{ url_for('manage_shops') }}">ショップ管理</a>
+{% block title %}ショップ管理{% endblock %}
+{% block header_title %}ショップ管理{% endblock %}
+
+{% block content %}
+    <div class="page-header">
+        <h1>ショップ管理</h1>
+    </div>
+
+    <!-- 新規追加フォーム -->
+    <div class="content-card">
+        <div class="content-card-header">
+            <h3>新規ショップ追加</h3>
         </div>
-        <div>
-            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
-                <select name="shop_id" onchange="this.form.submit()">
-                    <option value="">(ショップ未選択)</option>
-                    {% for s in all_shops %}
-                    <option value="{{ s.id }}" {% if current_shop_id==s.id %}selected{% endif %}>
-                        {{ s.name }}
-                    </option>
-                    {% endfor %}
-                </select>
+        <div class="content-card-body">
+            <form method="POST" class="shop-add-form" style="display:flex; gap:10px; flex-wrap: wrap;">
+                <input type="text" name="name" placeholder="ショップ名 (例: 文具店A)" required autocomplete="organization" style="flex: 1; min-width: 200px;">
+                <button type="submit" class="add-btn">追加</button>
             </form>
         </div>
     </div>
 
-    <h1>ショップ管理</h1>
-
-    <div class="form-section">
-        <h3>新規ショップ追加</h3>
-        <form method="POST" class="shop-add-form" style="display:flex; gap:10px;">
-            <input type="text" name="name" placeholder="ショップ名 (例: 文具店A)" required style="max-width:300px;" autocomplete="organization">
-            <button type="submit" class="add-btn">追加</button>
-        </form>
+    <!-- 登録済みショップ -->
+    <div class="content-card">
+        <div class="content-card-header">
+            <h3>登録済みショップ</h3>
+        </div>
+        <div class="content-card-body" style="padding: 0;">
+            <div class="table-responsive">
+                <table>
+                    <tr>
+                        <th>ID</th>
+                        <th>ショップ名</th>
+                        <th>商品数</th>
+                        <th>操作</th>
+                    </tr>
+                    {% for s in shops %}
+                    <tr>
+                        <td>{{ s.id }}</td>
+                        <td>{{ s.name }}</td>
+                        <td>{{ s.product_count }}</td>
+                        <td>
+                            <form method="POST" action="{{ url_for('delete_shop', shop_id=s.id) }}" style="display:inline;">
+                                <button type="submit" onclick="return confirm('削除すると紐付いている商品も影響を受けます。本当によろしいですか？');"
+                                    class="btn-danger">削除</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+        </div>
     </div>
-
-    <h3>登録済みショップ</h3>
-    <div class="table-responsive">
-        <table>
-            <tr>
-                <th>ID</th>
-                <th>ショップ名</th>
-                <th>商品数</th>
-                <th>操作</th>
-            </tr>
-            {% for s in shops %}
-            <tr>
-                <td>{{ s.id }}</td>
-                <td>{{ s.name }}</td>
-                <td>{{ s.product_count }}</td>
-                <td>
-                    <form method="POST" action="{{ url_for('delete_shop', shop_id=s.id) }}" style="display:inline;">
-                        <button type="submit" onclick="return confirm('削除すると紐付いている商品も影響を受けます。本当によろしいですか？');"
-                            class="btn-danger">削除</button>
-                    </form>
-                </td>
-            </tr>
-            {% endfor %}
-        </table>
-    </div>
-</body>
-
-</html>
+{% endblock %}

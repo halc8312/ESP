@@ -1,76 +1,75 @@
-<!doctype html>
-<html lang="ja">
-<meta charset="utf-8">
-<title>スクレイピング設定</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
+{% extends "base.html" %}
 
-<body>
-    <div class="nav">
-        <div>
-            <a href="{{ url_for('index') }}">商品一覧</a>
-            <a href="{{ url_for('dashboard') }}">ダッシュボード</a>
-            <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
-            <a href="{{ url_for('manage_templates') }}">テンプレート</a>
-            <a href="{{ url_for('manage_shops') }}">ショップ管理</a>
+{% block title %}スクレイピング設定{% endblock %}
+{% block header_title %}スクレイピング{% endblock %}
+
+{% block content %}
+    <div class="page-header">
+        <h1>スクレイピング実行</h1>
+    </div>
+
+    <!-- 方法1: URL直接指定 -->
+    <div class="content-card">
+        <div class="content-card-header">
+            <h3>方法1: URLを直接指定（単品抽出）</h3>
         </div>
-        <div>
-            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
-                <select name="shop_id" onchange="this.form.submit()">
-                    <option value="">(ショップ未選択)</option>
-                    {% for s in all_shops %}
-                    <option value="{{ s.id }}" {% if current_shop_id==s.id %}selected{% endif %}>
-                        {{ s.name }}
-                    </option>
-                    {% endfor %}
-                </select>
+        <div class="content-card-body">
+            <form method="POST" action="{{ url_for('scrape_run') }}">
+                <div class="form-group">
+                    <label>商品URL</label>
+                    <input type="url" name="target_url"
+                        placeholder="https://jp.mercari.com/item/m123456789 または https://store.shopping.yahoo.co.jp/..." required
+                        inputmode="url" autocomplete="url">
+                </div>
+                <button type="submit" style="width: 100%;">URLからスクレイピング実行</button>
             </form>
         </div>
     </div>
 
-    <h1>スクレイピング実行</h1>
+    <!-- 方法2: 検索条件 -->
+    <div class="content-card">
+        <div class="content-card-header">
+            <h3>方法2: 検索条件から抽出（一括抽出）</h3>
+        </div>
+        <div class="content-card-body">
+            <form method="POST" action="{{ url_for('scrape_run') }}">
+                <div class="form-group">
+                    <label>キーワード</label>
+                    <input type="text" name="keyword" value="スニーカー" required autocomplete="off">
+                </div>
 
-    <div class="form-section">
-        <h3 style="margin-top:0;">方法1: URLを直接指定 (単品抽出)</h3>
-        <form method="POST" action="{{ url_for('scrape_run') }}">
-            <label>商品URL</label>
-            <input type="url" name="target_url"
-                placeholder="https://jp.mercari.com/item/m123456789 または https://store.shopping.yahoo.co.jp/..." required
-                style="width:100%;" inputmode="url" autocomplete="url">
-            <button type="submit">URLからスクレイピング実行</button>
-        </form>
+                <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+                    <div class="form-group">
+                        <label>価格 min（任意）</label>
+                        <input type="number" name="price_min" inputmode="numeric" min="0" placeholder="0">
+                    </div>
+                    <div class="form-group">
+                        <label>価格 max（任意）</label>
+                        <input type="number" name="price_max" inputmode="numeric" min="0" placeholder="上限なし">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>ソート順</label>
+                    <select name="sort">
+                        <option value="created_desc">新着順</option>
+                        <option value="price_asc">価格：安い順</option>
+                        <option value="price_desc">価格：高い順</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>カテゴリID（任意、メルカリカテゴリID）</label>
+                    <input type="text" name="category" placeholder="例：1" inputmode="numeric">
+                </div>
+
+                <div class="form-group">
+                    <label>最大取得件数</label>
+                    <input type="number" name="limit" value="10" min="1" inputmode="numeric">
+                </div>
+
+                <button type="submit" style="width: 100%;">スクレイピング実行</button>
+            </form>
+        </div>
     </div>
-
-    <div class="form-section">
-        <h3 style="margin-top:0;">方法2: 検索条件から抽出 (一括抽出)</h3>
-        <form method="POST" action="{{ url_for('scrape_run') }}">
-
-            <label>キーワード</label>
-            <input type="text" name="keyword" value="スニーカー" required autocomplete="off">
-
-            <label>価格 min（任意）</label>
-            <input type="number" name="price_min" inputmode="numeric" min="0">
-
-            <label>価格 max（任意）</label>
-            <input type="number" name="price_max" inputmode="numeric" min="0">
-
-            <label>ソート順</label>
-            <select name="sort">
-                <option value="created_desc">新着順</option>
-                <option value="price_asc">価格：安い順</option>
-                <option value="price_desc">価格：高い順</option>
-            </select>
-
-            <label>カテゴリID（任意、メルカリカテゴリID）</label>
-            <input type="text" name="category" placeholder="例：1" inputmode="numeric">
-
-            <label>最大取得件数</label>
-            <input type="number" name="limit" value="10" min="1" inputmode="numeric">
-
-            <button type="submit">スクレイピング実行</button>
-        </form>
-    </div>
-</body>
-
-</html>
+{% endblock %}

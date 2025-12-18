@@ -1,244 +1,297 @@
-<!doctype html>
-<html lang="ja">
+{% extends "base.html" %}
 
-<head>
-    <meta charset="utf-8">
-    <title>商品編集 - {{ product.last_title }}</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
+{% block title %}商品編集 - {{ product.last_title }}{% endblock %}
+{% block header_title %}商品編集{% endblock %}
 
-<body>
-    <div class="nav">
-        <div>
-            <a href="{{ url_for('index') }}">商品一覧</a>
-            <a href="{{ url_for('dashboard') }}">ダッシュボード</a>
-            <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
-            <a href="{{ url_for('manage_templates') }}">テンプレート</a>
-            <a href="{{ url_for('manage_shops') }}">ショップ管理</a>
-        </div>
-        <div>
-            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
-                <select name="shop_id" onchange="this.form.submit()">
-                    <option value="">(ショップ未選択)</option>
-                    {% for s in all_shops %}
-                    <option value="{{ s.id }}" {% if current_shop_id==s.id %}selected{% endif %}>
-                        {{ s.name }}
-                    </option>
-                    {% endfor %}
-                </select>
-            </form>
-        </div>
+{% block content %}
+    <a href="{{ url_for('index') }}" class="back-link">&laquo; 一覧に戻る</a>
+
+    <div class="page-header">
+        <h1>商品編集</h1>
     </div>
-
-    <h1>商品編集</h1>
-    <p><a href="{{ url_for('index') }}">&laquo; 一覧に戻る</a></p>
 
     <form method="POST">
         <!-- 削除対象IDリスト -->
         <input type="hidden" name="delete_v_ids" id="delete_v_ids" value="">
 
-        <!-- 上部：基本情報 -->
-        <div class="form-section">
-            <h2>基本情報</h2>
-
-            <div class="form-group">
-                <label for="shop_id">所属ショップ</label>
-                <select id="shop_id" name="shop_id">
-                    <option value="">(共通 / 未所属)</option>
-                    {% for s in all_shops %}
-                    <option value="{{ s.id }}" {% if product.shop_id==s.id %}selected{% endif %}>{{ s.name }}</option>
-                    {% endfor %}
-                </select>
+        <!-- 基本情報 -->
+        <div class="content-card">
+            <div class="content-card-header">
+                <h2>基本情報</h2>
             </div>
-
-            <div class="form-group">
-                <label for="title">商品名 (Title)</label>
-                <input type="text" id="title" name="title"
-                    value="{{ product.custom_title or product.last_title or '' }}">
-            </div>
-
-            <div class="form-group">
-                <label for="status">ステータス (Status)</label>
-                <select id="status" name="status">
-                    <option value="active" {% if product.status=='active' %}selected{% endif %}>有効 (Active)</option>
-                    <option value="draft" {% if product.status=='draft' %}selected{% endif %}>下書き (Draft)</option>
-                </select>
-            </div>
-
-            <div class="form-group">
-                <label for="template">説明文テンプレート</label>
-                <select id="template" onchange="applyTemplate()">
-                    <option value="">(テンプレートを選択)</option>
-                    {% for t in templates %}
-                    <option value="{{ t.content | e }}">{{ t.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-
-            <div class="form-group">
-                <label for="description">商品説明 (Body HTML)</label>
-                <textarea id="description"
-                    name="description">{{ product.custom_description or (snapshot.description if snapshot else '') }}</textarea>
-            </div>
-        </div>
-
-        <!-- 中段：バリエーション設定 -->
-        <div class="form-section">
-            <h2>バリエーション設定</h2>
-
-            <!-- Bulk Generator Wizard -->
-            <div class="form-section" style="background: #e3f2fd; border-color: #90caf9;">
-                <h3 style="margin-top:0; font-size:14px;">⚡ バリエーション一括生成</h3>
-                <p style="font-size:12px; color:#555;">カンマ区切りで入力してください (例: S, M, L)。既存の行は削除されません。</p>
-                <div class="bulk-generator" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
-                    <div>
-                        <label style="font-size:11px;">Option1 Values</label>
-                        <input type="text" id="bulk_opt1" placeholder="例: Red, Blue" style="width:150px;">
-                    </div>
-                    <div>
-                        <label style="font-size:11px;">Option2 Values</label>
-                        <input type="text" id="bulk_opt2" placeholder="例: S, M, L" style="width:150px;">
-                    </div>
-                    <div>
-                        <label style="font-size:11px;">共通価格</label>
-                        <input type="number" id="bulk_price" placeholder="" style="width:80px;">
-                    </div>
-                    <div>
-                        <label style="font-size:11px;">共通SKU接頭辞</label>
-                        <input type="text" id="bulk_sku" placeholder="MER-ITEM-" style="width:100px;">
-                    </div>
-                    <button type="button" onclick="generateVariants()"
-                        style="background:#0066cc; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer;">生成</button>
-                </div>
-            </div>
-
-            <!-- オプション名の設定 -->
-            <div style="display:flex; gap:10px; margin-bottom:10px; background:#f0f0f0; padding:10px;">
-                <div>
-                    <label style="font-size:11px;">Option1 Name</label>
-                    <input type="text" name="option1_name" value="{{ product.option1_name or 'Title' }}"
-                        style="width:120px;">
-                </div>
-                <div>
-                    <label style="font-size:11px;">Option2 Name</label>
-                    <input type="text" name="option2_name" value="{{ product.option2_name or '' }}" style="width:120px;"
-                        placeholder="(例: Size)">
-                </div>
-                <div>
-                    <label style="font-size:11px;">Option3 Name</label>
-                    <input type="text" name="option3_name" value="{{ product.option3_name or '' }}"
-                        style="width:120px;">
-                </div>
-            </div>
-
-            <table class="variant-table" id="variantTable">
-                <thead>
-                    <tr>
-                        <th style="width:15%">Opt1 Value</th>
-                        <th style="width:15%">Opt2 Value</th>
-                        <th style="width:15%">Price</th>
-                        <th style="width:15%">SKU</th>
-                        <th style="width:10%">在庫</th>
-                        <th style="width:10%">重量(g)</th>
-                        <th>税 / HS / Origin</th>
-                        <th style="width:50px;">操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for v in variants %}
-                    <tr id="row-{{ v.id }}">
-                        <td data-label="Opt1 Value">
-                            <input type="hidden" name="v_ids" value="{{ v.id }}">
-                            <input type="text" name="v_opt1_{{ v.id }}" value="{{ v.option1_value or '' }}">
-                        </td>
-                        <td data-label="Opt2 Value">
-                            <input type="text" name="v_opt2_{{ v.id }}" value="{{ v.option2_value or '' }}">
-                        </td>
-                        <td data-label="Price">
-                            <input type="number" name="v_price_{{ v.id }}" value="{{ v.price or '' }}">
-                        </td>
-                        <td data-label="SKU">
-                            <input type="text" name="v_sku_{{ v.id }}" value="{{ v.sku or '' }}">
-                        </td>
-                        <td data-label="在庫">
-                            <input type="number" name="v_qty_{{ v.id }}" value="{{ v.inventory_qty }}" class="short">
-                        </td>
-                        <td data-label="重量(g)">
-                            <input type="number" name="v_grams_{{ v.id }}" value="{{ v.grams or '' }}" class="short">
-                        </td>
-                        <td data-label="税 / HS / Origin" style="text-align:left; font-size:11px;">
-                            <label><input type="checkbox" name="v_tax_{{ v.id }}" {% if v.taxable %}checked{% endif %}>
-                                課税</label><br>
-                            HS: <input type="text" name="v_hs_{{ v.id }}" value="{{ v.hs_code or '' }}"
-                                style="width:60px;"><br>
-                            Org: <input type="text" name="v_org_{{ v.id }}" value="{{ v.country_of_origin or '' }}"
-                                style="width:40px;">
-                        </td>
-                        <td data-label="操作">
-                            <button type="button" class="del-btn" onclick="markDelete({{ v.id }})">削除</button>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-
-            <button type="button" class="add-btn" onclick="addVariantRow()">＋ バリエーションを追加</button>
-        </div>
-
-        <!-- 下段：その他 -->
-        <div class="form-grid">
-            <div class="form-section">
-                <h2>分類</h2>
+            <div class="content-card-body">
                 <div class="form-group">
-                    <label for="vendor">販売元 (Vendor)</label>
-                    <input type="text" id="vendor" name="vendor"
+                    <label for="shop_id">所属ショップ</label>
+                    <select id="shop_id" name="shop_id">
+                        <option value="">(共通 / 未所属)</option>
+                        {% for s in all_shops %}
+                        <option value="{{ s.id }}" {% if product.shop_id==s.id %}selected{% endif %}>{{ s.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="title">商品名 (Title)</label>
+                    <input type="text" id="title" name="title"
+                        value="{{ product.custom_title or product.last_title or '' }}">
+                </div>
+
+                <div class="form-group">
+                    <label for="status">ステータス (Status)</label>
+                    <select id="status" name="status">
+                        <option value="active" {% if product.status=='active' %}selected{% endif %}>有効 (Active)</option>
+                        <option value="draft" {% if product.status=='draft' %}selected{% endif %}>下書き (Draft)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="template">説明文テンプレート</label>
+                    <select id="template" onchange="applyTemplate()">
+                        <option value="">(テンプレートを選択)</option>
+                        {% for t in templates %}
+                        <option value="{{ t.content | e }}">{{ t.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="description">商品説明 (Body HTML)</label>
+                    <textarea id="description" name="description" rows="6">{{ product.custom_description or (snapshot.description if snapshot else '') }}</textarea>
+                </div>
+            </div>
+        </div>
+
+        <!-- バリエーション設定 -->
+        <div class="content-card">
+            <div class="content-card-header">
+                <h2>バリエーション設定</h2>
+            </div>
+            <div class="content-card-body">
+                <!-- Bulk Generator（モバイルでは折りたたみ） -->
+                <details class="mobile-collapsible" style="margin-bottom: 16px; background: #e3f2fd;">
+                    <summary class="mobile-collapsible-header" style="background: #e3f2fd;">
+                        <span class="mobile-collapsible-title">⚡ バリエーション一括生成</span>
+                        <span class="mobile-collapsible-icon">▶</span>
+                    </summary>
+                    <div class="mobile-collapsible-content">
+                        <p class="text-small text-muted mb-1">カンマ区切りで入力してください (例: S, M, L)。既存の行は削除されません。</p>
+                        <div class="bulk-generator" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                            <div class="filter-group">
+                                <label>Option1 Values</label>
+                                <input type="text" id="bulk_opt1" placeholder="例: Red, Blue">
+                            </div>
+                            <div class="filter-group">
+                                <label>Option2 Values</label>
+                                <input type="text" id="bulk_opt2" placeholder="例: S, M, L">
+                            </div>
+                            <div class="filter-group">
+                                <label>共通価格</label>
+                                <input type="number" id="bulk_price" placeholder="">
+                            </div>
+                            <div class="filter-group">
+                                <label>共通SKU接頭辞</label>
+                                <input type="text" id="bulk_sku" placeholder="MER-ITEM-">
+                            </div>
+                        </div>
+                        <button type="button" onclick="generateVariants()" class="mt-1"
+                            style="background:#0066cc; color:white; border:none; padding:10px 16px; border-radius:4px; cursor:pointer; width: 100%;">生成</button>
+                    </div>
+                </details>
+
+                <!-- オプション名の設定 -->
+                <details class="mobile-collapsible mobile-only" style="margin-bottom: 16px;">
+                    <summary class="mobile-collapsible-header">
+                        <span class="mobile-collapsible-title">⚙️ オプション名設定</span>
+                        <span class="mobile-collapsible-icon">▶</span>
+                    </summary>
+                    <div class="mobile-collapsible-content">
+                        <div class="filter-grid">
+                            <div class="filter-group">
+                                <label>Option1 Name</label>
+                                <input type="text" name="option1_name" value="{{ product.option1_name or 'Title' }}">
+                            </div>
+                            <div class="filter-group">
+                                <label>Option2 Name</label>
+                                <input type="text" name="option2_name" value="{{ product.option2_name or '' }}" placeholder="(例: Size)">
+                            </div>
+                            <div class="filter-group">
+                                <label>Option3 Name</label>
+                                <input type="text" name="option3_name" value="{{ product.option3_name or '' }}">
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- PC用オプション名設定 -->
+                <div class="desktop-only" style="display:flex; gap:10px; margin-bottom:16px; background:#f0f0f0; padding:12px; border-radius: 6px;">
+                    <div class="filter-group">
+                        <label style="font-size:11px;">Option1 Name</label>
+                        <input type="text" name="option1_name_desktop" value="{{ product.option1_name or 'Title' }}" style="width:120px;">
+                    </div>
+                    <div class="filter-group">
+                        <label style="font-size:11px;">Option2 Name</label>
+                        <input type="text" name="option2_name_desktop" value="{{ product.option2_name or '' }}" style="width:120px;" placeholder="(例: Size)">
+                    </div>
+                    <div class="filter-group">
+                        <label style="font-size:11px;">Option3 Name</label>
+                        <input type="text" name="option3_name_desktop" value="{{ product.option3_name or '' }}" style="width:120px;">
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="variant-table" id="variantTable">
+                        <thead>
+                            <tr>
+                                <th style="width:15%">Opt1</th>
+                                <th style="width:15%">Opt2</th>
+                                <th style="width:15%">価格</th>
+                                <th style="width:15%">SKU</th>
+                                <th style="width:10%">在庫</th>
+                                <th class="hide-mobile" style="width:10%">重量</th>
+                                <th class="hide-mobile">税/HS/Origin</th>
+                                <th style="width:50px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for v in variants %}
+                            <tr id="row-{{ v.id }}">
+                                <td data-label="Opt1">
+                                    <input type="hidden" name="v_ids" value="{{ v.id }}">
+                                    <input type="text" name="v_opt1_{{ v.id }}" value="{{ v.option1_value or '' }}">
+                                </td>
+                                <td data-label="Opt2">
+                                    <input type="text" name="v_opt2_{{ v.id }}" value="{{ v.option2_value or '' }}">
+                                </td>
+                                <td data-label="価格">
+                                    <input type="number" name="v_price_{{ v.id }}" value="{{ v.price or '' }}">
+                                </td>
+                                <td data-label="SKU">
+                                    <input type="text" name="v_sku_{{ v.id }}" value="{{ v.sku or '' }}">
+                                </td>
+                                <td data-label="在庫">
+                                    <input type="number" name="v_qty_{{ v.id }}" value="{{ v.inventory_qty }}" class="short">
+                                </td>
+                                <td data-label="重量" class="hide-mobile">
+                                    <input type="number" name="v_grams_{{ v.id }}" value="{{ v.grams or '' }}" class="short">
+                                </td>
+                                <td data-label="税/HS/Origin" class="hide-mobile" style="text-align:left; font-size:11px;">
+                                    <label><input type="checkbox" name="v_tax_{{ v.id }}" {% if v.taxable %}checked{% endif %}> 課税</label><br>
+                                    HS: <input type="text" name="v_hs_{{ v.id }}" value="{{ v.hs_code or '' }}" style="width:60px;"><br>
+                                    Org: <input type="text" name="v_org_{{ v.id }}" value="{{ v.country_of_origin or '' }}" style="width:40px;">
+                                </td>
+                                <td data-label="操作">
+                                    <button type="button" class="del-btn" onclick="markDelete({{ v.id }})">削除</button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <button type="button" class="add-btn mt-1" onclick="addVariantRow()" style="width: 100%;">＋ バリエーションを追加</button>
+            </div>
+        </div>
+
+        <!-- 分類とSEO（モバイルでは折りたたみ） -->
+        <details class="mobile-collapsible mobile-only">
+            <summary class="mobile-collapsible-header">
+                <span class="mobile-collapsible-title">📂 分類・SEO設定</span>
+                <span class="mobile-collapsible-icon">▶</span>
+            </summary>
+            <div class="mobile-collapsible-content">
+                <div class="form-group">
+                    <label for="vendor_mobile">販売元 (Vendor)</label>
+                    <input type="text" id="vendor_mobile" name="vendor"
                         value="{{ product.custom_vendor or product.site or '' }}">
                 </div>
                 <div class="form-group">
-                    <label for="tags">タグ (Tags)</label>
-                    <input type="text" id="tags" name="tags" value="{{ product.tags or '' }}" placeholder="カンマ区切りで入力">
+                    <label for="tags_mobile">タグ (Tags)</label>
+                    <input type="text" id="tags_mobile" name="tags" value="{{ product.tags or '' }}" placeholder="カンマ区切りで入力">
                 </div>
-            </div>
-
-            <div class="form-section">
-                <h2>SEO</h2>
                 <div class="form-group">
-                    <label for="handle">URLハンドル (Handle)</label>
-                    <input type="text" id="handle" name="handle"
+                    <label for="handle_mobile">URLハンドル (Handle)</label>
+                    <input type="text" id="handle_mobile" name="handle"
                         value="{{ product.custom_handle or ('mercari-' + product.id|string) }}">
                 </div>
                 <div class="form-group">
-                    <label for="seo_title">ページタイトル (SEO Title)</label>
-                    <input type="text" id="seo_title" name="seo_title" value="{{ product.seo_title or '' }}"
+                    <label for="seo_title_mobile">ページタイトル (SEO Title)</label>
+                    <input type="text" id="seo_title_mobile" name="seo_title" value="{{ product.seo_title or '' }}"
                         placeholder="60文字以内推奨">
                 </div>
                 <div class="form-group">
-                    <label for="seo_description">メタディスクリプション (SEO Description)</label>
-                    <textarea id="seo_description" name="seo_description"
-                        rows="4">{{ product.seo_description or '' }}</textarea>
+                    <label for="seo_description_mobile">メタディスクリプション</label>
+                    <textarea id="seo_description_mobile" name="seo_description" rows="3">{{ product.seo_description or '' }}</textarea>
+                </div>
+            </div>
+        </details>
+
+        <!-- PC用：分類とSEO -->
+        <div class="form-grid desktop-only">
+            <div class="content-card">
+                <div class="content-card-header">
+                    <h2>分類</h2>
+                </div>
+                <div class="content-card-body">
+                    <div class="form-group">
+                        <label for="vendor">販売元 (Vendor)</label>
+                        <input type="text" id="vendor" name="vendor_desktop"
+                            value="{{ product.custom_vendor or product.site or '' }}">
+                    </div>
+                    <div class="form-group">
+                        <label for="tags">タグ (Tags)</label>
+                        <input type="text" id="tags" name="tags_desktop" value="{{ product.tags or '' }}" placeholder="カンマ区切りで入力">
+                    </div>
+                </div>
+            </div>
+
+            <div class="content-card">
+                <div class="content-card-header">
+                    <h2>SEO</h2>
+                </div>
+                <div class="content-card-body">
+                    <div class="form-group">
+                        <label for="handle">URLハンドル (Handle)</label>
+                        <input type="text" id="handle" name="handle_desktop"
+                            value="{{ product.custom_handle or ('mercari-' + product.id|string) }}">
+                    </div>
+                    <div class="form-group">
+                        <label for="seo_title">ページタイトル (SEO Title)</label>
+                        <input type="text" id="seo_title" name="seo_title_desktop" value="{{ product.seo_title or '' }}"
+                            placeholder="60文字以内推奨">
+                    </div>
+                    <div class="form-group">
+                        <label for="seo_description">メタディスクリプション</label>
+                        <textarea id="seo_description" name="seo_description_desktop" rows="3">{{ product.seo_description or '' }}</textarea>
+                    </div>
                 </div>
             </div>
         </div>
 
         <div style="margin-top: 20px;">
-            <button type="submit">保存</button>
+            <button type="submit" style="width: 100%;">保存</button>
         </div>
     </form>
 
-    <div class="form-section">
-        <h2>画像（{{ images|length }}枚）</h2>
-        {% if images %}
-        <div class="images">
-            {% for url in images %}
-            <img src="{{ url }}" alt="image {{ loop.index }}">
-            {% endfor %}
+    <!-- 画像セクション -->
+    <div class="content-card mt-2">
+        <div class="content-card-header">
+            <h2>画像（{{ images|length }}枚）</h2>
         </div>
-        {% else %}
-        <p>(画像なし)</p>
-        {% endif %}
+        <div class="content-card-body">
+            {% if images %}
+            <div class="images">
+                {% for url in images %}
+                <img src="{{ url }}" alt="image {{ loop.index }}">
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted">(画像なし)</p>
+            {% endif %}
+        </div>
     </div>
+{% endblock %}
 
+{% block scripts %}
     <script>
         function applyTemplate() {
             var select = document.getElementById('template');
@@ -269,14 +322,14 @@
             var newRow = table.insertRow();
 
             newRow.innerHTML = `
-                <td data-label="Opt1 Value">
+                <td data-label="Opt1">
                     <input type="hidden" name="new_v_indices" value="${idx}">
                     <input type="text" name="new_v_opt1_${idx}" value="${opt1}">
                 </td>
-                <td data-label="Opt2 Value">
+                <td data-label="Opt2">
                     <input type="text" name="new_v_opt2_${idx}" value="${opt2}">
                 </td>
-                <td data-label="Price">
+                <td data-label="価格">
                     <input type="number" name="new_v_price_${idx}" value="${price}">
                 </td>
                 <td data-label="SKU">
@@ -285,10 +338,10 @@
                 <td data-label="在庫">
                     <input type="number" name="new_v_qty_${idx}" value="1" class="short">
                 </td>
-                <td data-label="重量(g)">
+                <td data-label="重量" class="hide-mobile">
                     <input type="number" name="new_v_grams_${idx}" value="" class="short">
                 </td>
-                <td data-label="税 / HS / Origin" style="text-align:left; font-size:11px;">
+                <td data-label="税/HS/Origin" class="hide-mobile" style="text-align:left; font-size:11px;">
                     <label><input type="checkbox" name="new_v_tax_${idx}"> 課税</label><br>
                     HS: <input type="text" name="new_v_hs_${idx}" value="" style="width:60px;"><br>
                     Org: <input type="text" name="new_v_org_${idx}" value="JP" style="width:40px;">
@@ -334,6 +387,4 @@
             }
         }
     </script>
-</body>
-
-</html>
+{% endblock %}
