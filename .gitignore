@@ -48,3 +48,4 @@ env/
 
 # Temporary files
 /tmp/
+tests/__pycache__/
