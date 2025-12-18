@@ -11,10 +11,11 @@
 | ファイル | 役割 |
 |---------|------|
 | `mercari_db.py` | メルカリのスクレイピングロジック（メイン） |
-| `yahoo_db.py` | Yahoo!ショッピングのスクレイピングロジック |
 | `routes/scrape.py` | スクレイピングのWebエンドポイント |
 | `services/product_service.py` | スクレイピング結果のDB保存 |
 | `cli.py` | CLIからの自動更新コマンド |
+
+> **注記:** `yahoo_db.py` はYahoo!ショッピング用のスクレイピングモジュールですが、構造はメルカリと同様のため、本分析の改善提案は両方に適用可能です。
 
 ### 1.2 主要関数
 
@@ -254,8 +255,10 @@ def scrape_search_result_v2(search_url, max_items=5, max_workers=3):
         results = []
         for future in futures:
             try:
-                item = future.result(timeout=30)
-                results.extend(item)
+                items = future.result(timeout=30)
+                # scrape_single_item はリストを返すため extend を使用
+                if items:
+                    results.extend(items)
             except Exception as e:
                 logging.error(f"Scraping failed: {e}")
     
@@ -329,7 +332,7 @@ def scrape_search_result_v2(search_url, max_items=5, max_workers=3):
 
 ### 6.2 メモリ管理
 - 並列化するとWebDriver×worker数のメモリ消費
-- Render等の低メモリ環境では worker=2-3 が限界
+- 低メモリ環境（Docker、PaaS等）では worker=2-3 が限界
 
 ### 6.3 エラーハンドリング
 - 並列処理では個別のエラー捕捉が重要
