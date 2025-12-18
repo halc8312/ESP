@@ -405,7 +405,7 @@ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, ...
 ## 推奨される改善の優先順位
 
 ### 優先度：高
-1. ✅ **修正済み**: app.py の構文エラー修正（line 816）
+1. ✅ **修正済み**: app.py の構文エラー修正（二重exceptブロックの問題）とコード品質改善（traceback importの整理）
 2. 入力フィールドのフォントサイズを16pxに変更（iOSズーム防止）
 3. 商品一覧テーブルの列を減らす（モバイル表示）
 
