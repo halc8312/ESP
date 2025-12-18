@@ -9,6 +9,7 @@ import os
 import requests
 import shutil
 import hashlib
+import traceback
 
 # 独自モジュール
 from mercari_db import scrape_search_result, scrape_single_item
@@ -788,7 +789,6 @@ def scrape_run():
                 )
                 new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="yahoo")
             except Exception as e:
-                import traceback
                 traceback.print_exc()
                 items = []
                 new_count = updated_count = 0
@@ -809,14 +809,10 @@ def scrape_run():
                 )
                 new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="mercari")
             except Exception as e:
-                # ... handled below in catch-all or let it bubble? 
-                # Original code had try/except block.
-                # Re-raising or handling here.
-                raise e
-        except Exception as e:
-            items = []
-            new_count = updated_count = 0
-            error_msg = str(e)
+                traceback.print_exc()
+                items = []
+                new_count = updated_count = 0
+                error_msg = f"Mercari Search Error: {str(e)}"
 
     return render_template(
         "scrape_result.html",
@@ -1216,7 +1212,6 @@ def update_products():
                 
             except Exception as e:
                 print(f"  -> Error: {e}")
-                import traceback
                 traceback.print_exc()
                 
         session_db.commit()
