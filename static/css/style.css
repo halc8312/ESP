@@ -284,19 +284,6 @@ tr.changed {
         display: none;
     }
 
-    /* Product list table: hide less important columns on mobile */
-    /* Column order: 1.選択, 2.ID, 3.サイト, 4.サムネイル, 5.商品名, 6.価格, 7.ステータス, 8.画像枚数, 9.元URL, 10.詳細, 11.最終更新 */
-    .product-table th:nth-child(2),
-    .product-table td:nth-child(2),
-    .product-table th:nth-child(3),
-    .product-table td:nth-child(3),
-    .product-table th:nth-child(8),
-    .product-table td:nth-child(8),
-    .product-table th:nth-child(11),
-    .product-table td:nth-child(11) {
-        display: none;
-    }
-
     /* Variant table: mobile-friendly card-style layout */
     .variant-table,
     .variant-table thead,

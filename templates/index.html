@@ -144,24 +144,24 @@
             <table class="product-table">
                 <tr>
                     <th>選択</th>
-                    <th>ID</th>
-                    <th>サイト</th>
+                    <th class="hide-mobile">ID</th>
+                    <th class="hide-mobile">サイト</th>
                     <th>サムネイル</th>
                     <th>商品名</th>
                     <th>価格</th>
                     <th>ステータス</th>
-                    <th>画像枚数</th>
+                    <th class="hide-mobile">画像枚数</th>
                     <th>元URL</th>
                     <th>詳細</th>
-                    <th>最終更新</th>
+                    <th class="hide-mobile">最終更新</th>
                 </tr>
                 {% for p in products %}
                 <tr class="{{ 'changed' if p.has_changed else '' }}">
                     <td>
                         <input type="checkbox" name="id" value="{{ p.id }}">
                     </td>
-                    <td>{{ p.id }}</td>
-                    <td>{{ p.site }}</td>
+                    <td class="hide-mobile">{{ p.id }}</td>
+                    <td class="hide-mobile">{{ p.site }}</td>
                     <td>
                         {% if thumb_url %}
                         <img src="{{ thumb_url }}" alt="thumb" style="max-height: 80px;">
@@ -174,10 +174,10 @@
                         {% endif %}
                     </td>
                     <td>{{ p.last_status }}</td>
-                    <td>{{ image_count }}</td>
+                    <td class="hide-mobile">{{ image_count }}</td>
                     <td><a href="{{ p.source_url }}" target="_blank">開く</a></td>
                     <td><a href="{{ url_for('product_detail', product_id=p.id) }}">編集</a></td>
-                    <td>{{ p.updated_at }}</td>
+                    <td class="hide-mobile">{{ p.updated_at }}</td>
                 </tr>
                 {% endfor %}
             </table>
