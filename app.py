@@ -809,14 +809,11 @@ def scrape_run():
                 )
                 new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="mercari")
             except Exception as e:
-                # ... handled below in catch-all or let it bubble? 
-                # Original code had try/except block.
-                # Re-raising or handling here.
-                raise e
-        except Exception as e:
-            items = []
-            new_count = updated_count = 0
-            error_msg = str(e)
+                import traceback
+                traceback.print_exc()
+                items = []
+                new_count = updated_count = 0
+                error_msg = f"Mercari Search Error: {str(e)}"
 
     return render_template(
         "scrape_result.html",
