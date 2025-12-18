@@ -255,9 +255,11 @@ tr.changed {
 
 /* Mobile Optimizations */
 @media (max-width: 768px) {
+    /* Navigation: improved tap targets */
     .nav {
         flex-direction: column;
         align-items: stretch;
+        padding: 10px;
     }
 
     .nav div {
@@ -270,18 +272,126 @@ tr.changed {
         text-align: center;
         background: #f8f9fa;
         margin-bottom: 5px;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 15px;
+        border-radius: 6px;
     }
 
+    .nav select {
+        min-height: 44px;
+        padding: 10px 12px;
+    }
+
+    /* Actions area */
     .actions {
         grid-template-columns: 1fr;
+        padding: 15px;
     }
 
+    /* Filters: stack vertically on mobile */
+    .filters,
+    .nav-filters {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .filters label,
+    .nav-filters label {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        width: 100%;
+    }
+
+    .filters select,
+    .filters input,
+    .nav-filters select,
+    .nav-filters input {
+        width: 100%;
+        min-height: 44px;
+    }
+
+    .filters button,
+    .nav-filters button {
+        width: 100%;
+        min-height: 44px;
+        margin-top: 5px;
+    }
+
+    /* Form grid */
     .form-grid {
         grid-template-columns: 1fr !important;
     }
 
     .hide-mobile {
         display: none;
+    }
+
+    /* Shop add form: stack vertically */
+    .shop-add-form {
+        flex-direction: column !important;
+        gap: 10px !important;
+    }
+
+    .shop-add-form input {
+        max-width: 100% !important;
+        width: 100% !important;
+    }
+
+    .shop-add-form button {
+        width: 100%;
+        min-height: 44px;
+    }
+
+    /* Table responsive: scroll hint */
+    .table-responsive {
+        position: relative;
+    }
+
+    .table-responsive::after {
+        content: "← スクロール →";
+        display: block;
+        text-align: center;
+        font-size: 11px;
+        color: #888;
+        padding: 8px 0;
+        background: linear-gradient(to right, rgba(255,255,255,0), rgba(255,255,255,1) 20%, rgba(255,255,255,1) 80%, rgba(255,255,255,0));
+    }
+
+    /* Buttons: ensure minimum tap target */
+    button,
+    .btn {
+        min-height: 44px;
+        padding: 10px 16px;
+    }
+
+    /* Form sections: reduce padding on mobile */
+    .form-section {
+        padding: 15px;
+    }
+
+    /* Page heading */
+    h1 {
+        font-size: 1.25rem;
+        padding: 0 15px;
+    }
+
+    /* Pagination: better spacing */
+    .pagination {
+        flex-wrap: wrap;
+        padding: 0 15px;
+    }
+
+    .pagination a,
+    .pagination span {
+        padding: 8px 12px;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
     }
 
     /* Variant table: mobile-friendly card-style layout */
@@ -425,11 +535,17 @@ tr.changed {
     width: 100%;
     max-width: 400px;
     border: 1px solid var(--border-color);
+    margin: 0 15px;
 }
 
 .login-container h1 {
     text-align: center;
     margin-bottom: 1.5rem;
+}
+
+.login-container button[type="submit"] {
+    width: 100%;
+    min-height: 44px;
 }
 
 .error {
@@ -450,6 +566,7 @@ tr.changed {
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 20px;
     margin-bottom: 24px;
+    padding: 0 15px;
 }
 
 .stat-card {
@@ -472,6 +589,25 @@ tr.changed {
     color: #333;
 }
 
+@media (max-width: 768px) {
+    .dashboard-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+
+    .stat-card {
+        padding: 15px 10px;
+    }
+
+    .stat-card h3 {
+        font-size: 12px;
+    }
+
+    .stat-card .value {
+        font-size: 24px;
+    }
+}
+
 /* Collapsible Sections */
 .collapsible-section {
     background: var(--card-bg);
@@ -490,6 +626,7 @@ tr.changed {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-height: 44px;
 }
 
 .collapsible-section summary::-webkit-details-marker {
