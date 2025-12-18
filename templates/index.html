@@ -65,6 +65,7 @@
     <!-- エクスポート用フォーム -->
     <form method="GET">
         <div class="actions">
+            <!-- 基本設定（常に表示） -->
             <div>
                 <label>価格倍率 (markup)</label>
                 <input type="number" id="markup" name="markup" value="{{ default_markup }}" step="0.01"
@@ -85,55 +86,62 @@
                 <input type="number" name="rate" value="{{ default_rate }}" step="0.01">
                 <span style="font-size: 11px; color: #555;">1ドルあたりの円（例: 155）</span>
             </div>
-            <div>
-                <label>eBay カテゴリID (Category)</label>
-                <input type="text" name="ebay_category_id" value="{{ default_ebay_category_id }}"
-                    placeholder="例: 183454">
-            </div>
-            <div>
-                <label>eBay ConditionID</label>
-                <input type="text" name="ebay_condition_id" value="{{ default_ebay_condition_id }}"
-                    placeholder="新品=1000 / 中古=3000">
-            </div>
-            <div>
-                <label>PaymentProfileName</label>
-                <input type="text" name="ebay_payment_profile" value="{{ default_ebay_payment_profile }}"
-                    placeholder="例: payAddress">
-            </div>
-            <div>
-                <label>ReturnProfileName</label>
-                <input type="text" name="ebay_return_profile" value="{{ default_ebay_return_profile }}"
-                    placeholder="例: return Buyer pays for shipping">
-            </div>
-            <div>
-                <label>ShippingProfileName</label>
-                <input type="text" name="ebay_shipping_profile" value="{{ default_ebay_shipping_profile }}"
-                    placeholder="例: [US DDP] $132.01–$198">
-            </div>
-            <div>
-                <label>PayPalEmailAddress</label>
-                <input type="text" name="ebay_paypal_email" value="{{ default_ebay_paypal_email }}"
-                    placeholder="例: your-paypal@example.com">
-            </div>
+        </div>
 
-            <div style="flex-basis: 100%; margin-top: 8px;">
-                <button type="submit" formaction="{{ url_for('export_shopify') }}">
-                    Shopify 風 CSV
-                </button>
-                <button type="submit" formaction="{{ url_for('export_ebay') }}">
-                    eBay File Exchange 用 CSV
-                </button>
-                <button type="submit" formaction="{{ url_for('export_stock_update') }}">
-                    Shopify 在庫更新CSV
-                </button>
-                <button type="submit" formaction="{{ url_for('export_price_update') }}">
-                    Shopify 価格更新CSV
-                </button>
+        <!-- eBay設定（折りたたみ） -->
+        <details class="collapsible-section">
+            <summary>eBay 詳細設定</summary>
+            <div class="actions" style="margin-top: 10px;">
+                <div>
+                    <label>eBay カテゴリID (Category)</label>
+                    <input type="text" name="ebay_category_id" value="{{ default_ebay_category_id }}"
+                        placeholder="例: 183454">
+                </div>
+                <div>
+                    <label>eBay ConditionID</label>
+                    <input type="text" name="ebay_condition_id" value="{{ default_ebay_condition_id }}"
+                        placeholder="新品=1000 / 中古=3000">
+                </div>
+                <div>
+                    <label>PaymentProfileName</label>
+                    <input type="text" name="ebay_payment_profile" value="{{ default_ebay_payment_profile }}"
+                        placeholder="例: payAddress">
+                </div>
+                <div>
+                    <label>ReturnProfileName</label>
+                    <input type="text" name="ebay_return_profile" value="{{ default_ebay_return_profile }}"
+                        placeholder="例: return Buyer pays for shipping">
+                </div>
+                <div>
+                    <label>ShippingProfileName</label>
+                    <input type="text" name="ebay_shipping_profile" value="{{ default_ebay_shipping_profile }}"
+                        placeholder="例: [US DDP] $132.01–$198">
+                </div>
+                <div>
+                    <label>PayPalEmailAddress</label>
+                    <input type="text" name="ebay_paypal_email" value="{{ default_ebay_paypal_email }}"
+                        placeholder="例: your-paypal@example.com">
+                </div>
             </div>
+        </details>
+
+        <div class="export-buttons" style="margin: 15px 0;">
+            <button type="submit" formaction="{{ url_for('export_shopify') }}">
+                Shopify 風 CSV
+            </button>
+            <button type="submit" formaction="{{ url_for('export_ebay') }}">
+                eBay File Exchange 用 CSV
+            </button>
+            <button type="submit" formaction="{{ url_for('export_stock_update') }}">
+                Shopify 在庫更新CSV
+            </button>
+            <button type="submit" formaction="{{ url_for('export_price_update') }}">
+                Shopify 価格更新CSV
+            </button>
         </div>
 
         <div class="table-responsive">
-            <table>
+            <table class="product-table">
                 <tr>
                     <th>選択</th>
                     <th>ID</th>
