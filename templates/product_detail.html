@@ -91,7 +91,7 @@
             <div class="form-section" style="background: #e3f2fd; border-color: #90caf9;">
                 <h3 style="margin-top:0; font-size:14px;">⚡ バリエーション一括生成</h3>
                 <p style="font-size:12px; color:#555;">カンマ区切りで入力してください (例: S, M, L)。既存の行は削除されません。</p>
-                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                <div class="bulk-generator" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
                     <div>
                         <label style="font-size:11px;">Option1 Values</label>
                         <input type="text" id="bulk_opt1" placeholder="例: Red, Blue" style="width:150px;">
@@ -148,26 +148,26 @@
                 <tbody>
                     {% for v in variants %}
                     <tr id="row-{{ v.id }}">
-                        <td>
+                        <td data-label="Opt1 Value">
                             <input type="hidden" name="v_ids" value="{{ v.id }}">
                             <input type="text" name="v_opt1_{{ v.id }}" value="{{ v.option1_value or '' }}">
                         </td>
-                        <td>
+                        <td data-label="Opt2 Value">
                             <input type="text" name="v_opt2_{{ v.id }}" value="{{ v.option2_value or '' }}">
                         </td>
-                        <td>
+                        <td data-label="Price">
                             <input type="number" name="v_price_{{ v.id }}" value="{{ v.price or '' }}">
                         </td>
-                        <td>
+                        <td data-label="SKU">
                             <input type="text" name="v_sku_{{ v.id }}" value="{{ v.sku or '' }}">
                         </td>
-                        <td>
+                        <td data-label="在庫">
                             <input type="number" name="v_qty_{{ v.id }}" value="{{ v.inventory_qty }}" class="short">
                         </td>
-                        <td>
+                        <td data-label="重量(g)">
                             <input type="number" name="v_grams_{{ v.id }}" value="{{ v.grams or '' }}" class="short">
                         </td>
-                        <td style="text-align:left; font-size:11px;">
+                        <td data-label="税 / HS / Origin" style="text-align:left; font-size:11px;">
                             <label><input type="checkbox" name="v_tax_{{ v.id }}" {% if v.taxable %}checked{% endif %}>
                                 課税</label><br>
                             HS: <input type="text" name="v_hs_{{ v.id }}" value="{{ v.hs_code or '' }}"
@@ -175,7 +175,7 @@
                             Org: <input type="text" name="v_org_{{ v.id }}" value="{{ v.country_of_origin or '' }}"
                                 style="width:40px;">
                         </td>
-                        <td>
+                        <td data-label="操作">
                             <button type="button" class="del-btn" onclick="markDelete({{ v.id }})">削除</button>
                         </td>
                     </tr>
@@ -269,31 +269,31 @@
             var newRow = table.insertRow();
 
             newRow.innerHTML = `
-                <td>
+                <td data-label="Opt1 Value">
                     <input type="hidden" name="new_v_indices" value="${idx}">
                     <input type="text" name="new_v_opt1_${idx}" value="${opt1}">
                 </td>
-                <td>
+                <td data-label="Opt2 Value">
                     <input type="text" name="new_v_opt2_${idx}" value="${opt2}">
                 </td>
-                <td>
+                <td data-label="Price">
                     <input type="number" name="new_v_price_${idx}" value="${price}">
                 </td>
-                <td>
+                <td data-label="SKU">
                     <input type="text" name="new_v_sku_${idx}" value="${sku}">
                 </td>
-                <td>
+                <td data-label="在庫">
                     <input type="number" name="new_v_qty_${idx}" value="1" class="short">
                 </td>
-                <td>
+                <td data-label="重量(g)">
                     <input type="number" name="new_v_grams_${idx}" value="" class="short">
                 </td>
-                <td style="text-align:left; font-size:11px;">
+                <td data-label="税 / HS / Origin" style="text-align:left; font-size:11px;">
                     <label><input type="checkbox" name="new_v_tax_${idx}"> 課税</label><br>
                     HS: <input type="text" name="new_v_hs_${idx}" value="" style="width:60px;"><br>
                     Org: <input type="text" name="new_v_org_${idx}" value="JP" style="width:40px;">
                 </td>
-                <td>
+                <td data-label="操作">
                     <button type="button" class="del-btn" onclick="removeNewRow(this)">取消</button>
                 </td>
             `;

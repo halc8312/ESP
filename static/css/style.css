@@ -167,7 +167,8 @@ textarea {
     display: block;
     width: 100%;
     padding: 8px 12px;
-    font-size: 15px;
+    font-size: 16px;
+    /* 16px prevents iOS auto-zoom on focus */
     line-height: 1.5;
     color: var(--text-color);
     background-color: #fff;
@@ -279,12 +280,68 @@ tr.changed {
         grid-template-columns: 1fr !important;
     }
 
-    /* Make tables card-like on very small screens? 
-       For now, just scrolling is safer for data-heavy tables, 
-       but we can hide less important columns if needed. */
-
     .hide-mobile {
         display: none;
+    }
+
+    /* Variant table: mobile-friendly card-style layout */
+    .variant-table,
+    .variant-table thead,
+    .variant-table tbody,
+    .variant-table tr,
+    .variant-table th,
+    .variant-table td {
+        display: block;
+    }
+
+    .variant-table thead {
+        display: none;
+    }
+
+    .variant-table tbody tr {
+        margin-bottom: 15px;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 10px;
+        background: #fff;
+    }
+
+    .variant-table td {
+        border: none;
+        padding: 5px 0;
+        text-align: left;
+    }
+
+    .variant-table td::before {
+        content: attr(data-label);
+        font-weight: 600;
+        display: block;
+        margin-bottom: 3px;
+        font-size: 11px;
+        color: #666;
+    }
+
+    .variant-table input[type="text"],
+    .variant-table input[type="number"] {
+        width: 100% !important;
+        max-width: 100%;
+    }
+
+    .variant-table input.short {
+        width: 100% !important;
+    }
+
+    /* Bulk variant generator: stack vertically on mobile */
+    .bulk-generator {
+        flex-direction: column !important;
+    }
+
+    .bulk-generator>div {
+        width: 100%;
+    }
+
+    .bulk-generator input {
+        width: 100% !important;
     }
 }
 
@@ -413,4 +470,71 @@ tr.changed {
     font-size: 32px;
     font-weight: bold;
     color: #333;
+}
+
+/* Collapsible Sections */
+.collapsible-section {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    margin-bottom: 15px;
+}
+
+.collapsible-section summary {
+    padding: 12px 15px;
+    cursor: pointer;
+    font-weight: 500;
+    background: #f8f9fa;
+    border-radius: 8px;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.collapsible-section summary::-webkit-details-marker {
+    display: none;
+}
+
+.collapsible-section summary::before {
+    content: "▶";
+    font-size: 10px;
+    transition: transform 0.2s;
+}
+
+.collapsible-section[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.collapsible-section[open] summary {
+    border-radius: 8px 8px 0 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.collapsible-section .actions {
+    margin-bottom: 0;
+    border: none;
+    border-radius: 0 0 8px 8px;
+}
+
+/* Export Buttons */
+.export-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.export-buttons button {
+    flex: 1;
+    min-width: 150px;
+}
+
+@media (max-width: 768px) {
+    .export-buttons {
+        flex-direction: column;
+    }
+
+    .export-buttons button {
+        width: 100%;
+    }
 }
