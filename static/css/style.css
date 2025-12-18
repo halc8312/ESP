@@ -512,9 +512,21 @@ tr.changed {
 
 @media (max-width: 768px) {
     .product-title-cell {
-        max-width: 150px;
+        /* モバイルでは幅制限を解除し、テーブルセル内で自然に折り返す */
+        max-width: none;
+        min-width: 120px;
         -webkit-line-clamp: 3;
         line-clamp: 3;
+    }
+    
+    /* モバイル用テーブル調整: 商品名セルにより多くのスペースを割り当て */
+    .product-table {
+        table-layout: auto;
+    }
+    
+    .product-table td,
+    .product-table th {
+        padding: 8px 6px;
     }
 }
 
