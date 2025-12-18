@@ -35,9 +35,9 @@
         <h3 style="margin-top:0;">方法1: URLを直接指定 (単品抽出)</h3>
         <form method="POST" action="{{ url_for('scrape_run') }}">
             <label>商品URL</label>
-            <input type="text" name="target_url"
+            <input type="url" name="target_url"
                 placeholder="https://jp.mercari.com/item/m123456789 または https://store.shopping.yahoo.co.jp/..." required
-                style="width:100%;">
+                style="width:100%;" inputmode="url" autocomplete="url">
             <button type="submit">URLからスクレイピング実行</button>
         </form>
     </div>
@@ -47,13 +47,13 @@
         <form method="POST" action="{{ url_for('scrape_run') }}">
 
             <label>キーワード</label>
-            <input type="text" name="keyword" value="スニーカー" required>
+            <input type="text" name="keyword" value="スニーカー" required autocomplete="off">
 
             <label>価格 min（任意）</label>
-            <input type="number" name="price_min">
+            <input type="number" name="price_min" inputmode="numeric" min="0">
 
             <label>価格 max（任意）</label>
-            <input type="number" name="price_max">
+            <input type="number" name="price_max" inputmode="numeric" min="0">
 
             <label>ソート順</label>
             <select name="sort">
@@ -63,10 +63,10 @@
             </select>
 
             <label>カテゴリID（任意、メルカリカテゴリID）</label>
-            <input type="text" name="category" placeholder="例：1">
+            <input type="text" name="category" placeholder="例：1" inputmode="numeric">
 
             <label>最大取得件数</label>
-            <input type="number" name="limit" value="10" min="1">
+            <input type="number" name="limit" value="10" min="1" inputmode="numeric">
 
             <button type="submit">スクレイピング実行</button>
         </form>

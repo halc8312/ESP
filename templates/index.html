@@ -69,21 +69,21 @@
             <div>
                 <label>価格倍率 (markup)</label>
                 <input type="number" id="markup" name="markup" value="{{ default_markup }}" step="0.01"
-                    oninput="updateProfitMargin()">
+                    oninput="updateProfitMargin()" inputmode="decimal">
                 <span style="font-size: 11px; color: #555;">1.0=そのまま / 1.2=20%上乗せ</span>
             </div>
             <div>
                 <label>利益率 (%)</label>
-                <input type="number" id="profit_margin" step="1" oninput="updateMarkup()">
+                <input type="number" id="profit_margin" step="1" oninput="updateMarkup()" inputmode="numeric">
                 <span style="font-size: 11px; color: #555;">価格倍率と連動します</span>
             </div>
             <div>
                 <label>在庫数 (Quantity)</label>
-                <input type="number" name="qty" value="{{ default_qty }}" step="1" min="0">
+                <input type="number" name="qty" value="{{ default_qty }}" step="1" min="0" inputmode="numeric">
             </div>
             <div>
                 <label>為替レート (JPY → USD)</label>
-                <input type="number" name="rate" value="{{ default_rate }}" step="0.01">
+                <input type="number" name="rate" value="{{ default_rate }}" step="0.01" inputmode="decimal">
                 <span style="font-size: 11px; color: #555;">1ドルあたりの円（例: 155）</span>
             </div>
         </div>
