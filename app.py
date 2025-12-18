@@ -9,6 +9,7 @@ import os
 import requests
 import shutil
 import hashlib
+import traceback
 
 # 独自モジュール
 from mercari_db import scrape_search_result, scrape_single_item
@@ -788,7 +789,6 @@ def scrape_run():
                 )
                 new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="yahoo")
             except Exception as e:
-                import traceback
                 traceback.print_exc()
                 items = []
                 new_count = updated_count = 0
@@ -809,7 +809,6 @@ def scrape_run():
                 )
                 new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="mercari")
             except Exception as e:
-                import traceback
                 traceback.print_exc()
                 items = []
                 new_count = updated_count = 0
@@ -1213,7 +1212,6 @@ def update_products():
                 
             except Exception as e:
                 print(f"  -> Error: {e}")
-                import traceback
                 traceback.print_exc()
                 
         session_db.commit()
