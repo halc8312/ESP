@@ -465,6 +465,45 @@ tr.changed {
     gap: 20px;
 }
 
+/* Option names section - responsive layout */
+.option-names-section {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 16px;
+    background: #f0f0f0;
+    padding: 12px;
+    border-radius: 6px;
+    flex-wrap: wrap;
+}
+
+.option-names-section .filter-group {
+    flex: 1;
+    min-width: 100px;
+}
+
+.option-names-section label {
+    font-size: 11px;
+}
+
+/* Classification and SEO section responsive */
+.classification-seo-section {
+    margin-top: 16px;
+}
+
+@media (max-width: 1024px) {
+    .option-names-section {
+        flex-direction: column;
+    }
+    
+    .option-names-section .filter-group {
+        width: 100%;
+    }
+    
+    .classification-seo-section {
+        grid-template-columns: 1fr !important;
+    }
+}
+
 .form-section {
     background: var(--card-bg);
     border: 1px solid var(--border-color);

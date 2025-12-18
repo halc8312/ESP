@@ -98,43 +98,19 @@
                     </div>
                 </details>
 
-                <!-- オプション名の設定 -->
-                <details class="mobile-collapsible mobile-only" style="margin-bottom: 16px;">
-                    <summary class="mobile-collapsible-header">
-                        <span class="mobile-collapsible-title">⚙️ オプション名設定</span>
-                        <span class="mobile-collapsible-icon">▶</span>
-                    </summary>
-                    <div class="mobile-collapsible-content">
-                        <div class="filter-grid">
-                            <div class="filter-group">
-                                <label>Option1 Name</label>
-                                <input type="text" name="option1_name" value="{{ product.option1_name or 'Title' }}">
-                            </div>
-                            <div class="filter-group">
-                                <label>Option2 Name</label>
-                                <input type="text" name="option2_name" value="{{ product.option2_name or '' }}" placeholder="(例: Size)">
-                            </div>
-                            <div class="filter-group">
-                                <label>Option3 Name</label>
-                                <input type="text" name="option3_name" value="{{ product.option3_name or '' }}">
-                            </div>
-                        </div>
-                    </div>
-                </details>
-
-                <!-- PC用オプション名設定 -->
-                <div class="desktop-only" style="display:flex; gap:10px; margin-bottom:16px; background:#f0f0f0; padding:12px; border-radius: 6px;">
+                <!-- オプション名の設定（レスポンシブ共通） -->
+                <div class="option-names-section">
                     <div class="filter-group">
-                        <label style="font-size:11px;">Option1 Name</label>
-                        <input type="text" name="option1_name_desktop" value="{{ product.option1_name or 'Title' }}" style="width:120px;">
+                        <label>Option1 Name</label>
+                        <input type="text" name="option1_name" value="{{ product.option1_name or 'Title' }}">
                     </div>
                     <div class="filter-group">
-                        <label style="font-size:11px;">Option2 Name</label>
-                        <input type="text" name="option2_name_desktop" value="{{ product.option2_name or '' }}" style="width:120px;" placeholder="(例: Size)">
+                        <label>Option2 Name</label>
+                        <input type="text" name="option2_name" value="{{ product.option2_name or '' }}" placeholder="(例: Size)">
                     </div>
                     <div class="filter-group">
-                        <label style="font-size:11px;">Option3 Name</label>
-                        <input type="text" name="option3_name_desktop" value="{{ product.option3_name or '' }}" style="width:120px;">
+                        <label>Option3 Name</label>
+                        <input type="text" name="option3_name" value="{{ product.option3_name or '' }}">
                     </div>
                 </div>
 
@@ -192,41 +168,8 @@
             </div>
         </div>
 
-        <!-- 分類とSEO（モバイルでは折りたたみ） -->
-        <details class="mobile-collapsible mobile-only">
-            <summary class="mobile-collapsible-header">
-                <span class="mobile-collapsible-title">📂 分類・SEO設定</span>
-                <span class="mobile-collapsible-icon">▶</span>
-            </summary>
-            <div class="mobile-collapsible-content">
-                <div class="form-group">
-                    <label for="vendor_mobile">販売元 (Vendor)</label>
-                    <input type="text" id="vendor_mobile" name="vendor"
-                        value="{{ product.custom_vendor or product.site or '' }}">
-                </div>
-                <div class="form-group">
-                    <label for="tags_mobile">タグ (Tags)</label>
-                    <input type="text" id="tags_mobile" name="tags" value="{{ product.tags or '' }}" placeholder="カンマ区切りで入力">
-                </div>
-                <div class="form-group">
-                    <label for="handle_mobile">URLハンドル (Handle)</label>
-                    <input type="text" id="handle_mobile" name="handle"
-                        value="{{ product.custom_handle or ('mercari-' + product.id|string) }}">
-                </div>
-                <div class="form-group">
-                    <label for="seo_title_mobile">ページタイトル (SEO Title)</label>
-                    <input type="text" id="seo_title_mobile" name="seo_title" value="{{ product.seo_title or '' }}"
-                        placeholder="60文字以内推奨">
-                </div>
-                <div class="form-group">
-                    <label for="seo_description_mobile">メタディスクリプション</label>
-                    <textarea id="seo_description_mobile" name="seo_description" rows="3">{{ product.seo_description or '' }}</textarea>
-                </div>
-            </div>
-        </details>
-
-        <!-- PC用：分類とSEO -->
-        <div class="form-grid desktop-only">
+        <!-- 分類とSEO（レスポンシブ共通） -->
+        <div class="form-grid classification-seo-section">
             <div class="content-card">
                 <div class="content-card-header">
                     <h2>分類</h2>
@@ -234,12 +177,12 @@
                 <div class="content-card-body">
                     <div class="form-group">
                         <label for="vendor">販売元 (Vendor)</label>
-                        <input type="text" id="vendor" name="vendor_desktop"
+                        <input type="text" id="vendor" name="vendor"
                             value="{{ product.custom_vendor or product.site or '' }}">
                     </div>
                     <div class="form-group">
                         <label for="tags">タグ (Tags)</label>
-                        <input type="text" id="tags" name="tags_desktop" value="{{ product.tags or '' }}" placeholder="カンマ区切りで入力">
+                        <input type="text" id="tags" name="tags" value="{{ product.tags or '' }}" placeholder="カンマ区切りで入力">
                     </div>
                 </div>
             </div>
@@ -251,17 +194,17 @@
                 <div class="content-card-body">
                     <div class="form-group">
                         <label for="handle">URLハンドル (Handle)</label>
-                        <input type="text" id="handle" name="handle_desktop"
+                        <input type="text" id="handle" name="handle"
                             value="{{ product.custom_handle or ('mercari-' + product.id|string) }}">
                     </div>
                     <div class="form-group">
                         <label for="seo_title">ページタイトル (SEO Title)</label>
-                        <input type="text" id="seo_title" name="seo_title_desktop" value="{{ product.seo_title or '' }}"
+                        <input type="text" id="seo_title" name="seo_title" value="{{ product.seo_title or '' }}"
                             placeholder="60文字以内推奨">
                     </div>
                     <div class="form-group">
                         <label for="seo_description">メタディスクリプション</label>
-                        <textarea id="seo_description" name="seo_description_desktop" rows="3">{{ product.seo_description or '' }}</textarea>
+                        <textarea id="seo_description" name="seo_description" rows="3">{{ product.seo_description or '' }}</textarea>
                     </div>
                 </div>
             </div>
