@@ -19,8 +19,8 @@ def _parse_ids_and_params(session_db):
     Always filter by current_user.id
     """
     product_ids = request.args.getlist("id", type=int)
-    markup = request.args.get("markup", "1.0", type=float)
-    qty = request.args.get("qty", "1", type=int)
+    markup = request.args.get("markup", type=float) or 1.0
+    qty = request.args.get("qty", type=int) or 1
 
     query = session_db.query(Product).filter(Product.user_id == current_user.id)
     
