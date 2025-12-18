@@ -1,143 +1,228 @@
-<!doctype html>
-<html lang="ja">
-<meta charset="utf-8">
-<title>商品一覧（mercari.db）</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+{% extends "base.html" %}
 
-<body>
-    <div class="nav">
-        <div>
-            <a href="{{ url_for('index') }}">商品一覧</a>
-            <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
-            <a href="{{ url_for('manage_templates') }}">テンプレート</a>
-            <a href="{{ url_for('manage_shops') }}">ショップ管理</a>
-        </div>
-        <div>
-            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
-                <select name="shop_id" onchange="this.form.submit()">
-                    <option value="">(ショップ未選択)</option>
-                    {% for s in all_shops %}
-                    <option value="{{ s.id }}" {% if current_shop_id==s.id %}selected{% endif %}>
-                        {{ s.name }}
-                    </option>
-                    {% endfor %}
-                </select>
-            </form>
-        </div>
+{% block title %}商品一覧（mercari.db）{% endblock %}
+{% block header_title %}商品一覧{% endblock %}
+
+{% block content %}
+    <div class="page-header">
+        <h1>商品一覧</h1>
+        <p class="page-subtitle">{{ selected_site or "全サイト" }} / {{ selected_status or "全ステータス" }}</p>
     </div>
 
-    <h1>商品一覧（{{ selected_site or "全サイト" }} / {{ selected_status or "全ステータス" }}）</h1>
-
-    <!-- フィルタフォーム -->
-    <form method="GET" action="{{ url_for('index') }}">
-        <div class="filters">
-            <label>
-                サイト:
-                <select name="site">
-                    <option value="">(すべて)</option>
-                    {% for s in sites %}
-                    <option value="{{ s }}" {% if s==selected_site %}selected{% endif %}>{{ s }}</option>
-                    {% endfor %}
-                </select>
-            </label>
-            <label>
-                ステータス:
-                <select name="status">
-                    <option value="">(すべて)</option>
-                    {% for st in statuses %}
-                    <option value="{{ st }}" {% if st==selected_status %}selected{% endif %}>{{ st }}</option>
-                    {% endfor %}
-                </select>
-            </label>
-            <label>
-                変更:
-                <select name="change_filter">
-                    <option value="">(すべて)</option>
-                    <option value="changed" {% if selected_change_filter=='changed' %}selected{% endif %}>変更ありのみ
-                    </option>
-                </select>
-            </label>
-            <button type="submit">フィルタ</button>
+    <!-- フィルタセクション（モバイルでは折りたたみ） -->
+    <details class="mobile-collapsible mobile-only" id="filterSection">
+        <summary class="mobile-collapsible-header">
+            <span class="mobile-collapsible-title">🔍 フィルタ</span>
+            <span class="mobile-collapsible-icon">▶</span>
+        </summary>
+        <div class="mobile-collapsible-content">
+            <form method="GET" action="{{ url_for('index') }}">
+                <div class="filter-grid">
+                    <div class="filter-group">
+                        <label>サイト</label>
+                        <select name="site">
+                            <option value="">(すべて)</option>
+                            {% for s in sites %}
+                            <option value="{{ s }}" {% if s==selected_site %}selected{% endif %}>{{ s }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>ステータス</label>
+                        <select name="status">
+                            <option value="">(すべて)</option>
+                            {% for st in statuses %}
+                            <option value="{{ st }}" {% if st==selected_status %}selected{% endif %}>{{ st }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>変更</label>
+                        <select name="change_filter">
+                            <option value="">(すべて)</option>
+                            <option value="changed" {% if selected_change_filter=='changed' %}selected{% endif %}>変更ありのみ</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="filter-actions">
+                    <button type="submit">フィルタを適用</button>
+                </div>
+            </form>
         </div>
-    </form>
+    </details>
+
+    <!-- PC用フィルタ（常に表示） -->
+    <div class="filter-section desktop-only">
+        <form method="GET" action="{{ url_for('index') }}">
+            <div class="filter-section-body">
+                <div class="filter-grid">
+                    <div class="filter-group">
+                        <label>サイト</label>
+                        <select name="site">
+                            <option value="">(すべて)</option>
+                            {% for s in sites %}
+                            <option value="{{ s }}" {% if s==selected_site %}selected{% endif %}>{{ s }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>ステータス</label>
+                        <select name="status">
+                            <option value="">(すべて)</option>
+                            {% for st in statuses %}
+                            <option value="{{ st }}" {% if st==selected_status %}selected{% endif %}>{{ st }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>変更</label>
+                        <select name="change_filter">
+                            <option value="">(すべて)</option>
+                            <option value="changed" {% if selected_change_filter=='changed' %}selected{% endif %}>変更ありのみ</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="filter-actions">
+                    <button type="submit">フィルタを適用</button>
+                </div>
+            </div>
+        </form>
+    </div>
 
     <!-- エクスポート用フォーム -->
     <form method="GET">
-        <div class="actions">
-            <!-- 基本設定（常に表示） -->
-            <div>
-                <label>価格倍率 (markup)</label>
-                <input type="number" id="markup" name="markup" value="{{ default_markup }}" step="0.01"
-                    oninput="updateProfitMargin()" inputmode="decimal">
-                <span style="font-size: 11px; color: #555;">1.0=そのまま / 1.2=20%上乗せ</span>
-            </div>
-            <div>
-                <label>利益率 (%)</label>
-                <input type="number" id="profit_margin" step="1" oninput="updateMarkup()" inputmode="numeric">
-                <span style="font-size: 11px; color: #555;">価格倍率と連動します</span>
-            </div>
-            <div>
-                <label>在庫数 (Quantity)</label>
-                <input type="number" name="qty" value="{{ default_qty }}" step="1" min="0" inputmode="numeric">
-            </div>
-            <div>
-                <label>為替レート (JPY → USD)</label>
-                <input type="number" name="rate" value="{{ default_rate }}" step="0.01" inputmode="decimal">
-                <span style="font-size: 11px; color: #555;">1ドルあたりの円（例: 155）</span>
-            </div>
-        </div>
+        <!-- エクスポート設定（モバイルでは折りたたみ） -->
+        <details class="mobile-collapsible mobile-only">
+            <summary class="mobile-collapsible-header">
+                <span class="mobile-collapsible-title">⚙️ エクスポート設定</span>
+                <span class="mobile-collapsible-icon">▶</span>
+            </summary>
+            <div class="mobile-collapsible-content">
+                <div class="export-grid">
+                    <div class="filter-group">
+                        <label>価格倍率</label>
+                        <input type="number" id="markup_mobile" name="markup" value="{{ default_markup }}" step="0.01"
+                            oninput="updateProfitMarginMobile()" inputmode="decimal">
+                        <span class="text-small text-muted">1.0=そのまま / 1.2=20%上乗せ</span>
+                    </div>
+                    <div class="filter-group">
+                        <label>利益率 (%)</label>
+                        <input type="number" id="profit_margin_mobile" step="1" oninput="updateMarkupMobile()" inputmode="numeric">
+                    </div>
+                    <div class="filter-group">
+                        <label>在庫数</label>
+                        <input type="number" name="qty" value="{{ default_qty }}" step="1" min="0" inputmode="numeric">
+                    </div>
+                    <div class="filter-group">
+                        <label>為替レート</label>
+                        <input type="number" name="rate" value="{{ default_rate }}" step="0.01" inputmode="decimal">
+                    </div>
+                </div>
 
-        <!-- eBay設定（折りたたみ） -->
-        <details class="collapsible-section">
-            <summary>eBay 詳細設定</summary>
-            <div class="actions" style="margin-top: 10px;">
-                <div>
-                    <label>eBay カテゴリID (Category)</label>
-                    <input type="text" name="ebay_category_id" value="{{ default_ebay_category_id }}"
-                        placeholder="例: 183454">
-                </div>
-                <div>
-                    <label>eBay ConditionID</label>
-                    <input type="text" name="ebay_condition_id" value="{{ default_ebay_condition_id }}"
-                        placeholder="新品=1000 / 中古=3000">
-                </div>
-                <div>
-                    <label>PaymentProfileName</label>
-                    <input type="text" name="ebay_payment_profile" value="{{ default_ebay_payment_profile }}"
-                        placeholder="例: payAddress">
-                </div>
-                <div>
-                    <label>ReturnProfileName</label>
-                    <input type="text" name="ebay_return_profile" value="{{ default_ebay_return_profile }}"
-                        placeholder="例: return Buyer pays for shipping">
-                </div>
-                <div>
-                    <label>ShippingProfileName</label>
-                    <input type="text" name="ebay_shipping_profile" value="{{ default_ebay_shipping_profile }}"
-                        placeholder="例: [US DDP] $132.01–$198">
-                </div>
-                <div>
-                    <label>PayPalEmailAddress</label>
-                    <input type="text" name="ebay_paypal_email" value="{{ default_ebay_paypal_email }}"
-                        placeholder="例: your-paypal@example.com">
+                <!-- eBay設定 -->
+                <details class="collapsible-section mt-2">
+                    <summary>eBay 詳細設定</summary>
+                    <div class="actions">
+                        <div class="filter-group">
+                            <label>カテゴリID</label>
+                            <input type="text" name="ebay_category_id" value="{{ default_ebay_category_id }}" placeholder="例: 183454">
+                        </div>
+                        <div class="filter-group">
+                            <label>ConditionID</label>
+                            <input type="text" name="ebay_condition_id" value="{{ default_ebay_condition_id }}" placeholder="新品=1000">
+                        </div>
+                        <div class="filter-group">
+                            <label>PaymentProfile</label>
+                            <input type="text" name="ebay_payment_profile" value="{{ default_ebay_payment_profile }}">
+                        </div>
+                        <div class="filter-group">
+                            <label>ReturnProfile</label>
+                            <input type="text" name="ebay_return_profile" value="{{ default_ebay_return_profile }}">
+                        </div>
+                        <div class="filter-group">
+                            <label>ShippingProfile</label>
+                            <input type="text" name="ebay_shipping_profile" value="{{ default_ebay_shipping_profile }}">
+                        </div>
+                        <div class="filter-group">
+                            <label>PayPalEmail</label>
+                            <input type="text" name="ebay_paypal_email" value="{{ default_ebay_paypal_email }}">
+                        </div>
+                    </div>
+                </details>
+
+                <div class="export-btn-grid mt-2">
+                    <button type="submit" formaction="{{ url_for('export_shopify') }}">Shopify CSV</button>
+                    <button type="submit" formaction="{{ url_for('export_ebay') }}">eBay CSV</button>
+                    <button type="submit" formaction="{{ url_for('export_stock_update') }}">在庫更新CSV</button>
+                    <button type="submit" formaction="{{ url_for('export_price_update') }}">価格更新CSV</button>
                 </div>
             </div>
         </details>
 
-        <div class="export-buttons" style="margin: 15px 0;">
-            <button type="submit" formaction="{{ url_for('export_shopify') }}">
-                Shopify 風 CSV
-            </button>
-            <button type="submit" formaction="{{ url_for('export_ebay') }}">
-                eBay File Exchange 用 CSV
-            </button>
-            <button type="submit" formaction="{{ url_for('export_stock_update') }}">
-                Shopify 在庫更新CSV
-            </button>
-            <button type="submit" formaction="{{ url_for('export_price_update') }}">
-                Shopify 価格更新CSV
-            </button>
+        <!-- PC用エクスポート設定 -->
+        <div class="export-section desktop-only">
+            <div class="export-section-body">
+                <div class="export-grid">
+                    <div class="filter-group">
+                        <label>価格倍率 (markup)</label>
+                        <input type="number" id="markup" name="markup" value="{{ default_markup }}" step="0.01"
+                            oninput="updateProfitMargin()" inputmode="decimal">
+                        <span class="text-small text-muted">1.0=そのまま / 1.2=20%上乗せ</span>
+                    </div>
+                    <div class="filter-group">
+                        <label>利益率 (%)</label>
+                        <input type="number" id="profit_margin" step="1" oninput="updateMarkup()" inputmode="numeric">
+                        <span class="text-small text-muted">価格倍率と連動します</span>
+                    </div>
+                    <div class="filter-group">
+                        <label>在庫数 (Quantity)</label>
+                        <input type="number" name="qty" value="{{ default_qty }}" step="1" min="0" inputmode="numeric">
+                    </div>
+                    <div class="filter-group">
+                        <label>為替レート (JPY → USD)</label>
+                        <input type="number" name="rate" value="{{ default_rate }}" step="0.01" inputmode="decimal">
+                        <span class="text-small text-muted">1ドルあたりの円</span>
+                    </div>
+                </div>
+
+                <!-- eBay設定（折りたたみ） -->
+                <details class="collapsible-section mt-2">
+                    <summary>eBay 詳細設定</summary>
+                    <div class="actions">
+                        <div class="filter-group">
+                            <label>eBay カテゴリID (Category)</label>
+                            <input type="text" name="ebay_category_id" value="{{ default_ebay_category_id }}" placeholder="例: 183454">
+                        </div>
+                        <div class="filter-group">
+                            <label>eBay ConditionID</label>
+                            <input type="text" name="ebay_condition_id" value="{{ default_ebay_condition_id }}" placeholder="新品=1000 / 中古=3000">
+                        </div>
+                        <div class="filter-group">
+                            <label>PaymentProfileName</label>
+                            <input type="text" name="ebay_payment_profile" value="{{ default_ebay_payment_profile }}" placeholder="例: payAddress">
+                        </div>
+                        <div class="filter-group">
+                            <label>ReturnProfileName</label>
+                            <input type="text" name="ebay_return_profile" value="{{ default_ebay_return_profile }}" placeholder="例: return Buyer pays for shipping">
+                        </div>
+                        <div class="filter-group">
+                            <label>ShippingProfileName</label>
+                            <input type="text" name="ebay_shipping_profile" value="{{ default_ebay_shipping_profile }}" placeholder="例: [US DDP] $132.01–$198">
+                        </div>
+                        <div class="filter-group">
+                            <label>PayPalEmailAddress</label>
+                            <input type="text" name="ebay_paypal_email" value="{{ default_ebay_paypal_email }}" placeholder="例: your-paypal@example.com">
+                        </div>
+                    </div>
+                </details>
+
+                <div class="export-btn-grid mt-2">
+                    <button type="submit" formaction="{{ url_for('export_shopify') }}">Shopify 風 CSV</button>
+                    <button type="submit" formaction="{{ url_for('export_ebay') }}">eBay File Exchange 用 CSV</button>
+                    <button type="submit" formaction="{{ url_for('export_stock_update') }}">Shopify 在庫更新CSV</button>
+                    <button type="submit" formaction="{{ url_for('export_price_update') }}">Shopify 価格更新CSV</button>
+                </div>
+            </div>
         </div>
 
         <div class="table-responsive">
@@ -185,23 +270,24 @@
 
         <div class="pagination">
             {% if has_prev %}
-            <a href="{{ url_for('index', page=page-1, site=selected_site, status=selected_status) }}">&laquo; 前のページ</a>
+            <a href="{{ url_for('index', page=page-1, site=selected_site, status=selected_status) }}">&laquo; 前</a>
             {% endif %}
-            <span>ページ {{ page }} / {{ total_pages }}</span>
+            <span>{{ page }} / {{ total_pages }}</span>
             {% if has_next %}
-            <a href="{{ url_for('index', page=page+1, site=selected_site, status=selected_status) }}">次のページ &raquo;</a>
+            <a href="{{ url_for('index', page=page+1, site=selected_site, status=selected_status) }}">次 &raquo;</a>
             {% endif %}
         </div>
     </form>
+{% endblock %}
+
+{% block scripts %}
     <script>
         function updateProfitMargin() {
             const markupInput = document.getElementById('markup');
             const profitMarginInput = document.getElementById('profit_margin');
+            if (!markupInput || !profitMarginInput) return;
             const markup = parseFloat(markupInput.value);
             if (!isNaN(markup) && markup > 0) {
-                // 利益率 = (売上 - 仕入) / 売上
-                // markup = 売上 / 仕入
-                // 利益率 = (markup - 1) / markup * 100
                 const profitMargin = ((markup - 1) / markup) * 100;
                 profitMarginInput.value = profitMargin.toFixed(0);
             } else {
@@ -212,9 +298,9 @@
         function updateMarkup() {
             const markupInput = document.getElementById('markup');
             const profitMarginInput = document.getElementById('profit_margin');
+            if (!markupInput || !profitMarginInput) return;
             const profitMargin = parseFloat(profitMarginInput.value);
             if (!isNaN(profitMargin) && profitMargin < 100) {
-                // markup = 1 / (1 - (利益率 / 100))
                 const markup = 1 / (1 - (profitMargin / 100));
                 markupInput.value = markup.toFixed(2);
             } else {
@@ -222,12 +308,35 @@
             }
         }
 
-        // ページ読み込み時に初期値を設定
+        function updateProfitMarginMobile() {
+            const markupInput = document.getElementById('markup_mobile');
+            const profitMarginInput = document.getElementById('profit_margin_mobile');
+            if (!markupInput || !profitMarginInput) return;
+            const markup = parseFloat(markupInput.value);
+            if (!isNaN(markup) && markup > 0) {
+                const profitMargin = ((markup - 1) / markup) * 100;
+                profitMarginInput.value = profitMargin.toFixed(0);
+            } else {
+                profitMarginInput.value = '';
+            }
+        }
+
+        function updateMarkupMobile() {
+            const markupInput = document.getElementById('markup_mobile');
+            const profitMarginInput = document.getElementById('profit_margin_mobile');
+            if (!markupInput || !profitMarginInput) return;
+            const profitMargin = parseFloat(profitMarginInput.value);
+            if (!isNaN(profitMargin) && profitMargin < 100) {
+                const markup = 1 / (1 - (profitMargin / 100));
+                markupInput.value = markup.toFixed(2);
+            } else {
+                markupInput.value = '';
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', function () {
-            // markupの値から利益率を計算して表示
             updateProfitMargin();
+            updateProfitMarginMobile();
         });
     </script>
-</body>
-
-</html>
+{% endblock %}

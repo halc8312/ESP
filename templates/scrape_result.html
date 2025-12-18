@@ -1,89 +1,109 @@
-<!doctype html>
-<html lang="ja">
+{% extends "base.html" %}
 
-<head>
-    <meta charset="utf-8">
-    <title>スクレイピング結果</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
+{% block title %}スクレイピング結果{% endblock %}
+{% block header_title %}取得結果{% endblock %}
 
-<body>
-    <div class="nav">
-        <div>
-            <a href="{{ url_for('index') }}">商品一覧</a>
-            <a href="{{ url_for('dashboard') }}">ダッシュボード</a>
-            <a href="{{ url_for('scrape_form') }}">新規スクレイピング</a>
-            <a href="{{ url_for('manage_templates') }}">テンプレート</a>
-            <a href="{{ url_for('manage_shops') }}">ショップ管理</a>
-        </div>
-        <div>
-            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
-                <select name="shop_id" onchange="this.form.submit()">
-                    <option value="">(ショップ未選択)</option>
-                    {% for s in all_shops %}
-                    <option value="{{ s.id }}" {% if current_shop_id==s.id %}selected{% endif %}>
-                        {{ s.name }}
-                    </option>
-                    {% endfor %}
-                </select>
-            </form>
-        </div>
+{% block content %}
+    <a href="{{ url_for('scrape_form') }}" class="back-link">&laquo; 条件を変更して再スクレイピング</a>
+
+    <div class="page-header">
+        <h1>スクレイピング結果</h1>
     </div>
 
-    <h1>スクレイピング結果</h1>
-    <div style="margin-bottom: 20px;">
-        <a href="{{ url_for('scrape_form') }}">&laquo; 条件を変更して再スクレイピング</a>
+    <!-- 検索URL（モバイルでは折りたたみ） -->
+    <details class="mobile-collapsible mobile-only">
+        <summary class="mobile-collapsible-header">
+            <span class="mobile-collapsible-title">🔗 検索URL詳細</span>
+            <span class="mobile-collapsible-icon">▶</span>
+        </summary>
+        <div class="mobile-collapsible-content">
+            <pre style="background:#f0f0f0; padding:12px; overflow-x: auto; font-size: 12px;">{{ search_url }}</pre>
+            <h4>設定パラメータ</h4>
+            <ul style="font-size: 14px;">
+                <li>キーワード: {{ keyword }}</li>
+                <li>価格範囲: {{ price_min }} 〜 {{ price_max }}</li>
+                <li>ソート: {{ sort }}</li>
+                <li>カテゴリ: {{ category }}</li>
+                <li>取得件数: {{ limit }}</li>
+            </ul>
+        </div>
+    </details>
+
+    <!-- PC用詳細表示 -->
+    <div class="content-card desktop-only">
+        <div class="content-card-header">
+            <h3>検索URL</h3>
+        </div>
+        <div class="content-card-body">
+            <pre style="background:#f0f0f0; padding:12px; overflow-x: auto;">{{ search_url }}</pre>
+            <h4>設定パラメータ:</h4>
+            <ul>
+                <li>キーワード: {{ keyword }}</li>
+                <li>価格範囲: {{ price_min }} 〜 {{ price_max }}</li>
+                <li>ソート: {{ sort }}</li>
+                <li>カテゴリ: {{ category }}</li>
+                <li>取得件数(max_items): {{ limit }}</li>
+            </ul>
+        </div>
     </div>
-
-    <h3>使用した検索URL:</h3>
-    <pre style="background:#f0f0f0; padding:12px; overflow-x: auto;">{{ search_url }}</pre>
-
-    <h3>設定パラメータ:</h3>
-    <ul>
-        <li>キーワード: {{ keyword }}</li>
-        <li>価格範囲: {{ price_min }} 〜 {{ price_max }}</li>
-        <li>ソート: {{ sort }}</li>
-        <li>カテゴリ: {{ category }}</li>
-        <li>取得件数(max_items): {{ limit }}</li>
-    </ul>
 
     {% if error_msg %}
-    <p class="error">スクレイピング中にエラーが発生しました: {{ error_msg }}</p>
+    <div class="content-card" style="border-color: var(--danger-color);">
+        <div class="content-card-body">
+            <p class="error" style="margin: 0;">スクレイピング中にエラーが発生しました: {{ error_msg }}</p>
+        </div>
+    </div>
     {% else %}
-    <p>スクレイピング取得件数: {{ items|length }} 件</p>
-    <p>DB 新規登録: {{ new_count }} 件 / 更新: {{ updated_count }} 件</p>
+    <!-- 結果サマリ -->
+    <div class="dashboard-grid" style="grid-template-columns: repeat(3, 1fr);">
+        <div class="stat-card">
+            <h3>取得件数</h3>
+            <div class="value">{{ items|length }}</div>
+        </div>
+        <div class="stat-card">
+            <h3>新規登録</h3>
+            <div class="value" style="color: var(--success-color);">{{ new_count }}</div>
+        </div>
+        <div class="stat-card">
+            <h3>更新</h3>
+            <div class="value" style="color: var(--primary-color);">{{ updated_count }}</div>
+        </div>
+    </div>
 
     {% if items %}
-    <h3>取得した商品（プレビュー）</h3>
-    <div class="table-responsive">
-        <table>
-            <tr>
-                <th>#</th>
-                <th>タイトル</th>
-                <th>価格</th>
-                <th>ステータス</th>
-                <th>URL</th>
-            </tr>
-            {% for it in items %}
-            <tr>
-                <td>{{ loop.index }}</td>
-                <td>{{ it.title }}</td>
-                <td>
-                    {% if it.price is not none %}
-                    ¥{{ "{:,}".format(it.price) }}
-                    {% else %}
-                    -
-                    {% endif %}
-                </td>
-                <td>{{ it.status }}</td>
-                <td><a href="{{ it.url }}" target="_blank">開く</a></td>
-            </tr>
-            {% endfor %}
-        </table>
+    <div class="content-card">
+        <div class="content-card-header">
+            <h3>取得した商品（プレビュー）</h3>
+        </div>
+        <div class="content-card-body" style="padding: 0;">
+            <div class="table-responsive">
+                <table>
+                    <tr>
+                        <th>#</th>
+                        <th>タイトル</th>
+                        <th>価格</th>
+                        <th class="hide-mobile">ステータス</th>
+                        <th>URL</th>
+                    </tr>
+                    {% for it in items %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td class="product-title-cell">{{ it.title }}</td>
+                        <td>
+                            {% if it.price is not none %}
+                            ¥{{ "{:,}".format(it.price) }}
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                        <td class="hide-mobile">{{ it.status }}</td>
+                        <td><a href="{{ it.url }}" target="_blank">開く</a></td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+        </div>
     </div>
     {% endif %}
     {% endif %}
-</body>
-
-</html>
+{% endblock %}

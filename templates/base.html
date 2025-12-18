@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="utf-8">
+    <title>{% block title %}ESP{% endblock %}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block head %}{% endblock %}
+</head>
+
+<body class="{% block body_class %}has-bottom-nav{% endblock %}">
+    <!-- Mobile Header with Hamburger -->
+    <header class="mobile-header">
+        <button class="hamburger-btn" onclick="toggleSidebar()" aria-label="メニューを開く">
+            <span class="hamburger-icon"></span>
+        </button>
+        <h1 class="mobile-header-title">{% block header_title %}ESP{% endblock %}</h1>
+        <div class="mobile-header-shop">
+            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
+                <select name="shop_id" onchange="this.form.submit()" class="shop-select-compact">
+                    <option value="">未選択</option>
+                    {% for s in all_shops %}
+                    <option value="{{ s.id }}" {% if current_shop_id==s.id %}selected{% endif %}>
+                        {{ s.name[:8] }}{% if s.name|length > 8 %}...{% endif %}
+                    </option>
+                    {% endfor %}
+                </select>
+            </form>
+        </div>
+    </header>
+
+    <!-- Sidebar Overlay -->
+    <div class="sidebar-overlay" onclick="closeSidebar()"></div>
+
+    <!-- Sidebar Navigation (Mobile: slide-in drawer, PC: always visible) -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <span class="sidebar-logo">ESP</span>
+            <button class="sidebar-close" onclick="closeSidebar()" aria-label="メニューを閉じる">×</button>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="{{ url_for('index') }}" class="sidebar-link {% if request.endpoint == 'index' %}active{% endif %}">
+                <span class="nav-icon">📦</span>
+                <span class="nav-text">商品一覧</span>
+            </a>
+            <a href="{{ url_for('dashboard') }}" class="sidebar-link {% if request.endpoint == 'dashboard' %}active{% endif %}">
+                <span class="nav-icon">📊</span>
+                <span class="nav-text">ダッシュボード</span>
+            </a>
+            <a href="{{ url_for('scrape_form') }}" class="sidebar-link {% if request.endpoint == 'scrape_form' %}active{% endif %}">
+                <span class="nav-icon">🔍</span>
+                <span class="nav-text">スクレイピング</span>
+            </a>
+            <a href="{{ url_for('manage_templates') }}" class="sidebar-link {% if request.endpoint == 'manage_templates' %}active{% endif %}">
+                <span class="nav-icon">📝</span>
+                <span class="nav-text">テンプレート</span>
+            </a>
+            <a href="{{ url_for('manage_shops') }}" class="sidebar-link {% if request.endpoint == 'manage_shops' %}active{% endif %}">
+                <span class="nav-icon">🏪</span>
+                <span class="nav-text">ショップ管理</span>
+            </a>
+        </nav>
+        <div class="sidebar-shop-section">
+            <label class="sidebar-shop-label">ショップ選択</label>
+            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
+                <select name="shop_id" onchange="this.form.submit()" class="sidebar-shop-select">
+                    <option value="">(ショップ未選択)</option>
+                    {% for s in all_shops %}
+                    <option value="{{ s.id }}" {% if current_shop_id==s.id %}selected{% endif %}>
+                        {{ s.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </form>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Bottom Navigation (Mobile only) -->
+    <nav class="bottom-nav">
+        <a href="{{ url_for('index') }}" class="bottom-nav-item {% if request.endpoint == 'index' %}active{% endif %}">
+            <span class="bottom-nav-icon">📦</span>
+            <span class="bottom-nav-label">商品</span>
+        </a>
+        <a href="{{ url_for('dashboard') }}" class="bottom-nav-item {% if request.endpoint == 'dashboard' %}active{% endif %}">
+            <span class="bottom-nav-icon">📊</span>
+            <span class="bottom-nav-label">ダッシュ</span>
+        </a>
+        <a href="{{ url_for('scrape_form') }}" class="bottom-nav-item {% if request.endpoint == 'scrape_form' %}active{% endif %}">
+            <span class="bottom-nav-icon">🔍</span>
+            <span class="bottom-nav-label">取得</span>
+        </a>
+        <a href="{{ url_for('manage_templates') }}" class="bottom-nav-item {% if request.endpoint == 'manage_templates' %}active{% endif %}">
+            <span class="bottom-nav-icon">📝</span>
+            <span class="bottom-nav-label">テンプレ</span>
+        </a>
+        <a href="{{ url_for('manage_shops') }}" class="bottom-nav-item {% if request.endpoint == 'manage_shops' %}active{% endif %}">
+            <span class="bottom-nav-icon">🏪</span>
+            <span class="bottom-nav-label">店舗</span>
+        </a>
+    </nav>
+
+    <script>
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+            document.querySelector('.sidebar-overlay').classList.toggle('open');
+            document.body.classList.toggle('sidebar-open');
+        }
+
+        function closeSidebar() {
+            document.getElementById('sidebar').classList.remove('open');
+            document.querySelector('.sidebar-overlay').classList.remove('open');
+            document.body.classList.remove('sidebar-open');
+        }
+
+        // Close sidebar on escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeSidebar();
+            }
+        });
+
+        // Close sidebar when clicking a link (mobile)
+        document.querySelectorAll('.sidebar-link').forEach(function(link) {
+            link.addEventListener('click', function() {
+                if (window.innerWidth < 1024) {
+                    closeSidebar();
+                }
+            });
+        });
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+
+</html>
