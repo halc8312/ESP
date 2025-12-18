@@ -499,6 +499,25 @@ tr.changed {
 }
 
 
+/* Product Title Cell - prevent overly tall rows */
+.product-title-cell {
+    max-width: 250px;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    word-break: break-word;
+}
+
+@media (max-width: 768px) {
+    .product-title-cell {
+        max-width: 150px;
+        -webkit-line-clamp: 3;
+        line-clamp: 3;
+    }
+}
+
 /* Variant Table */
 .variant-table input[type='text'],
 .variant-table input[type='number'] {

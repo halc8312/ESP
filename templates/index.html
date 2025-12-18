@@ -167,7 +167,7 @@
                         <img src="{{ thumb_url }}" alt="thumb" style="max-height: 80px;">
                         {% endif %}
                     </td>
-                    <td>{{ p.last_title }}</td>
+                    <td class="product-title-cell">{{ p.last_title }}</td>
                     <td>
                         {% if p.last_price is not none %}
                         ¥{{ "{:,}".format(p.last_price) }}
