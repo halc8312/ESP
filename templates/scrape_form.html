@@ -4,72 +4,80 @@
 {% block header_title %}スクレイピング{% endblock %}
 
 {% block content %}
-    <div class="page-header">
-        <h1>スクレイピング実行</h1>
+<div class="page-header">
+    <h1>スクレイピング実行</h1>
+</div>
+
+<!-- 方法1: URL直接指定 -->
+<div class="content-card">
+    <div class="content-card-header">
+        <h3>方法1: URLを直接指定（単品抽出）</h3>
     </div>
-
-    <!-- 方法1: URL直接指定 -->
-    <div class="content-card">
-        <div class="content-card-header">
-            <h3>方法1: URLを直接指定（単品抽出）</h3>
-        </div>
-        <div class="content-card-body">
-            <form method="POST" action="{{ url_for('scrape_run') }}">
-                <div class="form-group">
-                    <label>商品URL</label>
-                    <input type="url" name="target_url"
-                        placeholder="https://jp.mercari.com/item/m123456789 または https://store.shopping.yahoo.co.jp/..." required
-                        inputmode="url" autocomplete="url">
-                </div>
-                <button type="submit" style="width: 100%;">URLからスクレイピング実行</button>
-            </form>
-        </div>
+    <div class="content-card-body">
+        <form method="POST" action="{{ url_for('scrape_run') }}">
+            <div class="form-group">
+                <label>商品URL</label>
+                <input type="url" name="target_url"
+                    placeholder="https://jp.mercari.com/item/m123456789 または https://store.shopping.yahoo.co.jp/..."
+                    required inputmode="url" autocomplete="url">
+            </div>
+            <button type="submit" style="width: 100%;">URLからスクレイピング実行</button>
+        </form>
     </div>
+</div>
 
-    <!-- 方法2: 検索条件 -->
-    <div class="content-card">
-        <div class="content-card-header">
-            <h3>方法2: 検索条件から抽出（一括抽出）</h3>
-        </div>
-        <div class="content-card-body">
-            <form method="POST" action="{{ url_for('scrape_run') }}">
-                <div class="form-group">
-                    <label>キーワード</label>
-                    <input type="text" name="keyword" value="スニーカー" required autocomplete="off">
-                </div>
-
-                <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
-                    <div class="form-group">
-                        <label>価格 min（任意）</label>
-                        <input type="number" name="price_min" inputmode="numeric" min="0" placeholder="0">
-                    </div>
-                    <div class="form-group">
-                        <label>価格 max（任意）</label>
-                        <input type="number" name="price_max" inputmode="numeric" min="0" placeholder="上限なし">
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label>ソート順</label>
-                    <select name="sort">
-                        <option value="created_desc">新着順</option>
-                        <option value="price_asc">価格：安い順</option>
-                        <option value="price_desc">価格：高い順</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label>カテゴリID（任意、メルカリカテゴリID）</label>
-                    <input type="text" name="category" placeholder="例：1" inputmode="numeric">
-                </div>
-
-                <div class="form-group">
-                    <label>最大取得件数</label>
-                    <input type="number" name="limit" value="10" min="1" inputmode="numeric">
-                </div>
-
-                <button type="submit" style="width: 100%;">スクレイピング実行</button>
-            </form>
-        </div>
+<!-- 方法2: 検索条件 -->
+<div class="content-card">
+    <div class="content-card-header">
+        <h3>方法2: 検索条件から抽出（一括抽出）</h3>
     </div>
+    <div class="content-card-body">
+        <form method="POST" action="{{ url_for('scrape_run') }}">
+            <div class="form-group">
+                <label>サイト</label>
+                <select name="site">
+                    <option value="mercari">Mercari</option>
+                    <option value="yahoo">Yahoo!ショッピング</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>キーワード</label>
+                <input type="text" name="keyword" value="スニーカー" required autocomplete="off">
+            </div>
+
+            <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+                <div class="form-group">
+                    <label>価格 min（任意）</label>
+                    <input type="number" name="price_min" inputmode="numeric" min="0" placeholder="0">
+                </div>
+                <div class="form-group">
+                    <label>価格 max（任意）</label>
+                    <input type="number" name="price_max" inputmode="numeric" min="0" placeholder="上限なし">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>ソート順</label>
+                <select name="sort">
+                    <option value="created_desc">新着順</option>
+                    <option value="price_asc">価格：安い順</option>
+                    <option value="price_desc">価格：高い順</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>カテゴリID（任意、メルカリカテゴリID）</label>
+                <input type="text" name="category" placeholder="例：1" inputmode="numeric">
+            </div>
+
+            <div class="form-group">
+                <label>最大取得件数</label>
+                <input type="number" name="limit" value="10" min="1" inputmode="numeric">
+            </div>
+
+            <button type="submit" style="width: 100%;">スクレイピング実行</button>
+        </form>
+    </div>
+</div>
 {% endblock %}
