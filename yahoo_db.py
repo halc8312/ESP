@@ -28,18 +28,18 @@ def scrape_item_detail(driver, url: str):
 
     # ---- Title ----
     title = ""
-    # Try more generic selectors first as Yahoo has many templates
-    # .mdItemName, .elName are common classes
+    # Yahoo titles now often use styles_itemName__... or similar dynamic classes
     for selector in [
+        "[class*='styles_itemName']", 
+        "[class*='styles_itemTitle']",
         ".mdItemName", ".elName", 
         "h1.title", "h1.name", 
         "[data-testid='item-name']", 
-        "h1" # Last resort
+        "h1"
     ]:
         try:
             els = driver.find_elements(By.CSS_SELECTOR, selector)
             if els:
-                # Yahoo titles sometimes contain newlines or extra spaces
                 t = els[0].text.replace('\n', ' ').strip()
                 if t: 
                     title = t
@@ -55,11 +55,13 @@ def scrape_item_detail(driver, url: str):
             pass
 
     # ---- Price ----
+    # ---- Price ----
     price = None
     for selector in [
+        "[class*='styles_price']",
         ".mdItemPrice", ".elPrice", ".elItemPrice", 
         "[data-testid='item-price']",
-        ".price" # Generic fallbacks
+        ".price"
     ]:
         try:
             els = driver.find_elements(By.CSS_SELECTOR, selector)
@@ -85,8 +87,9 @@ def scrape_item_detail(driver, url: str):
     # ---- Description ----
     description = ""
     desc_selectors = [
+        "[class*='styles_itemDescription']",
         ".mdItemDescription", ".elItemInfo", "#item-info",
-        ".explanation", ".item_exp" # Older templates
+        ".explanation", ".item_exp"
     ]
     for sel in desc_selectors:
         try:
@@ -127,11 +130,13 @@ def scrape_item_detail(driver, url: str):
             except:
                 pass
 
+        collect_imgs("[class*='styles_image'] img")
+        collect_imgs("[class*='styles_mainImage'] img")
         collect_imgs(".mdItemImage img")
         collect_imgs(".elItemImage img")
         collect_imgs(".libItemImage img")
         collect_imgs("#item-image img")
-        collect_imgs("ul.elItemImage > li > img") # Slider thumbnails often imply main images exist
+        collect_imgs("ul.elItemImage > li > img")
         
         # If nothing specific found, get all images that look like product photos
         if not candidates:
