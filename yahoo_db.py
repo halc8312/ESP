@@ -5,6 +5,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from mercari_db import create_driver
+from selector_config import get_selectors, get_valid_domains
+from scrape_metrics import get_metrics, log_scrape_result, check_scrape_health
 
 def scrape_item_detail(driver, url: str):
     """
@@ -28,15 +30,13 @@ def scrape_item_detail(driver, url: str):
 
     # ---- Title ----
     title = ""
-    # Yahoo titles now often use styles_itemName__... or similar dynamic classes
-    for selector in [
-        "[class*='styles_itemName']", 
-        "[class*='styles_itemTitle']",
-        ".mdItemName", ".elName", 
-        "h1.title", "h1.name", 
-        "[data-testid='item-name']", 
-        "h1"
-    ]:
+    # Load selectors from config (with fallback to hardcoded if config not found)
+    title_selectors = get_selectors('yahoo', 'detail', 'title') or [
+        "[class*='styles_itemName']", "[class*='styles_itemTitle']",
+        ".mdItemName", ".elName", "h1.title", "h1.name", 
+        "[data-testid='item-name']", "h1"
+    ]
+    for selector in title_selectors:
         try:
             els = driver.find_elements(By.CSS_SELECTOR, selector)
             if els:
@@ -55,14 +55,12 @@ def scrape_item_detail(driver, url: str):
             pass
 
     # ---- Price ----
-    # ---- Price ----
     price = None
-    for selector in [
-        "[class*='styles_price']",
-        ".mdItemPrice", ".elPrice", ".elItemPrice", 
-        "[data-testid='item-price']",
-        ".price"
-    ]:
+    price_selectors = get_selectors('yahoo', 'detail', 'price') or [
+        "[class*='styles_price']", ".mdItemPrice", ".elPrice", 
+        ".elItemPrice", "[data-testid='item-price']", ".price"
+    ]
+    for selector in price_selectors:
         try:
             els = driver.find_elements(By.CSS_SELECTOR, selector)
             if els:
@@ -86,7 +84,7 @@ def scrape_item_detail(driver, url: str):
 
     # ---- Description ----
     description = ""
-    desc_selectors = [
+    desc_selectors = get_selectors('yahoo', 'detail', 'description') or [
         "[class*='styles_itemDescription']",
         ".mdItemDescription", ".elItemInfo", "#item-info",
         ".explanation", ".item_exp"
@@ -130,13 +128,14 @@ def scrape_item_detail(driver, url: str):
             except:
                 pass
 
-        collect_imgs("[class*='styles_image'] img")
-        collect_imgs("[class*='styles_mainImage'] img")
-        collect_imgs(".mdItemImage img")
-        collect_imgs(".elItemImage img")
-        collect_imgs(".libItemImage img")
-        collect_imgs("#item-image img")
-        collect_imgs("ul.elItemImage > li > img")
+        # Load image selectors from config
+        image_selectors = get_selectors('yahoo', 'detail', 'images') or [
+            "[class*='styles_image'] img", "[class*='styles_mainImage'] img",
+            ".mdItemImage img", ".elItemImage img", ".libItemImage img",
+            "#item-image img", "ul.elItemImage > li > img"
+        ]
+        for selector in image_selectors:
+            collect_imgs(selector)
         
         # If nothing specific found, get all images that look like product photos
         if not candidates:
@@ -186,15 +185,21 @@ def scrape_single_item(url: str, headless: bool = True):
     One-shot scraping for Yahoo Shopping
     """
     driver = None
+    metrics = get_metrics()
+    metrics.start('yahoo', 'single')
     try:
         print(f"DEBUG: Starting Yahoo scrape for {url}")
         driver = create_driver(headless=headless)
         data = scrape_item_detail(driver, url)
+        log_scrape_result('yahoo', url, data)
         if data["title"]:
             print(f"DEBUG: Success -> {data['title']}")
+        metrics.finish()
         return [data]
     except Exception as e:
         print(f"Yahoo Scrape Error: {e}")
+        metrics.record_attempt(False, url, str(e))
+        metrics.finish()
         return []
     finally:
         if driver:
@@ -225,27 +230,28 @@ def scrape_search_result(
 
         # Collect links
         links = []
-        # Yahoo Search Result Selectors (Updated for CSS Modules)
-        # New structure uses class*='SearchResult_SearchResultItem' for items
-        # and class*='SearchResult_SearchResultItem__detailLink' for links
+        # Load search result selectors from config
+        item_link_selectors = get_selectors('yahoo', 'search', 'item_links') or [
+            "a[class*='SearchResult_SearchResultItem__detailLink']",
+            "a[class*='ItemImageLink']",
+            "li.LoopList__item a", ".Item__title a", "[data-testid='item-name'] a"
+        ]
+        valid_domains = get_valid_domains('yahoo', 'search') or [
+            "store.shopping.yahoo.co.jp", "shopping-item-reach.yahoo.co.jp"
+        ]
         
         # Try to collect enough unique item links
         page = 1
         while len(links) < max_items:
-            # Get links on current page using new selectors
+            # Get links on current page using selectors from config
             candidates = []
-            # New CSS Modules based selectors (primary)
-            candidates.extend(driver.find_elements(By.CSS_SELECTOR, "a[class*='SearchResult_SearchResultItem__detailLink']"))
-            candidates.extend(driver.find_elements(By.CSS_SELECTOR, "a[class*='ItemImageLink']"))
-            # Legacy selectors (fallback)
-            candidates.extend(driver.find_elements(By.CSS_SELECTOR, "li.LoopList__item a"))
-            candidates.extend(driver.find_elements(By.CSS_SELECTOR, ".Item__title a"))
-            candidates.extend(driver.find_elements(By.CSS_SELECTOR, "[data-testid='item-name'] a"))
+            for selector in item_link_selectors:
+                candidates.extend(driver.find_elements(By.CSS_SELECTOR, selector))
             
              # Deduplicate on page
             for cand in candidates:
                 href = cand.get_attribute("href")
-                if href and ("store.shopping.yahoo.co.jp" in href or "shopping-item-reach.yahoo.co.jp" in href) and href not in [l.get_attribute("href") for l in links]:
+                if href and any(domain in href for domain in valid_domains) and href not in [l.get_attribute("href") for l in links]:
                     links.append(cand)
             
             if len(links) >= max_items:
@@ -279,12 +285,20 @@ def scrape_search_result(
             print(f"DEBUG: Scraping {url}")
             try:
                 data = scrape_item_detail(driver, url)
+                log_scrape_result('yahoo', url, data)
                 if data["title"]:
                     print(f"DEBUG: Success -> {data['title']}")
                     items.append(data)
                 time.sleep(1)
             except Exception as e:
-                 print(f"Error scraping {url}: {e}")
+                metrics.record_attempt(False, url, str(e))
+                print(f"Error scraping {url}: {e}")
+        
+        # Check health and log final metrics
+        health = check_scrape_health(items)
+        if health['action_required']:
+            logging.warning(f"Yahoo scrape health check: {health['message']}")
+        metrics.finish()
         
         return items
 
@@ -292,6 +306,7 @@ def scrape_search_result(
         print(f"Yahoo Search Error: {e}")
         import traceback
         traceback.print_exc()
+        metrics.finish()
         return []
     finally:
         if driver:

@@ -12,6 +12,28 @@ import os
 import shutil
 import uuid
 
+# Import selector configuration loader
+try:
+    from selector_config import get_selectors
+except ImportError:
+    # Fallback if module not found
+    def get_selectors(site, page_type, field):
+        return []
+
+# Import metrics logging
+try:
+    from scrape_metrics import get_metrics, log_scrape_result, check_scrape_health
+except ImportError:
+    # Fallback if module not found
+    def get_metrics():
+        class DummyMetrics:
+            def start(self, *a): pass
+            def record_attempt(self, *a): pass
+            def finish(self): return {}
+        return DummyMetrics()
+    def log_scrape_result(*a): return True
+    def check_scrape_health(*a): return {"action_required": False}
+
 def create_driver(headless: bool = True):
     """Chrome WebDriver を生成（Render/Docker 低メモリ環境最適化版）"""
     options = Options()
@@ -61,25 +83,28 @@ def scrape_shops_product(driver, url: str):
 
     # ---- タイトル ----
     title = ""
+    title_selectors = get_selectors('mercari', 'shops', 'title') or ["[data-testid='product-name']", "h1"]
     try:
-        title_el = driver.find_elements(By.CSS_SELECTOR, "[data-testid='product-name']")
-        if not title_el:
-            title_el = driver.find_elements(By.TAG_NAME, "h1")
-        
-        if title_el:
-            title = title_el[0].text.strip()
+        for selector in title_selectors:
+            title_el = driver.find_elements(By.CSS_SELECTOR, selector)
+            if title_el:
+                title = title_el[0].text.strip()
+                break
     except Exception:
         pass
 
     # ---- 価格 ----
     price = None
+    price_selectors = get_selectors('mercari', 'shops', 'price') or ["[data-testid='product-price']"]
     try:
-        price_els = driver.find_elements(By.CSS_SELECTOR, "[data-testid='product-price']")
-        if price_els:
-            price_text = price_els[0].text
-            m = re.search(r"([\d,]+)", price_text)
-            if m:
-                price = int(m.group(1).replace(",", ""))
+        for selector in price_selectors:
+            price_els = driver.find_elements(By.CSS_SELECTOR, selector)
+            if price_els:
+                price_text = price_els[0].text
+                m = re.search(r"([\d,]+)", price_text)
+                if m:
+                    price = int(m.group(1).replace(",", ""))
+                    break
     except Exception:
         pass
     
@@ -95,23 +120,25 @@ def scrape_shops_product(driver, url: str):
 
     # ---- 説明文 ----
     description = ""
+    desc_selectors = get_selectors('mercari', 'shops', 'description') or ["[data-testid='product-description']"]
     try:
-        desc_els = driver.find_elements(By.CSS_SELECTOR, "[data-testid='product-description']")
-        if desc_els:
-            description = desc_els[0].text.strip()
-        else:
-            pass
+        for selector in desc_selectors:
+            desc_els = driver.find_elements(By.CSS_SELECTOR, selector)
+            if desc_els:
+                description = desc_els[0].text.strip()
+                break
     except Exception:
         pass
 
     # ---- 画像 ----
     image_urls = []
+    image_selectors = get_selectors('mercari', 'shops', 'images') or ["img[src*='mercari'][src*='static']"]
     try:
-        imgs = driver.find_elements(By.TAG_NAME, "img")
-        for img in imgs:
-            src = img.get_attribute("src")
-            if src and "mercari" in src and "static" in src:
-                if src not in image_urls:
+        for selector in image_selectors:
+            imgs = driver.find_elements(By.CSS_SELECTOR, selector)
+            for img in imgs:
+                src = img.get_attribute("src")
+                if src and src not in image_urls:
                     image_urls.append(src)
     except Exception:
         pass
@@ -282,14 +309,17 @@ def scrape_item_detail(driver, url: str):
 
     # ---- 価格 ----
     price = None
+    price_selectors = get_selectors('mercari', 'general', 'price') or ["[data-testid='price']"]
     try:
         # メルカリのクラス名は頻繁に変わるため、data-testidがあれば優先
-        price_el = driver.find_elements(By.CSS_SELECTOR, "[data-testid='price']")
-        if price_el:
-            price_text = price_el[0].text
-            m = re.search(r"[¥￥]\s*([\d,]+)", price_text) or re.search(r"([\d,]+)", price_text)
-            if m:
-                price = int(m.group(1).replace(",", ""))
+        for selector in price_selectors:
+            price_el = driver.find_elements(By.CSS_SELECTOR, selector)
+            if price_el:
+                price_text = price_el[0].text
+                m = re.search(r"[¥￥]\s*([\d,]+)", price_text) or re.search(r"([\d,]+)", price_text)
+                if m:
+                    price = int(m.group(1).replace(",", ""))
+                    break
     except Exception:
         pass
 
@@ -334,17 +364,18 @@ def scrape_item_detail(driver, url: str):
 
     # ---- 商品画像 ----
     image_urls = []
+    image_selectors = get_selectors('mercari', 'general', 'images') or [
+        "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']"
+    ]
     try:
         # 画像取得も少し待つ
-        time.sleep(1) 
-        img_elements = driver.find_elements(
-            By.CSS_SELECTOR,
-            "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']",
-        )
-        for img in img_elements:
-            src = img.get_attribute("src")
-            if src and src not in image_urls:
-                image_urls.append(src)
+        time.sleep(1)
+        for selector in image_selectors:
+            img_elements = driver.find_elements(By.CSS_SELECTOR, selector)
+            for img in img_elements:
+                src = img.get_attribute("src")
+                if src and src not in image_urls:
+                    image_urls.append(src)
     except Exception:
         pass
 
@@ -502,23 +533,29 @@ def scrape_single_item(url: str, headless: bool = True):
     save_scraped_items_to_db にそのまま渡せるようにリストに包んでいる。
     """
     driver = None
+    metrics = get_metrics()
+    metrics.start('mercari', 'single')
     try:
         print(f"DEBUG: Starting scrape_single_item for {url}")
         driver = create_driver(headless=headless)
         
         data = scrape_item_detail(driver, url)
+        log_scrape_result('mercari', url, data)
         
         if data["title"]:
             print(f"DEBUG: Success -> {data['title']}")
         else:
             print("DEBUG: Failed to get title")
 
+        metrics.finish()
         return [data]
 
     except Exception as e:
         print(f"CRITICAL ERROR during single scraping: {e}")
         import traceback
         traceback.print_exc()
+        metrics.record_attempt(False, url, str(e))
+        metrics.finish()
         return []
     finally:
         if driver:

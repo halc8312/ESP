@@ -1,0 +1,90 @@
+{
+    "_comment": "Scraping selectors configuration. Update these when site structure changes.",
+    "_updated": "2024-12-23",
+    "mercari": {
+        "shops": {
+            "title": [
+                "[data-testid='product-name']",
+                "h1"
+            ],
+            "price": [
+                "[data-testid='product-price']"
+            ],
+            "description": [
+                "[data-testid='product-description']"
+            ],
+            "images": [
+                "img[src*='mercari'][src*='static']"
+            ]
+        },
+        "general": {
+            "title": [
+                "h1"
+            ],
+            "price": [
+                "[data-testid='price']"
+            ],
+            "images": [
+                "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']"
+            ]
+        },
+        "search": {
+            "item_links": [
+                "a[href*='/item/']",
+                "li[data-testid='item-cell'] a"
+            ]
+        }
+    },
+    "yahoo": {
+        "detail": {
+            "title": [
+                "[class*='styles_itemName']",
+                "[class*='styles_itemTitle']",
+                ".mdItemName",
+                ".elName",
+                "h1.title",
+                "h1.name",
+                "[data-testid='item-name']",
+                "h1"
+            ],
+            "price": [
+                "[class*='styles_price']",
+                ".mdItemPrice",
+                ".elPrice",
+                ".elItemPrice",
+                "[data-testid='item-price']",
+                ".price"
+            ],
+            "description": [
+                "[class*='styles_itemDescription']",
+                ".mdItemDescription",
+                ".elItemInfo",
+                "#item-info",
+                ".explanation",
+                ".item_exp"
+            ],
+            "images": [
+                "[class*='styles_image'] img",
+                "[class*='styles_mainImage'] img",
+                ".mdItemImage img",
+                ".elItemImage img",
+                ".libItemImage img",
+                "#item-image img",
+                "ul.elItemImage > li > img"
+            ]
+        },
+        "search": {
+            "item_links": [
+                "a[class*='SearchResult_SearchResultItem__detailLink']",
+                "a[class*='ItemImageLink']",
+                "li.LoopList__item a",
+                ".Item__title a",
+                "[data-testid='item-name'] a"
+            ],
+            "valid_domains": [
+                "store.shopping.yahoo.co.jp",
+                "shopping-item-reach.yahoo.co.jp"
+            ]
+        }
+    }
+}
