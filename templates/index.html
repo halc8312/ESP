@@ -225,7 +225,7 @@
             </div>
         </div>
 
-        <div class="table-responsive">
+        <div class="table-responsive product-table-mobile-hidden">
             <table class="product-table">
                 <tr>
                     <th>選択</th>
@@ -266,6 +266,38 @@
                 </tr>
                 {% endfor %}
             </table>
+        </div>
+
+        <!-- Mobile Product Cards (Airbnb-style) -->
+        <div class="product-card-mobile">
+            {% for p in products %}
+            <div class="product-card {{ 'changed' if p.has_changed else '' }}">
+                <div class="product-checkbox-wrapper">
+                    <input type="checkbox" name="id" value="{{ p.id }}">
+                </div>
+                {% if thumb_url %}
+                <img src="{{ thumb_url }}" alt="thumb" class="product-card-image">
+                {% else %}
+                <div class="product-card-image"></div>
+                {% endif %}
+                <div class="product-card-content">
+                    <div class="product-card-title">{{ p.last_title }}</div>
+                    <div class="product-card-price">
+                        {% if p.last_price is not none %}
+                        ¥{{ "{:,}".format(p.last_price) }}
+                        {% endif %}
+                    </div>
+                    <div class="product-card-meta">
+                        <span class="product-card-status {{ 'active' if p.last_status == '出品中' else 'draft' }}">{{ p.last_status }}</span>
+                        <span>{{ p.site }}</span>
+                    </div>
+                </div>
+                <div class="product-card-actions">
+                    <a href="{{ url_for('product_detail', product_id=p.id) }}" class="btn">編集</a>
+                    <a href="{{ p.source_url }}" target="_blank" class="btn" style="background: #f5f5f5;">元</a>
+                </div>
+            </div>
+            {% endfor %}
         </div>
 
         <div class="pagination">

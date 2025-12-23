@@ -44,19 +44,23 @@
                 <span class="nav-icon">📦</span>
                 <span class="nav-text">商品一覧</span>
             </a>
-            <a href="{{ url_for('dashboard') }}" class="sidebar-link {% if request.endpoint == 'dashboard' %}active{% endif %}">
+            <a href="{{ url_for('dashboard') }}"
+                class="sidebar-link {% if request.endpoint == 'dashboard' %}active{% endif %}">
                 <span class="nav-icon">📊</span>
                 <span class="nav-text">ダッシュボード</span>
             </a>
-            <a href="{{ url_for('scrape_form') }}" class="sidebar-link {% if request.endpoint == 'scrape_form' %}active{% endif %}">
+            <a href="{{ url_for('scrape_form') }}"
+                class="sidebar-link {% if request.endpoint == 'scrape_form' %}active{% endif %}">
                 <span class="nav-icon">🔍</span>
                 <span class="nav-text">スクレイピング</span>
             </a>
-            <a href="{{ url_for('manage_templates') }}" class="sidebar-link {% if request.endpoint == 'manage_templates' %}active{% endif %}">
+            <a href="{{ url_for('manage_templates') }}"
+                class="sidebar-link {% if request.endpoint == 'manage_templates' %}active{% endif %}">
                 <span class="nav-icon">📝</span>
                 <span class="nav-text">テンプレート</span>
             </a>
-            <a href="{{ url_for('manage_shops') }}" class="sidebar-link {% if request.endpoint == 'manage_shops' %}active{% endif %}">
+            <a href="{{ url_for('manage_shops') }}"
+                class="sidebar-link {% if request.endpoint == 'manage_shops' %}active{% endif %}">
                 <span class="nav-icon">🏪</span>
                 <span class="nav-text">ショップ管理</span>
             </a>
@@ -87,23 +91,30 @@
             <span class="bottom-nav-icon">📦</span>
             <span class="bottom-nav-label">商品</span>
         </a>
-        <a href="{{ url_for('dashboard') }}" class="bottom-nav-item {% if request.endpoint == 'dashboard' %}active{% endif %}">
+        <a href="{{ url_for('dashboard') }}"
+            class="bottom-nav-item {% if request.endpoint == 'dashboard' %}active{% endif %}">
             <span class="bottom-nav-icon">📊</span>
             <span class="bottom-nav-label">ダッシュ</span>
         </a>
-        <a href="{{ url_for('scrape_form') }}" class="bottom-nav-item {% if request.endpoint == 'scrape_form' %}active{% endif %}">
+        <a href="{{ url_for('scrape_form') }}"
+            class="bottom-nav-item {% if request.endpoint == 'scrape_form' %}active{% endif %}">
             <span class="bottom-nav-icon">🔍</span>
             <span class="bottom-nav-label">取得</span>
         </a>
-        <a href="{{ url_for('manage_templates') }}" class="bottom-nav-item {% if request.endpoint == 'manage_templates' %}active{% endif %}">
+        <a href="{{ url_for('manage_templates') }}"
+            class="bottom-nav-item {% if request.endpoint == 'manage_templates' %}active{% endif %}">
             <span class="bottom-nav-icon">📝</span>
             <span class="bottom-nav-label">テンプレ</span>
         </a>
-        <a href="{{ url_for('manage_shops') }}" class="bottom-nav-item {% if request.endpoint == 'manage_shops' %}active{% endif %}">
+        <a href="{{ url_for('manage_shops') }}"
+            class="bottom-nav-item {% if request.endpoint == 'manage_shops' %}active{% endif %}">
             <span class="bottom-nav-icon">🏪</span>
             <span class="bottom-nav-label">店舗</span>
         </a>
     </nav>
+
+    <!-- Back to Top Button -->
+    <button class="back-to-top" id="backToTop" onclick="window.scrollTo({top: 0, behavior: 'smooth'})">↑</button>
 
     <script>
         function toggleSidebar() {
@@ -119,19 +130,31 @@
         }
 
         // Close sidebar on escape key
-        document.addEventListener('keydown', function(e) {
+        document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') {
                 closeSidebar();
             }
         });
 
         // Close sidebar when clicking a link (mobile)
-        document.querySelectorAll('.sidebar-link').forEach(function(link) {
-            link.addEventListener('click', function() {
+        document.querySelectorAll('.sidebar-link').forEach(function (link) {
+            link.addEventListener('click', function () {
                 if (window.innerWidth < 1024) {
                     closeSidebar();
                 }
             });
+        });
+
+        // Back to top button visibility
+        window.addEventListener('scroll', function () {
+            const backToTop = document.getElementById('backToTop');
+            if (backToTop) {
+                if (window.scrollY > 300) {
+                    backToTop.classList.add('visible');
+                } else {
+                    backToTop.classList.remove('visible');
+                }
+            }
         });
     </script>
     {% block scripts %}{% endblock %}
