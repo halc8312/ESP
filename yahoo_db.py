@@ -216,6 +216,8 @@ def scrape_search_result(
     Yahoo! Shopping 検索結果から複数商品をスクレイピングする
     """
     driver = None
+    metrics = get_metrics()
+    metrics.start('yahoo', 'search')
     try:
         print(f"DEBUG: Starting Yahoo search scrape for {search_url}")
         driver = create_driver(headless=headless)
