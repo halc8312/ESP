@@ -225,16 +225,19 @@ def scrape_search_result(
 
         # Collect links
         links = []
-        # Yahoo Search Result Selectors
-        # Standard: .LoopList__item a
-        # Grid: .Item__title a
-        # List: .elTitle a
+        # Yahoo Search Result Selectors (Updated for CSS Modules)
+        # New structure uses class*='SearchResult_SearchResultItem' for items
+        # and class*='SearchResult_SearchResultItem__detailLink' for links
         
         # Try to collect enough unique item links
         page = 1
         while len(links) < max_items:
-            # Get links on current page
+            # Get links on current page using new selectors
             candidates = []
+            # New CSS Modules based selectors (primary)
+            candidates.extend(driver.find_elements(By.CSS_SELECTOR, "a[class*='SearchResult_SearchResultItem__detailLink']"))
+            candidates.extend(driver.find_elements(By.CSS_SELECTOR, "a[class*='ItemImageLink']"))
+            # Legacy selectors (fallback)
             candidates.extend(driver.find_elements(By.CSS_SELECTOR, "li.LoopList__item a"))
             candidates.extend(driver.find_elements(By.CSS_SELECTOR, ".Item__title a"))
             candidates.extend(driver.find_elements(By.CSS_SELECTOR, "[data-testid='item-name'] a"))
@@ -242,7 +245,7 @@ def scrape_search_result(
              # Deduplicate on page
             for cand in candidates:
                 href = cand.get_attribute("href")
-                if href and "store.shopping.yahoo.co.jp" in href and href not in [l.get_attribute("href") for l in links]:
+                if href and ("store.shopping.yahoo.co.jp" in href or "shopping-item-reach.yahoo.co.jp" in href) and href not in [l.get_attribute("href") for l in links]:
                     links.append(cand)
             
             if len(links) >= max_items:
