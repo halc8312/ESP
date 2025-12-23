@@ -8,6 +8,7 @@ from flask_login import login_required, current_user
 
 from mercari_db import scrape_search_result, scrape_single_item
 import yahoo_db
+import rakuma_db
 from services.product_service import save_scraped_items_to_db
 
 scrape_bp = Blueprint('scrape', __name__)
@@ -41,9 +42,11 @@ def scrape_run():
         # Check domain for switching scrapers
         if "shopping.yahoo.co.jp" in target_url:
             items = yahoo_db.scrape_single_item(target_url, headless=True)
-            # site="yahoo" can be passed if we want to distinguish in DB, but Product model "site" field is used.
-            # save_scraped_items_to_db defaults to "mercari". Let's check its signature.
             new_count, updated_count = save_scraped_items_to_db(items, site="yahoo", user_id=current_user.id)
+        elif "fril.jp" in target_url:
+            # Rakuma (ラクマ)
+            items = rakuma_db.scrape_single_item(target_url, headless=True)
+            new_count, updated_count = save_scraped_items_to_db(items, site="rakuma", user_id=current_user.id)
         else:
             # Default to Mercari
             items = scrape_single_item(target_url, headless=True)
@@ -86,8 +89,31 @@ def scrape_run():
                 new_count = updated_count = 0
                 error_msg = f"Yahoo Search Error: {str(e)}"
 
+        elif site == "rakuma":
+            # Rakuma Search Logic
+            # Rakuma Search URL: https://fril.jp/s?query={keyword}
+            
+            base = "https://fril.jp/s?"
+            r_params = {"query": keyword} if keyword else {}
+            
+            search_url = base + urlencode(r_params)
+            
+            try:
+                items = rakuma_db.scrape_search_result(
+                    search_url=search_url,
+                    max_items=limit,
+                    max_scroll=3,
+                    headless=True,
+                )
+                new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="rakuma")
+            except Exception as e:
+                traceback.print_exc()
+                items = []
+                new_count = updated_count = 0
+                error_msg = f"Rakuma Search Error: {str(e)}"
+
         else:
-            # Mercari Search Logic (Existing)
+            # Mercari Search Logic (Default)
             base = "https://jp.mercari.com/search?"
             query = urlencode(params)
             search_url = base + query

@@ -86,5 +86,37 @@
                 "shopping-item-reach.yahoo.co.jp"
             ]
         }
+    },
+    "rakuma": {
+        "detail": {
+            "title": [
+                "h1.item__name",
+                "h1.item-name",
+                "h1"
+            ],
+            "price": [
+                "span.item__price",
+                ".item__price",
+                ".item-price"
+            ],
+            "description": [
+                "div.item__description",
+                ".item-description"
+            ],
+            "images": [
+                ".sp-image",
+                ".item-bundle-image img"
+            ]
+        },
+        "search": {
+            "item_links": [
+                "a.link_search_image",
+                "a.link_search_title"
+            ],
+            "valid_domains": [
+                "item.fril.jp",
+                "fril.jp"
+            ]
+        }
     }
 }

@@ -18,7 +18,7 @@
             <div class="form-group">
                 <label>商品URL</label>
                 <input type="url" name="target_url"
-                    placeholder="https://jp.mercari.com/item/m123456789 または https://store.shopping.yahoo.co.jp/..."
+                    placeholder="https://jp.mercari.com/... または https://item.fril.jp/... または https://store.shopping.yahoo.co.jp/..."
                     required inputmode="url" autocomplete="url">
             </div>
             <button type="submit" style="width: 100%;">URLからスクレイピング実行</button>
@@ -38,6 +38,7 @@
                 <select name="site">
                     <option value="mercari">Mercari</option>
                     <option value="yahoo">Yahoo!ショッピング</option>
+                    <option value="rakuma">ラクマ</option>
                 </select>
             </div>
 
