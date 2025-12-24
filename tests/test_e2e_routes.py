@@ -450,6 +450,23 @@ class TestScrapeRoutes:
         self._login_user(client, db_session)
         response = client.get('/scrape')
         assert response.status_code == 200
+    
+    def test_scrape_page_shows_shop_dropdown(self, client, db_session):
+        """Test scrape page displays shop selection dropdown with user's shops"""
+        user = self._login_user(client, db_session, 'scrape_shop_test')
+        
+        # Create shops for this user
+        shop1 = Shop(name='My Scrape Shop', user_id=user.id)
+        shop2 = Shop(name='Another Shop', user_id=user.id)
+        db_session.add(shop1)
+        db_session.add(shop2)
+        db_session.commit()
+        
+        response = client.get('/scrape')
+        assert response.status_code == 200
+        # Check that shop names appear in the response (in the dropdown)
+        assert b'My Scrape Shop' in response.data
+        assert b'Another Shop' in response.data
 
 
 class TestExportRoutes:
