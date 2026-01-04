@@ -33,6 +33,7 @@ def scrape_item_detail(driver, url: str):
     # ---- NEXT_DATA JSON Parsing (Variant Support) ----
     next_data_variants = []
     next_data_info = {}
+    image_urls = [] # Init here to capture JSON images
     try:
         # Try to find the __NEXT_DATA__ script block
         script_el = driver.find_elements(By.ID, "__NEXT_DATA__")
@@ -53,12 +54,43 @@ def scrape_item_detail(driver, url: str):
                  next_data_info["price"] = int(item.get("price"))
                  
             # Images
+            # Structure: item['images'] = { "list": [{"src": "..."}, ...], "count": ... }
             if item.get("images"):
-                # images is often a list of objects or strings, need to check structure
-                # Usually: [{"id":..., "url":...}, ...] or similar
-                # For now we rely on HTML scraping for images as it's quite robust, 
-                # but we can use JSON if needed. 
-                pass
+                json_images_data = item.get("images")
+                image_list = []
+                
+                if isinstance(json_images_data, dict):
+                    # Aggregate from all possible lists
+                    if "list" in json_images_data:
+                         image_list.extend(json_images_data.get("list", []))
+                    if "itemImageList" in json_images_data:
+                         image_list.extend(json_images_data.get("itemImageList", []))
+                    if "detailImageList" in json_images_data:
+                         image_list.extend(json_images_data.get("detailImageList", []))
+                    # Also mainImage if it's a dict
+                    if "mainImage" in json_images_data:
+                        image_list.append(json_images_data.get("mainImage"))
+
+                elif isinstance(json_images_data, list):
+                    image_list = json_images_data
+                
+                for img in image_list:
+                    img_url = ""
+                    if isinstance(img, dict):
+                        img_url = img.get("src") or img.get("url") or img.get("path")
+                        if not img_url and img.get("id"):
+                            # Fallback: Construct URL from ID
+                            # Pattern: https://item-shopping.c.yimg.jp/i/n/{id}
+                            # Validation: ID usually contains shop name and item code
+                            img_url = f"https://item-shopping.c.yimg.jp/i/n/{img.get('id')}"
+                            
+                    elif isinstance(img, str):
+                        img_url = img
+                    
+                    if img_url:
+                        if img_url.startswith("http"):
+                             if img_url not in image_urls:
+                                 image_urls.append(img_url)
 
             # --- Extract Variants ---
             # stockTableTwoAxis: Nested Dictionary Structure
@@ -224,7 +256,7 @@ def scrape_item_detail(driver, url: str):
             pass
 
     # ---- Images ----
-    image_urls = []
+    # image_urls = [] # Already initialized above
     try:
         # 1. Look for main image container first
         # Yahoo often uses .mdItemImage or .elItemImage
