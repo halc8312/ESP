@@ -149,3 +149,21 @@ class PricingRule(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User")
+
+
+class ExclusionKeyword(Base):
+    """
+    Exclusion keywords for filtering out unwanted products during scraping.
+    Products containing these keywords in their title will not be saved.
+    """
+    __tablename__ = "exclusion_keywords"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    keyword = Column(String, nullable=False)
+    match_type = Column(String, default="partial")  # "partial" or "exact"
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
+

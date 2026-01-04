@@ -12,6 +12,8 @@ from mercari_db import scrape_search_result, scrape_single_item
 import yahoo_db
 import rakuma_db
 from services.product_service import save_scraped_items_to_db
+from services.filter_service import filter_excluded_items
+
 
 scrape_bp = Blueprint('scrape', __name__)
 
@@ -54,15 +56,20 @@ def scrape_run():
         # Check domain for switching scrapers
         if "shopping.yahoo.co.jp" in target_url:
             items = yahoo_db.scrape_single_item(target_url, headless=True)
-            new_count, updated_count = save_scraped_items_to_db(items, site="yahoo", user_id=current_user.id)
         elif "fril.jp" in target_url:
             # Rakuma (ラクマ)
             items = rakuma_db.scrape_single_item(target_url, headless=True)
-            new_count, updated_count = save_scraped_items_to_db(items, site="rakuma", user_id=current_user.id)
         else:
             # Default to Mercari
             items = scrape_single_item(target_url, headless=True)
-            new_count, updated_count = save_scraped_items_to_db(items, site="mercari", user_id=current_user.id)
+        
+        # Apply exclusion filter
+        items, excluded = filter_excluded_items(items, current_user.id)
+        
+        # Determine site from URL
+        site = "yahoo" if "shopping.yahoo.co.jp" in target_url else ("rakuma" if "fril.jp" in target_url else "mercari")
+        new_count, updated_count = save_scraped_items_to_db(items, site=site, user_id=current_user.id)
+
         
     else: # This block handles search results
         params = {}
@@ -94,6 +101,8 @@ def scrape_run():
                     max_scroll=3,
                     headless=True,
                 )
+                # Apply exclusion filter
+                items, excluded = filter_excluded_items(items, current_user.id)
                 new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="yahoo")
             except Exception as e:
                 traceback.print_exc()
@@ -117,10 +126,13 @@ def scrape_run():
                     max_scroll=3,
                     headless=True,
                 )
+                # Apply exclusion filter
+                items, excluded = filter_excluded_items(items, current_user.id)
                 new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="rakuma")
             except Exception as e:
                 traceback.print_exc()
                 items = []
+
                 new_count = updated_count = 0
                 error_msg = f"Rakuma Search Error: {str(e)}"
 
@@ -137,12 +149,15 @@ def scrape_run():
                     max_scroll=3,
                     headless=True,
                 )
+                # Apply exclusion filter
+                items, excluded = filter_excluded_items(items, current_user.id)
                 new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="mercari")
             except Exception as e:
                 traceback.print_exc()
                 items = []
                 new_count = updated_count = 0
                 error_msg = f"Mercari Search Error: {str(e)}"
+
 
     # Get shop data for template
     session_db = SessionLocal()

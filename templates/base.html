@@ -69,7 +69,13 @@
                 <span class="nav-icon">💰</span>
                 <span class="nav-text">価格ルール</span>
             </a>
+            <a href="{{ url_for('settings.settings_list') }}"
+                class="sidebar-link {% if request.endpoint == 'settings.settings_list' %}active{% endif %}">
+                <span class="nav-icon">⚙️</span>
+                <span class="nav-text">設定</span>
+            </a>
         </nav>
+
 
         <div class="sidebar-shop-section">
             <label class="sidebar-shop-label">ショップ選択</label>

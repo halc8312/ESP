@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}設定{% endblock %}
+{% block header_title %}設定{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>設定</h1>
+</div>
+
+<div class="content-card">
+    <div class="content-card-header">
+        <h2>除外キーワード</h2>
+    </div>
+    <div class="content-card-body">
+        <p style="color: #666; margin-bottom: 16px;">
+            スクレイピング時に、これらのキーワードを含む商品は自動的に除外されます。
+        </p>
+
+        <form action="{{ url_for('settings.add_keyword') }}" method="POST" class="form-inline">
+            <div class="form-row" style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;">
+                <div class="form-group" style="flex: 1; min-width: 200px;">
+                    <label for="keyword">キーワード</label>
+                    <input type="text" id="keyword" name="keyword" placeholder="例: ジャンク" required>
+                </div>
+                <div class="form-group">
+                    <label for="match_type">マッチタイプ</label>
+                    <select id="match_type" name="match_type">
+                        <option value="partial">部分一致</option>
+                        <option value="exact">完全一致</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <button type="submit" class="btn btn-primary">追加</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="content-card" style="margin-top: 24px;">
+    <div class="content-card-header">
+        <h2>登録済みキーワード</h2>
+    </div>
+    <div class="content-card-body">
+        {% if keywords %}
+        <div class="keyword-tags" style="display: flex; flex-wrap: wrap; gap: 8px;">
+            {% for kw in keywords %}
+            <div class="keyword-tag"
+                style="display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; background: #f5f5f5; border-radius: 20px; border: 1px solid #ddd;">
+                <span style="font-weight: 500;">{{ kw.keyword }}</span>
+                <span
+                    style="font-size: 0.75em; color: #666; background: #e0e0e0; padding: 2px 6px; border-radius: 4px;">
+                    {{ "部分一致" if kw.match_type == "partial" else "完全一致" }}
+                </span>
+                <form action="{{ url_for('settings.delete_keyword', keyword_id=kw.id) }}" method="POST"
+                    style="display: inline;">
+                    <button type="submit"
+                        style="border: none; background: none; color: #d32f2f; cursor: pointer; font-size: 1.2em; padding: 0;"
+                        title="削除">×</button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p style="text-align: center; color: #666;">まだ除外キーワードが登録されていません。</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="content-card" style="margin-top: 24px;">
+    <div class="content-card-header">
+        <h2>よく使われる除外キーワード</h2>
+    </div>
+    <div class="content-card-body">
+        <p style="color: #666; margin-bottom: 12px;">参考として、よく除外に使われるキーワードの例です：</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            <span class="example-tag"
+                style="padding: 6px 12px; background: #e3f2fd; border-radius: 16px; font-size: 0.9em;">ジャンク</span>
+            <span class="example-tag"
+                style="padding: 6px 12px; background: #e3f2fd; border-radius: 16px; font-size: 0.9em;">専用</span>
+            <span class="example-tag"
+                style="padding: 6px 12px; background: #e3f2fd; border-radius: 16px; font-size: 0.9em;">訳あり</span>
+            <span class="example-tag"
+                style="padding: 6px 12px; background: #e3f2fd; border-radius: 16px; font-size: 0.9em;">確認用</span>
+            <span class="example-tag"
+                style="padding: 6px 12px; background: #e3f2fd; border-radius: 16px; font-size: 0.9em;">部品取り</span>
+            <span class="example-tag"
+                style="padding: 6px 12px; background: #e3f2fd; border-radius: 16px; font-size: 0.9em;">まとめ売り</span>
+            <span class="example-tag"
+                style="padding: 6px 12px; background: #e3f2fd; border-radius: 16px; font-size: 0.9em;">難あり</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
