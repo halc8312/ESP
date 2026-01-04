@@ -3,9 +3,11 @@ Scraping routes.
 """
 import traceback
 from urllib.parse import urlencode
-from flask import Blueprint, render_template, request
+from flask import Blueprint, render_template, request, session
 from flask_login import login_required, current_user
 
+from database import SessionLocal
+from models import Shop
 from mercari_db import scrape_search_result, scrape_single_item
 import yahoo_db
 import rakuma_db
@@ -17,7 +19,17 @@ scrape_bp = Blueprint('scrape', __name__)
 @scrape_bp.route("/scrape", methods=["GET", "POST"])
 @login_required
 def scrape_form():
-    return render_template("scrape_form.html")
+    session_db = SessionLocal()
+    try:
+        all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
+        current_shop_id = session.get('current_shop_id')
+        return render_template(
+            "scrape_form.html",
+            all_shops=all_shops,
+            current_shop_id=current_shop_id
+        )
+    finally:
+        session_db.close()
 
 
 @scrape_bp.route("/scrape/run", methods=["POST"])
@@ -132,17 +144,27 @@ def scrape_run():
                 new_count = updated_count = 0
                 error_msg = f"Mercari Search Error: {str(e)}"
 
-    return render_template(
-        "scrape_result.html",
-        search_url=search_url,
-        keyword=keyword,
-        price_min=price_min,
-        price_max=price_max,
-        sort=sort,
-        category=category,
-        limit=limit,
-        items=items,
-        new_count=new_count,
-        updated_count=updated_count,
-        error_msg=error_msg,
-    )
+    # Get shop data for template
+    session_db = SessionLocal()
+    try:
+        all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
+        current_shop_id = session.get('current_shop_id')
+        
+        return render_template(
+            "scrape_result.html",
+            search_url=search_url,
+            keyword=keyword,
+            price_min=price_min,
+            price_max=price_max,
+            sort=sort,
+            category=category,
+            limit=limit,
+            items=items,
+            new_count=new_count,
+            updated_count=updated_count,
+            error_msg=error_msg,
+            all_shops=all_shops,
+            current_shop_id=current_shop_id,
+        )
+    finally:
+        session_db.close()
