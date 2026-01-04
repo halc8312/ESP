@@ -8,6 +8,20 @@
     <h1>ダッシュボード</h1>
 </div>
 
+<!-- Validation Alert (if issues exist) -->
+{% if validation_summary and validation_summary.products_with_issues > 0 %}
+<div class="validation-alert"
+    style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px;">
+    <span style="font-size: 1.5em;">⚠️</span>
+    <div>
+        <strong>{{ validation_summary.products_with_issues }}件の商品に問題があります</strong>
+        <span style="color: #666; font-size: 0.9em;">
+            (❌ エラー: {{ validation_summary.error_count }}件, ⚠️ 警告: {{ validation_summary.warning_count }}件)
+        </span>
+    </div>
+</div>
+{% endif %}
+
 <!-- KPI Cards -->
 <div class="dashboard-grid">
     <div class="stat-card">
@@ -43,7 +57,7 @@
                         <th class="hide-mobile">価格</th>
                         <th class="hide-mobile">ステータス</th>
                         <th class="hide-mobile">最終更新</th>
-                        <th class="hide-mobile">最終チェック</th>
+                        <th>状態</th>
                         <th>操作</th>
                     </tr>
                 </thead>
@@ -63,9 +77,20 @@
                         <td class="hide-mobile">¥{{ "{:,}".format(p.last_price or 0) }}</td>
                         <td class="hide-mobile">{{ p.last_status }}</td>
                         <td class="hide-mobile">{{ p.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
-                        <td class="hide-mobile" style="font-size: 0.8em; color: #666;">
-                            {{ p.updated_at.strftime('%m-%d %H:%M') }}<br>
-                            <span style="color: #999;">(Patrol)</span>
+                        <td>
+                            {% if p.validation_issues %}
+                            {% for issue in p.validation_issues %}
+                            {% if issue.type == 'error' %}
+                            <span title="{{ issue.message }}"
+                                style="cursor: help; color: #c62828; font-size: 0.9em;">❌</span>
+                            {% else %}
+                            <span title="{{ issue.message }}"
+                                style="cursor: help; color: #f57f17; font-size: 0.9em;">⚠️</span>
+                            {% endif %}
+                            {% endfor %}
+                            {% else %}
+                            <span style="color: #2e7d32;">✓</span>
+                            {% endif %}
                         </td>
                         <td>
                             <a href="{{ url_for('product_detail', product_id=p.id) }}" class="btn">編集</a>
@@ -73,7 +98,7 @@
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="6" style="text-align:center;">更新履歴はありません</td>
+                        <td colspan="7" style="text-align:center;">更新履歴はありません</td>
                     </tr>
                     {% endfor %}
                 </tbody>

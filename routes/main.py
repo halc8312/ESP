@@ -8,6 +8,7 @@ from sqlalchemy import func
 
 from database import SessionLocal
 from models import Shop, Product, Variant
+from services.validation_service import validate_product, get_issue_summary
 
 main_bp = Blueprint('main', __name__)
 
@@ -56,13 +57,24 @@ def dashboard():
         
         sold_out_count = sold_out_query.scalar()
 
-        # 4. Recent Activity (Last 5 updated)
+        # 4. Recent Activity (Last 5 updated) with validation
         recent_items = (
             base_query
+            .options(subqueryload(Product.snapshots))
             .order_by(Product.updated_at.desc())
             .limit(5)
             .all()
         )
+        
+        # 5. Validate recent items and count issues
+        products_with_issues = []
+        for p in recent_items:
+            snapshot = p.snapshots[0] if p.snapshots else None
+            issues = validate_product(p, snapshot)
+            p.validation_issues = issues  # Attach to product for template access
+            products_with_issues.append((p, issues))
+        
+        validation_summary = get_issue_summary(products_with_issues)
 
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
 
@@ -72,11 +84,13 @@ def dashboard():
             status_map=status_map,
             sold_out_count=sold_out_count,
             recent_items=recent_items,
+            validation_summary=validation_summary,
             all_shops=all_shops,
             current_shop_id=current_shop_id
         )
     finally:
         session_db.close()
+
 
 
 @main_bp.route("/")
