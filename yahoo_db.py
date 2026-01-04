@@ -8,6 +8,8 @@ from mercari_db import create_driver
 from selector_config import get_selectors, get_valid_domains
 from scrape_metrics import get_metrics, log_scrape_result, check_scrape_health
 
+import json
+
 def scrape_item_detail(driver, url: str):
     """
     Yahoo!ショッピングの商品ページから詳細情報を取得する
@@ -28,59 +30,175 @@ def scrape_item_detail(driver, url: str):
     except Exception:
         pass
 
-    # ---- Title ----
-    title = ""
-    # Load selectors from config (with fallback to hardcoded if config not found)
-    title_selectors = get_selectors('yahoo', 'detail', 'title') or [
-        "[class*='styles_itemName']", "[class*='styles_itemTitle']",
-        ".mdItemName", ".elName", "h1.title", "h1.name", 
-        "[data-testid='item-name']", "h1"
-    ]
-    for selector in title_selectors:
-        try:
-            els = driver.find_elements(By.CSS_SELECTOR, selector)
-            if els:
-                t = els[0].text.replace('\n', ' ').strip()
-                if t: 
-                    title = t
-                    break
-        except:
-            continue
+    # ---- NEXT_DATA JSON Parsing (Variant Support) ----
+    next_data_variants = []
+    next_data_info = {}
+    try:
+        # Try to find the __NEXT_DATA__ script block
+        script_el = driver.find_elements(By.ID, "__NEXT_DATA__")
+        if script_el:
+            json_str = script_el[0].get_attribute("innerHTML")
+            data = json.loads(json_str)
+            item = data.get("props", {}).get("pageProps", {}).get("item", {})
             
-    # If title is still empty, try meta title
+            # --- Extract Basic Info from JSON (More reliable) ---
+            if item.get("name"):
+                next_data_info["title"] = item.get("name")
+            
+            # Price extraction from JSON
+            # priceTable seems to contain prices, or use applicablePrice
+            if item.get("applicablePrice"): # often exists
+                 next_data_info["price"] = int(item.get("applicablePrice"))
+            elif item.get("price"):
+                 next_data_info["price"] = int(item.get("price"))
+                 
+            # Images
+            if item.get("images"):
+                # images is often a list of objects or strings, need to check structure
+                # Usually: [{"id":..., "url":...}, ...] or similar
+                # For now we rely on HTML scraping for images as it's quite robust, 
+                # but we can use JSON if needed. 
+                pass
+
+            # --- Extract Variants ---
+            # stockTableTwoAxis: Nested Dictionary Structure
+            # stockTableOneAxis: Nested Dictionary Structure
+            
+            spec_list = item.get("specList", []) # Defines the axis names e.g. [{"label": "サイズ"}, {"label": "カラー"}]
+            
+            # Helper to check if "No Stock"
+            def is_in_stock(stock_obj):
+                q = stock_obj.get("quantity", 0)
+                if q > 0: return True
+                return False
+
+            base_price = next_data_info.get("price", None)
+
+            # Case 1: Two Axis
+            # Structure: { "firstOption": { "choiceList": [ { "choiceName": "Red", "secondOption": { "choiceList": [...] } } ] } }
+            if isinstance(item.get("stockTableTwoAxis"), dict):
+                two_axis = item.get("stockTableTwoAxis")
+                first_opt = two_axis.get("firstOption", {})
+                
+                # Try to get axis names from Spec List matching "id" if possible, or just use generic labels
+                # Or use first_opt['name'] if available?
+                # The JSON often has "name" inside firstOption and secondOption!
+                axis1_label = first_opt.get("name") or (spec_list[1].get("name") if len(spec_list) > 1 else "Option 1")
+                
+                for opt1 in first_opt.get("choiceList", []):
+                    v_name1 = opt1.get("choiceName")
+                    
+                    sec_opt = opt1.get("secondOption", {})
+                    axis2_label = sec_opt.get("name") or (spec_list[0].get("name") if len(spec_list) > 0 else "Option 2")
+                    
+                    for opt2 in sec_opt.get("choiceList", []):
+                        v_name2 = opt2.get("choiceName")
+                        
+                        stock_info = opt2.get("stock", {})
+                        qty = stock_info.get("quantity", 0)
+                        
+                        v_price = opt2.get("price") or base_price
+                        
+                        if v_name1 and v_name2:
+                            next_data_variants.append({
+                                "option1_name": axis1_label, # Usually Color
+                                "option1_value": v_name1,
+                                "option2_name": axis2_label, # Usually Size
+                                "option2_value": v_name2,
+                                "price": v_price,
+                                "inventory_qty": qty
+                            })
+
+            # Case 2: One Axis
+            # Structure: { "firstOption": { "choiceList": [ { "choiceName": "Red", "stock": {...} } ] } }
+            elif isinstance(item.get("stockTableOneAxis"), dict):
+                one_axis = item.get("stockTableOneAxis")
+                first_opt = one_axis.get("firstOption", {})
+                axis1_label = first_opt.get("name") or (spec_list[0].get("name") if len(spec_list) > 0 else "Option 1")
+                
+                for opt1 in first_opt.get("choiceList", []):
+                    v_name1 = opt1.get("choiceName")
+                    
+                    stock_info = opt1.get("stock", {})
+                    qty = stock_info.get("quantity", 0)
+                    
+                    v_price = opt1.get("price") or base_price
+                    
+                    if v_name1:
+                        next_data_variants.append({
+                            "option1_name": axis1_label,
+                            "option1_value": v_name1,
+                            "price": v_price,
+                            "inventory_qty": qty
+                        })
+            
+            # --- Fallback to List Logic (if API changes back or acts differently) ---
+            # (Keeping old logic briefly just in case, but usually unnecessary if Dict check passes)
+            elif isinstance(item.get("stockTableTwoAxis"), list):
+                 # ... (Old list implementation omitted to keep code clean, assuming we found the correct one)
+                 pass
+
+    except Exception as e:
+        print(f"JSON Parse Error: {e}")
+        # Continue to HTML scraping as fallback
+        pass
+
+
+    # ---- Title ----
+    title = next_data_info.get("title", "")
     if not title:
-        try:
-            title = driver.title.split('-')[0].strip()
-        except:
-            pass
+        # Load selectors from config (with fallback to hardcoded if config not found)
+        title_selectors = get_selectors('yahoo', 'detail', 'title') or [
+            "[class*='styles_itemName']", "[class*='styles_itemTitle']",
+            ".mdItemName", ".elName", "h1.title", "h1.name", 
+            "[data-testid='item-name']", "h1"
+        ]
+        for selector in title_selectors:
+            try:
+                els = driver.find_elements(By.CSS_SELECTOR, selector)
+                if els:
+                    t = els[0].text.replace('\n', ' ').strip()
+                    if t: 
+                        title = t
+                        break
+            except:
+                continue
+                
+        # If title is still empty, try meta title
+        if not title:
+            try:
+                title = driver.title.split('-')[0].strip()
+            except:
+                pass
 
     # ---- Price ----
-    price = None
-    price_selectors = get_selectors('yahoo', 'detail', 'price') or [
-        "[class*='styles_price']", ".mdItemPrice", ".elPrice", 
-        ".elItemPrice", "[data-testid='item-price']", ".price"
-    ]
-    for selector in price_selectors:
-        try:
-            els = driver.find_elements(By.CSS_SELECTOR, selector)
-            if els:
-                txt = els[0].text
-                m = re.search(r"([\d,]+)", txt)
+    price = next_data_info.get("price")
+    if price is None:
+        price_selectors = get_selectors('yahoo', 'detail', 'price') or [
+            "[class*='styles_price']", ".mdItemPrice", ".elPrice", 
+            ".elItemPrice", "[data-testid='item-price']", ".price"
+        ]
+        for selector in price_selectors:
+            try:
+                els = driver.find_elements(By.CSS_SELECTOR, selector)
+                if els:
+                    txt = els[0].text
+                    m = re.search(r"([\d,]+)", txt)
+                    if m:
+                        price = int(m.group(1).replace(",", ""))
+                        break
+            except:
+                continue
+                
+        # Fallback price from body if needed (risky but useful)
+        if price is None:
+            try:
+                body_text = driver.find_element(By.TAG_NAME, "body").text
+                m = re.search(r"([\d,]+)\s*円", body_text)
                 if m:
                     price = int(m.group(1).replace(",", ""))
-                    break
-        except:
-            continue
-            
-    # Fallback price from body if needed (risky but useful)
-    if price is None:
-        try:
-            body_text = driver.find_element(By.TAG_NAME, "body").text
-            m = re.search(r"([\d,]+)\s*円", body_text)
-            if m:
-                price = int(m.group(1).replace(",", ""))
-        except:
-            pass
+            except:
+                pass
 
     # ---- Description ----
     description = ""
@@ -163,12 +281,15 @@ def scrape_item_detail(driver, url: str):
 
     # ---- Status (Simplified) ----
     status = "on_sale"
-    try:
-        body_text = driver.find_element(By.TAG_NAME, "body").text
-        if "在庫切れ" in body_text or "売り切れ" in body_text:
-            status = "sold"
-    except:
-        pass
+    if next_data_info.get("stock") == 0: # If we found this in JSON
+        status = "sold"
+    else:
+        try:
+            body_text = driver.find_element(By.TAG_NAME, "body").text
+            if "在庫切れ" in body_text or "売り切れ" in body_text:
+                status = "sold"
+        except:
+            pass
 
     return {
         "url": url,
@@ -177,7 +298,7 @@ def scrape_item_detail(driver, url: str):
         "status": status,
         "description": description,
         "image_urls": image_urls,
-        "variants": [] # Variants are hard on Yahoo (often iframes), skipping for MVP
+        "variants": next_data_variants
     }
 
 def scrape_single_item(url: str, headless: bool = True):
@@ -194,6 +315,7 @@ def scrape_single_item(url: str, headless: bool = True):
         log_scrape_result('yahoo', url, data)
         if data["title"]:
             print(f"DEBUG: Success -> {data['title']}")
+            print(f"DEBUG: Variants found -> {len(data['variants'])}")
         metrics.finish()
         return [data]
     except Exception as e:
