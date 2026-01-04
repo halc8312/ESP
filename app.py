@@ -23,6 +23,42 @@ from services.image_service import IMAGE_STORAGE_PATH
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-this")
 
+
+# ==============================
+# Auto-Migration: Add missing columns
+# ==============================
+def run_migrations():
+    """Safely add missing columns to existing tables."""
+    from sqlalchemy import text
+    from database import engine
+    
+    migrations = [
+        # Pricing columns
+        ("products", "pricing_rule_id", "ALTER TABLE products ADD COLUMN pricing_rule_id INTEGER"),
+        ("products", "selling_price", "ALTER TABLE products ADD COLUMN selling_price INTEGER"),
+        # Archive column
+        ("products", "archived", "ALTER TABLE products ADD COLUMN archived BOOLEAN DEFAULT FALSE"),
+    ]
+    
+    with engine.connect() as conn:
+        for table, column, sql in migrations:
+            try:
+                # Check if column exists
+                result = conn.execute(text(f"SELECT {column} FROM {table} LIMIT 1"))
+            except Exception:
+                # Column doesn't exist, add it
+                try:
+                    conn.execute(text(sql))
+                    conn.commit()
+                    print(f"Migration: Added column {column} to {table}")
+                except Exception as e:
+                    print(f"Migration error for {column}: {e}")
+
+# Run migrations on startup
+run_migrations()
+
+
+
 # Scheduler Config
 class SchedulerConfig:
     SCHEDULER_API_ENABLED = True
@@ -73,6 +109,8 @@ from routes.scrape import scrape_bp
 from routes.export import export_bp
 from routes.pricing import pricing_bp
 from routes.settings import settings_bp
+from routes.import_routes import import_bp
+from routes.archive import archive_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(shops_bp)
@@ -82,6 +120,10 @@ app.register_blueprint(scrape_bp)
 app.register_blueprint(export_bp)
 app.register_blueprint(pricing_bp)
 app.register_blueprint(settings_bp)
+app.register_blueprint(import_bp)
+app.register_blueprint(archive_bp)
+
+
 
 
 

@@ -336,3 +336,62 @@ def export_price_update():
         return response
     finally:
         session_db.close()
+
+
+@export_bp.route("/export_images")
+@login_required
+def export_images():
+    """Export product images as a ZIP file."""
+    import zipfile
+    import requests
+    from io import BytesIO
+    
+    session_db = SessionLocal()
+    try:
+        products, _, _ = _parse_ids_and_params(session_db)
+        if not products:
+            return "対象の商品がありません。", 400
+
+        # Create ZIP in memory
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for product in products:
+                snapshot = (
+                    session_db.query(ProductSnapshot)
+                    .filter_by(product_id=product.id)
+                    .order_by(ProductSnapshot.scraped_at.desc())
+                    .first()
+                )
+                
+                if not snapshot or not snapshot.image_urls:
+                    continue
+                
+                image_urls = [u for u in snapshot.image_urls.split("|") if u]
+                product_folder = f"product_{product.id}"
+                
+                for i, img_url in enumerate(image_urls):
+                    try:
+                        resp = requests.get(img_url, timeout=10)
+                        if resp.status_code == 200:
+                            # Determine extension from content type
+                            content_type = resp.headers.get('Content-Type', '')
+                            ext = '.jpg'
+                            if 'png' in content_type:
+                                ext = '.png'
+                            elif 'webp' in content_type:
+                                ext = '.webp'
+                            
+                            filename = f"{product_folder}/image_{i+1}{ext}"
+                            zip_file.writestr(filename, resp.content)
+                    except Exception as e:
+                        print(f"Error downloading image: {e}")
+                        continue
+
+        zip_buffer.seek(0)
+        response = make_response(zip_buffer.read())
+        response.headers["Content-Disposition"] = "attachment; filename=product_images.zip"
+        response.headers["Content-type"] = "application/zip"
+        return response
+    finally:
+        session_db.close()
+

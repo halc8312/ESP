@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}アーカイブ{% endblock %}
+{% block header_title %}アーカイブ{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>アーカイブ済み商品</h1>
+    <p class="page-subtitle">売り切れ・終了した商品を管理</p>
+</div>
+
+<form method="POST" action="{{ url_for('archive.restore_products') }}">
+    <div class="batch-action-bar"
+        style="background: #f9f9f9; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; gap: 12px; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="selectAllArchive" onclick="toggleSelectAllArchive(this)">
+            <label for="selectAllArchive" style="font-weight: 500;">すべて選択</label>
+        </div>
+        <div style="flex: 1;"></div>
+        <button type="submit" class="btn" style="background: #2e7d32; color: white;">選択した商品を復元</button>
+    </div>
+
+    <div class="content-card">
+        <div class="content-card-body">
+            {% if products %}
+            <div class="table-responsive">
+                <table class="product-table">
+                    <thead>
+                        <tr>
+                            <th>選択</th>
+                            <th>タイトル</th>
+                            <th>価格</th>
+                            <th>サイト</th>
+                            <th>最終更新</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in products %}
+                        <tr>
+                            <td><input type="checkbox" name="ids" value="{{ p.id }}"></td>
+                            <td>{{ p.custom_title or p.last_title }}</td>
+                            <td>¥{{ "{:,}".format(p.last_price or 0) }}</td>
+                            <td>{{ p.site }}</td>
+                            <td>{{ p.updated_at.strftime('%Y-%m-%d') }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p style="text-align: center; color: #666; padding: 40px;">アーカイブされた商品はありません。</p>
+            {% endif %}
+        </div>
+    </div>
+</form>
+
+<script>
+    function toggleSelectAllArchive(source) {
+        const checkboxes = document.querySelectorAll('input[name="ids"]');
+        checkboxes.forEach(cb => cb.checked = source.checked);
+    }
+</script>
+{% endblock %}

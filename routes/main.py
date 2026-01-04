@@ -103,8 +103,11 @@ def index():
         selected_status = request.args.get("status")
         selected_change_filter = request.args.get("change_filter")
 
-        # Filter query by user_id
-        base_query = session_db.query(Product).filter(Product.user_id == current_user.id)
+        # Filter query by user_id and exclude archived
+        base_query = session_db.query(Product).filter(
+            Product.user_id == current_user.id,
+            Product.archived != True  # Exclude archived products
+        )
 
         sites = [s[0] for s in base_query.with_entities(Product.site).distinct().all()]
         statuses = [s[0] for s in base_query.with_entities(Product.last_status).distinct().all()]
@@ -183,3 +186,52 @@ def index():
         )
     finally:
         session_db.close()
+
+
+@main_bp.route("/batch-edit", methods=["POST"])
+@login_required
+def batch_edit():
+    """Handle batch title editing operations."""
+    action = request.form.get("action")
+    input_value = request.form.get("input", "")
+    input2_value = request.form.get("input2", "")
+    product_ids = request.form.getlist("ids")
+    
+    if not product_ids or not action:
+        return redirect(url_for('main.index'))
+    
+    session_db = SessionLocal()
+    try:
+        # Get products owned by current user
+        products = session_db.query(Product).filter(
+            Product.id.in_([int(pid) for pid in product_ids]),
+            Product.user_id == current_user.id
+        ).all()
+        
+        updated_count = 0
+        for product in products:
+            original_title = product.custom_title or product.last_title or ""
+            new_title = original_title
+            
+            if action == "prefix":
+                new_title = input_value + original_title
+            elif action == "suffix":
+                new_title = original_title + input_value
+            elif action == "replace":
+                new_title = original_title.replace(input_value, input2_value)
+            
+            if new_title != original_title:
+                product.custom_title = new_title
+                updated_count += 1
+        
+        session_db.commit()
+        
+        # Flash message would be ideal, but redirect with success param works too
+        return redirect(url_for('main.index'))
+    except Exception as e:
+        session_db.rollback()
+        print(f"Batch edit error: {e}")
+        return redirect(url_for('main.index'))
+    finally:
+        session_db.close()
+

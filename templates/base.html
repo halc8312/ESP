@@ -74,6 +74,16 @@
                 <span class="nav-icon">⚙️</span>
                 <span class="nav-text">設定</span>
             </a>
+            <a href="{{ url_for('import.import_form') }}"
+                class="sidebar-link {% if request.endpoint == 'import.import_form' %}active{% endif %}">
+                <span class="nav-icon">📥</span>
+                <span class="nav-text">インポート</span>
+            </a>
+            <a href="{{ url_for('archive.archive_list') }}"
+                class="sidebar-link {% if request.endpoint == 'archive.archive_list' %}active{% endif %}">
+                <span class="nav-icon">📦</span>
+                <span class="nav-text">アーカイブ</span>
+            </a>
         </nav>
 
 

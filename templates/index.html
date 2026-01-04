@@ -232,11 +232,35 @@
                 <button type="submit" formaction="{{ url_for('export_ebay') }}">eBay File Exchange 用 CSV</button>
                 <button type="submit" formaction="{{ url_for('export_stock_update') }}">Shopify 在庫更新CSV</button>
                 <button type="submit" formaction="{{ url_for('export_price_update') }}">Shopify 価格更新CSV</button>
+                <button type="submit" formaction="{{ url_for('export_images') }}">📷 画像ZIP</button>
             </div>
         </div>
     </div>
 
+
+    <!-- Batch Edit Action Bar -->
+    <div class="batch-action-bar"
+        style="background: #f9f9f9; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="selectAll" onclick="toggleSelectAll(this)">
+            <label for="selectAll" style="font-weight: 500;">すべて選択</label>
+            <span id="selectedCount" style="color: #666; font-size: 0.9em;">(0件選択中)</span>
+        </div>
+        <div style="flex: 1;"></div>
+        <select id="batchAction" style="padding: 8px 12px; border-radius: 6px; border: 1px solid #ddd;">
+            <option value="">-- 一括操作を選択 --</option>
+            <option value="prefix">タイトルに接頭辞を追加</option>
+            <option value="suffix">タイトルに接尾辞を追加</option>
+            <option value="replace">文字列を置換</option>
+            <option value="archive">アーカイブに移動</option>
+        </select>
+        <button type="button" onclick="showBatchEditModal()" class="btn"
+            style="background: #1976d2; color: white;">実行</button>
+    </div>
+
+
     <div class="table-responsive product-table-mobile-hidden">
+
         <table class="product-table">
             <tr>
                 <th>選択</th>
@@ -393,6 +417,98 @@
     document.addEventListener('DOMContentLoaded', function () {
         updateProfitMargin();
         updateProfitMarginMobile();
+        updateSelectedCount();
+
+        // Add change listener to all checkboxes
+        document.querySelectorAll('input[name="id"]').forEach(cb => {
+            cb.addEventListener('change', updateSelectedCount);
+        });
     });
+
+    // Batch edit functions
+    function toggleSelectAll(source) {
+        const checkboxes = document.querySelectorAll('input[name="id"]');
+        checkboxes.forEach(cb => cb.checked = source.checked);
+        updateSelectedCount();
+    }
+
+    function updateSelectedCount() {
+        const checked = document.querySelectorAll('input[name="id"]:checked').length;
+        document.getElementById('selectedCount').textContent = `(${checked}件選択中)`;
+    }
+
+    function getSelectedIds() {
+        return Array.from(document.querySelectorAll('input[name="id"]:checked')).map(cb => cb.value);
+    }
+
+    function showBatchEditModal() {
+        const action = document.getElementById('batchAction').value;
+        const selectedIds = getSelectedIds();
+
+        if (!action) {
+            alert('操作を選択してください');
+            return;
+        }
+        if (selectedIds.length === 0) {
+            alert('商品を選択してください');
+            return;
+        }
+
+        let input = '';
+        let input2 = '';
+
+        if (action === 'prefix') {
+            input = prompt('追加する接頭辞を入力してください:', '【新着】');
+        } else if (action === 'suffix') {
+            input = prompt('追加する接尾辞を入力してください:', ' - 送料無料');
+        } else if (action === 'replace') {
+            input = prompt('置換対象の文字列を入力してください:');
+            if (input) {
+                input2 = prompt('置換後の文字列を入力してください:');
+            }
+        } else if (action === 'archive') {
+            if (confirm(`${selectedIds.length}件の商品をアーカイブに移動しますか？`)) {
+                // Submit to archive route
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '{{ url_for("archive.archive_products") }}';
+                selectedIds.forEach(id => {
+                    const field = document.createElement('input');
+                    field.type = 'hidden';
+                    field.name = 'ids';
+                    field.value = id;
+                    form.appendChild(field);
+                });
+                document.body.appendChild(form);
+                form.submit();
+                return;
+            }
+            return;
+        }
+
+        if (!input && input !== '') return;
+
+        // Submit batch edit
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '{{ url_for("main.batch_edit") }}';
+
+
+        const addHidden = (name, value) => {
+            const field = document.createElement('input');
+            field.type = 'hidden';
+            field.name = name;
+            field.value = value;
+            form.appendChild(field);
+        };
+
+        addHidden('action', action);
+        addHidden('input', input);
+        addHidden('input2', input2 || '');
+        selectedIds.forEach(id => addHidden('ids', id));
+
+        document.body.appendChild(form);
+        form.submit();
+    }
 </script>
 {% endblock %}

@@ -70,11 +70,15 @@ class Product(Base):
     pricing_rule_id = Column(Integer, ForeignKey("pricing_rules.id"), nullable=True)
     selling_price = Column(Integer)  # Calculated selling price
 
+    # Archive (SOLD Stacking)
+    archived = Column(Boolean, default=False)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
     snapshots = relationship("ProductSnapshot", back_populates="product", cascade="all, delete-orphan")
     variants = relationship("Variant", back_populates="product", cascade="all, delete-orphan")
+
 
 
 
