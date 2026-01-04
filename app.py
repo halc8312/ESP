@@ -71,6 +71,7 @@ from routes.main import main_bp
 from routes.products import products_bp
 from routes.scrape import scrape_bp
 from routes.export import export_bp
+from routes.pricing import pricing_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(shops_bp)
@@ -78,6 +79,8 @@ app.register_blueprint(main_bp)
 app.register_blueprint(products_bp)
 app.register_blueprint(scrape_bp)
 app.register_blueprint(export_bp)
+app.register_blueprint(pricing_bp)
+
 
 
 # ==============================

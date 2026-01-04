@@ -66,11 +66,16 @@ class Product(Base):
     option2_name = Column(String)
     option3_name = Column(String)
 
+    # Pricing
+    pricing_rule_id = Column(Integer, ForeignKey("pricing_rules.id"), nullable=True)
+    selling_price = Column(Integer)  # Calculated selling price
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
     snapshots = relationship("ProductSnapshot", back_populates="product", cascade="all, delete-orphan")
     variants = relationship("Variant", back_populates="product", cascade="all, delete-orphan")
+
 
 
 class Variant(Base):
@@ -123,3 +128,24 @@ class DescriptionTemplate(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PricingRule(Base):
+    """
+    Pricing rule for calculating selling prices from scraped cost prices.
+    Formula: selling_price = (cost_price + shipping_cost) * (1 + margin_rate) + fixed_fee
+    """
+    __tablename__ = "pricing_rules"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=False)  # e.g., "Default", "High Margin"
+
+    # Calculation Parameters
+    margin_rate = Column(Integer, default=30)  # Percentage (30 = 30%)
+    shipping_cost = Column(Integer, default=0)  # Fixed shipping to add (JPY)
+    fixed_fee = Column(Integer, default=0)  # Fixed fee to add (JPY)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")

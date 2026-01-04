@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}価格ルール管理{% endblock %}
+{% block header_title %}価格ルール管理{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>価格ルール管理</h1>
+</div>
+
+<div class="content-card">
+    <div class="content-card-header">
+        <h2>新規ルール作成</h2>
+    </div>
+    <div class="content-card-body">
+        <form action="{{ url_for('pricing.pricing_create') }}" method="POST" class="form-inline">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="name">ルール名</label>
+                    <input type="text" id="name" name="name" placeholder="例: 標準利益率" required>
+                </div>
+                <div class="form-group">
+                    <label for="margin_rate">利益率 (%)</label>
+                    <input type="number" id="margin_rate" name="margin_rate" value="30" min="0" max="500" required>
+                </div>
+                <div class="form-group">
+                    <label for="shipping_cost">送料上乗せ (円)</label>
+                    <input type="number" id="shipping_cost" name="shipping_cost" value="0" min="0">
+                </div>
+                <div class="form-group">
+                    <label for="fixed_fee">固定手数料 (円)</label>
+                    <input type="number" id="fixed_fee" name="fixed_fee" value="0" min="0">
+                </div>
+                <div class="form-group">
+                    <button type="submit" class="btn btn-primary">作成</button>
+                </div>
+            </div>
+        </form>
+        <div class="formula-preview"
+            style="margin-top: 12px; padding: 12px; background: #f5f5f5; border-radius: 8px; font-size: 0.9em;">
+            <strong>計算式:</strong> 販売価格 = (仕入値 + 送料上乗せ) × (1 + 利益率/100) + 固定手数料
+        </div>
+    </div>
+</div>
+
+<div class="content-card" style="margin-top: 24px;">
+    <div class="content-card-header">
+        <h2>登録済みルール</h2>
+    </div>
+    <div class="content-card-body">
+        {% if rules %}
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ルール名</th>
+                        <th>利益率</th>
+                        <th>送料上乗せ</th>
+                        <th>固定手数料</th>
+                        <th>計算例 (仕入1000円の場合)</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for rule in rules %}
+                    <tr>
+                        <td>{{ rule.name }}</td>
+                        <td>{{ rule.margin_rate }}%</td>
+                        <td>¥{{ "{:,}".format(rule.shipping_cost or 0) }}</td>
+                        <td>¥{{ "{:,}".format(rule.fixed_fee or 0) }}</td>
+                        <td style="color: #2e7d32; font-weight: bold;">
+                            {% set example_price = ((1000 + (rule.shipping_cost or 0)) * (1 + (rule.margin_rate or 0) /
+                            100) + (rule.fixed_fee or 0)) | int %}
+                            ¥{{ "{:,}".format(example_price) }}
+                        </td>
+                        <td>
+                            <button class="btn btn-sm"
+                                onclick="editRule({{ rule.id }}, '{{ rule.name }}', {{ rule.margin_rate }}, {{ rule.shipping_cost or 0 }}, {{ rule.fixed_fee or 0 }})">編集</button>
+                            <form action="{{ url_for('pricing.pricing_delete', rule_id=rule.id) }}" method="POST"
+                                style="display: inline;">
+                                <button type="submit" class="btn btn-sm btn-danger"
+                                    onclick="return confirm('削除しますか？')">削除</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p style="text-align: center; color: #666;">まだ価格ルールが登録されていません。</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Edit Modal -->
+<div id="editModal"
+    style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="background: white; margin: 10% auto; padding: 24px; border-radius: 12px; max-width: 500px;">
+        <h3>ルール編集</h3>
+        <form id="editForm" method="POST">
+            <div class="form-group" style="margin-bottom: 12px;">
+                <label>ルール名</label>
+                <input type="text" name="name" id="edit_name" required style="width: 100%;">
+            </div>
+            <div class="form-group" style="margin-bottom: 12px;">
+                <label>利益率 (%)</label>
+                <input type="number" name="margin_rate" id="edit_margin_rate" min="0" max="500" required
+                    style="width: 100%;">
+            </div>
+            <div class="form-group" style="margin-bottom: 12px;">
+                <label>送料上乗せ (円)</label>
+                <input type="number" name="shipping_cost" id="edit_shipping_cost" min="0" style="width: 100%;">
+            </div>
+            <div class="form-group" style="margin-bottom: 12px;">
+                <label>固定手数料 (円)</label>
+                <input type="number" name="fixed_fee" id="edit_fixed_fee" min="0" style="width: 100%;">
+            </div>
+            <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                <button type="button" class="btn" onclick="closeModal()">キャンセル</button>
+                <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    function editRule(id, name, margin, shipping, fee) {
+        document.getElementById('editForm').action = '/pricing/' + id + '/edit';
+        document.getElementById('edit_name').value = name;
+        document.getElementById('edit_margin_rate').value = margin;
+        document.getElementById('edit_shipping_cost').value = shipping;
+        document.getElementById('edit_fixed_fee').value = fee;
+        document.getElementById('editModal').style.display = 'block';
+    }
+
+    function closeModal() {
+        document.getElementById('editModal').style.display = 'none';
+    }
+</script>
+{% endblock %}

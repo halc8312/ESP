@@ -7,6 +7,7 @@ from mercari_db import scrape_single_item as scrape_mercari
 from yahoo_db import scrape_single_item as scrape_yahoo
 from rakuma_db import scrape_single_item as scrape_rakuma
 from services.product_service import save_scraped_items_to_db
+from services.pricing_service import update_product_selling_price
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -52,6 +53,11 @@ class MonitorService:
                         # save_scraped_items_to_db handles logic for logic changes
                         new_c, updated_c = save_scraped_items_to_db(items, user_id=product.user_id, site=product.site)
                         logger.info(f"Updated {product.id}: {updated_c} changes.")
+                        
+                        # Recalculate selling price if pricing rule is assigned
+                        if product.pricing_rule_id:
+                            update_product_selling_price(product.id)
+                            logger.info(f"Recalculated selling price for {product.id}")
                     else:
                         logger.warning(f"Failed to scrape {product.source_url} or item deleted.")
                         # Optionally mark as error or increment error count
@@ -64,3 +70,4 @@ class MonitorService:
         finally:
             session_db.close()
             logger.info("--- Patrol Finished ---")
+
