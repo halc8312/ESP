@@ -8,3 +8,4 @@ webdriver-manager
 Flask-Login
 pytest
 pytest-flask
+Flask-APScheduler

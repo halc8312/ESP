@@ -23,6 +23,25 @@ from services.image_service import IMAGE_STORAGE_PATH
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-this")
 
+# Scheduler Config
+class SchedulerConfig:
+    SCHEDULER_API_ENABLED = True
+
+app.config.from_object(SchedulerConfig())
+
+from flask_apscheduler import APScheduler
+from services.monitor_service import MonitorService
+
+scheduler = APScheduler()
+scheduler.init_app(app)
+scheduler.start()
+
+# Register Job
+@scheduler.task('interval', id='patrol_job', minutes=15)
+def patrol_job():
+    with app.app_context():
+        MonitorService.check_stale_products(limit=5)
+
 # Render/Herokuなどのプロキシ環境下で正しいURLスキーム(https)を取得するための設定
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 

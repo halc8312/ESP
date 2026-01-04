@@ -4,78 +4,84 @@
 {% block header_title %}ダッシュボード{% endblock %}
 
 {% block content %}
-    <div class="page-header">
-        <h1>ダッシュボード</h1>
-    </div>
+<div class="page-header">
+    <h1>ダッシュボード</h1>
+</div>
 
-    <!-- KPI Cards -->
-    <div class="dashboard-grid">
-        <div class="stat-card">
-            <h3>全商品数 ({{ current_shop_id and '選択中' or '全ショップ' }})</h3>
-            <div class="value">{{ total_items }}</div>
-        </div>
-        <div class="stat-card">
-            <h3>出品中 (Active)</h3>
-            <div class="value" style="color: #2e7d32;">{{ status_map.get('active', 0) }}</div>
-        </div>
-        <div class="stat-card">
-            <h3>在庫切れ (Variant=0)</h3>
-            <div class="value" style="color: #c62828;">{{ sold_out_count }}</div>
-        </div>
-        <div class="stat-card">
-            <h3>下書き (Draft)</h3>
-            <div class="value" style="color: #f57f17;">{{ status_map.get('draft', 0) }}</div>
-        </div>
+<!-- KPI Cards -->
+<div class="dashboard-grid">
+    <div class="stat-card">
+        <h3>全商品数 ({{ current_shop_id and '選択中' or '全ショップ' }})</h3>
+        <div class="value">{{ total_items }}</div>
     </div>
+    <div class="stat-card">
+        <h3>出品中 (Active)</h3>
+        <div class="value" style="color: #2e7d32;">{{ status_map.get('active', 0) }}</div>
+    </div>
+    <div class="stat-card">
+        <h3>在庫切れ (Variant=0)</h3>
+        <div class="value" style="color: #c62828;">{{ sold_out_count }}</div>
+    </div>
+    <div class="stat-card">
+        <h3>下書き (Draft)</h3>
+        <div class="value" style="color: #f57f17;">{{ status_map.get('draft', 0) }}</div>
+    </div>
+</div>
 
-    <!-- Recent Activity -->
-    <div class="content-card">
-        <div class="content-card-header">
-            <h2>最近更新された商品</h2>
+<!-- Recent Activity -->
+<div class="content-card">
+    <div class="content-card-header">
+        <h2>最近更新された商品</h2>
+    </div>
+    <div class="content-card-body">
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>画像</th>
+                        <th>タイトル</th>
+                        <th class="hide-mobile">価格</th>
+                        <th class="hide-mobile">ステータス</th>
+                        <th class="hide-mobile">最終更新</th>
+                        <th class="hide-mobile">最終チェック</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in recent_items %}
+                    <tr>
+                        <td>
+                            {% if p.snapshots and p.snapshots[0].image_urls %}
+                            <img src="{{ p.snapshots[0].image_urls.split('|')[0] }}"
+                                style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px;">
+                            {% else %}
+                            <span
+                                style="display:inline-block; width:50px; height:50px; background:#eee; border-radius: 4px;"></span>
+                            {% endif %}
+                        </td>
+                        <td class="product-title-cell">{{ p.custom_title or p.last_title }}</td>
+                        <td class="hide-mobile">¥{{ "{:,}".format(p.last_price or 0) }}</td>
+                        <td class="hide-mobile">{{ p.last_status }}</td>
+                        <td class="hide-mobile">{{ p.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                        <td class="hide-mobile" style="font-size: 0.8em; color: #666;">
+                            {{ p.updated_at.strftime('%m-%d %H:%M') }}<br>
+                            <span style="color: #999;">(Patrol)</span>
+                        </td>
+                        <td>
+                            <a href="{{ url_for('product_detail', product_id=p.id) }}" class="btn">編集</a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" style="text-align:center;">更新履歴はありません</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
-        <div class="content-card-body">
-            <div class="table-responsive">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>画像</th>
-                            <th>タイトル</th>
-                            <th class="hide-mobile">価格</th>
-                            <th class="hide-mobile">ステータス</th>
-                            <th class="hide-mobile">最終更新</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for p in recent_items %}
-                        <tr>
-                            <td>
-                                {% if p.snapshots and p.snapshots[0].image_urls %}
-                                <img src="{{ p.snapshots[0].image_urls.split('|')[0] }}"
-                                    style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px;">
-                                {% else %}
-                                <span style="display:inline-block; width:50px; height:50px; background:#eee; border-radius: 4px;"></span>
-                                {% endif %}
-                            </td>
-                            <td class="product-title-cell">{{ p.custom_title or p.last_title }}</td>
-                            <td class="hide-mobile">¥{{ "{:,}".format(p.last_price or 0) }}</td>
-                            <td class="hide-mobile">{{ p.last_status }}</td>
-                            <td class="hide-mobile">{{ p.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
-                            <td>
-                                <a href="{{ url_for('product_detail', product_id=p.id) }}" class="btn">編集</a>
-                            </td>
-                        </tr>
-                        {% else %}
-                        <tr>
-                            <td colspan="6" style="text-align:center;">更新履歴はありません</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            <div style="margin-top:12px; text-align:right;">
-                <a href="{{ url_for('index') }}">すべて見る &raquo;</a>
-            </div>
+        <div style="margin-top:12px; text-align:right;">
+            <a href="{{ url_for('index') }}">すべて見る &raquo;</a>
         </div>
     </div>
+</div>
 {% endblock %}
