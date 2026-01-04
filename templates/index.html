@@ -296,7 +296,7 @@
                         style="display:inline-block; width:60px; height:60px; background:#eee; border-radius: 4px;"></span>
                     {% endif %}
                 </td>
-                <td class="product-title-cell">{{ p.last_title }}</td>
+                <td class="product-title-cell">{{ p.custom_title or p.last_title }}</td>
                 <td>
                     {% if p.last_price is not none %}
                     ¥{{ "{:,}".format(p.last_price) }}
@@ -328,7 +328,7 @@
             <div class="product-card-image"></div>
             {% endif %}
             <div class="product-card-content">
-                <div class="product-card-title">{{ p.last_title }}</div>
+                <div class="product-card-title">{{ p.custom_title or p.last_title }}</div>
                 <div class="product-card-price">
                     {% if p.last_price is not none %}
                     ¥{{ "{:,}".format(p.last_price) }}
