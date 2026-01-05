@@ -84,6 +84,11 @@
                 <span class="nav-icon">📦</span>
                 <span class="nav-text">アーカイブ</span>
             </a>
+            <a href="{{ url_for('trash.trash_list') }}"
+                class="sidebar-link {% if request.endpoint == 'trash.trash_list' %}active{% endif %}">
+                <span class="nav-icon">🗑️</span>
+                <span class="nav-text">ゴミ箱</span>
+            </a>
         </nav>
 
 

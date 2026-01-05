@@ -253,6 +253,7 @@
             <option value="suffix">タイトルに接尾辞を追加</option>
             <option value="replace">文字列を置換</option>
             <option value="archive">アーカイブに移動</option>
+            <option value="trash">🗑️ ゴミ箱へ移動</option>
         </select>
         <button type="button" onclick="showBatchEditModal()" class="btn"
             style="background: #1976d2; color: white;">実行</button>
@@ -476,6 +477,24 @@
                     const field = document.createElement('input');
                     field.type = 'hidden';
                     field.name = 'ids';
+                    field.value = id;
+                    form.appendChild(field);
+                });
+                document.body.appendChild(form);
+                form.submit();
+                return;
+            }
+            return;
+        } else if (action === 'trash') {
+            if (confirm(`${selectedIds.length}件の商品をゴミ箱に移動しますか？`)) {
+                // Submit to trash route
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '{{ url_for("trash.trash_delete") }}';
+                selectedIds.forEach(id => {
+                    const field = document.createElement('input');
+                    field.type = 'hidden';
+                    field.name = 'id';
                     field.value = id;
                     form.appendChild(field);
                 });

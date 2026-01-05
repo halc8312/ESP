@@ -73,6 +73,9 @@ class Product(Base):
     # Archive (SOLD Stacking)
     archived = Column(Boolean, default=False)
 
+    # Trash (Soft Delete)
+    deleted_at = Column(DateTime, nullable=True)  # NULL = not deleted
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 

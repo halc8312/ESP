@@ -38,6 +38,8 @@ def run_migrations():
         ("products", "selling_price", "ALTER TABLE products ADD COLUMN selling_price INTEGER"),
         # Archive column
         ("products", "archived", "ALTER TABLE products ADD COLUMN archived BOOLEAN DEFAULT FALSE"),
+        # Trash column
+        ("products", "deleted_at", "ALTER TABLE products ADD COLUMN deleted_at DATETIME"),
     ]
     
     with engine.connect() as conn:
@@ -76,7 +78,18 @@ scheduler.start()
 @scheduler.task('interval', id='patrol_job', minutes=15)
 def patrol_job():
     with app.app_context():
-        MonitorService.check_stale_products(limit=5)
+        MonitorService.check_stale_products(limit=15)
+
+# Trash auto-purge job (runs daily at 3 AM)
+@scheduler.task('cron', id='trash_purge_job', hour=3)
+def trash_purge_job():
+    with app.app_context():
+        from routes.trash import purge_old_trash
+        import logging
+        logger = logging.getLogger("trash")
+        count = purge_old_trash()
+        if count > 0:
+            logger.info(f"Auto-purged {count} items from trash")
 
 # Render/Herokuなどのプロキシ環境下で正しいURLスキーム(https)を取得するための設定
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
@@ -111,6 +124,7 @@ from routes.pricing import pricing_bp
 from routes.settings import settings_bp
 from routes.import_routes import import_bp
 from routes.archive import archive_bp
+from routes.trash import trash_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(shops_bp)
@@ -122,6 +136,7 @@ app.register_blueprint(pricing_bp)
 app.register_blueprint(settings_bp)
 app.register_blueprint(import_bp)
 app.register_blueprint(archive_bp)
+app.register_blueprint(trash_bp)
 
 
 

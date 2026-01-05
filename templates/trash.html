@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}ゴミ箱{% endblock %}
+{% block header_title %}ゴミ箱{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>🗑️ ゴミ箱</h1>
+    <p style="color: #666; margin-top: 8px;">削除から30日後に自動的に完全削除されます</p>
+</div>
+
+{% if items %}
+<form id="trashForm" method="POST">
+    <div class="batch-action-bar"
+        style="margin-bottom: 16px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+        <label style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+            全選択 (<span id="selectedCount">0</span>件)
+        </label>
+
+        <button type="submit" formaction="{{ url_for('trash.trash_restore') }}"
+            style="background: #2e7d32; color: white; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer;">
+            ♻️ 復元
+        </button>
+
+        <button type="submit" formaction="{{ url_for('trash.trash_purge') }}"
+            onclick="return confirm('選択した商品を完全に削除しますか？この操作は取り消せません。')"
+            style="background: #c62828; color: white; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer;">
+            ⚠️ 完全削除
+        </button>
+    </div>
+
+    <div class="content-card">
+        <table class="product-table">
+            <thead>
+                <tr>
+                    <th style="width: 40px;"></th>
+                    <th>タイトル</th>
+                    <th>価格</th>
+                    <th>削除日</th>
+                    <th>残り日数</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    <td>
+                        <input type="checkbox" name="id" value="{{ item.id }}" class="item-checkbox"
+                            onchange="updateSelectedCount()">
+                    </td>
+                    <td>{{ item.custom_title or item.last_title }}</td>
+                    <td>
+                        {% if item.last_price %}
+                        ¥{{ "{:,}".format(item.last_price) }}
+                        {% endif %}
+                    </td>
+                    <td>{{ item.deleted_at.strftime('%Y-%m-%d %H:%M') if item.deleted_at else '-' }}</td>
+                    <td>
+                        {% if item.days_remaining <= 7 %} <span style="color: #c62828; font-weight: bold;">{{
+                            item.days_remaining }}日</span>
+                            {% else %}
+                            <span style="color: #666;">{{ item.days_remaining }}日</span>
+                            {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</form>
+
+{% else %}
+<div class="content-card">
+    <div class="content-card-body" style="text-align: center; padding: 48px;">
+        <p style="color: #666; font-size: 1.1em;">ゴミ箱は空です</p>
+        <p style="color: #999; margin-top: 8px;">削除された商品はここに表示されます</p>
+    </div>
+</div>
+{% endif %}
+
+<script>
+    function toggleSelectAll() {
+        const checked = document.getElementById('selectAll').checked;
+        document.querySelectorAll('.item-checkbox').forEach(cb => cb.checked = checked);
+        updateSelectedCount();
+    }
+
+    function updateSelectedCount() {
+        const count = document.querySelectorAll('.item-checkbox:checked').length;
+        document.getElementById('selectedCount').textContent = count;
+    }
+</script>
+{% endblock %}

@@ -103,10 +103,11 @@ def index():
         selected_status = request.args.get("status")
         selected_change_filter = request.args.get("change_filter")
 
-        # Filter query by user_id and exclude archived
+        # Filter query by user_id, exclude archived and deleted
         base_query = session_db.query(Product).filter(
             Product.user_id == current_user.id,
-            Product.archived != True  # Exclude archived products
+            Product.archived != True,  # Exclude archived products
+            Product.deleted_at == None  # Exclude deleted products (trash)
         )
 
         sites = [s[0] for s in base_query.with_entities(Product.site).distinct().all()]
