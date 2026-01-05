@@ -8,21 +8,94 @@
     <h1>CSVインポート</h1>
 </div>
 
+{% if preview_data %}
+<!-- Preview Mode -->
+<div class="content-card" style="margin-bottom: 24px;">
+    <div class="content-card-header">
+        <h2>プレビュー</h2>
+    </div>
+    <div class="content-card-body">
+        <div style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
+            <div style="padding: 12px 20px; background: #e8f5e9; border-radius: 8px;">
+                <strong style="color: #2e7d32;">✓ インポート可能:</strong> {{ preview_data.ok_count }}件
+            </div>
+            <div style="padding: 12px 20px; background: #fff3e0; border-radius: 8px;">
+                <strong style="color: #e65100;">⚠ スキップ:</strong> {{ preview_data.skip_count }}件
+            </div>
+            <div style="padding: 12px 20px; background: #ffebee; border-radius: 8px;">
+                <strong style="color: #c62828;">✗ エラー:</strong> {{ preview_data.error_count }}件
+            </div>
+        </div>
+
+        {% for warning in preview_data.warnings %}
+        <div style="padding: 8px 12px; background: #fff3e0; border-radius: 4px; margin-bottom: 8px; font-size: 0.9em;">
+            ⚠ {{ warning }}
+        </div>
+        {% endfor %}
+
+        <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+            <table class="product-table" style="font-size: 0.9em;">
+                <thead style="position: sticky; top: 0; background: white;">
+                    <tr>
+                        <th>行</th>
+                        <th>状態</th>
+                        <th>タイトル</th>
+                        <th>価格</th>
+                        <th>URL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in preview_data.rows %}
+                    <tr
+                        style="{% if row.status == 'error' %}background: #ffebee;{% elif row.status == 'skip' %}background: #fff3e0;{% endif %}">
+                        <td>{{ row.row_num }}</td>
+                        <td>
+                            {% if row.status == 'ok' %}
+                            <span style="color: #2e7d32;">✓</span>
+                            {% elif row.status == 'skip' %}
+                            <span style="color: #e65100;" title="{{ row.warning }}">⚠</span>
+                            {% else %}
+                            <span style="color: #c62828;" title="{{ row.warning }}">✗</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ row.title }}</td>
+                        <td>¥{{ row.price }}</td>
+                        <td style="font-size: 0.85em; color: #666;">{{ row.url or '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div style="margin-top: 20px; display: flex; gap: 12px;">
+            <form action="{{ url_for('import.import_execute') }}" method="POST" style="display: inline;">
+                <button type="submit" class="btn" style="background: #2e7d32; color: white; padding: 12px 24px;">
+                    ✓ {{ preview_data.ok_count }}件をインポート
+                </button>
+            </form>
+            <a href="{{ url_for('import.import_form') }}" class="btn"
+                style="background: #666; color: white; padding: 12px 24px; text-decoration: none;">
+                キャンセル
+            </a>
+        </div>
+    </div>
+</div>
+
+{% else %}
+<!-- Upload Form -->
 <div class="content-card">
     <div class="content-card-header">
         <h2>商品データをインポート</h2>
     </div>
     <div class="content-card-body">
-        <p style="color: #666; margin-bottom: 16px;">
-            CSVファイルから商品データをインポートします。以下のカラムに対応しています：
-        </p>
-
-        <div
-            style="background: #f5f5f5; padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; font-family: monospace; font-size: 0.9em;">
-            title（必須）, price, url, sku
+        <div style="background: #f5f5f5; padding: 12px 16px; border-radius: 6px; margin-bottom: 20px;">
+            <strong>対応カラム:</strong>
+            <div style="font-family: monospace; font-size: 0.9em; margin-top: 8px;">
+                <span style="color: #c62828;">title（必須）</span>, price, url, sku, description, image_urls, inventory
+            </div>
         </div>
 
-        <form action="{{ url_for('import.import_csv') }}" method="POST" enctype="multipart/form-data">
+        <form action="{{ url_for('import.import_preview') }}" method="POST" enctype="multipart/form-data">
             <div class="form-group" style="margin-bottom: 16px;">
                 <label for="file">CSVファイル</label>
                 <input type="file" id="file" name="file" accept=".csv" required
@@ -51,7 +124,7 @@
 
             <button type="submit" class="btn btn-primary"
                 style="background: #1976d2; color: white; padding: 12px 24px;">
-                インポート実行
+                プレビュー
             </button>
         </form>
     </div>
@@ -62,10 +135,14 @@
         <h2>CSVサンプル</h2>
     </div>
     <div class="content-card-body">
-        <p style="color: #666; margin-bottom: 12px;">以下の形式でCSVを準備してください：</p>
-        <pre style="background: #f5f5f5; padding: 16px; border-radius: 8px; overflow-x: auto;">title,price,url,sku
-サンプル商品1,1980,https://example.com/1,SKU-001
-サンプル商品2,2980,https://example.com/2,SKU-002</pre>
+        <pre style="background: #f5f5f5; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.85em;">title,price,url,sku,description,image_urls,inventory
+サンプル商品1,1980,https://example.com/1,SKU-001,商品の説明文,https://img.example.com/1.jpg,5
+サンプル商品2,2980,https://example.com/2,SKU-002,複数画像,https://img1.jpg|https://img2.jpg,3</pre>
+        <p style="font-size: 0.85em; color: #666; margin-top: 8px;">
+            ※ image_urlsは複数画像を <code>|</code> で区切ります
+        </p>
     </div>
 </div>
+{% endif %}
+
 {% endblock %}
