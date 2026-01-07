@@ -12,10 +12,10 @@ logger = logging.getLogger("patrol")
 class SurugayaPatrol(BasePatrol):
     """Lightweight patrol for suruga-ya.jp"""
     
-    # CSS Selectors for patrol (minimal set)
+    # CSS Selectors for patrol (minimal set) - Updated 2026-01-07
     SELECTORS = {
         "price": ".price_group .text-price-detail, .price_group label",
-        "stock_available": ".btn_buy",
+        "stock_available": ".btn_buy, .cart1",  # Both selectors work
         "stock_sold": ".waitbtn",
     }
     

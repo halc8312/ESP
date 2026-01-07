@@ -11,14 +11,14 @@ from mercari_db import create_driver
 
 logger = logging.getLogger("surugaya")
 
-# CSS Selectors
+# CSS Selectors - Updated based on browser investigation 2026-01-07
 SELECTORS = {
     "title": "h1",
     "price": ".price_group .text-price-detail, .price_group label",
-    "stock_available": ".btn_buy",
+    "stock_available": ".btn_buy, .cart1",  # Both selectors work
     "stock_sold": ".waitbtn",
     "main_image": ".is-main-image img",
-    "description": "#product_detail",
+    "description": ".tbl_product_info",  # Fixed: was #product_detail (doesn't exist)
     "condition": ".price_group label",
     "category": ".left div a[href*='category=']",
 }
