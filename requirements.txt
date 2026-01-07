@@ -9,3 +9,4 @@ Flask-Login
 pytest
 pytest-flask
 Flask-APScheduler
+undetected-chromedriver

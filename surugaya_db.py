@@ -1,5 +1,6 @@
 """
 Surugaya scraper - Product detail scraping for suruga-ya.jp
+Uses undetected-chromedriver to bypass Cloudflare protection.
 """
 import logging
 import re
@@ -7,9 +8,39 @@ import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from mercari_db import create_driver
 
 logger = logging.getLogger("surugaya")
+
+
+def create_stealth_driver(headless: bool = True):
+    """
+    Create undetected-chromedriver for Cloudflare bypass.
+    Falls back to regular driver if undetected-chromedriver not available.
+    """
+    try:
+        import undetected_chromedriver as uc
+        
+        options = uc.ChromeOptions()
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        
+        if headless:
+            options.add_argument("--headless=new")
+        
+        # Create undetected driver
+        driver = uc.Chrome(options=options, use_subprocess=True)
+        print("[SURUGAYA] Using undetected-chromedriver (Cloudflare bypass)")
+        return driver
+        
+    except ImportError:
+        print("[SURUGAYA] undetected-chromedriver not available, using regular driver")
+        from mercari_db import create_driver
+        return create_driver(headless=headless)
+    except Exception as e:
+        print(f"[SURUGAYA] Failed to create stealth driver: {e}, falling back to regular")
+        from mercari_db import create_driver
+        return create_driver(headless=headless)
 
 # CSS Selectors - Updated based on browser investigation 2026-01-07
 SELECTORS = {
@@ -188,14 +219,15 @@ def scrape_item_detail(driver, url: str) -> dict:
 def scrape_single_item(url: str, headless: bool = True) -> list:
     """
     指定された駿河屋商品URLを1件だけスクレイピングして list[dict] を返す。
+    Uses stealth driver to bypass Cloudflare.
     """
     driver = None
     try:
-        driver = create_driver(headless=headless)
+        driver = create_stealth_driver(headless=headless)
         result = scrape_item_detail(driver, url)
         return [result] if result["title"] else []
     except Exception as e:
-        logger.error(f"Error in scrape_single_item: {e}")
+        print(f"[SURUGAYA] Error in scrape_single_item: {e}")
         return []
     finally:
         if driver:
@@ -218,7 +250,8 @@ def scrape_search_result(
     results = []
     
     try:
-        driver = create_driver(headless=headless)
+        driver = create_stealth_driver(headless=headless)
+        print(f"[SURUGAYA] Search: Navigating to {search_url}")
         driver.get(search_url)
         time.sleep(2)
         
