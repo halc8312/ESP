@@ -155,21 +155,72 @@ def scrape_item_detail(driver, url: str) -> dict:
     except Exception:
         pass
     
-    # Description
+    # Description - Multiple approaches
+    # Approach 1: Try #ProductDescription
     try:
         desc_el = driver.find_element(By.CSS_SELECTOR, SELECTORS["description"])
         result["description"] = desc_el.text.strip()
     except Exception:
-        # Try finding description near "商品説明" heading
+        pass
+    
+    # Approach 2: Find section containing "商品説明" and get sibling/child content
+    if not result["description"]:
         try:
+            # Find h2 with "商品説明"
             headings = driver.find_elements(By.TAG_NAME, "h2")
             for h in headings:
                 if "商品説明" in h.text:
-                    sibling = h.find_element(By.XPATH, "following-sibling::*[1]")
-                    result["description"] = sibling.text.strip()
-                    break
+                    # Get parent section and find content div
+                    section = h.find_element(By.XPATH, "./ancestor::section")
+                    # Get all text within section excluding the header
+                    all_divs = section.find_elements(By.TAG_NAME, "div")
+                    for div in all_divs:
+                        text = div.text.strip()
+                        if text and "商品説明" not in text and len(text) > 50:
+                            result["description"] = text
+                            break
+                    if result["description"]:
+                        break
         except Exception:
             pass
+    
+    # Approach 3: Check for iframe with description
+    if not result["description"]:
+        try:
+            iframes = driver.find_elements(By.TAG_NAME, "iframe")
+            for iframe in iframes:
+                iframe_id = iframe.get_attribute("id") or ""
+                iframe_name = iframe.get_attribute("name") or ""
+                if "desc" in iframe_id.lower() or "desc" in iframe_name.lower():
+                    driver.switch_to.frame(iframe)
+                    body = driver.find_element(By.TAG_NAME, "body")
+                    result["description"] = body.text.strip()
+                    driver.switch_to.default_content()
+                    break
+        except Exception:
+            driver.switch_to.default_content()
+    
+    # Approach 4: Search body text for description near relevant keywords
+    if not result["description"]:
+        try:
+            body_text = driver.find_element(By.TAG_NAME, "body").text
+            # Find text after "商品説明" marker
+            if "商品説明" in body_text:
+                start_idx = body_text.find("商品説明") + len("商品説明")
+                # Find end marker (next section like "発送について" or "支払い")
+                end_markers = ["発送について", "支払いについて", "注意事項", "送料", "配送方法"]
+                end_idx = len(body_text)
+                for marker in end_markers:
+                    marker_idx = body_text.find(marker, start_idx)
+                    if marker_idx > 0 and marker_idx < end_idx:
+                        end_idx = marker_idx
+                desc_text = body_text[start_idx:end_idx].strip()
+                if len(desc_text) > 20:
+                    result["description"] = desc_text[:2000]  # Limit to 2000 chars
+        except Exception:
+            pass
+    
+    logger.debug(f"Description length: {len(result['description'])}")
     
     # Default variant
     if result["price"]:

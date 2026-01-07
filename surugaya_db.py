@@ -42,9 +42,10 @@ def scrape_item_detail(driver, url: str) -> dict:
     
     try:
         driver.get(url)
-        wait = WebDriverWait(driver, 10)
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        time.sleep(1.5)  # Wait for dynamic content
+        wait = WebDriverWait(driver, 15)
+        # Wait for H1 to appear (main content loaded)
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "h1")))
+        time.sleep(2)  # Additional wait for dynamic content and JS
     except Exception as e:
         logger.error(f"Error accessing {url}: {e}")
         result["status"] = "error"
@@ -54,10 +55,12 @@ def scrape_item_detail(driver, url: str) -> dict:
     try:
         title_el = driver.find_element(By.CSS_SELECTOR, SELECTORS["title"])
         result["title"] = title_el.text.strip()
-    except Exception:
-        pass
+        logger.debug(f"Title found: {result['title'][:50]}")
+    except Exception as e:
+        logger.warning(f"Title not found: {e}")
     
     # ---- 価格 ----
+    # Try multiple price selectors
     try:
         price_els = driver.find_elements(By.CSS_SELECTOR, SELECTORS["price"])
         for el in price_els:
@@ -66,9 +69,10 @@ def scrape_item_detail(driver, url: str) -> dict:
             match = re.search(r"([\d,]+)\s*円", text)
             if match:
                 result["price"] = int(match.group(1).replace(",", ""))
+                logger.debug(f"Price found: {result['price']}")
                 break
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Price extraction failed: {e}")
     
     # Fallback: search body text
     if result["price"] is None:
