@@ -11,6 +11,9 @@ from models import Shop
 from mercari_db import scrape_search_result, scrape_single_item
 import yahoo_db
 import rakuma_db
+import surugaya_db
+import offmall_db
+import yahuoku_db
 from services.product_service import save_scraped_items_to_db
 from services.filter_service import filter_excluded_items
 
@@ -56,18 +59,31 @@ def scrape_run():
         # Check domain for switching scrapers
         if "shopping.yahoo.co.jp" in target_url:
             items = yahoo_db.scrape_single_item(target_url, headless=True)
+            site = "yahoo"
         elif "fril.jp" in target_url:
             # Rakuma (ラクマ)
             items = rakuma_db.scrape_single_item(target_url, headless=True)
+            site = "rakuma"
+        elif "suruga-ya.jp" in target_url:
+            # 駿河屋
+            items = surugaya_db.scrape_single_item(target_url, headless=True)
+            site = "surugaya"
+        elif "netmall.hardoff.co.jp" in target_url:
+            # オフモール
+            items = offmall_db.scrape_single_item(target_url, headless=True)
+            site = "offmall"
+        elif "auctions.yahoo.co.jp" in target_url:
+            # ヤフオク
+            items = yahuoku_db.scrape_single_item(target_url, headless=True)
+            site = "yahuoku"
         else:
             # Default to Mercari
             items = scrape_single_item(target_url, headless=True)
+            site = "mercari"
         
         # Apply exclusion filter
         items, excluded = filter_excluded_items(items, current_user.id)
         
-        # Determine site from URL
-        site = "yahoo" if "shopping.yahoo.co.jp" in target_url else ("rakuma" if "fril.jp" in target_url else "mercari")
         new_count, updated_count = save_scraped_items_to_db(items, site=site, user_id=current_user.id)
 
         
@@ -135,6 +151,74 @@ def scrape_run():
 
                 new_count = updated_count = 0
                 error_msg = f"Rakuma Search Error: {str(e)}"
+
+        elif site == "surugaya":
+            # 駿河屋 Search
+            base = "https://www.suruga-ya.jp/search?"
+            s_params = {"search_word": keyword} if keyword else {}
+            if keyword:
+                s_params["is_stock"] = "1"  # In stock only
+            
+            search_url = base + urlencode(s_params)
+            
+            try:
+                items = surugaya_db.scrape_search_result(
+                    search_url=search_url,
+                    max_items=limit,
+                    max_scroll=3,
+                    headless=True,
+                )
+                items, excluded = filter_excluded_items(items, current_user.id)
+                new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="surugaya")
+            except Exception as e:
+                traceback.print_exc()
+                items = []
+                new_count = updated_count = 0
+                error_msg = f"Surugaya Search Error: {str(e)}"
+
+        elif site == "offmall":
+            # オフモール Search
+            base = "https://netmall.hardoff.co.jp/search?"
+            o_params = {"q": keyword} if keyword else {}
+            
+            search_url = base + urlencode(o_params)
+            
+            try:
+                items = offmall_db.scrape_search_result(
+                    search_url=search_url,
+                    max_items=limit,
+                    max_scroll=3,
+                    headless=True,
+                )
+                items, excluded = filter_excluded_items(items, current_user.id)
+                new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="offmall")
+            except Exception as e:
+                traceback.print_exc()
+                items = []
+                new_count = updated_count = 0
+                error_msg = f"Offmall Search Error: {str(e)}"
+
+        elif site == "yahuoku":
+            # ヤフオク Search
+            base = "https://auctions.yahoo.co.jp/search/search?"
+            y_params = {"p": keyword} if keyword else {}
+            
+            search_url = base + urlencode(y_params)
+            
+            try:
+                items = yahuoku_db.scrape_search_result(
+                    search_url=search_url,
+                    max_items=limit,
+                    max_scroll=3,
+                    headless=True,
+                )
+                items, excluded = filter_excluded_items(items, current_user.id)
+                new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="yahuoku")
+            except Exception as e:
+                traceback.print_exc()
+                items = []
+                new_count = updated_count = 0
+                error_msg = f"Yahoo Auctions Search Error: {str(e)}"
 
         else:
             # Mercari Search Logic (Default)

@@ -77,7 +77,7 @@ def export_shopify():
             # Description processing remains same
             description = product.custom_description or (snapshot.description if snapshot else "")
             vendor = product.custom_vendor or product.site.capitalize()
-            handle = product.custom_handle or f"mercari-{product.id}"
+            handle = product.custom_handle or f"{product.site or 'product'}-{product.id}"
             
             image_urls = []
             if snapshot and snapshot.image_urls:

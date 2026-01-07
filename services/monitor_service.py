@@ -13,6 +13,9 @@ from services.pricing_service import update_product_selling_price
 from services.patrol.mercari_patrol import MercariPatrol
 from services.patrol.yahoo_patrol import YahooPatrol
 from services.patrol.rakuma_patrol import RakumaPatrol
+from services.patrol.surugaya_patrol import SurugayaPatrol
+from services.patrol.offmall_patrol import OffmallPatrol
+from services.patrol.yahuoku_patrol import YahuokuPatrol
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,7 +32,10 @@ class MonitorService:
     _patrols = {
         'mercari': MercariPatrol(),
         'yahoo': YahooPatrol(),
-        'rakuma': RakumaPatrol()
+        'rakuma': RakumaPatrol(),
+        'surugaya': SurugayaPatrol(),
+        'offmall': OffmallPatrol(),
+        'yahuoku': YahuokuPatrol(),
     }
     
     @staticmethod
