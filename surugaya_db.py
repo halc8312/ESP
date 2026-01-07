@@ -40,42 +40,44 @@ def scrape_item_detail(driver, url: str) -> dict:
         "category": "",
     }
     
-    logger.info(f"Surugaya: Starting scrape for {url}")
+    # Use print for Render logs (logger may not be configured)
+    print(f"[SURUGAYA] Starting scrape for {url}")
     
     try:
         driver.get(url)
-        logger.info("Surugaya: Page load initiated")
+        print("[SURUGAYA] Page load initiated")
         
-        wait = WebDriverWait(driver, 20)  # Increased timeout
+        wait = WebDriverWait(driver, 20)
         
         # First wait for body to exist
         wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        logger.info("Surugaya: Body element found")
+        print("[SURUGAYA] Body element found")
         
-        # Wait longer for any JS to execute
+        # Wait for JS to execute
         time.sleep(3)
         
-        # Check if we got a Cloudflare or block page
+        # Check for Cloudflare block
         page_source = driver.page_source
         if "cloudflare" in page_source.lower() or "challenge" in page_source.lower():
-            logger.error("Surugaya: Cloudflare/Challenge page detected!")
+            print("[SURUGAYA] ERROR: Cloudflare/Challenge page detected!")
             result["status"] = "blocked"
             return result
         
-        # Check for H1 (may timeout if blocked)
+        # Check page title to see what we got
+        print(f"[SURUGAYA] Page title: {driver.title}")
+        print(f"[SURUGAYA] Current URL: {driver.current_url}")
+        
+        # Check for H1
         try:
             wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "h1")))
-            logger.info("Surugaya: H1 element found")
+            print("[SURUGAYA] H1 element found")
         except Exception as h1_err:
-            logger.warning(f"Surugaya: H1 not found after timeout: {h1_err}")
-            # Log some page info for debugging
-            logger.warning(f"Surugaya: Page title: {driver.title}")
-            logger.warning(f"Surugaya: Current URL: {driver.current_url}")
+            print(f"[SURUGAYA] WARNING: H1 not found: {h1_err}")
             
-        time.sleep(1)  # Final stabilization wait
+        time.sleep(1)
         
     except Exception as e:
-        logger.error(f"Surugaya: Error during page load: {e}")
+        print(f"[SURUGAYA] ERROR during page load: {e}")
         result["status"] = "error"
         return result
     
