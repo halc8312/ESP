@@ -40,14 +40,42 @@ def scrape_item_detail(driver, url: str) -> dict:
         "category": "",
     }
     
+    logger.info(f"Surugaya: Starting scrape for {url}")
+    
     try:
         driver.get(url)
-        wait = WebDriverWait(driver, 15)
-        # Wait for H1 to appear (main content loaded)
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "h1")))
-        time.sleep(2)  # Additional wait for dynamic content and JS
+        logger.info("Surugaya: Page load initiated")
+        
+        wait = WebDriverWait(driver, 20)  # Increased timeout
+        
+        # First wait for body to exist
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        logger.info("Surugaya: Body element found")
+        
+        # Wait longer for any JS to execute
+        time.sleep(3)
+        
+        # Check if we got a Cloudflare or block page
+        page_source = driver.page_source
+        if "cloudflare" in page_source.lower() or "challenge" in page_source.lower():
+            logger.error("Surugaya: Cloudflare/Challenge page detected!")
+            result["status"] = "blocked"
+            return result
+        
+        # Check for H1 (may timeout if blocked)
+        try:
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "h1")))
+            logger.info("Surugaya: H1 element found")
+        except Exception as h1_err:
+            logger.warning(f"Surugaya: H1 not found after timeout: {h1_err}")
+            # Log some page info for debugging
+            logger.warning(f"Surugaya: Page title: {driver.title}")
+            logger.warning(f"Surugaya: Current URL: {driver.current_url}")
+            
+        time.sleep(1)  # Final stabilization wait
+        
     except Exception as e:
-        logger.error(f"Error accessing {url}: {e}")
+        logger.error(f"Surugaya: Error during page load: {e}")
         result["status"] = "error"
         return result
     

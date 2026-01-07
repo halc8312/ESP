@@ -208,13 +208,39 @@ def scrape_item_detail(driver, url: str) -> dict:
             if "商品説明" in body_text:
                 start_idx = body_text.find("商品説明") + len("商品説明")
                 # Find end marker (next section like "発送について" or "支払い")
-                end_markers = ["発送について", "支払いについて", "注意事項", "送料", "配送方法"]
+                end_markers = [
+                    "発送について", "支払いについて", "注意事項", "送料", "配送方法",
+                    "発送詳細", "支払い詳細", "お支払い", "落札者の方へ", 
+                    "連絡掲示板", "出品者情報", "質問する", "ウォッチ",
+                    "入札件数", "残り時間", "出品地域", "出品者", "評価"
+                ]
                 end_idx = len(body_text)
                 for marker in end_markers:
                     marker_idx = body_text.find(marker, start_idx)
                     if marker_idx > 0 and marker_idx < end_idx:
                         end_idx = marker_idx
                 desc_text = body_text[start_idx:end_idx].strip()
+                
+                # Clean up the description - remove common noise patterns
+                lines = desc_text.split('\n')
+                cleaned_lines = []
+                for line in lines:
+                    line = line.strip()
+                    # Skip empty lines and very short lines
+                    if not line or len(line) < 3:
+                        continue
+                    # Skip lines that look like metadata/table headers
+                    skip_patterns = [
+                        "全国一律", "送料無料", "匿名配送", "発送元", "発送日",
+                        "着払い", "離島", "配送", "追跡番号", "補償", "定形外",
+                        "ゆうパック", "ヤマト", "佐川", "クリックポスト", "ネコポス",
+                        "発送までの日数", "入金確認後", "円～", "～円", "円　～"
+                    ]
+                    if any(pattern in line for pattern in skip_patterns):
+                        continue
+                    cleaned_lines.append(line)
+                
+                desc_text = '\n'.join(cleaned_lines).strip()
                 if len(desc_text) > 20:
                     result["description"] = desc_text[:2000]  # Limit to 2000 chars
         except Exception:
