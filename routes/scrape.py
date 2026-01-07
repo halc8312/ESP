@@ -13,7 +13,8 @@ import yahoo_db
 import rakuma_db
 import surugaya_db
 import offmall_db
-import yahuoku_db４e import save_scraped_items_to_db
+import yahuoku_db
+from services.product_service import save_scraped_items_to_db
 from services.filter_service import filter_excluded_items
 
 
