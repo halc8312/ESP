@@ -20,25 +20,40 @@ def create_stealth_driver(headless: bool = True):
     try:
         import undetected_chromedriver as uc
         
+        print("[SURUGAYA] Configuring undetected-chromedriver...")
+        
         options = uc.ChromeOptions()
+        # Docker/Render essential settings
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
+        options.add_argument("--single-process")  # For Docker
+        options.add_argument("--disable-setuid-sandbox")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--window-size=1920,1080")
         
         if headless:
             options.add_argument("--headless=new")
         
-        # Create undetected driver
-        driver = uc.Chrome(options=options, use_subprocess=True)
+        print("[SURUGAYA] Creating Chrome instance...")
+        
+        # Create undetected driver with version_main for stability
+        driver = uc.Chrome(
+            options=options, 
+            use_subprocess=True,
+            version_main=None  # Auto-detect Chrome version
+        )
+        
         print("[SURUGAYA] Using undetected-chromedriver (Cloudflare bypass)")
         return driver
         
-    except ImportError:
-        print("[SURUGAYA] undetected-chromedriver not available, using regular driver")
+    except ImportError as ie:
+        print(f"[SURUGAYA] undetected-chromedriver not available: {ie}")
         from mercari_db import create_driver
         return create_driver(headless=headless)
     except Exception as e:
-        print(f"[SURUGAYA] Failed to create stealth driver: {e}, falling back to regular")
+        print(f"[SURUGAYA] Failed to create stealth driver: {e}")
+        print("[SURUGAYA] Falling back to regular driver")
         from mercari_db import create_driver
         return create_driver(headless=headless)
 
@@ -250,13 +265,25 @@ def scrape_search_result(
     results = []
     
     try:
+        print(f"[SURUGAYA] Search: Creating driver...")
         driver = create_stealth_driver(headless=headless)
+        print(f"[SURUGAYA] Search: Driver created, setting timeout...")
+        driver.set_page_load_timeout(30)  # 30 second timeout
+        
         print(f"[SURUGAYA] Search: Navigating to {search_url}")
-        driver.get(search_url)
-        time.sleep(2)
+        try:
+            driver.get(search_url)
+            print("[SURUGAYA] Search: Page load complete")
+        except Exception as load_err:
+            print(f"[SURUGAYA] Search: Page load error/timeout: {load_err}")
+            # Try to continue anyway
+        
+        print("[SURUGAYA] Search: Waiting for content...")
+        time.sleep(3)
+        
+        print(f"[SURUGAYA] Search: Page title: {driver.title}")
         
         # Find product links
-        # Surugaya uses .item class or similar for product cards
         product_selectors = [
             ".item a[href*='/product/detail/']",
             "a[href*='/product/detail/']",
