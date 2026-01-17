@@ -234,45 +234,60 @@ def scrape_item_detail(driver, url: str) -> dict:
 def scrape_single_item(url: str, headless: bool = True) -> list:
     """
     指定された駿河屋商品URLを1件だけスクレイピングして list[dict] を返す。
-    Temporarily disabled due to Cloudflare protection on Render.
+    Uses stealth driver to bypass Cloudflare.
     """
-    print(f"[SURUGAYA] Scraping disabled due to Cloudflare protection. Skipping {url}")
-    return []
-
-    # Original code commented out below for future reference
-    # driver = None
-    # try:
-    #     driver = create_stealth_driver(headless=headless)
-    #     result = scrape_item_detail(driver, url)
-    #     return [result] if result["title"] else []
-    # except Exception as e:
-    #     print(f"[SURUGAYA] Error in scrape_single_item: {e}")
-    #     return []
-    # finally:
-    #     if driver:
-    #         try:
-    #             driver.quit()
-    #         except Exception:
-    #             pass
+    driver = None
+    try:
+        driver = create_stealth_driver(headless=headless)
+        result = scrape_item_detail(driver, url)
+        return [result] if result["title"] else []
+    except Exception as e:
+        print(f"[SURUGAYA] Error in scrape_single_item: {e}")
+        return []
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass
 
 
 def scrape_search_result(
     search_url: str,
-    max_items: int = 10,
+    max_items: int = 5,
+    max_scroll: int = 3,
     headless: bool = True,
 ) -> list:
     """
-    駿河屋の検索結果ページから複数商品をスクレイピングする。
-    Temporarily disabled due to Cloudflare protection on Render.
+    駿河屋検索結果から複数商品をスクレイピング
     """
-    print(f"[SURUGAYA] Search disabled due to Cloudflare protection. Skipping {search_url}")
-    return []
-
-    # Original code commented out due to Cloudflare blocks
-    # results = []
-    # try:
-    #     driver = create_stealth_driver(headless=headless)
-
+    driver = None
+    results = []
+    
+    try:
+        print(f"[SURUGAYA] Search: Creating driver...")
+        driver = create_stealth_driver(headless=headless)
+        print(f"[SURUGAYA] Search: Driver created, setting timeout...")
+        driver.set_page_load_timeout(30)  # 30 second timeout
+        
+        print(f"[SURUGAYA] Search: Navigating to {search_url}")
+        try:
+            driver.get(search_url)
+            print("[SURUGAYA] Search: Page load complete")
+        except Exception as load_err:
+            print(f"[SURUGAYA] Search: Page load error/timeout: {load_err}")
+            # Try to continue anyway
+        
+        print("[SURUGAYA] Search: Waiting for content...")
+        time.sleep(3)
+        
+        print(f"[SURUGAYA] Search: Page title: {driver.title}")
+        
+        # Find product links
+        product_selectors = [
+            ".item a[href*='/product/detail/']",
+            "a[href*='/product/detail/']",
+        ]
         
         product_urls = set()
         for selector in product_selectors:
