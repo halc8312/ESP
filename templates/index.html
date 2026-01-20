@@ -9,15 +9,39 @@
     <p class="page-subtitle">{{ selected_site or "全サイト" }} / {{ selected_status or "全ステータス" }}</p>
 </div>
 
+<!-- サイト別統計バッジ -->
+<div class="site-stats-bar" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; padding: 0 16px;">
+    <a href="{{ url_for('index') }}" class="site-badge {{ 'active' if not selected_site else '' }}"
+        style="display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 20px; font-size: 13px; font-weight: 500; text-decoration: none; transition: all 0.2s; {{ 'background: #0066cc; color: white;' if not selected_site else 'background: #f0f0f0; color: #333;' }}">
+        全て <span
+            style="margin-left: 6px; background: {{ 'rgba(255,255,255,0.3)' if not selected_site else '#ddd' }}; padding: 2px 8px; border-radius: 10px; font-size: 11px;">{{
+            total_count }}</span>
+    </a>
+    {% for site_name, count in site_stats.items() %}
+    <a href="{{ url_for('index', site=site_name) }}"
+        class="site-badge {{ 'active' if selected_site == site_name else '' }}"
+        style="display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 20px; font-size: 13px; font-weight: 500; text-decoration: none; transition: all 0.2s; {{ 'background: #0066cc; color: white;' if selected_site == site_name else 'background: #f0f0f0; color: #333;' }}">
+        {{ site_name }} <span
+            style="margin-left: 6px; background: {{ 'rgba(255,255,255,0.3)' if selected_site == site_name else '#ddd' }}; padding: 2px 8px; border-radius: 10px; font-size: 11px;">{{
+            count }}</span>
+    </a>
+    {% endfor %}
+</div>
+
 <!-- フィルタセクション（モバイルでは折りたたみ） -->
 <details class="mobile-collapsible mobile-only" id="filterSection">
     <summary class="mobile-collapsible-header">
-        <span class="mobile-collapsible-title">🔍 フィルタ</span>
+        <span class="mobile-collapsible-title">🔍 フィルタ・検索</span>
         <span class="mobile-collapsible-icon">▶</span>
     </summary>
     <div class="mobile-collapsible-content">
         <form method="GET" action="{{ url_for('index') }}">
             <div class="filter-grid">
+                <!-- キーワード検索 -->
+                <div class="filter-group" style="grid-column: 1 / -1;">
+                    <label>🔍 キーワード検索</label>
+                    <input type="text" name="search" value="{{ search_keyword }}" placeholder="商品名で検索...">
+                </div>
                 <div class="filter-group">
                     <label>サイト</label>
                     <select name="site">
@@ -44,19 +68,49 @@
                         </option>
                     </select>
                 </div>
+                <!-- 価格帯フィルタ -->
+                <div class="filter-group">
+                    <label>💰 最低価格</label>
+                    <input type="number" name="price_min" value="{{ price_min }}" placeholder="¥0" inputmode="numeric">
+                </div>
+                <div class="filter-group">
+                    <label>💰 最高価格</label>
+                    <input type="number" name="price_max" value="{{ price_max }}" placeholder="¥999,999"
+                        inputmode="numeric">
+                </div>
+                <!-- ソート -->
+                <div class="filter-group">
+                    <label>📊 並び順</label>
+                    <select name="sort">
+                        <option value="updated_desc" {% if sort_by=='updated_desc' %}selected{% endif %}>更新日（新しい順）
+                        </option>
+                        <option value="created_desc" {% if sort_by=='created_desc' %}selected{% endif %}>登録日（新しい順）
+                        </option>
+                        <option value="created_asc" {% if sort_by=='created_asc' %}selected{% endif %}>登録日（古い順）</option>
+                        <option value="price_desc" {% if sort_by=='price_desc' %}selected{% endif %}>価格（高い順）</option>
+                        <option value="price_asc" {% if sort_by=='price_asc' %}selected{% endif %}>価格（安い順）</option>
+                    </select>
+                </div>
             </div>
-            <div class="filter-actions">
+            <div class="filter-actions" style="display: flex; gap: 8px; margin-top: 12px;">
                 <button type="submit">フィルタを適用</button>
+                <a href="{{ url_for('index') }}" class="btn" style="background: #6c757d; color: white;">クリア</a>
             </div>
         </form>
     </div>
 </details>
 
+
 <!-- PC用フィルタ（常に表示） -->
 <div class="filter-section desktop-only">
     <form method="GET" action="{{ url_for('index') }}">
         <div class="filter-section-body">
-            <div class="filter-grid">
+            <div class="filter-grid" style="grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));">
+                <!-- キーワード検索 -->
+                <div class="filter-group" style="grid-column: span 2;">
+                    <label>🔍 キーワード検索</label>
+                    <input type="text" name="search" value="{{ search_keyword }}" placeholder="商品名で検索...">
+                </div>
                 <div class="filter-group">
                     <label>サイト</label>
                     <select name="site">
@@ -83,13 +137,38 @@
                         </option>
                     </select>
                 </div>
+                <!-- 価格帯フィルタ -->
+                <div class="filter-group">
+                    <label>💰 最低価格</label>
+                    <input type="number" name="price_min" value="{{ price_min }}" placeholder="¥0" inputmode="numeric">
+                </div>
+                <div class="filter-group">
+                    <label>💰 最高価格</label>
+                    <input type="number" name="price_max" value="{{ price_max }}" placeholder="¥999,999"
+                        inputmode="numeric">
+                </div>
+                <!-- ソート -->
+                <div class="filter-group">
+                    <label>📊 並び順</label>
+                    <select name="sort">
+                        <option value="updated_desc" {% if sort_by=='updated_desc' %}selected{% endif %}>更新日（新しい順）
+                        </option>
+                        <option value="created_desc" {% if sort_by=='created_desc' %}selected{% endif %}>登録日（新しい順）
+                        </option>
+                        <option value="created_asc" {% if sort_by=='created_asc' %}selected{% endif %}>登録日（古い順）</option>
+                        <option value="price_desc" {% if sort_by=='price_desc' %}selected{% endif %}>価格（高い順）</option>
+                        <option value="price_asc" {% if sort_by=='price_asc' %}selected{% endif %}>価格（安い順）</option>
+                    </select>
+                </div>
             </div>
-            <div class="filter-actions">
+            <div class="filter-actions" style="display: flex; gap: 8px; margin-top: 12px;">
                 <button type="submit">フィルタを適用</button>
+                <a href="{{ url_for('index') }}" class="btn" style="background: #6c757d; color: white;">クリア</a>
             </div>
         </div>
     </form>
 </div>
+
 
 <!-- エクスポート用フォーム -->
 <form method="GET">
@@ -351,11 +430,15 @@
 
     <div class="pagination">
         {% if has_prev %}
-        <a href="{{ url_for('index', page=page-1, site=selected_site, status=selected_status) }}">&laquo; 前</a>
+        <a
+            href="{{ url_for('index', page=page-1, site=selected_site, status=selected_status, change_filter=selected_change_filter, search=search_keyword, price_min=price_min, price_max=price_max, sort=sort_by) }}">&laquo;
+            前</a>
         {% endif %}
         <span>{{ page }} / {{ total_pages }}</span>
         {% if has_next %}
-        <a href="{{ url_for('index', page=page+1, site=selected_site, status=selected_status) }}">次 &raquo;</a>
+        <a
+            href="{{ url_for('index', page=page+1, site=selected_site, status=selected_status, change_filter=selected_change_filter, search=search_keyword, price_min=price_min, price_max=price_max, sort=sort_by) }}">次
+            &raquo;</a>
         {% endif %}
     </div>
 </form>

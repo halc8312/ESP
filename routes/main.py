@@ -102,6 +102,12 @@ def index():
         selected_site = request.args.get("site")
         selected_status = request.args.get("status")
         selected_change_filter = request.args.get("change_filter")
+        
+        # New filter parameters
+        search_keyword = request.args.get("search", "").strip()
+        price_min = request.args.get("price_min", "").strip()
+        price_max = request.args.get("price_max", "").strip()
+        sort_by = request.args.get("sort", "updated_desc")
 
         # Filter query by user_id, exclude archived and deleted
         base_query = session_db.query(Product).filter(
@@ -114,6 +120,13 @@ def index():
         statuses = [s[0] for s in base_query.with_entities(Product.last_status).distinct().all()]
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         current_shop_id = session.get('current_shop_id')
+        
+        # Site statistics - count products per site
+        site_stats = {}
+        for site in sites:
+            count = base_query.filter(Product.site == site).count()
+            site_stats[site] = count
+        total_count = base_query.count()
 
         query = base_query
         if current_shop_id:
@@ -122,8 +135,40 @@ def index():
             query = query.filter(Product.site == selected_site)
         if selected_status:
             query = query.filter(Product.last_status == selected_status)
+        
+        # Keyword search filter
+        if search_keyword:
+            search_pattern = f"%{search_keyword}%"
+            query = query.filter(
+                (Product.last_title.ilike(search_pattern)) | 
+                (Product.custom_title.ilike(search_pattern))
+            )
+        
+        # Price range filter
+        if price_min:
+            try:
+                query = query.filter(Product.last_price >= int(price_min))
+            except ValueError:
+                pass
+        if price_max:
+            try:
+                query = query.filter(Product.last_price <= int(price_max))
+            except ValueError:
+                pass
+        
+        # Sorting
+        if sort_by == "price_asc":
+            query = query.order_by(Product.last_price.asc().nullslast())
+        elif sort_by == "price_desc":
+            query = query.order_by(Product.last_price.desc().nullsfirst())
+        elif sort_by == "created_desc":
+            query = query.order_by(Product.created_at.desc())
+        elif sort_by == "created_asc":
+            query = query.order_by(Product.created_at.asc())
+        else:  # default: updated_desc
+            query = query.order_by(Product.updated_at.desc())
 
-        all_products = query.options(subqueryload(Product.snapshots)).order_by(Product.updated_at.desc()).all()
+        all_products = query.options(subqueryload(Product.snapshots)).all()
 
         products_to_display = []
         for p in all_products:
@@ -169,6 +214,14 @@ def index():
             selected_site=selected_site,
             selected_status=selected_status,
             selected_change_filter=selected_change_filter,
+            # New filter values
+            search_keyword=search_keyword,
+            price_min=price_min,
+            price_max=price_max,
+            sort_by=sort_by,
+            site_stats=site_stats,
+            total_count=total_count,
+            # Pagination
             page=page,
             total_pages=total_pages,
             has_prev=has_prev,
