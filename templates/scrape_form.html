@@ -17,8 +17,9 @@
         <form method="POST" action="{{ url_for('scrape_run') }}">
             <div class="form-group">
                 <label>商品URL</label>
-                <input type="url" name="target_url" placeholder="メルカリ / ラクマ / Yahoo / 駿河屋 / オフモール / ヤフオク のURL" required
-                    inputmode="url" autocomplete="url">
+                <input type="url" name="target_url"
+                    placeholder="メルカリ / ラクマ / Yahoo / 駿河屋 / オフモール / ヤフオク / SNKRDUNK のURL" required inputmode="url"
+                    autocomplete="url">
             </div>
             <button type="submit" style="width: 100%;">URLからスクレイピング実行</button>
         </form>
@@ -41,6 +42,7 @@
                     <option value="surugaya">駿河屋</option>
                     <option value="offmall">オフモール</option>
                     <option value="yahuoku">ヤフオク</option>
+                    <option value="snkrdunk">SNKRDUNK</option>
                 </select>
             </div>
 

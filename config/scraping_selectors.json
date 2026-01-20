@@ -118,5 +118,37 @@
                 "fril.jp"
             ]
         }
+    },
+    "snkrdunk": {
+        "detail": {
+            "title": [
+                "h1.product-name-en",
+                "h1[class*='product-name']",
+                "h1"
+            ],
+            "price": [
+                ".new-buy-button",
+                "[class*='buy-button']"
+            ],
+            "description": [
+                ".item-article-text p",
+                ".item-article-textbox",
+                "[class*='article-text']"
+            ],
+            "images": [
+                ".product-img img",
+                "[class*='product-img'] img",
+                "img[src*='snkrdunk']"
+            ]
+        },
+        "search": {
+            "item_links": [
+                "a[class*='productTile']",
+                "a[href*='/products/']"
+            ],
+            "valid_domains": [
+                "snkrdunk.com"
+            ]
+        }
     }
 }

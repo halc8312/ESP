@@ -14,6 +14,7 @@ import rakuma_db
 import surugaya_db
 import offmall_db
 import yahuoku_db
+import snkrdunk_db
 from services.product_service import save_scraped_items_to_db
 from services.filter_service import filter_excluded_items
 
@@ -76,6 +77,10 @@ def scrape_run():
             # ヤフオク
             items = yahuoku_db.scrape_single_item(target_url, headless=True)
             site = "yahuoku"
+        elif "snkrdunk.com" in target_url:
+            # SNKRDUNK
+            items = snkrdunk_db.scrape_single_item(target_url, headless=True)
+            site = "snkrdunk"
         else:
             # Default to Mercari
             items = scrape_single_item(target_url, headless=True)
@@ -219,6 +224,28 @@ def scrape_run():
                 items = []
                 new_count = updated_count = 0
                 error_msg = f"Yahoo Auctions Search Error: {str(e)}"
+
+        elif site == "snkrdunk":
+            # SNKRDUNK Search
+            base = "https://snkrdunk.com/search?"
+            s_params = {"keywords": keyword} if keyword else {}
+            
+            search_url = base + urlencode(s_params)
+            
+            try:
+                items = snkrdunk_db.scrape_search_result(
+                    search_url=search_url,
+                    max_items=limit,
+                    max_scroll=3,
+                    headless=True,
+                )
+                items, excluded = filter_excluded_items(items, current_user.id)
+                new_count, updated_count = save_scraped_items_to_db(items, user_id=current_user.id, site="snkrdunk")
+            except Exception as e:
+                traceback.print_exc()
+                items = []
+                new_count = updated_count = 0
+                error_msg = f"SNKRDUNK Search Error: {str(e)}"
 
         else:
             # Mercari Search Logic (Default)
