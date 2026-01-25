@@ -27,7 +27,8 @@
         <div class="mobile-header-shop">
             <form action="{{ url_for('set_current_shop') }}" method="post" class="shop-select-form">
                 <label class="shop-select-label visually-hidden" for="mobile-shop-select">ショップ選択</label>
-                <select name="shop_id" id="mobile-shop-select" class="shop-select-compact" aria-describedby="shop-current">
+                <select name="shop_id" id="mobile-shop-select" class="shop-select-compact" aria-describedby="shop-current"
+                    data-auto-submit="true">
                     <option value="">未選択</option>
                     {% for s in all_shops %}
                     <option value="{{ s.id }}" {% if current_shop_id==s.id %}selected{% endif %}>
@@ -35,7 +36,6 @@
                     </option>
                     {% endfor %}
                 </select>
-                <button type="submit" class="btn btn-compact">適用</button>
             </form>
             <span class="shop-current" id="shop-current">現在: {{ current_shop.name }}</span>
         </div>
@@ -218,6 +218,14 @@
 
         document.querySelectorAll('[data-action="close-sidebar"]').forEach(function (button) {
             button.addEventListener('click', closeSidebar);
+        });
+
+        document.querySelectorAll('select[data-auto-submit="true"]').forEach(function (select) {
+            select.addEventListener('change', function () {
+                if (select.form) {
+                    select.form.submit();
+                }
+            });
         });
 
         const backToTop = document.getElementById('backToTop');

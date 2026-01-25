@@ -981,13 +981,17 @@ tr.changed {
     gap: 2px;
 }
 
+.mobile-header-shop .shop-select-form {
+    flex-wrap: nowrap;
+}
+
 .shop-select-compact {
     padding: 6px 8px;
     font-size: 12px;
     border: 1px solid var(--border-color);
     border-radius: 4px;
     background: #fff;
-    max-width: 100px;
+    max-width: 140px;
 }
 
 /* Hamburger Button */
