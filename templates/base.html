@@ -10,15 +10,24 @@
 </head>
 
 <body class="{% block body_class %}has-bottom-nav{% endblock %}">
+    <a class="skip-link" href="#main-content">本文へスキップ</a>
+    {% set current_shop = namespace(name='未選択') %}
+    {% for s in all_shops %}
+    {% if current_shop_id == s.id %}
+    {% set current_shop.name = s.name %}
+    {% endif %}
+    {% endfor %}
     <!-- Mobile Header with Hamburger -->
     <header class="mobile-header">
-        <button class="hamburger-btn" onclick="toggleSidebar()" aria-label="メニューを開く">
+        <button class="hamburger-btn" data-action="toggle-sidebar" aria-label="メニューを開く" aria-controls="sidebar"
+            aria-expanded="false">
             <span class="hamburger-icon"></span>
         </button>
         <h1 class="mobile-header-title">{% block header_title %}ESP{% endblock %}</h1>
         <div class="mobile-header-shop">
-            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
-                <select name="shop_id" onchange="this.form.submit()" class="shop-select-compact">
+            <form action="{{ url_for('set_current_shop') }}" method="post" class="shop-select-form">
+                <label class="shop-select-label visually-hidden" for="mobile-shop-select">ショップ選択</label>
+                <select name="shop_id" id="mobile-shop-select" class="shop-select-compact" aria-describedby="shop-current">
                     <option value="">未選択</option>
                     {% for s in all_shops %}
                     <option value="{{ s.id }}" {% if current_shop_id==s.id %}selected{% endif %}>
@@ -26,66 +35,78 @@
                     </option>
                     {% endfor %}
                 </select>
+                <button type="submit" class="btn btn-compact">適用</button>
             </form>
+            <span class="shop-current" id="shop-current">現在: {{ current_shop.name }}</span>
         </div>
     </header>
 
     <!-- Sidebar Overlay -->
-    <div class="sidebar-overlay" onclick="closeSidebar()"></div>
+    <div class="sidebar-overlay" data-action="close-sidebar"></div>
 
     <!-- Sidebar Navigation (Mobile: slide-in drawer, PC: always visible) -->
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <span class="sidebar-logo">ESP</span>
-            <button class="sidebar-close" onclick="closeSidebar()" aria-label="メニューを閉じる">×</button>
+            <button class="sidebar-close" data-action="close-sidebar" aria-label="メニューを閉じる">×</button>
         </div>
         <nav class="sidebar-nav">
-            <a href="{{ url_for('index') }}" class="sidebar-link {% if request.endpoint == 'index' %}active{% endif %}">
+            <a href="{{ url_for('index') }}" class="sidebar-link {% if request.endpoint == 'index' %}active{% endif %}"
+                {% if request.endpoint == 'index' %}aria-current="page"{% endif %}>
                 <span class="nav-icon">📦</span>
                 <span class="nav-text">商品一覧</span>
             </a>
             <a href="{{ url_for('dashboard') }}"
-                class="sidebar-link {% if request.endpoint == 'dashboard' %}active{% endif %}">
+                class="sidebar-link {% if request.endpoint == 'dashboard' %}active{% endif %}" {% if request.endpoint
+                == 'dashboard' %}aria-current="page"{% endif %}>
                 <span class="nav-icon">📊</span>
                 <span class="nav-text">ダッシュボード</span>
             </a>
             <a href="{{ url_for('scrape_form') }}"
-                class="sidebar-link {% if request.endpoint == 'scrape_form' %}active{% endif %}">
+                class="sidebar-link {% if request.endpoint == 'scrape_form' %}active{% endif %}"
+                {% if request.endpoint == 'scrape_form' %}aria-current="page"{% endif %}>
                 <span class="nav-icon">🔍</span>
                 <span class="nav-text">スクレイピング</span>
             </a>
             <a href="{{ url_for('manage_templates') }}"
-                class="sidebar-link {% if request.endpoint == 'manage_templates' %}active{% endif %}">
+                class="sidebar-link {% if request.endpoint == 'manage_templates' %}active{% endif %}"
+                {% if request.endpoint == 'manage_templates' %}aria-current="page"{% endif %}>
                 <span class="nav-icon">📝</span>
                 <span class="nav-text">テンプレート</span>
             </a>
             <a href="{{ url_for('manage_shops') }}"
-                class="sidebar-link {% if request.endpoint == 'manage_shops' %}active{% endif %}">
+                class="sidebar-link {% if request.endpoint == 'manage_shops' %}active{% endif %}"
+                {% if request.endpoint == 'manage_shops' %}aria-current="page"{% endif %}>
                 <span class="nav-icon">🏪</span>
                 <span class="nav-text">ショップ管理</span>
             </a>
             <a href="{{ url_for('pricing.pricing_list') }}"
-                class="sidebar-link {% if request.endpoint == 'pricing.pricing_list' %}active{% endif %}">
+                class="sidebar-link {% if request.endpoint == 'pricing.pricing_list' %}active{% endif %}"
+                {% if request.endpoint == 'pricing.pricing_list' %}aria-current="page"{% endif %}>
                 <span class="nav-icon">💰</span>
                 <span class="nav-text">価格ルール</span>
             </a>
             <a href="{{ url_for('settings.settings_list') }}"
-                class="sidebar-link {% if request.endpoint == 'settings.settings_list' %}active{% endif %}">
+                class="sidebar-link {% if request.endpoint == 'settings.settings_list' %}active{% endif %}"
+                {% if request.endpoint == 'settings.settings_list' %}aria-current="page"{% endif %}>
                 <span class="nav-icon">⚙️</span>
                 <span class="nav-text">設定</span>
             </a>
             <a href="{{ url_for('import.import_form') }}"
-                class="sidebar-link {% if request.endpoint == 'import.import_form' %}active{% endif %}">
+                class="sidebar-link {% if request.endpoint == 'import.import_form' %}active{% endif %}"
+                {% if request.endpoint == 'import.import_form' %}aria-current="page"{% endif %}>
                 <span class="nav-icon">📥</span>
                 <span class="nav-text">インポート</span>
             </a>
             <a href="{{ url_for('archive.archive_list') }}"
-                class="sidebar-link {% if request.endpoint == 'archive.archive_list' %}active{% endif %}">
+                class="sidebar-link {% if request.endpoint == 'archive.archive_list' %}active{% endif %}"
+                {% if request.endpoint == 'archive.archive_list' %}aria-current="page"{% endif %}>
                 <span class="nav-icon">📦</span>
                 <span class="nav-text">アーカイブ</span>
             </a>
             <a href="{{ url_for('trash.trash_list') }}"
-                class="sidebar-link {% if request.endpoint == 'trash.trash_list' %}active{% endif %}">
+                class="sidebar-link {% if request.endpoint == 'trash.trash_list' %}active{% endif %}"
+                {% if request.endpoint == 'trash.trash_list' %}aria-current="page"{% endif %}>
                 <span class="nav-icon">🗑️</span>
                 <span class="nav-text">ゴミ箱</span>
             </a>
@@ -94,8 +115,8 @@
 
         <div class="sidebar-shop-section">
             <label class="sidebar-shop-label">ショップ選択</label>
-            <form action="{{ url_for('set_current_shop') }}" method="post" style="margin:0;">
-                <select name="shop_id" onchange="this.form.submit()" class="sidebar-shop-select">
+            <form action="{{ url_for('set_current_shop') }}" method="post" class="shop-select-form">
+                <select name="shop_id" class="sidebar-shop-select">
                     <option value="">(ショップ未選択)</option>
                     {% for s in all_shops %}
                     <option value="{{ s.id }}" {% if current_shop_id==s.id %}selected{% endif %}>
@@ -103,57 +124,76 @@
                     </option>
                     {% endfor %}
                 </select>
+                <button type="submit" class="btn btn-compact">適用</button>
             </form>
+            <span class="shop-current">現在: {{ current_shop.name }}</span>
         </div>
     </aside>
 
     <!-- Main Content -->
-    <main class="main-content">
+    <main class="main-content" id="main-content">
         {% block content %}{% endblock %}
     </main>
 
     <!-- Bottom Navigation (Mobile only) -->
     <nav class="bottom-nav">
-        <a href="{{ url_for('index') }}" class="bottom-nav-item {% if request.endpoint == 'index' %}active{% endif %}">
+        <a href="{{ url_for('index') }}" class="bottom-nav-item {% if request.endpoint == 'index' %}active{% endif %}"
+            {% if request.endpoint == 'index' %}aria-current="page"{% endif %}>
             <span class="bottom-nav-icon">📦</span>
             <span class="bottom-nav-label">商品</span>
         </a>
         <a href="{{ url_for('dashboard') }}"
-            class="bottom-nav-item {% if request.endpoint == 'dashboard' %}active{% endif %}">
+            class="bottom-nav-item {% if request.endpoint == 'dashboard' %}active{% endif %}"
+            {% if request.endpoint == 'dashboard' %}aria-current="page"{% endif %}>
             <span class="bottom-nav-icon">📊</span>
             <span class="bottom-nav-label">ダッシュ</span>
         </a>
         <a href="{{ url_for('scrape_form') }}"
-            class="bottom-nav-item {% if request.endpoint == 'scrape_form' %}active{% endif %}">
+            class="bottom-nav-item {% if request.endpoint == 'scrape_form' %}active{% endif %}"
+            {% if request.endpoint == 'scrape_form' %}aria-current="page"{% endif %}>
             <span class="bottom-nav-icon">🔍</span>
             <span class="bottom-nav-label">取得</span>
         </a>
         <a href="{{ url_for('manage_templates') }}"
-            class="bottom-nav-item {% if request.endpoint == 'manage_templates' %}active{% endif %}">
+            class="bottom-nav-item {% if request.endpoint == 'manage_templates' %}active{% endif %}"
+            {% if request.endpoint == 'manage_templates' %}aria-current="page"{% endif %}>
             <span class="bottom-nav-icon">📝</span>
             <span class="bottom-nav-label">テンプレ</span>
         </a>
         <a href="{{ url_for('manage_shops') }}"
-            class="bottom-nav-item {% if request.endpoint == 'manage_shops' %}active{% endif %}">
+            class="bottom-nav-item {% if request.endpoint == 'manage_shops' %}active{% endif %}"
+            {% if request.endpoint == 'manage_shops' %}aria-current="page"{% endif %}>
             <span class="bottom-nav-icon">🏪</span>
             <span class="bottom-nav-label">店舗</span>
         </a>
     </nav>
 
     <!-- Back to Top Button -->
-    <button class="back-to-top" id="backToTop" onclick="window.scrollTo({top: 0, behavior: 'smooth'})">↑</button>
+    <button class="back-to-top" id="backToTop" type="button">↑</button>
 
     <script>
         function toggleSidebar() {
-            document.getElementById('sidebar').classList.toggle('open');
-            document.querySelector('.sidebar-overlay').classList.toggle('open');
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.querySelector('.sidebar-overlay');
+            const toggleButton = document.querySelector('[data-action="toggle-sidebar"]');
+            sidebar.classList.toggle('open');
+            overlay.classList.toggle('open');
             document.body.classList.toggle('sidebar-open');
+            if (toggleButton) {
+                toggleButton.setAttribute('aria-expanded', sidebar.classList.contains('open'));
+            }
         }
 
         function closeSidebar() {
-            document.getElementById('sidebar').classList.remove('open');
-            document.querySelector('.sidebar-overlay').classList.remove('open');
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.querySelector('.sidebar-overlay');
+            const toggleButton = document.querySelector('[data-action="toggle-sidebar"]');
+            sidebar.classList.remove('open');
+            overlay.classList.remove('open');
             document.body.classList.remove('sidebar-open');
+            if (toggleButton) {
+                toggleButton.setAttribute('aria-expanded', 'false');
+            }
         }
 
         // Close sidebar on escape key
@@ -172,9 +212,23 @@
             });
         });
 
+        document.querySelectorAll('[data-action="toggle-sidebar"]').forEach(function (button) {
+            button.addEventListener('click', toggleSidebar);
+        });
+
+        document.querySelectorAll('[data-action="close-sidebar"]').forEach(function (button) {
+            button.addEventListener('click', closeSidebar);
+        });
+
+        const backToTop = document.getElementById('backToTop');
+        if (backToTop) {
+            backToTop.addEventListener('click', function () {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            });
+        }
+
         // Back to top button visibility
         window.addEventListener('scroll', function () {
-            const backToTop = document.getElementById('backToTop');
             if (backToTop) {
                 if (window.scrollY > 300) {
                     backToTop.classList.add('visible');

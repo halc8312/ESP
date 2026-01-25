@@ -10,20 +10,14 @@
 </div>
 
 <!-- サイト別統計バッジ -->
-<div class="site-stats-bar" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; padding: 0 16px;">
-    <a href="{{ url_for('index') }}" class="site-badge {{ 'active' if not selected_site else '' }}"
-        style="display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 20px; font-size: 13px; font-weight: 500; text-decoration: none; transition: all 0.2s; {{ 'background: #0066cc; color: white;' if not selected_site else 'background: #f0f0f0; color: #333;' }}">
-        全て <span
-            style="margin-left: 6px; background: {{ 'rgba(255,255,255,0.3)' if not selected_site else '#ddd' }}; padding: 2px 8px; border-radius: 10px; font-size: 11px;">{{
-            total_count }}</span>
+<div class="site-stats-bar">
+    <a href="{{ url_for('index') }}" class="site-badge {{ 'active' if not selected_site else '' }}">
+        全て <span class="site-badge-count">{{ total_count }}</span>
     </a>
     {% for site_name, count in site_stats.items() %}
     <a href="{{ url_for('index', site=site_name) }}"
-        class="site-badge {{ 'active' if selected_site == site_name else '' }}"
-        style="display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 20px; font-size: 13px; font-weight: 500; text-decoration: none; transition: all 0.2s; {{ 'background: #0066cc; color: white;' if selected_site == site_name else 'background: #f0f0f0; color: #333;' }}">
-        {{ site_name }} <span
-            style="margin-left: 6px; background: {{ 'rgba(255,255,255,0.3)' if selected_site == site_name else '#ddd' }}; padding: 2px 8px; border-radius: 10px; font-size: 11px;">{{
-            count }}</span>
+        class="site-badge {{ 'active' if selected_site == site_name else '' }}">
+        {{ site_name }} <span class="site-badge-count">{{ count }}</span>
     </a>
     {% endfor %}
 </div>
@@ -38,7 +32,7 @@
         <form method="GET" action="{{ url_for('index') }}">
             <div class="filter-grid">
                 <!-- キーワード検索 -->
-                <div class="filter-group" style="grid-column: 1 / -1;">
+                <div class="filter-group filter-group--full">
                     <label>🔍 キーワード検索</label>
                     <input type="text" name="search" value="{{ search_keyword }}" placeholder="商品名で検索...">
                 </div>
@@ -92,9 +86,9 @@
                     </select>
                 </div>
             </div>
-            <div class="filter-actions" style="display: flex; gap: 8px; margin-top: 12px;">
+            <div class="filter-actions">
                 <button type="submit">フィルタを適用</button>
-                <a href="{{ url_for('index') }}" class="btn" style="background: #6c757d; color: white;">クリア</a>
+                <a href="{{ url_for('index') }}" class="btn btn-secondary">クリア</a>
             </div>
         </form>
     </div>
@@ -105,9 +99,9 @@
 <div class="filter-section desktop-only">
     <form method="GET" action="{{ url_for('index') }}">
         <div class="filter-section-body">
-            <div class="filter-grid" style="grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));">
+            <div class="filter-grid filter-grid--desktop">
                 <!-- キーワード検索 -->
-                <div class="filter-group" style="grid-column: span 2;">
+                <div class="filter-group filter-group--span-2">
                     <label>🔍 キーワード検索</label>
                     <input type="text" name="search" value="{{ search_keyword }}" placeholder="商品名で検索...">
                 </div>
@@ -161,9 +155,9 @@
                     </select>
                 </div>
             </div>
-            <div class="filter-actions" style="display: flex; gap: 8px; margin-top: 12px;">
+            <div class="filter-actions">
                 <button type="submit">フィルタを適用</button>
-                <a href="{{ url_for('index') }}" class="btn" style="background: #6c757d; color: white;">クリア</a>
+                <a href="{{ url_for('index') }}" class="btn btn-secondary">クリア</a>
             </div>
         </div>
     </form>
@@ -318,15 +312,14 @@
 
 
     <!-- Batch Edit Action Bar -->
-    <div class="batch-action-bar"
-        style="background: #f9f9f9; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-            <input type="checkbox" id="selectAll" onclick="toggleSelectAll(this)">
-            <label for="selectAll" style="font-weight: 500;">すべて選択</label>
-            <span id="selectedCount" style="color: #666; font-size: 0.9em;">(0件選択中)</span>
+    <div class="batch-action-bar">
+        <div class="batch-action-group">
+            <input type="checkbox" id="selectAll">
+            <label for="selectAll" class="batch-action-label">すべて選択</label>
+            <span id="selectedCount" class="batch-action-count">(0件選択中)</span>
         </div>
-        <div style="flex: 1;"></div>
-        <select id="batchAction" style="padding: 8px 12px; border-radius: 6px; border: 1px solid #ddd;">
+        <div class="batch-action-spacer"></div>
+        <select id="batchAction" class="batch-action-select">
             <option value="">-- 一括操作を選択 --</option>
             <option value="prefix">タイトルに接頭辞を追加</option>
             <option value="suffix">タイトルに接尾辞を追加</option>
@@ -334,8 +327,7 @@
             <option value="archive">アーカイブに移動</option>
             <option value="trash">🗑️ ゴミ箱へ移動</option>
         </select>
-        <button type="button" onclick="showBatchEditModal()" class="btn"
-            style="background: #1976d2; color: white;">実行</button>
+        <button type="button" class="btn btn-primary" data-action="batch-edit">実行</button>
     </div>
 
 
@@ -370,10 +362,9 @@
                 <td class="hide-mobile">{{ p.site }}</td>
                 <td>
                     {% if thumb_url %}
-                    <img src="{{ thumb_url }}" alt="thumb" style="max-height: 80px; border-radius: 4px;">
+                    <img src="{{ thumb_url }}" alt="商品サムネイル" class="product-thumb">
                     {% else %}
-                    <span
-                        style="display:inline-block; width:60px; height:60px; background:#eee; border-radius: 4px;"></span>
+                    <span class="product-thumb-placeholder" aria-hidden="true"></span>
                     {% endif %}
                 </td>
                 <td class="product-title-cell">{{ p.custom_title or p.last_title }}</td>
@@ -403,7 +394,7 @@
                 <input type="checkbox" name="id" value="{{ p.id }}">
             </div>
             {% if thumb_url %}
-            <img src="{{ thumb_url }}" alt="thumb" class="product-card-image">
+            <img src="{{ thumb_url }}" alt="商品サムネイル" class="product-card-image">
             {% else %}
             <div class="product-card-image"></div>
             {% endif %}
@@ -422,7 +413,7 @@
             </div>
             <div class="product-card-actions">
                 <a href="{{ url_for('product_detail', product_id=p.id) }}" class="btn">編集</a>
-                <a href="{{ p.source_url }}" target="_blank" class="btn" style="background: #f5f5f5;">元</a>
+                <a href="{{ p.source_url }}" target="_blank" class="btn btn-muted">元</a>
             </div>
         </div>
         {% endfor %}
@@ -507,6 +498,18 @@
         document.querySelectorAll('input[name="id"]').forEach(cb => {
             cb.addEventListener('change', updateSelectedCount);
         });
+
+        const selectAll = document.getElementById('selectAll');
+        if (selectAll) {
+            selectAll.addEventListener('change', function () {
+                toggleSelectAll(selectAll);
+            });
+        }
+
+        const batchEditButton = document.querySelector('[data-action="batch-edit"]');
+        if (batchEditButton) {
+            batchEditButton.addEventListener('click', showBatchEditModal);
+        }
     });
 
     // Batch edit functions
