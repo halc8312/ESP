@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     libgbm1 \
     ca-certificates \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Google Chromeのインストール ---
@@ -32,9 +33,9 @@ RUN apt-get update && apt-get install -y \
 RUN set -eux \
     && mkdir -p /usr/share/keyrings \
     && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub \
-        | gpg --dearmor --yes -o /usr/share/keyrings/google-linux-signing-keyring.gpg \
+    | gpg --dearmor --yes -o /usr/share/keyrings/google-linux-signing-keyring.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-signing-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
-        > /etc/apt/sources.list.d/google-chrome.list \
+    > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*

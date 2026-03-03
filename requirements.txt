@@ -10,3 +10,4 @@ pytest
 pytest-flask
 Flask-APScheduler
 undetected-chromedriver
+pyvirtualdisplay

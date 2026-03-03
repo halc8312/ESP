@@ -22,6 +22,21 @@ def create_stealth_driver(headless: bool = True):
         
         print("[SURUGAYA] Configuring undetected-chromedriver...")
         
+        # --- Virtual Display Setup for Headful Mode on Linux/Render ---
+        display = None
+        try:
+            import os
+            # If not on Windows and running headless, start a virtual display
+            if os.name != 'nt' and headless:
+                from pyvirtualdisplay import Display
+                print("[SURUGAYA] Starting virtual display (Xvfb) for headful mode...")
+                display = Display(visible=0, size=(1920, 1080))
+                display.start()
+        except ImportError:
+            print("[SURUGAYA] pyvirtualdisplay not installed, proceeding without it.")
+        except Exception as display_e:
+            print(f"[SURUGAYA] Virtual display failed to start: {display_e}")
+        
         options = uc.ChromeOptions()
         # Docker/Render essential settings
         options.add_argument("--no-sandbox")
@@ -32,8 +47,11 @@ def create_stealth_driver(headless: bool = True):
         options.add_argument("--disable-extensions")
         options.add_argument("--window-size=1920,1080")
         
-        if headless:
+        # If display started successfully, DO NOT use headless flag
+        if headless and display is None:
             options.add_argument("--headless=new")
+        elif display is not None:
+             print("[SURUGAYA] Running Chrome in headful mode within virtual display")
         
         print("[SURUGAYA] Creating Chrome instance...")
         
@@ -50,17 +68,17 @@ def create_stealth_driver(headless: bool = True):
         )
         
         print("[SURUGAYA] Using undetected-chromedriver (Cloudflare bypass)")
-        return driver
+        return driver, display
         
     except ImportError as ie:
         print(f"[SURUGAYA] undetected-chromedriver not available: {ie}")
         from mercari_db import create_driver
-        return create_driver(headless=headless)
+        return create_driver(headless=headless), display
     except Exception as e:
         print(f"[SURUGAYA] Failed to create stealth driver: {e}")
         print("[SURUGAYA] Falling back to regular driver")
         from mercari_db import create_driver
-        return create_driver(headless=headless)
+        return create_driver(headless=headless), display
 
 # CSS Selectors - Updated based on browser investigation 2026-01-07
 SELECTORS = {
@@ -261,8 +279,9 @@ def scrape_single_item(url: str, headless: bool = True) -> list:
     Uses stealth driver to bypass Cloudflare.
     """
     driver = None
+    display = None
     try:
-        driver = create_stealth_driver(headless=headless)
+        driver, display = create_stealth_driver(headless=headless)
         result = scrape_item_detail(driver, url)
         return [result] if result["title"] else []
     except Exception as e:
@@ -272,6 +291,11 @@ def scrape_single_item(url: str, headless: bool = True) -> list:
         if driver:
             try:
                 driver.quit()
+            except Exception:
+                pass
+        if display:
+            try:
+                display.stop()
             except Exception:
                 pass
 
@@ -286,11 +310,12 @@ def scrape_search_result(
     駿河屋検索結果から複数商品をスクレイピング
     """
     driver = None
+    display = None
     results = []
     
     try:
         print(f"[SURUGAYA] Search: Creating driver...")
-        driver = create_stealth_driver(headless=headless)
+        driver, display = create_stealth_driver(headless=headless)
         print(f"[SURUGAYA] Search: Driver created, setting timeout...")
         driver.set_page_load_timeout(60)  # 60 second timeout
         
@@ -361,5 +386,10 @@ def scrape_search_result(
         if driver:
             try:
                 driver.quit()
+            except Exception:
+                pass
+        if display:
+            try:
+                display.stop()
             except Exception:
                 pass
