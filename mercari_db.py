@@ -34,8 +34,41 @@ except ImportError:
     def log_scrape_result(*a): return True
     def check_scrape_health(*a): return {"action_required": False}
 
+def _get_chrome_version():
+    """インストール済みChromeのメジャーバージョンを検出する"""
+    import subprocess
+    try:
+        # Linux (Docker/Render)
+        result = subprocess.run(
+            ["google-chrome", "--version"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            # "Google Chrome 145.0.7632.116" -> "145"
+            version_str = result.stdout.strip().split()[-1]
+            major = version_str.split(".")[0]
+            logging.info(f"Detected Chrome version: {version_str} (major: {major})")
+            return major
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    
+    try:
+        # Windows
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Google\Chrome\BLBeacon")
+        version, _ = winreg.QueryValueEx(key, "version")
+        major = version.split(".")[0]
+        logging.info(f"Detected Chrome version: {version} (major: {major})")
+        return major
+    except Exception:
+        pass
+    
+    logging.warning("Could not detect Chrome version, using latest")
+    return None
+
+
 def create_driver(headless: bool = True):
-    """Chrome WebDriver を生成（Render/Docker 低メモリ環境最適化版）"""
+    """Chrome WebDriver を生成（Render/Docker 環境最適化版）"""
     options = Options()
 
     # --- Docker環境で必須の設定 ---
@@ -43,19 +76,29 @@ def create_driver(headless: bool = True):
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     
+    # --- メモリ最適化（Docker/Render向け） ---
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-software-rasterizer")
+    options.add_argument("--remote-debugging-port=0")
+    
     # --- ヘッドレスモードの設定 ---
     if headless:
         options.add_argument("--headless=new")
 
     # --- Bot検知対策 ---
-    user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
+    user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     options.add_argument(f'user-agent={user_agent}')
     options.add_argument('--disable-blink-features=AutomationControlled')
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
 
     try:
-        service = Service(ChromeDriverManager().install())
+        # インストール済みChromeバージョンに合うDriverを取得
+        chrome_major = _get_chrome_version()
+        if chrome_major:
+            service = Service(ChromeDriverManager(driver_version=f"{chrome_major}").install())
+        else:
+            service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
         return driver
     except Exception as e:

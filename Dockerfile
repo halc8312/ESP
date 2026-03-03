@@ -56,5 +56,8 @@ USER myuser
 
 # アプリケーション起動コマンド
 # Gunicornを使ってFlaskアプリ(app.pyの中のapp)を起動
-# --timeout 300: 処理が5分までかかってもタイムアウトしないように設定
-CMD ["gunicorn", "--timeout", "300", "app:app"]
+# --worker-class gthread: スレッドベースワーカー（スクレイピング中もヘルスチェックに応答可能）
+# --threads 2: 2スレッド（1つはスクレイピング、もう1つはリクエスト応答用）
+# --timeout 600: 処理が10分までかかってもタイムアウトしないように設定
+# --bind: Renderの$PORT環境変数にバインド
+CMD gunicorn --worker-class gthread --threads 2 --timeout 600 --bind 0.0.0.0:${PORT:-10000} app:app

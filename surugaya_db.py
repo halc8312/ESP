@@ -37,11 +37,16 @@ def create_stealth_driver(headless: bool = True):
         
         print("[SURUGAYA] Creating Chrome instance...")
         
+        # インストール済みChromeバージョンを検出
+        from mercari_db import _get_chrome_version
+        detected_version = _get_chrome_version()
+        version_main = int(detected_version) if detected_version else None
+        
         # Create undetected driver with version_main for stability
         driver = uc.Chrome(
             options=options, 
             use_subprocess=True,
-            version_main=None  # Auto-detect Chrome version
+            version_main=version_main
         )
         
         print("[SURUGAYA] Using undetected-chromedriver (Cloudflare bypass)")
