@@ -10,4 +10,5 @@ pytest
 pytest-flask
 Flask-APScheduler
 undetected-chromedriver
-pyvirtualdisplay
+beautifulsoup4
+curl_cffi
