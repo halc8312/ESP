@@ -2,24 +2,83 @@
 Surugaya scraper - Product detail scraping for suruga-ya.jp
 Uses curl_cffi to bypass Cloudflare protection by impersonating Chrome's TLS fingerprint.
 """
+import json
 import logging
 import re
+import time
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
+
 from bs4 import BeautifulSoup
 from curl_cffi import requests
 
 logger = logging.getLogger("surugaya")
 
+BASE_URL = "https://www.suruga-ya.jp"
+BLOCK_MARKERS = (
+    "just a moment",
+    "attention required",
+    "cf-browser-verification",
+    "window._cf_chl_opt",
+    "cf-challenge-running",
+    "challenge-form",
+)
+
 # CSS Selectors
 SELECTORS = {
-    "title": "h1",
-    "price": ".price_group .text-price-detail, .price_group label, span.text-price-detail",
-    "stock_available": ".btn_buy, .cart1, #cart-add",
-    "stock_sold": ".waitbtn, .soldout",
-    "main_image": ".is-main-image img, #item_picture",
-    "description": ".tbl_product_info, #item_condition",
-    "condition": ".price_group label, .condition",
-    "category": ".left div a[href*='category='], .breadcrumb a",
+    "title": [
+        "h1",
+        ".product_title h1",
+        "[itemprop='name']",
+    ],
+    "price": [
+        ".price_group .text-price-detail",
+        ".price_group label",
+        "span.text-price-detail",
+        "[itemprop='price']",
+    ],
+    "stock_available": [
+        ".btn_buy",
+        ".cart1",
+        "#cart-add",
+        "button[class*='cart']",
+    ],
+    "stock_sold": [
+        ".waitbtn",
+        ".soldout",
+        ".outofstock",
+    ],
+    "main_image": [
+        ".is-main-image img",
+        "#item_picture",
+        "img.main-pro-img",
+        "#image_default",
+        "img[src*='cdn.suruga-ya.jp/database/']",
+        "img[data-src*='cdn.suruga-ya.jp/database/']",
+    ],
+    "description": [
+        ".tbl_product_info",
+        "#item_condition",
+        "#product_detail",
+        "[itemprop='description']",
+    ],
+    "condition": [
+        ".price_group label",
+        ".condition",
+        ".item_state",
+    ],
+    "category": [
+        ".breadcrumb a",
+        ".left div a[href*='category=']",
+    ],
+    "product_links": [
+        ".item a[href*='/product/detail/']",
+        "a[href*='/product/detail/']",
+    ],
+    "pagination_links": [
+        "a[href*='page=']",
+    ],
 }
+
 
 def get_session():
     """Create a curl_cffi session that impersonates Chrome."""
@@ -34,9 +93,336 @@ def get_session():
         "Sec-Fetch-Mode": "navigate",
         "Sec-Fetch-Site": "none",
         "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1"
+        "Upgrade-Insecure-Requests": "1",
+        "Referer": BASE_URL + "/",
+        "Pragma": "no-cache",
+        "Cache-Control": "no-cache",
     })
     return session
+
+
+def _is_cloudflare_block(resp) -> bool:
+    if resp is None:
+        return False
+    text = (resp.text or "").lower()
+    return resp.status_code in (403, 429, 503) or any(marker in text for marker in BLOCK_MARKERS)
+
+
+def _normalize_url(raw_url: str, base_url: str) -> str:
+    if not raw_url:
+        return ""
+    url = raw_url.strip()
+    if not url:
+        return ""
+    if url.startswith("//"):
+        return "https:" + url
+    return urljoin(base_url, url)
+
+
+def _dedupe_keep_order(values):
+    seen = set()
+    out = []
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
+def _extract_price(text: str):
+    if not text:
+        return None
+
+    cleaned = text.replace("，", ",").replace("\u3000", " ")
+    patterns = [
+        r"([0-9][0-9,]{1,})\s*円",
+        r"[¥￥]\s*([0-9][0-9,]{1,})",
+        r"税込\s*([0-9][0-9,]{1,})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, cleaned)
+        if not match:
+            continue
+        try:
+            return int(match.group(1).replace(",", ""))
+        except Exception:
+            continue
+    return None
+
+
+def _extract_price_from_body(text: str):
+    if not text:
+        return None
+
+    patterns = [
+        r"([0-9][0-9,]{1,})\s*円\s*\(税込\)",
+        r"(?:販売価格|価格|税込)[^\d]{0,8}([0-9][0-9,]{1,})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        try:
+            return int(match.group(1).replace(",", ""))
+        except Exception:
+            continue
+    return None
+
+
+def _fetch_with_retry(session, url: str, timeout: int = 30, max_attempts: int = 3):
+    last_response = None
+    last_error = None
+
+    for attempt in range(max_attempts):
+        try:
+            response = session.get(url, timeout=timeout)
+            last_response = response
+            last_error = None
+        except Exception as exc:
+            response = None
+            last_error = exc
+
+        if response is not None and not _is_cloudflare_block(response) and response.status_code < 500:
+            return response, None
+
+        if attempt < max_attempts - 1:
+            try:
+                session.get(BASE_URL + "/", timeout=10)
+            except Exception:
+                pass
+            time.sleep(1.0 + (attempt * 0.8))
+
+    if last_response is not None:
+        return last_response, None
+    return None, last_error
+
+
+def _extract_json_ld_product(soup: BeautifulSoup) -> dict:
+    result = {}
+    scripts = soup.select("script[type='application/ld+json']")
+
+    for script in scripts:
+        raw = script.string or script.get_text()
+        if not raw:
+            continue
+
+        try:
+            data = json.loads(raw.strip())
+        except Exception:
+            continue
+
+        nodes = []
+        if isinstance(data, list):
+            nodes = data
+        elif isinstance(data, dict) and isinstance(data.get("@graph"), list):
+            nodes = data["@graph"]
+        elif isinstance(data, dict):
+            nodes = [data]
+
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            node_type = node.get("@type")
+            if isinstance(node_type, list):
+                types = [str(t).lower() for t in node_type]
+            else:
+                types = [str(node_type).lower()]
+            if "product" not in types:
+                continue
+
+            if not result.get("name") and node.get("name"):
+                result["name"] = str(node["name"]).strip()
+
+            if not result.get("images"):
+                image_data = node.get("image")
+                if isinstance(image_data, list):
+                    result["images"] = [str(i) for i in image_data if i]
+                elif isinstance(image_data, str):
+                    result["images"] = [image_data]
+
+            offers = node.get("offers")
+            offer_obj = None
+            if isinstance(offers, list) and offers:
+                offer_obj = offers[0]
+            elif isinstance(offers, dict):
+                offer_obj = offers
+
+            if isinstance(offer_obj, dict):
+                if result.get("price") is None:
+                    price_raw = offer_obj.get("price")
+                    if price_raw is not None:
+                        parsed = _extract_price(str(price_raw))
+                        if parsed is None:
+                            try:
+                                parsed = int(float(str(price_raw).replace(",", "")))
+                            except Exception:
+                                parsed = None
+                        result["price"] = parsed
+                if not result.get("availability"):
+                    availability = offer_obj.get("availability")
+                    if availability:
+                        result["availability"] = str(availability).lower()
+
+    return result
+
+
+def _is_placeholder_image(url: str) -> bool:
+    lowered = url.lower()
+    return (
+        "no_photo" in lowered
+        or "bglogo" in lowered
+        or "logo-surugaya" in lowered
+    )
+
+
+def _extract_image_urls(soup: BeautifulSoup, page_url: str, ld_product: dict) -> list:
+    image_urls = []
+
+    for selector in SELECTORS["main_image"]:
+        for img in soup.select(selector):
+            raw = img.get("src") or img.get("data-src") or img.get("data-original")
+            if not raw:
+                srcset = img.get("srcset")
+                if srcset:
+                    raw = srcset.split(",")[0].strip().split(" ")[0]
+            if not raw:
+                continue
+
+            full_url = _normalize_url(raw, page_url)
+            if not full_url or _is_placeholder_image(full_url):
+                continue
+            image_urls.append(full_url)
+
+    if not image_urls:
+        for raw in ld_product.get("images", []) or []:
+            full_url = _normalize_url(raw, page_url)
+            if not full_url or _is_placeholder_image(full_url):
+                continue
+            image_urls.append(full_url)
+
+    if not image_urls:
+        og_image = soup.select_one("meta[property='og:image']")
+        if og_image and og_image.get("content"):
+            full_url = _normalize_url(og_image.get("content"), page_url)
+            if full_url and not _is_placeholder_image(full_url):
+                image_urls.append(full_url)
+
+    return _dedupe_keep_order(image_urls)
+
+
+def _extract_status(soup: BeautifulSoup, ld_product: dict) -> str:
+    for selector in SELECTORS["stock_available"]:
+        if soup.select(selector):
+            return "active"
+
+    for selector in SELECTORS["stock_sold"]:
+        if soup.select(selector):
+            return "sold"
+
+    text = soup.get_text(" ", strip=True)
+    sold_keywords = ("売り切れ", "在庫なし", "品切れ", "販売終了")
+    active_keywords = ("カートに入れる", "購入手続き", "注文する")
+
+    if any(keyword in text for keyword in sold_keywords):
+        return "sold"
+    if any(keyword in text for keyword in active_keywords):
+        return "active"
+
+    availability = ld_product.get("availability") or ""
+    if "outofstock" in availability or "soldout" in availability:
+        return "sold"
+    if "instock" in availability:
+        return "active"
+
+    return "active"
+
+
+def _extract_condition(soup: BeautifulSoup) -> str:
+    for selector in SELECTORS["condition"]:
+        for element in soup.select(selector):
+            text = element.get_text(strip=True)
+            if "中古" in text:
+                return "中古"
+            if "新品" in text:
+                return "新品"
+    return ""
+
+
+def _extract_category(soup: BeautifulSoup) -> str:
+    categories = []
+    for selector in SELECTORS["category"]:
+        for element in soup.select(selector):
+            text = element.get_text(strip=True)
+            if text:
+                categories.append(text)
+    categories = _dedupe_keep_order(categories)
+    return " > ".join(categories)
+
+
+def _extract_product_urls(soup: BeautifulSoup, base_url: str) -> list:
+    product_urls = []
+    for selector in SELECTORS["product_links"]:
+        for anchor in soup.select(selector):
+            href = anchor.get("href")
+            if not href:
+                continue
+            full_url = _normalize_url(href, base_url)
+            parsed = urlparse(full_url)
+            if "/product/detail/" not in parsed.path:
+                continue
+            normalized = urlunparse(parsed._replace(fragment=""))
+            product_urls.append(normalized)
+    return _dedupe_keep_order(product_urls)
+
+
+def _set_page_param(url: str, page_num: int) -> str:
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    query["page"] = [str(page_num)]
+    new_query = urlencode(query, doseq=True)
+    return urlunparse(parsed._replace(query=new_query))
+
+
+def _build_search_page_urls(search_url: str, first_soup: BeautifulSoup, max_scroll: int) -> list:
+    max_pages = max(1, int(max_scroll or 1))
+    page_urls = [search_url]
+
+    if max_pages == 1:
+        return page_urls
+
+    discovered = []
+    for selector in SELECTORS["pagination_links"]:
+        for anchor in first_soup.select(selector):
+            href = anchor.get("href")
+            if not href:
+                continue
+            full_url = _normalize_url(href, search_url)
+            match = re.search(r"[?&]page=(\d+)", full_url)
+            if not match:
+                continue
+            discovered.append((int(match.group(1)), full_url))
+
+    discovered.sort(key=lambda x: x[0])
+    for page_num, page_url in discovered:
+        if page_num <= 1:
+            continue
+        if page_url in page_urls:
+            continue
+        page_urls.append(page_url)
+        if len(page_urls) >= max_pages:
+            return page_urls
+
+    # Fallback: synthesize page URLs when pagination links are missing.
+    next_page = 2
+    while len(page_urls) < max_pages:
+        candidate = _set_page_param(search_url, next_page)
+        if candidate not in page_urls:
+            page_urls.append(candidate)
+        next_page += 1
+
+    return page_urls
+
 
 def scrape_item_detail(session, url: str) -> dict:
     """
@@ -53,89 +439,87 @@ def scrape_item_detail(session, url: str) -> dict:
         "condition": "",
         "category": "",
     }
-    
+
     print(f"[SURUGAYA] Starting curl_cffi scrape for {url}")
-    
+
+    resp, fetch_error = _fetch_with_retry(session, url, timeout=30, max_attempts=3)
+    if fetch_error is not None:
+        print(f"[SURUGAYA] ERROR during page load: {fetch_error}")
+        result["status"] = "error"
+        return result
+    if resp is None:
+        print("[SURUGAYA] ERROR during page load: no response")
+        result["status"] = "error"
+        return result
+
+    if _is_cloudflare_block(resp):
+        print(f"[SURUGAYA] ERROR: Cloudflare block detected (Status: {resp.status_code})")
+        result["status"] = "blocked"
+        return result
+
+    if resp.status_code >= 400:
+        print(f"[SURUGAYA] WARN: HTTP status {resp.status_code} for {url}")
+
     try:
-        resp = session.get(url, timeout=30)
-        
-        # Check for Cloudflare block
-        if resp.status_code in [403, 503] or "Just a moment" in resp.text or "attention required" in resp.text.lower():
-            print(f"[SURUGAYA] ERROR: Cloudflare block detected (Status: {resp.status_code})")
-            result["status"] = "blocked"
-            return result
-            
         soup = BeautifulSoup(resp.content, "html.parser")
-        
     except Exception as e:
         print(f"[SURUGAYA] ERROR during page load: {e}")
         result["status"] = "error"
         return result
-    
-    # ---- タイトル ----
-    title_el = soup.select_one(SELECTORS["title"])
-    if title_el:
-        result["title"] = title_el.get_text(strip=True)
-    
-    # ---- 価格 ----
-    price_els = soup.select(SELECTORS["price"])
-    for el in price_els:
-        text = el.get_text(strip=True)
-        # Extract price from "中古 3,700円 (税込)" format
-        match = re.search(r"([\d,]+)\s*円", text)
-        if match:
-            result["price"] = int(match.group(1).replace(",", ""))
+
+    ld_product = _extract_json_ld_product(soup)
+
+    # ---- Title ----
+    for selector in SELECTORS["title"]:
+        title_el = soup.select_one(selector)
+        if title_el:
+            text = title_el.get_text(" ", strip=True)
+            if text:
+                result["title"] = text
+                break
+    if not result["title"] and ld_product.get("name"):
+        result["title"] = ld_product["name"]
+
+    # ---- Price ----
+    for selector in SELECTORS["price"]:
+        for el in soup.select(selector):
+            price = _extract_price(el.get_text(" ", strip=True))
+            if price is not None:
+                result["price"] = price
+                break
+        if result["price"] is not None:
             break
-            
-    # Fallback: search body text
+
+    if result["price"] is None and ld_product.get("price") is not None:
+        result["price"] = ld_product["price"]
+
     if result["price"] is None:
-        match = re.search(r"([\d,]+)\s*円\s*\(税込\)", soup.get_text())
-        if match:
-            result["price"] = int(match.group(1).replace(",", ""))
-    
-    # ---- 在庫状態 ----
-    buy_btn = soup.select(SELECTORS["stock_available"])
-    sold_btn = soup.select(SELECTORS["stock_sold"])
-    
-    if buy_btn:
-        result["status"] = "active"
-    elif sold_btn:
-        result["status"] = "sold"
-    else:
-        if "品切れ" in soup.get_text():
-            result["status"] = "sold"
-        else:
-            result["status"] = "active"
-    
-    # ---- 商品状態（中古/新品）----
-    condition_els = soup.select(SELECTORS["condition"])
-    for el in condition_els:
-        text = el.get_text(strip=True)
-        if "中古" in text:
-            result["condition"] = "中古"
+        result["price"] = _extract_price_from_body(soup.get_text(" ", strip=True))
+
+    # ---- Stock ----
+    result["status"] = _extract_status(soup, ld_product)
+
+    # ---- Condition ----
+    result["condition"] = _extract_condition(soup)
+
+    # ---- Images ----
+    result["image_urls"] = _extract_image_urls(soup, resp.url or url, ld_product)
+
+    # ---- Description ----
+    for selector in SELECTORS["description"]:
+        detail_el = soup.select_one(selector)
+        if not detail_el:
+            continue
+        text = detail_el.get_text(separator="\n", strip=True)
+        if text:
+            result["description"] = text
             break
-        elif "新品" in text:
-            result["condition"] = "新品"
-            break
-            
-    # ---- 画像 ----
-    img_el = soup.select_one(SELECTORS["main_image"])
-    if img_el and img_el.has_attr('src'):
-        result["image_urls"].append(img_el['src'])
-        
-    # ---- 説明（#product_detail テーブル）----
-    detail_el = soup.select_one(SELECTORS["description"])
-    if detail_el:
-        result["description"] = detail_el.get_text(separator="\n", strip=True)
-        
-    # ---- カテゴリ ----
-    category_els = soup.select(SELECTORS["category"])
-    if category_els:
-        categories = [el.get_text(strip=True) for el in category_els if el.get_text(strip=True)]
-        result["category"] = " > ".join(categories)
-        
+
+    # ---- Category ----
+    result["category"] = _extract_category(soup)
+
     # Default variant for compatibility
-    if result["price"]:
+    if result["price"] is not None:
         result["variants"] = [{
             "option1_value": result.get("condition") or "Default Title",
             "price": result["price"],
@@ -170,35 +554,54 @@ def scrape_search_result(
     駿河屋検索結果から複数商品をスクレイピング (curl_cffi版)
     """
     results = []
-    
+
     try:
         print(f"[SURUGAYA] Search: Initializing curl_cffi session...")
         session = get_session()
-        
+
         print(f"[SURUGAYA] Search: Fetching {search_url}")
-        resp = session.get(search_url, timeout=30)
-        
-        if resp.status_code in [403, 503] or "Just a moment" in resp.text or "attention required" in resp.text.lower():
-            print(f"[SURUGAYA] Search: ERROR: Cloudflare block detected (Status: {resp.status_code})")
+        first_resp, fetch_error = _fetch_with_retry(session, search_url, timeout=30, max_attempts=3)
+        if fetch_error is not None:
+            logger.error(f"Surugaya search fetch error: {fetch_error}")
             return results
-            
-        soup = BeautifulSoup(resp.content, "html.parser")
+        if first_resp is None:
+            logger.error("Surugaya search fetch error: no response")
+            return results
+        if _is_cloudflare_block(first_resp):
+            print(f"[SURUGAYA] Search: ERROR: Cloudflare block detected (Status: {first_resp.status_code})")
+            return results
+
+        soup = BeautifulSoup(first_resp.content, "html.parser")
         print(f"[SURUGAYA] Search: Page title: {soup.title.string if soup.title else 'No Title'}")
-        
-        # Find product links
-        product_urls = set()
-        for a in soup.select(".item a[href*='/product/detail/'], a[href*='/product/detail/']"):
-            href = a.get('href')
-            if href and "/product/detail/" in href:
-                # Ensure absolute URL
-                if href.startswith('/'):
-                    href = f"https://www.suruga-ya.jp{href}"
-                product_urls.add(href)
+
+        page_urls = _build_search_page_urls(search_url, soup, max_scroll=max_scroll)
+        product_urls = []
+
+        for index, page_url in enumerate(page_urls):
+            if index == 0:
+                page_soup = soup
+            else:
+                page_resp, page_error = _fetch_with_retry(session, page_url, timeout=30, max_attempts=2)
+                if page_error is not None:
+                    logger.warning(f"Surugaya page fetch failed: {page_url} ({page_error})")
+                    continue
+                if page_resp is None or _is_cloudflare_block(page_resp):
+                    logger.warning(f"Surugaya page blocked/skipped: {page_url}")
+                    continue
+                page_soup = BeautifulSoup(page_resp.content, "html.parser")
+
+            for product_url in _extract_product_urls(page_soup, page_url):
+                if product_url in product_urls:
+                    continue
+                product_urls.append(product_url)
                 if len(product_urls) >= max_items:
                     break
-                    
-        # Scrape each product
-        for url in list(product_urls)[:max_items]:
+
+            if len(product_urls) >= max_items:
+                break
+
+        # Scrape each product detail
+        for url in product_urls[:max_items]:
             try:
                 result = scrape_item_detail(session, url)
                 if result["title"]:
@@ -206,9 +609,9 @@ def scrape_search_result(
             except Exception as e:
                 logger.error(f"Error scraping {url}: {e}")
                 continue
-                
+
         return results
-        
+
     except Exception as e:
         logger.error(f"Error in scrape_search_result: {e}")
         return results

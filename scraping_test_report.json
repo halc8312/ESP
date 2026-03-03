@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-03-03T23:43:50.306570",
+  "timestamp": "2026-03-04T00:59:31.631482",
   "summary": {
     "total": 8,
     "passed": 7,
@@ -11,13 +11,13 @@
       "url": "https://jp.mercari.com/item/m53054743401",
       "success": true,
       "errors": [],
-      "duration": 11.849614143371582,
+      "duration": 21.273509740829468,
       "data": {
         "url": "https://jp.mercari.com/item/m53054743401",
         "title": "ポケットモンスター バイオレット Nintendo Switch",
         "price": 3400,
         "status": "sold",
-        "description": "新たなポケモンとの出会いを楽しむアクションRPG。\n\n- ゲームタイトル: ポケットモンスター バイオレット\n\n使用しない為出品します\n動作確認済みです\n自宅管理の為神経質な方はご遠慮下さい\n\nご覧いただきありがとうございます。\n1時間前",
+        "description": "新たなポケモンとの出会いを楽しむアクションRPG。\n\n- ゲームタイトル: ポケットモンスター バイオレット\n\n使用しない為出品します\n動作確認済みです\n自宅管理の為神経質な方はご遠慮下さい\n\nご覧いただきありがとうございます。\n2時間前",
         "image_urls": [
           "https://static.mercdn.net/item/detail/orig/photos/m53054743401_1.jpg?1772540026",
           "https://static.mercdn.net/item/detail/orig/photos/m53054743401_2.jpg?1772540026",
@@ -27,49 +27,50 @@
       }
     },
     {
-      "site": "surugaya",
-      "url": "https://www.suruga-ya.jp/product/detail/109003813",
-      "success": true,
-      "errors": [],
-      "duration": 0.6375012397766113,
-      "data": {
-        "url": "https://www.suruga-ya.jp/product/detail/109003813",
-        "title": "ニンテンドースイッチソフト　ゼルダの伝説 知恵のかりもの",
-        "price": 5980,
-        "status": "active",
-        "description": "管理番号\n新品 ：109003813000\n中古 ：109003813001\nメーカー\n任天堂\n発売日\n2024/09/26\n定価\n7,678円\n型番\nHAC-P-BDGEA\nシリーズプロデューサー\n青沼英二\nカテゴリ\nゲーム\nＴＶゲーム\nニンテンドースイッチ",
-        "image_urls": [
-          "https://cdn.suruga-ya.jp/database/pics_webp/game/109003813.jpg.webp"
-        ],
-        "variants": [
-          {
-            "option1_value": "新品",
-            "price": 5980,
-            "sku": "",
-            "inventory_qty": 1
-          }
-        ],
-        "condition": "新品",
-        "category": "駿河屋TOP > ゲーム > ＴＶゲーム > ニンテンドースイッチ > ゲーム > ＴＶゲーム > ニンテンドースイッチ"
-      }
-    },
-    {
       "site": "mercari_shops",
       "url": "https://jp.mercari.com/shops/product/xhF79ibHz3KwucSXev32C5",
       "success": false,
       "errors": [
         "Title missing or too short",
-        "Price is None",
-        "No images found"
+        "Price is None"
       ],
-      "duration": 11.630782842636108,
+      "duration": 19.428007125854492,
       "data": {
         "url": "https://jp.mercari.com/shops/product/xhF79ibHz3KwucSXev32C5",
         "title": "",
         "price": null,
         "status": "sold",
         "description": "送料無料 ホワイト 2点セット へそ出し 長袖トップス タンクトップ トレーナー ストリート ダンス 衣装 女の子 韓国子供服 HIPHOP 練習着 120cm 130cm 140cm 150cm 160cm 170cmをBeFive メルカリShops店でお得に購入！メルカリShopsは、アウトレット品、訳あり商品から人気定番アイテムまで取り揃えています。クレジットカード、コンビニ、銀行ATMでの支払いに対応。お買い物をお楽しみください。",
-        "image_urls": [],
+        "image_urls": [
+          "https://assets.mercari-shops-static.com/-/large/plain/b6xXrX62ERWjSA8CawQq2k.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/large/plain/erNNKPuPbYWLn6nBioq8c5.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/large/plain/tVjN9bS7ZL9uVCPWoeLwC6.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/large/plain/otWC2ucyvXpvTqcD7bNCFG.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/large/plain/Ci7MuGMmmQA2mMvH7gSx7a.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/large/plain/cGuQ3VP7vCLCQ6PkmK4S5S.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/large/plain/xCNw4WFhyvaPUvc7zpcXM8.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/large/plain/eDkr7wQr7EZq8MHkrZtXYc.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/large/plain/JQcjmwWySAd33EKLnQUXXZ.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/b6xXrX62ERWjSA8CawQq2k.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/CUHGS7EhPy4LMve8x3rVwM.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JMgc3Soads2VJoegDCNPj.png@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JMr9EhyMpAD6sVDo2rLLb.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JMr3VPUo4pPdKefCmw8yC.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JMr3VMej4yZkgrPEXS9xE.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JMr3VMshZ727DxGD4QVFB.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JMr3VMacRcYqeEtGCfYFc.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JMquMszLAmdhTpvdGgrqX.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/MwnGSZrgo2wC4VKsVaTNqJ.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/6vRJP8A8qFRbd76GZmbBc7.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JKTU7S5pz4tp2zLKaQ4MX.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/U7rRzECAYaGK3qyjNUVPb5.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/PCrb3SEfZZfeefVBFmfLXQ.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JJmJqKrG9mD4AXYwKLpgU.png@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/MpABkDGtzz9HwSRFqkHDpE.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JGmEQNQYJtevmxiSnePgx.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/sBZvA2y82G9TGweJ6HaExE.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JJYyBsByWwWsxJ8gVYhio.jpg@jpg"
+        ],
         "variants": [
           {
             "option1_name": "カラー",
@@ -173,17 +174,44 @@
       }
     },
     {
+      "site": "surugaya",
+      "url": "https://www.suruga-ya.jp/product/detail/109003813",
+      "success": true,
+      "errors": [],
+      "duration": 0.7623605728149414,
+      "data": {
+        "url": "https://www.suruga-ya.jp/product/detail/109003813",
+        "title": "ニンテンドースイッチソフト　ゼルダの伝説 知恵のかりもの",
+        "price": 5980,
+        "status": "active",
+        "description": "管理番号\n新品 ：109003813000\n中古 ：109003813001\nメーカー\n任天堂\n発売日\n2024/09/26\n定価\n7,678円\n型番\nHAC-P-BDGEA\nシリーズプロデューサー\n青沼英二\nカテゴリ\nゲーム\nＴＶゲーム\nニンテンドースイッチ",
+        "image_urls": [
+          "https://cdn.suruga-ya.jp/database/pics_webp/game/109003813.jpg.webp"
+        ],
+        "variants": [
+          {
+            "option1_value": "新品",
+            "price": 5980,
+            "sku": "",
+            "inventory_qty": 1
+          }
+        ],
+        "condition": "新品",
+        "category": "駿河屋TOP > ゲーム > ＴＶゲーム > ニンテンドースイッチ > ゲーム > ＴＶゲーム > ニンテンドースイッチ"
+      }
+    },
+    {
       "site": "rakuma",
       "url": "https://item.fril.jp/fed8b046583deff9f860ce320f64633c",
       "success": true,
       "errors": [],
-      "duration": 11.677558183670044,
+      "duration": 16.137836694717407,
       "data": {
         "url": "https://item.fril.jp/fed8b046583deff9f860ce320f64633c",
         "title": "【PS5】バイオハザード ヴィレッジ Z Version ゴールドエディション",
         "price": 3780,
         "status": "on_sale",
-        "description": "商品説明\n【PS5ソフト】 BIOHAZARD VILLAGE Z Version GOLD EDITION [Best Price]\n\n※新品未開封の状態でお送り致しますので、初期不良等はメーカーに問い合わせお願い致します。\n※返品、返金、交換は出来ません。\n\n※ゆうパケットポストminiにて発送致しますので、ポスト投函になります。\n※なるべく当日発送致しますが、時間によっては翌日発送になります。\n\n※受け取られましたら、受取評価をお願い致します。\n\nブランド：カプコン  バイオハザード\nソフトウェア対象年齢：18歳以上対象\nパッケージ種類：通常版\n\nCAPCOM\n型番：ELJM-30739\n約2時間前",
+        "description": "商品説明\n【PS5ソフト】 BIOHAZARD VILLAGE Z Version GOLD EDITION [Best Price]\n\n※新品未開封の状態でお送り致しますので、初期不良等はメーカーに問い合わせお願い致します。\n※返品、返金、交換は出来ません。\n\n※ゆうパケットポストminiにて発送致しますので、ポスト投函になります。\n※なるべく当日発送致しますが、時間によっては翌日発送になります。\n\n※受け取られましたら、受取評価をお願い致します。\n\nブランド：カプコン  バイオハザード\nソフトウェア対象年齢：18歳以上対象\nパッケージ種類：通常版\n\nCAPCOM\n型番：ELJM-30739\n約4時間前",
         "image_urls": [
           "https://img.fril.jp/img/819009653/l/2811614664.jpg?1772540118",
           "https://img.fril.jp/img/819009653/l/2811614662.jpg?1772540118"
@@ -196,7 +224,7 @@
       "url": "https://store.shopping.yahoo.co.jp/nextfreedom/igress-008.html",
       "success": true,
       "errors": [],
-      "duration": 14.732776641845703,
+      "duration": 19.11518120765686,
       "data": {
         "url": "https://store.shopping.yahoo.co.jp/nextfreedom/igress-008.html",
         "title": "tシャツ メンズ 半袖 無地 厚手 Tシャツ ヘビーウェイト 3枚組 白 黒 ドライ 大きいサイズ まとめ買い BALLOT バロット",
@@ -471,7 +499,7 @@
       "url": "https://netmall.hardoff.co.jp/product/5966534/",
       "success": true,
       "errors": [],
-      "duration": 10.65200424194336,
+      "duration": 13.135298013687134,
       "data": {
         "url": "https://netmall.hardoff.co.jp/product/5966534/",
         "title": "【ジャンク品】　KENWOOD　L-02T入荷！",
@@ -512,11 +540,29 @@
       }
     },
     {
+      "site": "snkrdunk",
+      "url": "https://snkrdunk.com/products/CT8013-170",
+      "success": true,
+      "errors": [],
+      "duration": 12.454164505004883,
+      "data": {
+        "url": "https://snkrdunk.com/products/CT8013-170",
+        "title": "Nike Air Jordan 12 \"Royalty\"",
+        "price": 35200,
+        "status": "on_sale",
+        "description": "商品紹介\n【スニダンで購入可】10/9発売 Nike Air Jordan 12 \"Royalty\" 抽選/定価/販売店舗まとめ\nNIKE(ナイキ)よりAIR JORDAN 12(エア ジョーダン 12)の新色が海外で登場！10月9日発売！ \"AIR JORDAN 12\"(エア ジョーダン 12)は1996年にリリースされたAJシリーズの12作目。一枚革のアッパーに旭日旗をイメージした斬新なシルエットは、当時ストリートからの支持は低かったものの、本来のバッシュとしての機能や履き心地は抜群だった。ジョーダンが求めた反発性の高い\"ズームエア\"を採用し、チャールズ・バークレーやロン・ハーパーなど、名だたるプレーヤー達が着用していた。96年頃のジョーダンと言えば、スコッティ・ピッペン、デニス・ロッドマンらと共に\"リーグ最強の3人組\"として暴れ回っていた頃。ブルズの全盛期に足元を支えていたのが\"AIR JOR\n紹介記事をもっと読む",
+        "image_urls": [
+          "https://cdn.snkrdunk.com/upload_bg_removed/20211118073437-0.webp?size=l"
+        ],
+        "variants": []
+      }
+    },
+    {
       "site": "yahuoku",
       "url": "https://page.auctions.yahoo.co.jp/auction/g1221465796",
       "success": true,
       "errors": [],
-      "duration": 12.492159128189087,
+      "duration": 13.023438453674316,
       "data": {
         "url": "https://page.auctions.yahoo.co.jp/auction/g1221465796",
         "title": "【購入後 鑑定付き】メガリザードンYex MUR仕様 [MC 766/742](スタートデッキ100「バトルコレクション」)",
@@ -546,24 +592,6 @@
         "auction_id": "g1221465796",
         "seller": "",
         "end_time": ""
-      }
-    },
-    {
-      "site": "snkrdunk",
-      "url": "https://snkrdunk.com/products/CT8013-170",
-      "success": true,
-      "errors": [],
-      "duration": 10.400086641311646,
-      "data": {
-        "url": "https://snkrdunk.com/products/CT8013-170",
-        "title": "Nike Air Jordan 12 \"Royalty\"",
-        "price": 35200,
-        "status": "on_sale",
-        "description": "商品紹介\n【スニダンで購入可】10/9発売 Nike Air Jordan 12 \"Royalty\" 抽選/定価/販売店舗まとめ\nNIKE(ナイキ)よりAIR JORDAN 12(エア ジョーダン 12)の新色が海外で登場！10月9日発売！ \"AIR JORDAN 12\"(エア ジョーダン 12)は1996年にリリースされたAJシリーズの12作目。一枚革のアッパーに旭日旗をイメージした斬新なシルエットは、当時ストリートからの支持は低かったものの、本来のバッシュとしての機能や履き心地は抜群だった。ジョーダンが求めた反発性の高い\"ズームエア\"を採用し、チャールズ・バークレーやロン・ハーパーなど、名だたるプレーヤー達が着用していた。96年頃のジョーダンと言えば、スコッティ・ピッペン、デニス・ロッドマンらと共に\"リーグ最強の3人組\"として暴れ回っていた頃。ブルズの全盛期に足元を支えていたのが\"AIR JOR\n紹介記事をもっと読む",
-        "image_urls": [
-          "https://cdn.snkrdunk.com/upload_bg_removed/20211118073437-0.webp?size=l"
-        ],
-        "variants": []
       }
     }
   ]

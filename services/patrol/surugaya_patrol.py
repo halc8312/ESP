@@ -15,8 +15,8 @@ class SurugayaPatrol(BasePatrol):
     # CSS Selectors for patrol (minimal set) - Updated 2026-01-07
     SELECTORS = {
         "price": ".price_group .text-price-detail, .price_group label",
-        "stock_available": ".btn_buy, .cart1",  # Both selectors work
-        "stock_sold": ".waitbtn",
+        "stock_available": ".btn_buy, .cart1, #cart-add",
+        "stock_sold": ".waitbtn, .soldout, .outofstock",
     }
     
     def fetch(self, url: str, driver=None) -> PatrolResult:
@@ -49,7 +49,7 @@ class SurugayaPatrol(BasePatrol):
                 price_els = driver.find_elements(By.CSS_SELECTOR, self.SELECTORS["price"])
                 for el in price_els:
                     text = el.text
-                    match = re.search(r"([\d,]+)\s*円", text)
+                    match = re.search(r"([\d,]+)\s*円", text) or re.search(r"[¥￥]\s*([\d,]+)", text)
                     if match:
                         price = int(match.group(1).replace(",", ""))
                         break
@@ -78,10 +78,14 @@ class SurugayaPatrol(BasePatrol):
                     status = "sold"
                 else:
                     body_text = driver.find_element(By.TAG_NAME, "body").text
-                    if "品切れ" in body_text:
+                    sold_keywords = ("売り切れ", "在庫なし", "品切れ", "販売終了")
+                    active_keywords = ("カートに入れる", "購入手続き", "注文する")
+                    if any(keyword in body_text for keyword in sold_keywords):
                         status = "sold"
-                    else:
+                    elif any(keyword in body_text for keyword in active_keywords):
                         status = "active"
+                    else:
+                        status = "unknown"
             except Exception:
                 pass
             
