@@ -15,7 +15,7 @@ logger = logging.getLogger("yahuoku")
 
 # CSS Selectors
 SELECTORS = {
-    "title": "h1",
+    "title": "h1.ProductTitle__text, h1",
     "price": ".Price__value",
     "countdown": ".CountDown__time",
     "seller": ".Seller__name a",

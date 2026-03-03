@@ -69,6 +69,14 @@ def scrape_item_detail(driver, url: str) -> dict:
         wait = WebDriverWait(driver, 10)
         wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
         time.sleep(1.5)
+        
+        # Check for "product not found" page
+        body_text = driver.find_element(By.TAG_NAME, "body").text
+        if "対象の商品はございません" in body_text or "ページが見つかりません" in body_text:
+            logger.info(f"Product not available (sold/removed): {url}")
+            result["status"] = "sold"
+            result["title"] = "Sold/Removed"
+            return result
     except Exception as e:
         logger.error(f"Error accessing {url}: {e}")
         result["status"] = "error"

@@ -126,9 +126,33 @@ def scrape_shops_product(driver, url: str):
             desc_els = driver.find_elements(By.CSS_SELECTOR, selector)
             if desc_els:
                 description = desc_els[0].text.strip()
-                break
+                if description:
+                    break
     except Exception:
         pass
+
+    # 説明文フォールバック: meta description
+    if not description:
+        try:
+            meta = driver.find_element(By.CSS_SELECTOR, "meta[name='description']")
+            description = meta.get_attribute("content") or ""
+        except Exception:
+            pass
+
+    # 説明文フォールバック: body text から抽出
+    if not description:
+        try:
+            body_text = driver.find_element(By.TAG_NAME, "body").text
+            if "商品の説明" in body_text:
+                after = body_text.split("商品の説明", 1)[1]
+                end_pos = len(after)
+                for marker in ["商品の情報", "ショップ情報", "おすすめ商品", "レビュー"]:
+                    idx = after.find(marker)
+                    if idx != -1 and idx < end_pos:
+                        end_pos = idx
+                description = after[:end_pos].strip()[:500]
+        except Exception:
+            pass
 
     # ---- 画像 ----
     image_urls = []

@@ -100,11 +100,18 @@ def scrape_item_detail(driver, url: str) -> dict:
         print("[SURUGAYA] Body element found")
         
         # Wait for JS to execute
-        time.sleep(3)
+        time.sleep(5)
         
         # Check for Cloudflare block
-        page_source = driver.page_source
-        if "cloudflare" in page_source.lower() or "challenge" in page_source.lower():
+        page_title = driver.title.lower()
+        page_source_lower = driver.page_source[:2000].lower()
+        is_cloudflare = (
+            "just a moment" in page_title or
+            "attention required" in page_title or
+            ("cloudflare" in page_source_lower and "challenge" in page_source_lower) or
+            "cf-browser-verification" in page_source_lower
+        )
+        if is_cloudflare:
             print("[SURUGAYA] ERROR: Cloudflare/Challenge page detected!")
             result["status"] = "blocked"
             return result

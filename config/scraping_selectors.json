@@ -90,16 +90,18 @@
     "rakuma": {
         "detail": {
             "title": [
-                "h1.item__name",
                 "h1.item-name",
+                "h1.item__name",
                 "h1"
             ],
             "price": [
+                ".item-price__price",
                 "span.item__price",
                 ".item__price",
                 ".item-price"
             ],
             "description": [
+                ".item-description__text",
                 "div.item__description",
                 ".item-description"
             ],
