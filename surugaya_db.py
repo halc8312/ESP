@@ -436,6 +436,11 @@ def _should_use_yahoo_search_fallback() -> bool:
     return flag not in ("0", "false", "off", "no")
 
 
+def _should_use_global_domain_fallback() -> bool:
+    flag = os.getenv("SURUGAYA_GLOBAL_DOMAIN_FALLBACK", "1").strip().lower()
+    return flag not in ("0", "false", "off", "no")
+
+
 def _extract_keyword_from_search_url(search_url: str) -> str:
     try:
         parsed = urlparse(search_url)
@@ -543,6 +548,163 @@ def _search_product_urls_via_yahoo(keyword: str, max_items: int) -> list:
         return []
 
     return _dedupe_keep_order(urls)[:max_items]
+
+
+def _build_global_product_url(jp_url: str) -> str:
+    try:
+        parsed = urlparse(jp_url)
+        marker = "/product/detail/"
+        if marker not in parsed.path:
+            return ""
+        code = parsed.path.split(marker, 1)[1].split("/")[0].strip()
+        if not code:
+            return ""
+        return f"https://www.suruga-ya.com/ja/product/{code}"
+    except Exception:
+        return ""
+
+
+def _extract_global_product_detail(source_url: str, global_url: str):
+    session = get_session()
+    resp, fetch_error = _fetch_with_retry(session, global_url, timeout=25, max_attempts=2)
+    if fetch_error is not None:
+        return None, fetch_error
+    if resp is None:
+        return None, "No response from global domain"
+    if _is_cloudflare_block(resp):
+        return None, f"Global domain blocked (status={resp.status_code})"
+    if resp.status_code >= 400:
+        return None, f"Global domain HTTP {resp.status_code}"
+
+    soup = BeautifulSoup(resp.content, "html.parser")
+    if _looks_like_challenge_soup(soup):
+        return None, "Global domain challenge page"
+
+    ld_product = _extract_json_ld_product(soup)
+
+    title = ""
+    title_el = soup.select_one("h1.title_product, h1")
+    if title_el:
+        title = title_el.get_text(" ", strip=True)
+    if not title and ld_product.get("name"):
+        title = ld_product["name"]
+    if not title:
+        og_title = soup.select_one("meta[property='og:title']")
+        if og_title and og_title.get("content"):
+            title = og_title.get("content").strip()
+
+    # Variant-like price/stock blocks on global pages
+    variants = []
+    stock_values = []
+    for option in soup.select("input[type='radio'][data-price]"):
+        raw_price = option.get("data-price") or ""
+        try:
+            price = int(float(str(raw_price).replace(",", "")))
+        except Exception:
+            continue
+        stock_raw = option.get("data-stock")
+        try:
+            stock = int(stock_raw) if stock_raw is not None and stock_raw != "" else 0
+        except Exception:
+            stock = 0
+        name = (option.get("data-name") or "").strip()
+        variant = {
+            "option1_value": name or "Default Title",
+            "price": price,
+            "sku": "",
+            "inventory_qty": stock if stock >= 0 else 0,
+        }
+        variants.append(variant)
+        stock_values.append(stock)
+
+    # Price selection: prefer in-stock min price, then any min price.
+    price = None
+    in_stock_prices = [v["price"] for v in variants if v.get("inventory_qty", 0) > 0]
+    if in_stock_prices:
+        price = min(in_stock_prices)
+    elif variants:
+        price = min(v["price"] for v in variants)
+    elif ld_product.get("price") is not None:
+        price = ld_product["price"]
+
+    # Status from variant stock / schema availability / sold keywords
+    status = "unknown"
+    if any(stock > 0 for stock in stock_values):
+        status = "active"
+    elif stock_values:
+        status = "sold"
+    else:
+        availability = ld_product.get("availability") or ""
+        if "instock" in availability:
+            status = "active"
+        elif "outofstock" in availability or "soldout" in availability:
+            status = "sold"
+        else:
+            body_text = soup.get_text(" ", strip=True)
+            if any(k in body_text for k in ("売り切れ", "在庫なし", "品切れ")):
+                status = "sold"
+            elif any(k in body_text for k in ("カートに入れる", "注文する")):
+                status = "active"
+            else:
+                status = "active"
+
+    condition = ""
+    if variants:
+        for v in variants:
+            if v["price"] == price:
+                name = v.get("option1_value", "")
+                if "中古" in name:
+                    condition = "中古"
+                elif "新品" in name:
+                    condition = "新品"
+                break
+    if not condition:
+        cond_text = soup.get_text(" ", strip=True)
+        if "中古" in cond_text:
+            condition = "中古"
+        elif "新品" in cond_text:
+            condition = "新品"
+
+    image_urls = _extract_image_urls(soup, resp.url or global_url, ld_product)
+    if not image_urls:
+        og_image = soup.select_one("meta[property='og:image']")
+        if og_image and og_image.get("content"):
+            og_url = _normalize_url(og_image.get("content"), resp.url or global_url)
+            if og_url and not _is_placeholder_image(og_url):
+                image_urls = [og_url]
+
+    description = ""
+    detail_el = soup.select_one("#product_detail_infor, .propertie_product, [itemprop='description']")
+    if detail_el:
+        description = detail_el.get_text("\n", strip=True)
+
+    categories = []
+    for el in soup.select("nav.breadcrumb a, .breadcrumb a"):
+        t = el.get_text(strip=True)
+        if t:
+            categories.append(t)
+    category = " > ".join(_dedupe_keep_order(categories))
+
+    if not variants and price is not None:
+        variants = [{
+            "option1_value": condition or "Default Title",
+            "price": price,
+            "sku": "",
+            "inventory_qty": 1 if status == "active" else 0,
+        }]
+
+    item = {
+        "url": source_url,
+        "title": title,
+        "price": price,
+        "status": status,
+        "description": description,
+        "image_urls": image_urls,
+        "variants": variants,
+        "condition": condition,
+        "category": category,
+    }
+    return item, None
 
 
 def _fetch_soup_with_selenium(url: str, headless: bool = True, wait_seconds: int = 20):
@@ -661,6 +823,17 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
             print(f"[SURUGAYA] ERROR: Selenium fallback failed: {selenium_error}")
 
     if soup is None:
+        if _should_use_global_domain_fallback():
+            global_url = _build_global_product_url(url)
+            if global_url:
+                print(f"[SURUGAYA] INFO: Trying global domain fallback: {global_url}")
+                global_item, global_error = _extract_global_product_detail(url, global_url)
+                if global_item and global_item.get("title"):
+                    logger.info(f"Scraped via global fallback: {global_item['title'][:30]}... - ¥{global_item.get('price')}")
+                    return global_item
+                if global_error:
+                    print(f"[SURUGAYA] ERROR: Global fallback failed: {global_error}")
+
         if resp is not None and _is_cloudflare_block(resp):
             print(f"[SURUGAYA] ERROR: Cloudflare block detected (Status: {resp.status_code})")
             result["status"] = "blocked"
