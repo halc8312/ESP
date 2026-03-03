@@ -42,6 +42,23 @@ def save_scraped_items_to_db(items, user_id: int, site: str = "mercari"):
             image_urls = item.get("image_urls") or []
             image_urls_str = "|".join(image_urls)
 
+            # Surugaya-specific guard:
+            # Skip blocked/error responses and clearly invalid price/title data
+            # to avoid overwriting good snapshots with anti-bot or placeholder results.
+            if site == "surugaya":
+                if status in {"blocked", "error"}:
+                    continue
+                if not title.strip():
+                    continue
+                if price is None:
+                    continue
+                try:
+                    numeric_price = float(price)
+                except (TypeError, ValueError):
+                    continue
+                if numeric_price <= 0:
+                    continue
+
             # 既存の Product を検索 (User + URL)
             product = session_db.query(Product).filter_by(source_url=url, user_id=user_id).one_or_none()
 

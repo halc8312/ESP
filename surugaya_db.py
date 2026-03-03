@@ -617,15 +617,20 @@ def _extract_global_product_detail(source_url: str, global_url: str):
         variants.append(variant)
         stock_values.append(stock)
 
-    # Price selection: prefer in-stock min price, then any min price.
+    # Price selection: prefer positive prices to avoid placeholder 0 values.
     price = None
-    in_stock_prices = [v["price"] for v in variants if v.get("inventory_qty", 0) > 0]
+    in_stock_prices = [v["price"] for v in variants if v.get("inventory_qty", 0) > 0 and v.get("price", 0) > 0]
     if in_stock_prices:
         price = min(in_stock_prices)
     elif variants:
-        price = min(v["price"] for v in variants)
+        positive_prices = [v["price"] for v in variants if v.get("price", 0) > 0]
+        if positive_prices:
+            price = min(positive_prices)
     elif ld_product.get("price") is not None:
         price = ld_product["price"]
+
+    if price is not None and price <= 0:
+        price = None
 
     # Status from variant stock / schema availability / sold keywords
     status = "unknown"
