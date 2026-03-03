@@ -105,19 +105,31 @@ def scrape_item_detail(driver, url: str) -> dict:
         print("[SURUGAYA] Body element found")
         
         # Wait for JS to execute
-        time.sleep(5)
+        time.sleep(3)
         
-        # Check for Cloudflare block
-        page_title = driver.title.lower()
-        page_source_lower = driver.page_source[:2000].lower()
-        is_cloudflare = (
-            "just a moment" in page_title or
-            "attention required" in page_title or
-            ("cloudflare" in page_source_lower and "challenge" in page_source_lower) or
-            "cf-browser-verification" in page_source_lower
-        )
-        if is_cloudflare:
-            print("[SURUGAYA] ERROR: Cloudflare/Challenge page detected!")
+        # Cloudflare challenge wait-and-retry
+        # 「Just a moment...」は数秒〜15秒で自動通過できることが多い
+        max_cf_wait = 30  # 最大30秒待つ
+        cf_interval = 3   # 3秒ごとにチェック
+        cf_waited = 0
+        while cf_waited < max_cf_wait:
+            page_title = driver.title.lower()
+            page_source_lower = driver.page_source[:2000].lower()
+            is_cloudflare = (
+                "just a moment" in page_title or
+                "attention required" in page_title or
+                ("cloudflare" in page_source_lower and "challenge" in page_source_lower) or
+                "cf-browser-verification" in page_source_lower
+            )
+            if not is_cloudflare:
+                print(f"[SURUGAYA] Cloudflare passed after {cf_waited}s")
+                break
+            print(f"[SURUGAYA] Cloudflare challenge detected, waiting... ({cf_waited}/{max_cf_wait}s)")
+            time.sleep(cf_interval)
+            cf_waited += cf_interval
+        else:
+            # 30秒待ってもCloudflareが通過できない場合
+            print("[SURUGAYA] ERROR: Cloudflare challenge could not be bypassed after 30s")
             result["status"] = "blocked"
             return result
         
@@ -280,7 +292,7 @@ def scrape_search_result(
         print(f"[SURUGAYA] Search: Creating driver...")
         driver = create_stealth_driver(headless=headless)
         print(f"[SURUGAYA] Search: Driver created, setting timeout...")
-        driver.set_page_load_timeout(30)  # 30 second timeout
+        driver.set_page_load_timeout(60)  # 60 second timeout
         
         print(f"[SURUGAYA] Search: Navigating to {search_url}")
         try:
@@ -290,8 +302,22 @@ def scrape_search_result(
             print(f"[SURUGAYA] Search: Page load error/timeout: {load_err}")
             # Try to continue anyway
         
+        # Cloudflare challenge wait-and-retry
         print("[SURUGAYA] Search: Waiting for content...")
-        time.sleep(3)
+        max_cf_wait = 30
+        cf_interval = 3
+        cf_waited = 0
+        while cf_waited < max_cf_wait:
+            title = driver.title.lower()
+            if "just a moment" not in title and "attention required" not in title:
+                print(f"[SURUGAYA] Search: Cloudflare passed after {cf_waited}s")
+                break
+            print(f"[SURUGAYA] Search: Cloudflare challenge, waiting... ({cf_waited}/{max_cf_wait}s)")
+            time.sleep(cf_interval)
+            cf_waited += cf_interval
+        else:
+            print("[SURUGAYA] Search: Cloudflare not bypassed, aborting")
+            return results
         
         print(f"[SURUGAYA] Search: Page title: {driver.title}")
         
