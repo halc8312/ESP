@@ -75,11 +75,17 @@ def create_driver(headless: bool = True):
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
+    options.add_argument("--single-process")  # Docker環境での安定性向上
     
     # --- メモリ最適化（Docker/Render向け） ---
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-software-rasterizer")
-    options.add_argument("--remote-debugging-port=0")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-default-apps")
+    options.add_argument("--window-size=1920,1080")
+    
+    # --- ページロード戦略: eager（DOMが使えた時点で次に進む） ---
+    options.page_load_strategy = 'eager'
     
     # --- ヘッドレスモードの設定 ---
     if headless:
@@ -100,6 +106,11 @@ def create_driver(headless: bool = True):
         else:
             service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
+        
+        # --- タイムアウト設定 ---
+        driver.set_page_load_timeout(60)  # ページ読み込み60秒まで
+        driver.set_script_timeout(30)     # スクリプト実行30秒まで
+        
         return driver
     except Exception as e:
         logging.error(f"Failed to initialize WebDriver: {e}")
