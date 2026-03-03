@@ -24,7 +24,6 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     libgbm1 \
     ca-certificates \
-    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Google Chromeのインストール ---

@@ -1,9 +1,9 @@
 {
-  "timestamp": "2026-03-03T21:35:01.716585",
+  "timestamp": "2026-03-03T23:43:50.306570",
   "summary": {
     "total": 8,
-    "passed": 8,
-    "failed": 0
+    "passed": 7,
+    "failed": 1
   },
   "details": [
     {
@@ -11,13 +11,13 @@
       "url": "https://jp.mercari.com/item/m53054743401",
       "success": true,
       "errors": [],
-      "duration": 13.282529830932617,
+      "duration": 11.849614143371582,
       "data": {
         "url": "https://jp.mercari.com/item/m53054743401",
         "title": "ポケットモンスター バイオレット Nintendo Switch",
         "price": 3400,
         "status": "sold",
-        "description": "新たなポケモンとの出会いを楽しむアクションRPG。\n\n- ゲームタイトル: ポケットモンスター バイオレット\n\n使用しない為出品します\n動作確認済みです\n自宅管理の為神経質な方はご遠慮下さい\n\nご覧いただきありがとうございます。\n14分前",
+        "description": "新たなポケモンとの出会いを楽しむアクションRPG。\n\n- ゲームタイトル: ポケットモンスター バイオレット\n\n使用しない為出品します\n動作確認済みです\n自宅管理の為神経質な方はご遠慮下さい\n\nご覧いただきありがとうございます。\n1時間前",
         "image_urls": [
           "https://static.mercdn.net/item/detail/orig/photos/m53054743401_1.jpg?1772540026",
           "https://static.mercdn.net/item/detail/orig/photos/m53054743401_2.jpg?1772540026",
@@ -27,52 +27,56 @@
       }
     },
     {
-      "site": "mercari_shops",
-      "url": "https://jp.mercari.com/shops/product/xhF79ibHz3KwucSXev32C5",
+      "site": "surugaya",
+      "url": "https://www.suruga-ya.jp/product/detail/109003813",
       "success": true,
       "errors": [],
-      "duration": 14.867906332015991,
+      "duration": 0.6375012397766113,
+      "data": {
+        "url": "https://www.suruga-ya.jp/product/detail/109003813",
+        "title": "ニンテンドースイッチソフト　ゼルダの伝説 知恵のかりもの",
+        "price": 5980,
+        "status": "active",
+        "description": "管理番号\n新品 ：109003813000\n中古 ：109003813001\nメーカー\n任天堂\n発売日\n2024/09/26\n定価\n7,678円\n型番\nHAC-P-BDGEA\nシリーズプロデューサー\n青沼英二\nカテゴリ\nゲーム\nＴＶゲーム\nニンテンドースイッチ",
+        "image_urls": [
+          "https://cdn.suruga-ya.jp/database/pics_webp/game/109003813.jpg.webp"
+        ],
+        "variants": [
+          {
+            "option1_value": "新品",
+            "price": 5980,
+            "sku": "",
+            "inventory_qty": 1
+          }
+        ],
+        "condition": "新品",
+        "category": "駿河屋TOP > ゲーム > ＴＶゲーム > ニンテンドースイッチ > ゲーム > ＴＶゲーム > ニンテンドースイッチ"
+      }
+    },
+    {
+      "site": "mercari_shops",
+      "url": "https://jp.mercari.com/shops/product/xhF79ibHz3KwucSXev32C5",
+      "success": false,
+      "errors": [
+        "Title missing or too short",
+        "Price is None",
+        "No images found"
+      ],
+      "duration": 11.630782842636108,
       "data": {
         "url": "https://jp.mercari.com/shops/product/xhF79ibHz3KwucSXev32C5",
-        "title": "送料無料 ホワイト 2点セット へそ出し 長袖トップス タンクトップ トレーナー ストリート ダンス 衣装 女の子 韓国子供服 HIPHOP 練習着 120cm 130cm 140cm 150cm 160cm 170cm",
-        "price": 2086,
+        "title": "",
+        "price": null,
         "status": "sold",
         "description": "送料無料 ホワイト 2点セット へそ出し 長袖トップス タンクトップ トレーナー ストリート ダンス 衣装 女の子 韓国子供服 HIPHOP 練習着 120cm 130cm 140cm 150cm 160cm 170cmをBeFive メルカリShops店でお得に購入！メルカリShopsは、アウトレット品、訳あり商品から人気定番アイテムまで取り揃えています。クレジットカード、コンビニ、銀行ATMでの支払いに対応。お買い物をお楽しみください。",
-        "image_urls": [
-          "https://assets.mercari-shops-static.com/-/large/plain/b6xXrX62ERWjSA8CawQq2k.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/large/plain/erNNKPuPbYWLn6nBioq8c5.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/large/plain/tVjN9bS7ZL9uVCPWoeLwC6.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/large/plain/otWC2ucyvXpvTqcD7bNCFG.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/large/plain/Ci7MuGMmmQA2mMvH7gSx7a.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/large/plain/cGuQ3VP7vCLCQ6PkmK4S5S.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/large/plain/xCNw4WFhyvaPUvc7zpcXM8.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/large/plain/eDkr7wQr7EZq8MHkrZtXYc.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/large/plain/JQcjmwWySAd33EKLnQUXXZ.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JMgc3Soads2VJoegDCNPj.png@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JMr9EhyMpAD6sVDo2rLLb.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JMr3VPUo4pPdKefCmw8yC.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JMr3VMej4yZkgrPEXS9xE.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JMr3VMshZ727DxGD4QVFB.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JMr3VMacRcYqeEtGCfYFc.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JMquMszLAmdhTpvdGgrqX.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/MwnGSZrgo2wC4VKsVaTNqJ.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/6vRJP8A8qFRbd76GZmbBc7.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JKTU7S5pz4tp2zLKaQ4MX.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/U7rRzECAYaGK3qyjNUVPb5.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/PCrb3SEfZZfeefVBFmfLXQ.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JJmJqKrG9mD4AXYwKLpgU.png@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/MpABkDGtzz9HwSRFqkHDpE.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JGmEQNQYJtevmxiSnePgx.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/sBZvA2y82G9TGweJ6HaExE.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JJYyBsByWwWsxJ8gVYhio.jpg@jpg"
-        ],
+        "image_urls": [],
         "variants": [
           {
             "option1_name": "カラー",
             "option1_value": "ホワイト",
             "option2_name": "サイズ/種類",
             "option2_value": "120",
-            "price": 2086,
+            "price": null,
             "inventory_qty": 1
           },
           {
@@ -80,7 +84,7 @@
             "option1_value": "ホワイト",
             "option2_name": "サイズ/種類",
             "option2_value": "130",
-            "price": 2086,
+            "price": null,
             "inventory_qty": 1
           },
           {
@@ -88,7 +92,7 @@
             "option1_value": "ホワイト",
             "option2_name": "サイズ/種類",
             "option2_value": "140",
-            "price": 2086,
+            "price": null,
             "inventory_qty": 1
           },
           {
@@ -96,7 +100,7 @@
             "option1_value": "ホワイト",
             "option2_name": "サイズ/種類",
             "option2_value": "150",
-            "price": 2086,
+            "price": null,
             "inventory_qty": 1
           },
           {
@@ -104,7 +108,7 @@
             "option1_value": "ホワイト",
             "option2_name": "サイズ/種類",
             "option2_value": "160",
-            "price": 2086,
+            "price": null,
             "inventory_qty": 1
           },
           {
@@ -112,7 +116,7 @@
             "option1_value": "ホワイト",
             "option2_name": "サイズ/種類",
             "option2_value": "170",
-            "price": 2086,
+            "price": null,
             "inventory_qty": 1
           },
           {
@@ -120,7 +124,7 @@
             "option1_value": "カーキ",
             "option2_name": "サイズ/種類",
             "option2_value": "120",
-            "price": 2086,
+            "price": null,
             "inventory_qty": 1
           },
           {
@@ -128,7 +132,7 @@
             "option1_value": "カーキ",
             "option2_name": "サイズ/種類",
             "option2_value": "130",
-            "price": 2086,
+            "price": null,
             "inventory_qty": 1
           },
           {
@@ -136,7 +140,7 @@
             "option1_value": "カーキ",
             "option2_name": "サイズ/種類",
             "option2_value": "140",
-            "price": 2086,
+            "price": null,
             "inventory_qty": 1
           },
           {
@@ -144,7 +148,7 @@
             "option1_value": "カーキ",
             "option2_name": "サイズ/種類",
             "option2_value": "150",
-            "price": 2086,
+            "price": null,
             "inventory_qty": 1
           },
           {
@@ -152,7 +156,7 @@
             "option1_value": "カーキ",
             "option2_name": "サイズ/種類",
             "option2_value": "160",
-            "price": 2086,
+            "price": null,
             "inventory_qty": 1
           },
           {
@@ -160,7 +164,7 @@
             "option1_value": "カーキ",
             "option2_name": "サイズ/種類",
             "option2_value": "170",
-            "price": 2086,
+            "price": null,
             "inventory_qty": 1
           }
         ],
@@ -173,13 +177,13 @@
       "url": "https://item.fril.jp/fed8b046583deff9f860ce320f64633c",
       "success": true,
       "errors": [],
-      "duration": 17.97508406639099,
+      "duration": 11.677558183670044,
       "data": {
         "url": "https://item.fril.jp/fed8b046583deff9f860ce320f64633c",
         "title": "【PS5】バイオハザード ヴィレッジ Z Version ゴールドエディション",
         "price": 3780,
         "status": "on_sale",
-        "description": "",
+        "description": "商品説明\n【PS5ソフト】 BIOHAZARD VILLAGE Z Version GOLD EDITION [Best Price]\n\n※新品未開封の状態でお送り致しますので、初期不良等はメーカーに問い合わせお願い致します。\n※返品、返金、交換は出来ません。\n\n※ゆうパケットポストminiにて発送致しますので、ポスト投函になります。\n※なるべく当日発送致しますが、時間によっては翌日発送になります。\n\n※受け取られましたら、受取評価をお願い致します。\n\nブランド：カプコン  バイオハザード\nソフトウェア対象年齢：18歳以上対象\nパッケージ種類：通常版\n\nCAPCOM\n型番：ELJM-30739\n約2時間前",
         "image_urls": [
           "https://img.fril.jp/img/819009653/l/2811614664.jpg?1772540118",
           "https://img.fril.jp/img/819009653/l/2811614662.jpg?1772540118"
@@ -192,7 +196,7 @@
       "url": "https://store.shopping.yahoo.co.jp/nextfreedom/igress-008.html",
       "success": true,
       "errors": [],
-      "duration": 20.069655179977417,
+      "duration": 14.732776641845703,
       "data": {
         "url": "https://store.shopping.yahoo.co.jp/nextfreedom/igress-008.html",
         "title": "tシャツ メンズ 半袖 無地 厚手 Tシャツ ヘビーウェイト 3枚組 白 黒 ドライ 大きいサイズ まとめ買い BALLOT バロット",
@@ -263,7 +267,8 @@
           "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/792faee4-b97e-42cd-8a6d-9dff3d0ce5b1.jpg",
           "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/c327fb66-8e88-4a3f-853d-d226a7cf3434.jpg",
           "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/92ace465-12a6-40e8-9a23-60e3e191350b.jpg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/21a3c173-8b27-4f0d-a06f-90235469e8e6.jpg"
+          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/21a3c173-8b27-4f0d-a06f-90235469e8e6.jpg",
+          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-047a2558e250d10a7067441d5ee00228/24817572-6d44ee94c99e9122e203105fb0b16cf6/img/1771917860/thumbnail.jpg"
         ],
         "variants": [
           {
@@ -462,38 +467,11 @@
       }
     },
     {
-      "site": "surugaya",
-      "url": "https://www.suruga-ya.jp/product/detail/109003813",
-      "success": true,
-      "errors": [],
-      "duration": 16.43003749847412,
-      "data": {
-        "url": "https://www.suruga-ya.jp/product/detail/109003813",
-        "title": "ニンテンドースイッチソフト　ゼルダの伝説 知恵のかりもの",
-        "price": 5980,
-        "status": "active",
-        "description": "管理番号 新品 ：109003813000\n中古 ：109003813001 メーカー 任天堂 発売日 2024/09/26 定価 7,678円 型番 HAC-P-BDGEA\nシリーズプロデューサー 青沼英二\nカテゴリ\nゲーム\nＴＶゲーム\nニンテンドースイッチ",
-        "image_urls": [
-          "https://cdn.suruga-ya.jp/database/pics_webp/game/109003813.jpg.webp"
-        ],
-        "variants": [
-          {
-            "option1_value": "新品",
-            "price": 5980,
-            "sku": "",
-            "inventory_qty": 1
-          }
-        ],
-        "condition": "新品",
-        "category": ""
-      }
-    },
-    {
       "site": "offmall",
       "url": "https://netmall.hardoff.co.jp/product/5966534/",
       "success": true,
       "errors": [],
-      "duration": 13.99615216255188,
+      "duration": 10.65200424194336,
       "data": {
         "url": "https://netmall.hardoff.co.jp/product/5966534/",
         "title": "【ジャンク品】　KENWOOD　L-02T入荷！",
@@ -538,13 +516,13 @@
       "url": "https://page.auctions.yahoo.co.jp/auction/g1221465796",
       "success": true,
       "errors": [],
-      "duration": 13.772022247314453,
+      "duration": 12.492159128189087,
       "data": {
         "url": "https://page.auctions.yahoo.co.jp/auction/g1221465796",
         "title": "【購入後 鑑定付き】メガリザードンYex MUR仕様 [MC 766/742](スタートデッキ100「バトルコレクション」)",
-        "price": 381001,
+        "price": 402010,
         "status": "active",
-        "description": "メガリザードンYex （MC_766/742） MEGA スタートデッキ100 バトルコレクション\n381,001円〜\nこの製品の相場を見る\nほしい",
+        "description": "メガリザードンYex （MC_766/742） MEGA スタートデッキ100 バトルコレクション\nこの製品の相場を見る\nほしい",
         "image_urls": [
           "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-17724306359968ajfq3e20594.jpg",
           "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img1200x888-17724306357931xmow7u20594.jpg",
@@ -560,7 +538,7 @@
         "variants": [
           {
             "option1_value": "Default Title",
-            "price": 381001,
+            "price": 402010,
             "sku": "g1221465796",
             "inventory_qty": 1
           }
@@ -575,7 +553,7 @@
       "url": "https://snkrdunk.com/products/CT8013-170",
       "success": true,
       "errors": [],
-      "duration": 14.730968952178955,
+      "duration": 10.400086641311646,
       "data": {
         "url": "https://snkrdunk.com/products/CT8013-170",
         "title": "Nike Air Jordan 12 \"Royalty\"",
