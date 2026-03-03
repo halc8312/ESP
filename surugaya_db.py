@@ -766,8 +766,10 @@ def scrape_search_result(
         print(f"[SURUGAYA] Search: Fetching {search_url}")
         first_resp, fetch_error = _fetch_with_retry(session, search_url, timeout=30, max_attempts=3)
 
+        keyword = _extract_keyword_from_search_url(search_url)
         soup = None
         base_search_url = search_url
+        product_urls = []
         if fetch_error is None and first_resp is not None and not _is_cloudflare_block(first_resp):
             soup = BeautifulSoup(first_resp.content, "html.parser")
             base_search_url = first_resp.url or search_url
@@ -792,66 +794,68 @@ def scrape_search_result(
                 logger.error(f"Surugaya search fetch error: {fetch_error}")
             else:
                 logger.error("Surugaya search fetch error: unable to fetch page")
-            return results
-
-        print(f"[SURUGAYA] Search: Page title: {soup.title.string if soup.title else 'No Title'}")
-
-        product_urls = []
-        keyword = _extract_keyword_from_search_url(search_url)
-
-        if _looks_like_challenge_soup(soup):
-            logger.warning("Surugaya search page appears to be a challenge page.")
             if _should_use_yahoo_search_fallback():
-                print("[SURUGAYA] Search: INFO: Trying Yahoo search fallback for product URLs...")
+                print("[SURUGAYA] Search: INFO: Trying Yahoo search fallback after blocked search page...")
                 product_urls = _search_product_urls_via_yahoo(keyword, max_items=max_items)
+        else:
+            print(f"[SURUGAYA] Search: Page title: {soup.title.string if soup.title else 'No Title'}")
 
-        page_urls = _build_search_page_urls(base_search_url, soup, max_scroll=max_scroll)
+            if _looks_like_challenge_soup(soup):
+                logger.warning("Surugaya search page appears to be a challenge page.")
+                if _should_use_yahoo_search_fallback():
+                    print("[SURUGAYA] Search: INFO: Trying Yahoo search fallback for product URLs...")
+                    product_urls = _search_product_urls_via_yahoo(keyword, max_items=max_items)
 
-        for index, page_url in enumerate(page_urls):
-            if len(product_urls) >= max_items:
-                break
+            page_urls = _build_search_page_urls(base_search_url, soup, max_scroll=max_scroll)
 
-            if index == 0:
-                page_soup = soup
-            else:
-                page_resp, page_error = _fetch_with_retry(session, page_url, timeout=30, max_attempts=2)
-                page_soup = None
-                if page_error is None and page_resp is not None and not _is_cloudflare_block(page_resp):
-                    page_soup = BeautifulSoup(page_resp.content, "html.parser")
-                elif _should_use_selenium_fallback():
-                    selenium_soup, _, selenium_error = _fetch_soup_with_selenium(
-                        page_url,
-                        headless=headless,
-                    )
-                    if selenium_soup is not None:
-                        page_soup = selenium_soup
-                    else:
-                        logger.warning(f"Surugaya page Selenium fallback failed: {page_url} ({selenium_error})")
-
-                if page_soup is None:
-                    if page_error is not None:
-                        logger.warning(f"Surugaya page fetch failed: {page_url} ({page_error})")
-                    else:
-                        logger.warning(f"Surugaya page blocked/skipped: {page_url}")
-                    continue
-
-                if _looks_like_challenge_soup(page_soup):
-                    logger.warning(f"Surugaya page challenge detected: {page_url}")
-                    continue
-
-            for product_url in _extract_product_urls(page_soup, page_url):
-                if product_url in product_urls:
-                    continue
-                product_urls.append(product_url)
+            for index, page_url in enumerate(page_urls):
                 if len(product_urls) >= max_items:
                     break
 
-            if len(product_urls) >= max_items:
-                break
+                if index == 0:
+                    page_soup = soup
+                else:
+                    page_resp, page_error = _fetch_with_retry(session, page_url, timeout=30, max_attempts=2)
+                    page_soup = None
+                    if page_error is None and page_resp is not None and not _is_cloudflare_block(page_resp):
+                        page_soup = BeautifulSoup(page_resp.content, "html.parser")
+                    elif _should_use_selenium_fallback():
+                        selenium_soup, _, selenium_error = _fetch_soup_with_selenium(
+                            page_url,
+                            headless=headless,
+                        )
+                        if selenium_soup is not None:
+                            page_soup = selenium_soup
+                        else:
+                            logger.warning(f"Surugaya page Selenium fallback failed: {page_url} ({selenium_error})")
 
-        if not product_urls and _should_use_yahoo_search_fallback():
-            print("[SURUGAYA] Search: INFO: Trying Yahoo search fallback (no product links found)...")
-            product_urls = _search_product_urls_via_yahoo(keyword, max_items=max_items)
+                    if page_soup is None:
+                        if page_error is not None:
+                            logger.warning(f"Surugaya page fetch failed: {page_url} ({page_error})")
+                        else:
+                            logger.warning(f"Surugaya page blocked/skipped: {page_url}")
+                        continue
+
+                    if _looks_like_challenge_soup(page_soup):
+                        logger.warning(f"Surugaya page challenge detected: {page_url}")
+                        continue
+
+                for product_url in _extract_product_urls(page_soup, page_url):
+                    if product_url in product_urls:
+                        continue
+                    product_urls.append(product_url)
+                    if len(product_urls) >= max_items:
+                        break
+
+                if len(product_urls) >= max_items:
+                    break
+
+            if not product_urls and _should_use_yahoo_search_fallback():
+                print("[SURUGAYA] Search: INFO: Trying Yahoo search fallback (no product links found)...")
+                product_urls = _search_product_urls_via_yahoo(keyword, max_items=max_items)
+
+        if not product_urls:
+            return results
 
         # Scrape each product detail
         for url in product_urls[:max_items]:
