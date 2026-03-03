@@ -2,12 +2,13 @@
 Surugaya scraper - Product detail scraping for suruga-ya.jp
 Uses curl_cffi to bypass Cloudflare protection by impersonating Chrome's TLS fingerprint.
 """
+import html
 import json
 import logging
 import os
 import re
 import time
-from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 from curl_cffi import requests
@@ -430,7 +431,121 @@ def _should_use_selenium_fallback() -> bool:
     return flag not in ("0", "false", "off", "no")
 
 
-def _fetch_soup_with_selenium(url: str, headless: bool = True, wait_seconds: int = 10):
+def _should_use_yahoo_search_fallback() -> bool:
+    flag = os.getenv("SURUGAYA_YAHOO_SEARCH_FALLBACK", "1").strip().lower()
+    return flag not in ("0", "false", "off", "no")
+
+
+def _extract_keyword_from_search_url(search_url: str) -> str:
+    try:
+        parsed = urlparse(search_url)
+        query = parse_qs(parsed.query, keep_blank_values=True)
+    except Exception:
+        return ""
+
+    for key in ("search_word", "keyword", "q", "p"):
+        values = query.get(key) or []
+        for value in values:
+            value = (value or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _looks_like_challenge_soup(soup: BeautifulSoup) -> bool:
+    if soup is None:
+        return False
+    title_text = (soup.title.get_text(" ", strip=True).lower() if soup.title else "")
+    if "just a moment" in title_text or "attention required" in title_text:
+        return True
+
+    html_text = str(soup).lower()
+    markers = (
+        "window._cf_chl_opt",
+        "cf-challenge-running",
+        "challenge-form",
+        "/cdn-cgi/challenge-platform",
+    )
+    marker_hit = any(marker in html_text for marker in markers)
+    if not marker_hit:
+        return False
+
+    # Avoid false positives on normal pages that include generic scripts.
+    has_product_link = bool(soup.select("a[href*='/product/detail/']"))
+    return not has_product_link
+
+
+def _looks_like_challenge_html(title_text: str, html_text: str) -> bool:
+    title_l = (title_text or "").lower()
+    html_l = (html_text or "").lower()
+    if "just a moment" in title_l or "attention required" in title_l:
+        return True
+    markers = (
+        "window._cf_chl_opt",
+        "cf-challenge-running",
+        "challenge-form",
+        "/cdn-cgi/challenge-platform",
+    )
+    return any(marker in html_l for marker in markers)
+
+
+def _search_product_urls_via_yahoo(keyword: str, max_items: int) -> list:
+    if not keyword:
+        return []
+
+    query = f"site:suruga-ya.jp/product/detail {keyword}"
+    search_url = "https://search.yahoo.co.jp/search?p=" + quote_plus(query)
+    urls = []
+
+    try:
+        session = requests.Session(impersonate="chrome120")
+        session.headers.update({
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            "Referer": "https://search.yahoo.co.jp/",
+        })
+        resp = session.get(search_url, timeout=20)
+        if resp.status_code >= 400:
+            logger.warning(f"Yahoo fallback search returned {resp.status_code}")
+            return []
+
+        soup = BeautifulSoup(resp.content, "html.parser")
+        for anchor in soup.select("a[href]"):
+            href = anchor.get("href") or ""
+            if not href:
+                continue
+
+            # Yahoo may return direct links or redirect links that include target URL params.
+            candidates = [href]
+            parsed = urlparse(href)
+            query_map = parse_qs(parsed.query, keep_blank_values=True)
+            for key in ("RU", "ru", "url", "u"):
+                for value in query_map.get(key, []):
+                    if value:
+                        candidates.append(unquote(html.unescape(value)))
+
+            resolved = ""
+            for candidate in candidates:
+                candidate = candidate.strip()
+                if "suruga-ya.jp/product/detail/" not in candidate:
+                    continue
+                resolved = _normalize_url(candidate, "https://search.yahoo.co.jp/")
+                break
+
+            if not resolved:
+                continue
+            urls.append(resolved)
+            if len(urls) >= max_items:
+                break
+
+    except Exception as exc:
+        logger.warning(f"Yahoo fallback search error: {exc}")
+        return []
+
+    return _dedupe_keep_order(urls)[:max_items]
+
+
+def _fetch_soup_with_selenium(url: str, headless: bool = True, wait_seconds: int = 20):
     """Fallback HTML fetch via Selenium (Render-safe fallback path)."""
     driver = None
     try:
@@ -443,16 +558,55 @@ def _fetch_soup_with_selenium(url: str, headless: bool = True, wait_seconds: int
 
     try:
         driver = create_driver(headless=headless)
+        try:
+            # Apply stealth script before first navigation when possible.
+            driver.execute_cdp_cmd(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {
+                    "source": """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+Object.defineProperty(navigator, 'languages', {get: () => ['ja-JP', 'ja', 'en-US', 'en']});
+Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+""".strip()
+                },
+            )
+        except Exception:
+            pass
         driver.get(url)
         WebDriverWait(driver, wait_seconds).until(
             EC.presence_of_element_located((By.TAG_NAME, "body"))
         )
-        time.sleep(1.2)
-        html = driver.page_source or ""
+
+        challenge_retry_done = False
+        deadline = time.time() + max(6, wait_seconds)
+        while time.time() < deadline:
+            html_text = driver.page_source or ""
+            title_text = getattr(driver, "title", "") or ""
+            current_url = getattr(driver, "current_url", url) or url
+            if not html_text:
+                time.sleep(0.8)
+                continue
+
+            if not _looks_like_challenge_html(title_text, html_text):
+                soup = BeautifulSoup(html_text, "html.parser")
+                return soup, current_url, None
+
+            if not challenge_retry_done:
+                challenge_retry_done = True
+                try:
+                    driver.refresh()
+                except Exception:
+                    pass
+            time.sleep(1.2)
+
+        # Return last HTML even if challenge remained, for caller-side handling/logging.
+        html_text = driver.page_source or ""
         current_url = getattr(driver, "current_url", url) or url
-        if not html:
+        if not html_text:
             return None, current_url, "Empty page source"
-        soup = BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(html_text, "html.parser")
+        if _looks_like_challenge_soup(soup):
+            return None, current_url, "Cloudflare challenge page remained after Selenium wait"
         return soup, current_url, None
     except Exception as exc:
         return None, url, str(exc)
@@ -642,10 +796,21 @@ def scrape_search_result(
 
         print(f"[SURUGAYA] Search: Page title: {soup.title.string if soup.title else 'No Title'}")
 
-        page_urls = _build_search_page_urls(base_search_url, soup, max_scroll=max_scroll)
         product_urls = []
+        keyword = _extract_keyword_from_search_url(search_url)
+
+        if _looks_like_challenge_soup(soup):
+            logger.warning("Surugaya search page appears to be a challenge page.")
+            if _should_use_yahoo_search_fallback():
+                print("[SURUGAYA] Search: INFO: Trying Yahoo search fallback for product URLs...")
+                product_urls = _search_product_urls_via_yahoo(keyword, max_items=max_items)
+
+        page_urls = _build_search_page_urls(base_search_url, soup, max_scroll=max_scroll)
 
         for index, page_url in enumerate(page_urls):
+            if len(product_urls) >= max_items:
+                break
+
             if index == 0:
                 page_soup = soup
             else:
@@ -670,6 +835,10 @@ def scrape_search_result(
                         logger.warning(f"Surugaya page blocked/skipped: {page_url}")
                     continue
 
+                if _looks_like_challenge_soup(page_soup):
+                    logger.warning(f"Surugaya page challenge detected: {page_url}")
+                    continue
+
             for product_url in _extract_product_urls(page_soup, page_url):
                 if product_url in product_urls:
                     continue
@@ -679,6 +848,10 @@ def scrape_search_result(
 
             if len(product_urls) >= max_items:
                 break
+
+        if not product_urls and _should_use_yahoo_search_fallback():
+            print("[SURUGAYA] Search: INFO: Trying Yahoo search fallback (no product links found)...")
+            product_urls = _search_product_urls_via_yahoo(keyword, max_items=max_items)
 
         # Scrape each product detail
         for url in product_urls[:max_items]:
