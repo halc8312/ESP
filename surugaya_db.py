@@ -4,6 +4,7 @@ Uses curl_cffi to bypass Cloudflare protection by impersonating Chrome's TLS fin
 """
 import json
 import logging
+import os
 import re
 import time
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
@@ -424,7 +425,46 @@ def _build_search_page_urls(search_url: str, first_soup: BeautifulSoup, max_scro
     return page_urls
 
 
-def scrape_item_detail(session, url: str) -> dict:
+def _should_use_selenium_fallback() -> bool:
+    flag = os.getenv("SURUGAYA_SELENIUM_FALLBACK", "1").strip().lower()
+    return flag not in ("0", "false", "off", "no")
+
+
+def _fetch_soup_with_selenium(url: str, headless: bool = True, wait_seconds: int = 10):
+    """Fallback HTML fetch via Selenium (Render-safe fallback path)."""
+    driver = None
+    try:
+        from mercari_db import create_driver
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.support.ui import WebDriverWait
+    except Exception as exc:
+        return None, url, str(exc)
+
+    try:
+        driver = create_driver(headless=headless)
+        driver.get(url)
+        WebDriverWait(driver, wait_seconds).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+        time.sleep(1.2)
+        html = driver.page_source or ""
+        current_url = getattr(driver, "current_url", url) or url
+        if not html:
+            return None, current_url, "Empty page source"
+        soup = BeautifulSoup(html, "html.parser")
+        return soup, current_url, None
+    except Exception as exc:
+        return None, url, str(exc)
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+
+
+def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
     """
     駿河屋の商品ページから詳細情報を取得する (curl_cffi版)
     """
@@ -442,29 +482,39 @@ def scrape_item_detail(session, url: str) -> dict:
 
     print(f"[SURUGAYA] Starting curl_cffi scrape for {url}")
 
+    soup = None
+    page_url = url
     resp, fetch_error = _fetch_with_retry(session, url, timeout=30, max_attempts=3)
-    if fetch_error is not None:
-        print(f"[SURUGAYA] ERROR during page load: {fetch_error}")
-        result["status"] = "error"
-        return result
-    if resp is None:
-        print("[SURUGAYA] ERROR during page load: no response")
-        result["status"] = "error"
-        return result
 
-    if _is_cloudflare_block(resp):
-        print(f"[SURUGAYA] ERROR: Cloudflare block detected (Status: {resp.status_code})")
-        result["status"] = "blocked"
-        return result
+    if fetch_error is None and resp is not None and not _is_cloudflare_block(resp):
+        if resp.status_code >= 400:
+            print(f"[SURUGAYA] WARN: HTTP status {resp.status_code} for {url}")
+        try:
+            soup = BeautifulSoup(resp.content, "html.parser")
+            page_url = resp.url or url
+        except Exception as exc:
+            print(f"[SURUGAYA] ERROR during page load: {exc}")
 
-    if resp.status_code >= 400:
-        print(f"[SURUGAYA] WARN: HTTP status {resp.status_code} for {url}")
+    # Fallback for Render/Cloudflare 403: retry with real browser only for Surugaya.
+    if soup is None and _should_use_selenium_fallback():
+        status_code = resp.status_code if resp is not None else "N/A"
+        print(f"[SURUGAYA] INFO: Trying Selenium fallback for item page (status={status_code})")
+        selenium_soup, selenium_url, selenium_error = _fetch_soup_with_selenium(url, headless=headless)
+        if selenium_soup is not None:
+            soup = selenium_soup
+            page_url = selenium_url or url
+        elif selenium_error:
+            print(f"[SURUGAYA] ERROR: Selenium fallback failed: {selenium_error}")
 
-    try:
-        soup = BeautifulSoup(resp.content, "html.parser")
-    except Exception as e:
-        print(f"[SURUGAYA] ERROR during page load: {e}")
-        result["status"] = "error"
+    if soup is None:
+        if resp is not None and _is_cloudflare_block(resp):
+            print(f"[SURUGAYA] ERROR: Cloudflare block detected (Status: {resp.status_code})")
+            result["status"] = "blocked"
+        elif fetch_error is not None:
+            print(f"[SURUGAYA] ERROR during page load: {fetch_error}")
+            result["status"] = "error"
+        else:
+            result["status"] = "error"
         return result
 
     ld_product = _extract_json_ld_product(soup)
@@ -503,7 +553,7 @@ def scrape_item_detail(session, url: str) -> dict:
     result["condition"] = _extract_condition(soup)
 
     # ---- Images ----
-    result["image_urls"] = _extract_image_urls(soup, resp.url or url, ld_product)
+    result["image_urls"] = _extract_image_urls(soup, page_url, ld_product)
 
     # ---- Description ----
     for selector in SELECTORS["description"]:
@@ -537,7 +587,7 @@ def scrape_single_item(url: str, headless: bool = True) -> list:
     """
     try:
         session = get_session()
-        result = scrape_item_detail(session, url)
+        result = scrape_item_detail(session, url, headless=headless)
         return [result] if result["title"] else []
     except Exception as e:
         print(f"[SURUGAYA] Error in scrape_single_item: {e}")
@@ -561,20 +611,38 @@ def scrape_search_result(
 
         print(f"[SURUGAYA] Search: Fetching {search_url}")
         first_resp, fetch_error = _fetch_with_retry(session, search_url, timeout=30, max_attempts=3)
-        if fetch_error is not None:
-            logger.error(f"Surugaya search fetch error: {fetch_error}")
-            return results
-        if first_resp is None:
-            logger.error("Surugaya search fetch error: no response")
-            return results
-        if _is_cloudflare_block(first_resp):
-            print(f"[SURUGAYA] Search: ERROR: Cloudflare block detected (Status: {first_resp.status_code})")
+
+        soup = None
+        base_search_url = search_url
+        if fetch_error is None and first_resp is not None and not _is_cloudflare_block(first_resp):
+            soup = BeautifulSoup(first_resp.content, "html.parser")
+            base_search_url = first_resp.url or search_url
+        else:
+            status_code = first_resp.status_code if first_resp is not None else "N/A"
+            if _should_use_selenium_fallback():
+                print(f"[SURUGAYA] Search: INFO: Trying Selenium fallback (status={status_code})")
+                selenium_soup, selenium_url, selenium_error = _fetch_soup_with_selenium(
+                    search_url,
+                    headless=headless,
+                )
+                if selenium_soup is not None:
+                    soup = selenium_soup
+                    base_search_url = selenium_url or search_url
+                else:
+                    logger.error(f"Surugaya search Selenium fallback error: {selenium_error}")
+
+        if soup is None:
+            if first_resp is not None and _is_cloudflare_block(first_resp):
+                print(f"[SURUGAYA] Search: ERROR: Cloudflare block detected (Status: {first_resp.status_code})")
+            elif fetch_error is not None:
+                logger.error(f"Surugaya search fetch error: {fetch_error}")
+            else:
+                logger.error("Surugaya search fetch error: unable to fetch page")
             return results
 
-        soup = BeautifulSoup(first_resp.content, "html.parser")
         print(f"[SURUGAYA] Search: Page title: {soup.title.string if soup.title else 'No Title'}")
 
-        page_urls = _build_search_page_urls(search_url, soup, max_scroll=max_scroll)
+        page_urls = _build_search_page_urls(base_search_url, soup, max_scroll=max_scroll)
         product_urls = []
 
         for index, page_url in enumerate(page_urls):
@@ -582,13 +650,25 @@ def scrape_search_result(
                 page_soup = soup
             else:
                 page_resp, page_error = _fetch_with_retry(session, page_url, timeout=30, max_attempts=2)
-                if page_error is not None:
-                    logger.warning(f"Surugaya page fetch failed: {page_url} ({page_error})")
+                page_soup = None
+                if page_error is None and page_resp is not None and not _is_cloudflare_block(page_resp):
+                    page_soup = BeautifulSoup(page_resp.content, "html.parser")
+                elif _should_use_selenium_fallback():
+                    selenium_soup, _, selenium_error = _fetch_soup_with_selenium(
+                        page_url,
+                        headless=headless,
+                    )
+                    if selenium_soup is not None:
+                        page_soup = selenium_soup
+                    else:
+                        logger.warning(f"Surugaya page Selenium fallback failed: {page_url} ({selenium_error})")
+
+                if page_soup is None:
+                    if page_error is not None:
+                        logger.warning(f"Surugaya page fetch failed: {page_url} ({page_error})")
+                    else:
+                        logger.warning(f"Surugaya page blocked/skipped: {page_url}")
                     continue
-                if page_resp is None or _is_cloudflare_block(page_resp):
-                    logger.warning(f"Surugaya page blocked/skipped: {page_url}")
-                    continue
-                page_soup = BeautifulSoup(page_resp.content, "html.parser")
 
             for product_url in _extract_product_urls(page_soup, page_url):
                 if product_url in product_urls:
@@ -603,7 +683,7 @@ def scrape_search_result(
         # Scrape each product detail
         for url in product_urls[:max_items]:
             try:
-                result = scrape_item_detail(session, url)
+                result = scrape_item_detail(session, url, headless=headless)
                 if result["title"]:
                     results.append(result)
             except Exception as e:
