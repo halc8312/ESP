@@ -369,7 +369,12 @@
                 </td>
                 <td class="product-title-cell">{{ p.custom_title or p.last_title }}</td>
                 <td>
-                    {% if p.last_price is not none %}
+                    {% if p.selling_price is not none %}
+                    ¥{{ "{:,}".format(p.selling_price) }}
+                    {% if p.last_price is not none and p.last_price != p.selling_price %}
+                    <br><span style="font-size:11px; color:#888;">仕入: ¥{{ "{:,}".format(p.last_price) }}</span>
+                    {% endif %}
+                    {% elif p.last_price is not none %}
                     ¥{{ "{:,}".format(p.last_price) }}
                     {% endif %}
                 </td>
@@ -401,7 +406,9 @@
             <div class="product-card-content">
                 <div class="product-card-title">{{ p.custom_title or p.last_title }}</div>
                 <div class="product-card-price">
-                    {% if p.last_price is not none %}
+                    {% if p.selling_price is not none %}
+                    ¥{{ "{:,}".format(p.selling_price) }}
+                    {% elif p.last_price is not none %}
                     ¥{{ "{:,}".format(p.last_price) }}
                     {% endif %}
                 </div>

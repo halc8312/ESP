@@ -120,6 +120,16 @@ def product_detail(product_id):
                     print(f"Error adding variant {idx}: {e}")
                     continue
 
+            # --- 販売価格の同期 ---
+            # バリエーションの価格をProduct.selling_priceに反映
+            # （商品一覧やカタログで表示される価格）
+            all_variants = session_db.query(Variant).filter_by(product_id=product.id).all()
+            if all_variants:
+                # 最初のバリエーションの価格を代表として使用
+                primary_variant = all_variants[0]
+                if primary_variant.price is not None:
+                    product.selling_price = primary_variant.price
+
             product.updated_at = datetime.utcnow()
             session_db.commit()
             return redirect(url_for('products.product_detail', product_id=product.id))
