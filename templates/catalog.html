@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>{{ pricelist.name }} | Product Catalog</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="{{ pricelist.name }} - Product catalog with prices and availability">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #13131a;
+            --bg-card: #1a1a25;
+            --bg-card-hover: #22222f;
+            --text-primary: #f0f0f5;
+            --text-secondary: #9898a8;
+            --text-muted: #686878;
+            --accent: #6366f1;
+            --accent-light: #818cf8;
+            --accent-glow: rgba(99, 102, 241, 0.15);
+            --green: #22c55e;
+            --green-bg: rgba(34, 197, 94, 0.12);
+            --red: #ef4444;
+            --red-bg: rgba(239, 68, 68, 0.12);
+            --border: rgba(255, 255, 255, 0.06);
+            --border-hover: rgba(255, 255, 255, 0.12);
+            --radius: 12px;
+            --radius-sm: 8px;
+            --shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .catalog-header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 24px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+
+        .header-inner {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 0 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .catalog-title {
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .catalog-title span {
+            color: var(--accent-light);
+        }
+
+        /* Currency Switcher */
+        .currency-switcher {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-card);
+            padding: 6px 12px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+        }
+
+        .currency-switcher label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .currency-switcher select {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .currency-switcher select:focus {
+            border-color: var(--accent);
+        }
+
+        /* Notes */
+        .catalog-notes {
+            max-width: 1280px;
+            margin: 20px auto 0;
+            padding: 0 20px;
+        }
+
+        .catalog-notes p {
+            background: var(--accent-glow);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            padding: 14px 18px;
+            border-radius: var(--radius-sm);
+            font-size: 14px;
+            color: var(--accent-light);
+            line-height: 1.7;
+        }
+
+        /* Stats Bar */
+        .stats-bar {
+            max-width: 1280px;
+            margin: 20px auto;
+            padding: 0 20px;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .stat-badge {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .stat-badge strong {
+            color: var(--text-primary);
+            margin-right: 4px;
+        }
+
+        /* Grid */
+        .catalog-grid {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 0 20px 40px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 16px;
+        }
+
+        /* Product Card */
+        .product-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .product-card:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-card-hover);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+        }
+
+        .product-card-image {
+            width: 100%;
+            aspect-ratio: 1;
+            object-fit: cover;
+            background: var(--bg-secondary);
+            display: block;
+        }
+
+        .product-card-image-placeholder {
+            width: 100%;
+            aspect-ratio: 1;
+            background: var(--bg-secondary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            font-size: 36px;
+        }
+
+        .product-card-body {
+            padding: 16px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .product-card-title {
+            font-size: 14px;
+            font-weight: 500;
+            line-height: 1.4;
+            color: var(--text-primary);
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .product-card-price {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--accent-light);
+            letter-spacing: -0.02em;
+        }
+
+        .product-card-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: auto;
+        }
+
+        .stock-badge {
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .stock-badge.in-stock {
+            background: var(--green-bg);
+            color: var(--green);
+        }
+
+        .stock-badge.out-of-stock {
+            background: var(--red-bg);
+            color: var(--red);
+        }
+
+        .stock-qty {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        /* Footer */
+        .catalog-footer {
+            border-top: 1px solid var(--border);
+            padding: 24px 20px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        /* Responsive */
+        @media (max-width: 640px) {
+            .catalog-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 10px;
+                padding: 0 12px 32px;
+            }
+
+            .product-card-body {
+                padding: 10px;
+            }
+
+            .product-card-title {
+                font-size: 12px;
+            }
+
+            .product-card-price {
+                font-size: 16px;
+            }
+
+            .header-inner {
+                padding: 0 12px;
+            }
+
+            .catalog-title {
+                font-size: 16px;
+            }
+
+            .stats-bar {
+                padding: 0 12px;
+            }
+
+            .catalog-notes {
+                padding: 0 12px;
+            }
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(16px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .product-card {
+            animation: fadeInUp 0.4s ease forwards;
+        }
+
+        .product-card:nth-child(1) {
+            animation-delay: 0.02s;
+        }
+
+        .product-card:nth-child(2) {
+            animation-delay: 0.04s;
+        }
+
+        .product-card:nth-child(3) {
+            animation-delay: 0.06s;
+        }
+
+        .product-card:nth-child(4) {
+            animation-delay: 0.08s;
+        }
+
+        .product-card:nth-child(5) {
+            animation-delay: 0.10s;
+        }
+
+        .product-card:nth-child(6) {
+            animation-delay: 0.12s;
+        }
+
+        .product-card:nth-child(7) {
+            animation-delay: 0.14s;
+        }
+
+        .product-card:nth-child(8) {
+            animation-delay: 0.16s;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Header -->
+    <header class="catalog-header">
+        <div class="header-inner">
+            <h1 class="catalog-title"><span>●</span> {{ pricelist.name }}</h1>
+            <div class="currency-switcher">
+                <label for="currencySelect">💱 Currency:</label>
+                <select id="currencySelect" onchange="switchCurrency(this.value)">
+                    <option value="JPY" selected>🇯🇵 JPY (¥)</option>
+                    <option value="USD">🇺🇸 USD ($)</option>
+                    <option value="EUR">🇪🇺 EUR (€)</option>
+                    <option value="GBP">🇬🇧 GBP (£)</option>
+                    <option value="AUD">🇦🇺 AUD (A$)</option>
+                    <option value="CAD">🇨🇦 CAD (C$)</option>
+                    <option value="CNY">🇨🇳 CNY (¥)</option>
+                    <option value="KRW">🇰🇷 KRW (₩)</option>
+                </select>
+            </div>
+        </div>
+    </header>
+
+    {% if pricelist.notes %}
+    <div class="catalog-notes">
+        <p>{{ pricelist.notes }}</p>
+    </div>
+    {% endif %}
+
+    <!-- Stats -->
+    <div class="stats-bar">
+        <div class="stat-badge"><strong>{{ items|length }}</strong> products</div>
+        <div class="stat-badge">
+            <strong>{{ items|selectattr('in_stock')|list|length }}</strong> in stock
+        </div>
+        <div class="stat-badge" id="rateDisplay">Rate: 1 USD = ¥{{ currency_rate }}</div>
+    </div>
+
+    <!-- Product Grid -->
+    <div class="catalog-grid">
+        {% for item in items %}
+        <div class="product-card">
+            {% if item.thumb_url %}
+            <img src="{{ item.thumb_url }}" alt="{{ item.title }}" class="product-card-image" loading="lazy">
+            {% else %}
+            <div class="product-card-image-placeholder">📦</div>
+            {% endif %}
+            <div class="product-card-body">
+                <div class="product-card-title">{{ item.title }}</div>
+                <div class="product-card-price" data-jpy-price="{{ item.price }}">
+                    ¥{{ "{:,}".format(item.price) }}
+                </div>
+                <div class="product-card-footer">
+                    {% if item.in_stock %}
+                    <span class="stock-badge in-stock">In Stock</span>
+                    <span class="stock-qty">Qty: {{ item.stock }}</span>
+                    {% else %}
+                    <span class="stock-badge out-of-stock">Out of Stock</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Footer -->
+    <footer class="catalog-footer">
+        <p>Prices are subject to change. Contact us for ordering details.</p>
+    </footer>
+
+    <script>
+        const JPY_RATE = {{ currency_rate }};  // 1 USD = X JPY
+
+        // Approximate cross rates from USD
+        const RATES_FROM_USD = {
+            'JPY': JPY_RATE,
+            'USD': 1,
+            'EUR': 0.92,
+            'GBP': 0.79,
+            'AUD': 1.55,
+            'CAD': 1.37,
+            'CNY': 7.25,
+            'KRW': 1350
+        };
+
+        const SYMBOLS = {
+            'JPY': '¥',
+            'USD': '$',
+            'EUR': '€',
+            'GBP': '£',
+            'AUD': 'A$',
+            'CAD': 'C$',
+            'CNY': '¥',
+            'KRW': '₩'
+        };
+
+        const DECIMALS = {
+            'JPY': 0,
+            'KRW': 0
+        };
+
+        function switchCurrency(currency) {
+            const priceElements = document.querySelectorAll('[data-jpy-price]');
+            const rateDisplay = document.getElementById('rateDisplay');
+
+            priceElements.forEach(el => {
+                const jpyPrice = parseInt(el.getAttribute('data-jpy-price'));
+                if (isNaN(jpyPrice)) return;
+
+                if (currency === 'JPY') {
+                    el.textContent = '¥' + jpyPrice.toLocaleString();
+                } else {
+                    // Convert JPY → USD → target currency
+                    const usdPrice = jpyPrice / JPY_RATE;
+                    const targetPrice = usdPrice * RATES_FROM_USD[currency];
+                    const decimals = DECIMALS[currency] !== undefined ? DECIMALS[currency] : 2;
+                    const symbol = SYMBOLS[currency] || currency + ' ';
+
+                    el.textContent = symbol + targetPrice.toLocaleString(undefined, {
+                        minimumFractionDigits: decimals,
+                        maximumFractionDigits: decimals
+                    });
+                }
+            });
+
+            // Update rate display
+            if (currency === 'JPY') {
+                rateDisplay.textContent = `Rate: 1 USD = ¥${JPY_RATE}`;
+            } else {
+                const rate = RATES_FROM_USD[currency];
+                rateDisplay.textContent = `Rate: 1 USD = ${SYMBOLS[currency]}${rate}`;
+            }
+        }
+    </script>
+</body>
+
+</html>

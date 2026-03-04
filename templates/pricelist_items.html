@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% block title %}商品管理 - {{ pricelist.name }}{% endblock %}
+{% block header_title %}{{ pricelist.name }} 商品管理{% endblock %}
+
+{% block content %}
+<a href="{{ url_for('pricelist.pricelist_list') }}" class="back-link">&laquo; 価格表一覧に戻る</a>
+
+<div class="page-header">
+    <h1>📦 {{ pricelist.name }}</h1>
+    <p class="page-subtitle">商品の追加・表示設定・カスタム価格を管理</p>
+</div>
+
+<div style="margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
+    <a href="{{ url_for('pricelist.pricelist_add_products_page', pricelist_id=pricelist.id) }}" class="btn btn-primary"
+        style="padding: 10px 16px; background: #0066cc; color: white; text-decoration: none; border-radius: 6px; font-weight: 600;">
+        ＋ 商品を追加
+    </a>
+    <a href="{{ url_for('catalog.catalog_view', token=pricelist.token) }}" target="_blank"
+        style="padding: 10px 16px; background: #f3e5f5; color: #7b1fa2; text-decoration: none; border-radius: 6px; border: 1px solid #ce93d8;">
+        👁️ プレビュー
+    </a>
+</div>
+
+{% if items %}
+<form method="POST">
+    <input type="hidden" name="action" value="update_items">
+
+    <div class="content-card">
+        <div class="content-card-body">
+            <div class="table-responsive">
+                <table class="product-table">
+                    <thead>
+                        <tr>
+                            <th>削除</th>
+                            <th>サムネイル</th>
+                            <th>商品名</th>
+                            <th>元価格</th>
+                            <th>カスタム価格</th>
+                            <th>在庫</th>
+                            <th>表示</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in items %}
+                        <tr>
+                            <td>
+                                <input type="checkbox" name="remove_ids" value="{{ item.id }}">
+                            </td>
+                            <td>
+                                {% if item.thumb_url %}
+                                <img src="{{ item.thumb_url }}" alt="thumb" class="product-thumb"
+                                    style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px;">
+                                {% else %}
+                                <span class="product-thumb-placeholder" aria-hidden="true"></span>
+                                {% endif %}
+                            </td>
+                            <td class="product-title-cell" style="max-width: 200px;">{{ item.display_title }}</td>
+                            <td>
+                                {% if item.product.last_price %}
+                                ¥{{ "{:,}".format(item.product.last_price) }}
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>
+                                <input type="number" name="custom_price_{{ item.id }}"
+                                    value="{{ item.custom_price or '' }}" placeholder="空=自動" style="width: 100px;">
+                            </td>
+                            <td>
+                                {% if item.total_stock > 0 %}
+                                <span style="color: #22c55e; font-weight: 600;">{{ item.total_stock }}</span>
+                                {% else %}
+                                <span style="color: #ef4444;">0</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <input type="checkbox" name="visible_{{ item.id }}" {% if item.visible %}checked{% endif
+                                    %}>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div style="margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
+                <button type="submit" style="flex: 1; min-width: 120px;">💾 設定を保存</button>
+                <button type="submit" formaction="{{ url_for('pricelist.pricelist_items', pricelist_id=pricelist.id) }}"
+                    name="action" value="remove_items" onclick="return confirm('選択した商品を価格表から削除しますか？')"
+                    style="background: #fce4ec; color: #c62828; border: 1px solid #ef9a9a; padding: 10px 16px; border-radius: 4px; cursor: pointer;">
+                    🗑️ 選択削除
+                </button>
+            </div>
+        </div>
+    </div>
+</form>
+{% else %}
+<div class="content-card">
+    <div class="content-card-body" style="text-align: center; padding: 40px;">
+        <p style="font-size: 18px; color: #888;">まだ商品がありません</p>
+        <p style="font-size: 14px; color: #aaa;">「商品を追加」ボタンから商品を追加しましょう</p>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

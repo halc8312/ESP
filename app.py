@@ -125,6 +125,8 @@ from routes.settings import settings_bp
 from routes.import_routes import import_bp
 from routes.archive import archive_bp
 from routes.trash import trash_bp
+from routes.pricelist import pricelist_bp
+from routes.catalog import catalog_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(shops_bp)
@@ -137,6 +139,8 @@ app.register_blueprint(settings_bp)
 app.register_blueprint(import_bp)
 app.register_blueprint(archive_bp)
 app.register_blueprint(trash_bp)
+app.register_blueprint(pricelist_bp)
+app.register_blueprint(catalog_bp)
 
 
 

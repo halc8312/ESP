@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}商品追加 - {{ pricelist.name }}{% endblock %}
+{% block header_title %}商品追加{% endblock %}
+
+{% block content %}
+<a href="{{ url_for('pricelist.pricelist_items', pricelist_id=pricelist.id) }}" class="back-link">&laquo; 商品管理に戻る</a>
+
+<div class="page-header">
+    <h1>＋ {{ pricelist.name }} に商品を追加</h1>
+</div>
+
+<!-- 検索 -->
+<div class="content-card" style="margin-bottom: 16px;">
+    <div class="content-card-body">
+        <form method="GET" style="display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap;">
+            <div class="filter-group" style="flex: 1; min-width: 200px;">
+                <label>🔍 キーワード検索</label>
+                <input type="text" name="search" value="{{ search }}" placeholder="商品名で検索...">
+            </div>
+            <button type="submit" style="height: 38px;">検索</button>
+        </form>
+    </div>
+</div>
+
+<!-- 商品一覧 -->
+<form method="POST" action="{{ url_for('pricelist.pricelist_add_products', pricelist_id=pricelist.id) }}">
+    <div class="content-card">
+        <div class="content-card-body">
+            {% if products %}
+            <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+                <label>
+                    <input type="checkbox" id="selectAllProducts"> すべて選択
+                </label>
+                <button type="submit"
+                    style="background: #0066cc; color: white; padding: 8px 16px; border-radius: 4px; border: none; cursor: pointer; font-weight: 600;">
+                    ＋ 選択した商品を追加
+                </button>
+            </div>
+
+            <div class="table-responsive">
+                <table class="product-table">
+                    <thead>
+                        <tr>
+                            <th>選択</th>
+                            <th>サムネイル</th>
+                            <th>商品名</th>
+                            <th>価格</th>
+                            <th>状態</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in products %}
+                        <tr style="{{ 'opacity: 0.5;' if p.already_added else '' }}">
+                            <td>
+                                {% if p.already_added %}
+                                <span style="font-size: 11px; color: #888;">追加済</span>
+                                {% else %}
+                                <input type="checkbox" name="product_ids" value="{{ p.id }}" class="product-checkbox">
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if p.thumb_url %}
+                                <img src="{{ p.thumb_url }}" alt="thumb"
+                                    style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px;">
+                                {% else %}
+                                <span class="product-thumb-placeholder" aria-hidden="true"></span>
+                                {% endif %}
+                            </td>
+                            <td class="product-title-cell" style="max-width: 250px;">{{ p.custom_title or p.last_title
+                                }}</td>
+                            <td>
+                                {% if p.last_price is not none %}
+                                ¥{{ "{:,}".format(p.last_price) }}
+                                {% endif %}
+                            </td>
+                            <td>{{ p.last_status or '-' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div style="margin-top: 12px; text-align: center;">
+                <button type="submit"
+                    style="width: 100%; background: #0066cc; color: white; padding: 12px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; font-size: 15px;">
+                    ＋ 選択した商品を追加
+                </button>
+            </div>
+            {% else %}
+            <p style="text-align: center; color: #888; padding: 20px;">
+                {% if search %}
+                「{{ search }}」に一致する商品が見つかりません
+                {% else %}
+                追加可能な商品がありません
+                {% endif %}
+            </p>
+            {% endif %}
+        </div>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const selectAll = document.getElementById('selectAllProducts');
+        if (selectAll) {
+            selectAll.addEventListener('change', function () {
+                document.querySelectorAll('.product-checkbox').forEach(cb => {
+                    cb.checked = selectAll.checked;
+                });
+            });
+        }
+    });
+</script>
+{% endblock %}

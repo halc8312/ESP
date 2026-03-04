@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}{% if pricelist %}価格表編集{% else %}新規価格表作成{% endif %}{% endblock %}
+{% block header_title %}{% if pricelist %}価格表編集{% else %}新規価格表作成{% endif %}{% endblock %}
+
+{% block content %}
+<a href="{{ url_for('pricelist.pricelist_list') }}" class="back-link">&laquo; 価格表一覧に戻る</a>
+
+<div class="page-header">
+    <h1>{% if pricelist %}✏️ 価格表編集{% else %}＋ 新規価格表作成{% endif %}</h1>
+</div>
+
+{% if error %}
+<div
+    style="background: #fce4ec; border: 1px solid #ef9a9a; padding: 12px; border-radius: 6px; margin-bottom: 16px; color: #c62828;">
+    {{ error }}
+</div>
+{% endif %}
+
+<div class="content-card">
+    <div class="content-card-body">
+        <form method="POST">
+            <div class="form-group">
+                <label for="name">価格表名 *</label>
+                <input type="text" id="name" name="name" value="{{ pricelist.name if pricelist else '' }}"
+                    placeholder="例: Customer A Price List" required>
+            </div>
+
+            <div class="form-group">
+                <label for="notes">備考（顧客へのメッセージ）</label>
+                <textarea id="notes" name="notes" rows="3"
+                    placeholder="例: Thank you for your interest!">{{ pricelist.notes if pricelist else '' }}</textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="currency_rate">為替レート（1 USD = ? JPY）</label>
+                <input type="number" id="currency_rate" name="currency_rate"
+                    value="{{ pricelist.currency_rate if pricelist else 150 }}" min="1" step="1">
+                <span style="font-size: 12px; color: #888;">通貨切り替え時のUSD換算に使用します</span>
+            </div>
+
+            {% if pricelist %}
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="is_active" {% if pricelist.is_active %}checked{% endif %}>
+                    公開する（チェックを外すとアクセス不可になります）
+                </label>
+            </div>
+
+            <div class="form-group" style="background: #f5f5f5; padding: 12px; border-radius: 6px;">
+                <label>公開URL:</label>
+                <code
+                    style="word-break: break-all; font-size: 13px;">{{ request.host_url }}catalog/{{ pricelist.token }}</code>
+            </div>
+            {% endif %}
+
+            <div style="margin-top: 20px;">
+                <button type="submit" style="width: 100%;">
+                    {% if pricelist %}保存{% else %}作成して商品を追加{% endif %}
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

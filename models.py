@@ -174,3 +174,35 @@ class ExclusionKeyword(Base):
 
     user = relationship("User")
 
+
+class PriceList(Base):
+    """顧客向け価格表（カタログ）"""
+    __tablename__ = "price_lists"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=False)                # 例: "Customer A Price List"
+    token = Column(String, unique=True, nullable=False)  # UUID公開アクセス用
+    is_active = Column(Boolean, default=True)            # 有効/無効
+    currency_rate = Column(Integer, default=150)         # JPY→USD換算レート
+    notes = Column(Text)                                 # 備考（顧客へのメッセージ等）
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
+    items = relationship("PriceListItem", back_populates="price_list", cascade="all, delete-orphan")
+
+
+class PriceListItem(Base):
+    """価格表に含める商品"""
+    __tablename__ = "price_list_items"
+
+    id = Column(Integer, primary_key=True)
+    price_list_id = Column(Integer, ForeignKey("price_lists.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    visible = Column(Boolean, default=True)           # 表示/非表示制御
+    custom_price = Column(Integer, nullable=True)     # 個別価格（NULLならselling_price使用）
+    sort_order = Column(Integer, default=0)
+
+    price_list = relationship("PriceList", back_populates="items")
+    product = relationship("Product")

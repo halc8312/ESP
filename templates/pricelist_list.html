@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}価格表管理{% endblock %}
+{% block header_title %}価格表管理{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📋 価格表管理</h1>
+    <p class="page-subtitle">海外顧客向けカタログページの管理</p>
+</div>
+
+<div style="margin-bottom: 20px;">
+    <a href="{{ url_for('pricelist.pricelist_create') }}" class="btn btn-primary"
+        style="display: inline-block; padding: 10px 20px; background: #0066cc; color: white; text-decoration: none; border-radius: 6px; font-weight: 600;">
+        ＋ 新規価格表を作成
+    </a>
+</div>
+
+{% if pricelists %}
+<div style="display: grid; gap: 16px;">
+    {% for pl in pricelists %}
+    <div class="content-card">
+        <div class="content-card-body"
+            style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div style="flex: 1; min-width: 200px;">
+                <h3 style="margin: 0 0 4px 0; font-size: 16px;">{{ pl.name }}</h3>
+                <div style="font-size: 13px; color: #666;">
+                    <span>📦 {{ pl.item_count }}商品</span>
+                    <span style="margin-left: 12px;">💱 1 USD = ¥{{ pl.currency_rate }}</span>
+                    {% if pl.is_active %}
+                    <span style="margin-left: 12px; color: #22c55e;">● 公開中</span>
+                    {% else %}
+                    <span style="margin-left: 12px; color: #ef4444;">● 非公開</span>
+                    {% endif %}
+                </div>
+                {% if pl.notes %}
+                <p style="font-size: 12px; color: #888; margin: 4px 0 0;">{{ pl.notes[:80] }}{% if pl.notes|length > 80
+                    %}...{% endif %}</p>
+                {% endif %}
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                <button type="button" class="btn"
+                    style="font-size: 12px; padding: 6px 10px; background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 4px; cursor: pointer;"
+                    onclick="copyUrl('{{ request.host_url }}catalog/{{ pl.token }}')">
+                    🔗 URLコピー
+                </button>
+                <a href="{{ url_for('pricelist.pricelist_items', pricelist_id=pl.id) }}" class="btn"
+                    style="font-size: 12px; padding: 6px 10px; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 4px; text-decoration: none; color: #1565c0;">
+                    📦 商品管理
+                </a>
+                <a href="{{ url_for('pricelist.pricelist_edit', pricelist_id=pl.id) }}" class="btn"
+                    style="font-size: 12px; padding: 6px 10px; background: #fff3e0; border: 1px solid #ffcc80; border-radius: 4px; text-decoration: none; color: #e65100;">
+                    ✏️ 編集
+                </a>
+                <a href="{{ url_for('catalog.catalog_view', token=pl.token) }}" target="_blank" class="btn"
+                    style="font-size: 12px; padding: 6px 10px; background: #f3e5f5; border: 1px solid #ce93d8; border-radius: 4px; text-decoration: none; color: #7b1fa2;">
+                    👁️ プレビュー
+                </a>
+                <form action="{{ url_for('pricelist.pricelist_delete', pricelist_id=pl.id) }}" method="post"
+                    style="display: inline;" onsubmit="return confirm('本当に削除しますか？')">
+                    <button type="submit" class="btn"
+                        style="font-size: 12px; padding: 6px 10px; background: #fce4ec; border: 1px solid #ef9a9a; border-radius: 4px; color: #c62828; cursor: pointer;">
+                        🗑️ 削除
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="content-card">
+    <div class="content-card-body" style="text-align: center; padding: 40px;">
+        <p style="font-size: 18px; color: #888;">まだ価格表がありません</p>
+        <p style="font-size: 14px; color: #aaa;">「新規価格表を作成」ボタンから始めましょう</p>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function copyUrl(url) {
+        navigator.clipboard.writeText(url).then(function () {
+            alert('URLをコピーしました: ' + url);
+        }).catch(function () {
+            prompt('URLをコピーしてください:', url);
+        });
+    }
+</script>
+{% endblock %}
