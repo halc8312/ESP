@@ -32,12 +32,16 @@
                     placeholder="例: Thank you for your interest!">{{ pricelist.notes if pricelist else '' }}</textarea>
             </div>
 
-            <div class="form-group">
-                <label for="currency_rate">為替レート（1 USD = ? JPY）</label>
-                <input type="number" id="currency_rate" name="currency_rate"
-                    value="{{ pricelist.currency_rate if pricelist else 150 }}" min="1" step="1">
-                <span style="font-size: 12px; color: #888;">通貨切り替え時のUSD換算に使用します</span>
+            <div class="form-group"
+                style="background: #e8f5e9; padding: 14px; border-radius: 6px; border: 1px solid #a5d6a7;">
+                <label style="margin-bottom: 4px; font-weight: 600;">💱 為替レート</label>
+                <p style="font-size: 13px; color: #2e7d32; margin: 0;">
+                    為替レートは <strong>open.er-api.com</strong> から自動取得されます（APIキー不要）。<br>
+                    カタログページを開くと、最新のレートが自動的に適用されます。<br>
+                    API障害時は内部フォールバックレートが使用されます。
+                </p>
             </div>
+
 
             {% if pricelist %}
             <div class="form-group">

@@ -389,7 +389,8 @@
         <div class="stat-badge">
             <strong>{{ items|selectattr('in_stock')|list|length }}</strong> in stock
         </div>
-        <div class="stat-badge" id="rateDisplay">Rate: 1 USD = ¥{{ currency_rate }}</div>
+        <div class="stat-badge" id="rateDisplay">⏳ Loading live rates...</div>
+        <div class="stat-badge" id="rateSource" style="font-size: 11px; opacity: 0.7;">Powered by open.er-api.com</div>
     </div>
 
     <!-- Product Grid -->
@@ -454,6 +455,8 @@
                     ratesReady = true;
                     const jpyPerUsd = 1 / data.rates['USD'];
                     rateDisplay.textContent = `✅ Live Rate: 1 USD = ¥${Math.round(jpyPerUsd)}`;
+                    const rateSource = document.getElementById('rateSource');
+                    if (rateSource) rateSource.textContent = `✅ API: open.er-api.com (updated: ${data.time_last_update_utc || 'now'})`;
                     console.log('Exchange rates loaded from API');
                     return;
                 }
@@ -480,7 +483,9 @@
             };
             ratesReady = true;
             const rateDisplay = document.getElementById('rateDisplay');
-            rateDisplay.textContent = `Rate: 1 USD = ¥${jpyRate} (manual)`;
+            rateDisplay.textContent = `⚠️ Fallback Rate: 1 USD = ¥${jpyRate}`;
+            const rateSource = document.getElementById('rateSource');
+            if (rateSource) rateSource.textContent = '⚠️ API unavailable — using fallback rates';
         }
 
         function switchCurrency(currency) {
