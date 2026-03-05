@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}スクレイピング結果{% endblock %}
+{% block title %}商品抽出結果{% endblock %}
 {% block header_title %}取得結果{% endblock %}
 
 {% block content %}
-    <a href="{{ url_for('scrape_form') }}" class="back-link">&laquo; 条件を変更して再スクレイピング</a>
+    <a href="{{ url_for('scrape_form') }}" class="back-link">&laquo; 条件を変更して再抽出</a>
 
     <div class="page-header">
-        <h1>スクレイピング結果</h1>
+        <h1>商品抽出結果</h1>
     </div>
 
     <!-- 検索URL（モバイルでは折りたたみ） -->
@@ -50,7 +50,7 @@
     {% if error_msg %}
     <div class="content-card" style="border-color: var(--danger-color);">
         <div class="content-card-body">
-            <p class="error" style="margin: 0;">スクレイピング中にエラーが発生しました: {{ error_msg }}</p>
+            <p class="error" style="margin: 0;">商品抽出中にエラーが発生しました: {{ error_msg }}</p>
         </div>
     </div>
     {% else %}

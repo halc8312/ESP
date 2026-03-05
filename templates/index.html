@@ -22,146 +22,62 @@
     {% endfor %}
 </div>
 
-<!-- フィルタセクション（モバイルでは折りたたみ） -->
-<details class="mobile-collapsible mobile-only" id="filterSection">
-    <summary class="mobile-collapsible-header">
-        <span class="mobile-collapsible-title">🔍 フィルタ・検索</span>
-        <span class="mobile-collapsible-icon">▶</span>
+<!-- フィルタセクション（統合） -->
+<details class="filter-collapsible" id="filterSection">
+    <summary class="filter-collapsible-header">
+        <span>🔍 フィルタ・検索</span>
+        <span class="filter-toggle-icon">▼</span>
     </summary>
-    <div class="mobile-collapsible-content">
-        <form method="GET" action="{{ url_for('index') }}">
-            <div class="filter-grid">
-                <!-- キーワード検索 -->
-                <div class="filter-group filter-group--full">
-                    <label>🔍 キーワード検索</label>
-                    <input type="text" name="search" value="{{ search_keyword }}" placeholder="商品名で検索...">
-                </div>
-                <div class="filter-group">
-                    <label>サイト</label>
-                    <select name="site">
-                        <option value="">(すべて)</option>
-                        {% for s in sites %}
-                        <option value="{{ s }}" {% if s==selected_site %}selected{% endif %}>{{ s }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>ステータス</label>
-                    <select name="status">
-                        <option value="">(すべて)</option>
-                        {% for st in statuses %}
-                        <option value="{{ st }}" {% if st==selected_status %}selected{% endif %}>{{ st }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>変更</label>
-                    <select name="change_filter">
-                        <option value="">(すべて)</option>
-                        <option value="changed" {% if selected_change_filter=='changed' %}selected{% endif %}>変更ありのみ
-                        </option>
-                    </select>
-                </div>
-                <!-- 価格帯フィルタ -->
-                <div class="filter-group">
-                    <label>💰 最低価格</label>
-                    <input type="number" name="price_min" value="{{ price_min }}" placeholder="¥0" inputmode="numeric">
-                </div>
-                <div class="filter-group">
-                    <label>💰 最高価格</label>
-                    <input type="number" name="price_max" value="{{ price_max }}" placeholder="¥999,999"
-                        inputmode="numeric">
-                </div>
-                <!-- ソート -->
-                <div class="filter-group">
-                    <label>📊 並び順</label>
-                    <select name="sort">
-                        <option value="updated_desc" {% if sort_by=='updated_desc' %}selected{% endif %}>更新日（新しい順）
-                        </option>
-                        <option value="created_desc" {% if sort_by=='created_desc' %}selected{% endif %}>登録日（新しい順）
-                        </option>
-                        <option value="created_asc" {% if sort_by=='created_asc' %}selected{% endif %}>登録日（古い順）</option>
-                        <option value="price_desc" {% if sort_by=='price_desc' %}selected{% endif %}>価格（高い順）</option>
-                        <option value="price_asc" {% if sort_by=='price_asc' %}selected{% endif %}>価格（安い順）</option>
-                    </select>
-                </div>
-            </div>
-            <div class="filter-actions">
-                <button type="submit">フィルタを適用</button>
-                <a href="{{ url_for('index') }}" class="btn btn-secondary">クリア</a>
-            </div>
-        </form>
-    </div>
-</details>
-
-
-<!-- PC用フィルタ（常に表示） -->
-<div class="filter-section desktop-only">
-    <form method="GET" action="{{ url_for('index') }}">
-        <div class="filter-section-body">
-            <div class="filter-grid filter-grid--desktop">
-                <!-- キーワード検索 -->
-                <div class="filter-group filter-group--span-2">
-                    <label>🔍 キーワード検索</label>
-                    <input type="text" name="search" value="{{ search_keyword }}" placeholder="商品名で検索...">
-                </div>
-                <div class="filter-group">
-                    <label>サイト</label>
-                    <select name="site">
-                        <option value="">(すべて)</option>
-                        {% for s in sites %}
-                        <option value="{{ s }}" {% if s==selected_site %}selected{% endif %}>{{ s }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>ステータス</label>
-                    <select name="status">
-                        <option value="">(すべて)</option>
-                        {% for st in statuses %}
-                        <option value="{{ st }}" {% if st==selected_status %}selected{% endif %}>{{ st }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>変更</label>
-                    <select name="change_filter">
-                        <option value="">(すべて)</option>
-                        <option value="changed" {% if selected_change_filter=='changed' %}selected{% endif %}>変更ありのみ
-                        </option>
-                    </select>
-                </div>
-                <!-- 価格帯フィルタ -->
-                <div class="filter-group">
-                    <label>💰 最低価格</label>
-                    <input type="number" name="price_min" value="{{ price_min }}" placeholder="¥0" inputmode="numeric">
-                </div>
-                <div class="filter-group">
-                    <label>💰 最高価格</label>
-                    <input type="number" name="price_max" value="{{ price_max }}" placeholder="¥999,999"
-                        inputmode="numeric">
-                </div>
-                <!-- ソート -->
-                <div class="filter-group">
-                    <label>📊 並び順</label>
-                    <select name="sort">
-                        <option value="updated_desc" {% if sort_by=='updated_desc' %}selected{% endif %}>更新日（新しい順）
-                        </option>
-                        <option value="created_desc" {% if sort_by=='created_desc' %}selected{% endif %}>登録日（新しい順）
-                        </option>
-                        <option value="created_asc" {% if sort_by=='created_asc' %}selected{% endif %}>登録日（古い順）</option>
-                        <option value="price_desc" {% if sort_by=='price_desc' %}selected{% endif %}>価格（高い順）</option>
-                        <option value="price_asc" {% if sort_by=='price_asc' %}selected{% endif %}>価格（安い順）</option>
-                    </select>
-                </div>
-            </div>
-            <div class="filter-actions">
-                <button type="submit">フィルタを適用</button>
-                <a href="{{ url_for('index') }}" class="btn btn-secondary">クリア</a>
-            </div>
+    <form method="GET" action="{{ url_for('index') }}" class="filter-form-compact">
+        <div class="filter-row-main">
+            <input type="text" name="search" value="{{ search_keyword }}" placeholder="🔍 キーワード検索..." class="filter-input-keyword">
+            <select name="status" class="filter-select">
+                <option value="">(全在庫)</option>
+                {% for st in statuses %}
+                <option value="{{ st }}" {% if st==selected_status %}selected{% endif %}>{{ st }}</option>
+                {% endfor %}
+            </select>
+            <select name="sort" class="filter-select">
+                <option value="updated_desc" {% if sort_by=='updated_desc' %}selected{% endif %}>更新日↓</option>
+                <option value="created_desc" {% if sort_by=='created_desc' %}selected{% endif %}>登録日↓</option>
+                <option value="created_asc" {% if sort_by=='created_asc' %}selected{% endif %}>登録日↑</option>
+                <option value="price_desc" {% if sort_by=='price_desc' %}selected{% endif %}>価格↓</option>
+                <option value="price_asc" {% if sort_by=='price_asc' %}selected{% endif %}>価格↑</option>
+            </select>
+            <button type="submit" class="btn btn-primary">適用</button>
+            <a href="{{ url_for('index') }}" class="btn btn-secondary">クリア</a>
         </div>
+        <details class="filter-advanced">
+            <summary>詳細フィルタ ▼</summary>
+            <div class="filter-advanced-body">
+                <div class="filter-group">
+                    <label>サイト</label>
+                    <select name="site">
+                        <option value="">(すべて)</option>
+                        {% for s in sites %}
+                        <option value="{{ s }}" {% if s==selected_site %}selected{% endif %}>{{ s }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>変更</label>
+                    <select name="change_filter">
+                        <option value="">(すべて)</option>
+                        <option value="changed" {% if selected_change_filter=='changed' %}selected{% endif %}>変更ありのみ</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>最低価格</label>
+                    <input type="number" name="price_min" value="{{ price_min }}" placeholder="¥0" inputmode="numeric">
+                </div>
+                <div class="filter-group">
+                    <label>最高価格</label>
+                    <input type="number" name="price_max" value="{{ price_max }}" placeholder="¥999,999" inputmode="numeric">
+                </div>
+            </div>
+        </details>
     </form>
-</div>
+</details>
 
 
 <!-- エクスポート用フォーム -->
@@ -195,42 +111,8 @@
                 </div>
             </div>
 
-            <!-- eBay設定 -->
-            <details class="collapsible-section mt-2">
-                <summary>eBay 詳細設定</summary>
-                <div class="actions">
-                    <div class="filter-group">
-                        <label>カテゴリID</label>
-                        <input type="text" name="ebay_category_id" value="{{ default_ebay_category_id }}"
-                            placeholder="例: 183454">
-                    </div>
-                    <div class="filter-group">
-                        <label>ConditionID</label>
-                        <input type="text" name="ebay_condition_id" value="{{ default_ebay_condition_id }}"
-                            placeholder="新品=1000">
-                    </div>
-                    <div class="filter-group">
-                        <label>PaymentProfile</label>
-                        <input type="text" name="ebay_payment_profile" value="{{ default_ebay_payment_profile }}">
-                    </div>
-                    <div class="filter-group">
-                        <label>ReturnProfile</label>
-                        <input type="text" name="ebay_return_profile" value="{{ default_ebay_return_profile }}">
-                    </div>
-                    <div class="filter-group">
-                        <label>ShippingProfile</label>
-                        <input type="text" name="ebay_shipping_profile" value="{{ default_ebay_shipping_profile }}">
-                    </div>
-                    <div class="filter-group">
-                        <label>PayPalEmail</label>
-                        <input type="text" name="ebay_paypal_email" value="{{ default_ebay_paypal_email }}">
-                    </div>
-                </div>
-            </details>
-
             <div class="export-btn-grid mt-2">
                 <button type="submit" formaction="{{ url_for('export_shopify') }}">Shopify CSV</button>
-                <button type="submit" formaction="{{ url_for('export_ebay') }}">eBay CSV</button>
                 <button type="submit" formaction="{{ url_for('export_stock_update') }}">在庫更新CSV</button>
                 <button type="submit" formaction="{{ url_for('export_price_update') }}">価格更新CSV</button>
             </div>
@@ -263,46 +145,8 @@
                 </div>
             </div>
 
-            <!-- eBay設定（折りたたみ） -->
-            <details class="collapsible-section mt-2">
-                <summary>eBay 詳細設定</summary>
-                <div class="actions">
-                    <div class="filter-group">
-                        <label>eBay カテゴリID (Category)</label>
-                        <input type="text" name="ebay_category_id" value="{{ default_ebay_category_id }}"
-                            placeholder="例: 183454">
-                    </div>
-                    <div class="filter-group">
-                        <label>eBay ConditionID</label>
-                        <input type="text" name="ebay_condition_id" value="{{ default_ebay_condition_id }}"
-                            placeholder="新品=1000 / 中古=3000">
-                    </div>
-                    <div class="filter-group">
-                        <label>PaymentProfileName</label>
-                        <input type="text" name="ebay_payment_profile" value="{{ default_ebay_payment_profile }}"
-                            placeholder="例: payAddress">
-                    </div>
-                    <div class="filter-group">
-                        <label>ReturnProfileName</label>
-                        <input type="text" name="ebay_return_profile" value="{{ default_ebay_return_profile }}"
-                            placeholder="例: return Buyer pays for shipping">
-                    </div>
-                    <div class="filter-group">
-                        <label>ShippingProfileName</label>
-                        <input type="text" name="ebay_shipping_profile" value="{{ default_ebay_shipping_profile }}"
-                            placeholder="例: [US DDP] $132.01–$198">
-                    </div>
-                    <div class="filter-group">
-                        <label>PayPalEmailAddress</label>
-                        <input type="text" name="ebay_paypal_email" value="{{ default_ebay_paypal_email }}"
-                            placeholder="例: your-paypal@example.com">
-                    </div>
-                </div>
-            </details>
-
             <div class="export-btn-grid mt-2">
                 <button type="submit" formaction="{{ url_for('export_shopify') }}">Shopify用CSV</button>
-                <button type="submit" formaction="{{ url_for('export_ebay') }}">eBay File Exchange 用 CSV</button>
                 <button type="submit" formaction="{{ url_for('export_stock_update') }}">Shopify 在庫更新CSV</button>
                 <button type="submit" formaction="{{ url_for('export_price_update') }}">Shopify 価格更新CSV</button>
                 <button type="submit" formaction="{{ url_for('export.export_images') }}">📷 画像ZIP</button>
@@ -331,19 +175,18 @@
     </div>
 
 
+    {% set site_display = {'mercari': 'メルカリ', 'yahuoku': 'ヤフオク', 'yahoo': 'ヤフショ', 'snkrdunk': 'スニダン', 'surugaya': '駿河屋', 'rakuma': 'ラクマ', 'offmall': 'オフモール'} %}
     <div class="table-responsive product-table-mobile-hidden">
 
         <table class="product-table">
             <tr>
                 <th>選択</th>
                 <th class="hide-mobile">ID</th>
-                <th class="hide-mobile">サイト</th>
                 <th>サムネイル</th>
                 <th>商品名</th>
                 <th>価格</th>
-                <th>ステータス</th>
-                <th class="hide-mobile">画像枚数</th>
-                <th>元URL</th>
+                <th>在庫</th>
+                <th>抽出サイト</th>
                 <th>詳細</th>
                 <th class="hide-mobile">最終更新</th>
             </tr>
@@ -352,14 +195,11 @@
             none %}
             {% set thumb_url = first_snapshot.image_urls.split('|')[0] if first_snapshot and first_snapshot.image_urls
             else '' %}
-            {% set img_count = first_snapshot.image_urls.split('|')|length if first_snapshot and
-            first_snapshot.image_urls else 0 %}
             <tr class="{{ 'changed' if p.has_changed else '' }}">
                 <td>
                     <input type="checkbox" name="id" value="{{ p.id }}">
                 </td>
                 <td class="hide-mobile">{{ p.id }}</td>
-                <td class="hide-mobile">{{ p.site }}</td>
                 <td>
                     {% if thumb_url %}
                     <img src="{{ thumb_url }}" alt="商品サムネイル" class="product-thumb">
@@ -368,19 +208,26 @@
                     {% endif %}
                 </td>
                 <td class="product-title-cell">{{ p.custom_title or p.last_title }}</td>
+                <td class="price-cell">
+                    <div class="price-row price-cost">
+                        <span class="price-label">仕入:</span>
+                        <span class="price-value">{% if p.last_price is not none %}¥{{ "{:,}".format(p.last_price) }}{% else %}—{% endif %}</span>
+                    </div>
+                    <div class="price-row price-sell">
+                        <span class="price-label">販売:</span>
+                        <span class="price-value">{% if p.selling_price is not none %}¥{{ "{:,}".format(p.selling_price) }}{% else %}<span class="text-muted">未設定</span>{% endif %}</span>
+                    </div>
+                </td>
                 <td>
-                    {% if p.selling_price is not none %}
-                    ¥{{ "{:,}".format(p.selling_price) }}
-                    {% if p.last_price is not none and p.last_price != p.selling_price %}
-                    <br><span style="font-size:11px; color:#888;">仕入: ¥{{ "{:,}".format(p.last_price) }}</span>
-                    {% endif %}
-                    {% elif p.last_price is not none %}
-                    ¥{{ "{:,}".format(p.last_price) }}
+                    {% if p.last_status in ['出品中', 'active', 'on_sale', 'selling', '在庫あり', '販売中', '在庫○'] %}
+                        <span class="stock-badge stock-in">在庫あり</span>
+                    {% else %}
+                        <span class="stock-badge stock-out">在庫なし</span>
                     {% endif %}
                 </td>
-                <td>{{ p.last_status }}</td>
-                <td class="hide-mobile">{{ img_count }}</td>
-                <td><a href="{{ p.source_url }}" target="_blank">開く</a></td>
+                <td>
+                    <a href="{{ p.source_url }}" target="_blank" rel="noopener">{{ site_display.get(p.site, p.site) }}</a>
+                </td>
                 <td><a href="{{ url_for('product_detail', product_id=p.id) }}">編集</a></td>
                 <td class="hide-mobile">{{ p.updated_at }}</td>
             </tr>
@@ -406,21 +253,20 @@
             <div class="product-card-content">
                 <div class="product-card-title">{{ p.custom_title or p.last_title }}</div>
                 <div class="product-card-price">
-                    {% if p.selling_price is not none %}
-                    ¥{{ "{:,}".format(p.selling_price) }}
-                    {% elif p.last_price is not none %}
-                    ¥{{ "{:,}".format(p.last_price) }}
-                    {% endif %}
+                    <div class="price-row price-sell"><span class="price-label">販売:</span> <span class="price-value">{% if p.selling_price is not none %}¥{{ "{:,}".format(p.selling_price) }}{% else %}<span class="text-muted">未設定</span>{% endif %}</span></div>
+                    <div class="price-row price-cost"><span class="price-label">仕入:</span> <span class="price-value">{% if p.last_price is not none %}¥{{ "{:,}".format(p.last_price) }}{% else %}—{% endif %}</span></div>
                 </div>
                 <div class="product-card-meta">
-                    <span class="product-card-status {{ 'active' if p.last_status == '出品中' else 'draft' }}">{{
-                        p.last_status }}</span>
-                    <span>{{ p.site }}</span>
+                    {% if p.last_status in ['出品中', 'active', 'on_sale', 'selling', '在庫あり', '販売中', '在庫○'] %}
+                        <span class="product-card-status active stock-badge stock-in">在庫あり</span>
+                    {% else %}
+                        <span class="product-card-status draft stock-badge stock-out">在庫なし</span>
+                    {% endif %}
                 </div>
             </div>
             <div class="product-card-actions">
                 <a href="{{ url_for('product_detail', product_id=p.id) }}" class="btn">編集</a>
-                <a href="{{ p.source_url }}" target="_blank" class="btn btn-muted">元</a>
+                <a href="{{ p.source_url }}" target="_blank" rel="noopener" class="btn btn-muted">{{ site_display.get(p.site, p.site) }}</a>
             </div>
         </div>
         {% endfor %}
