@@ -2379,3 +2379,76 @@ button:active {
         right: calc(24px + var(--sidebar-width));
     }
 }
+
+/* ── Phase 1: Stock badge ── */
+.stock-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+.stock-badge.stock-in {
+    background: #dcfce7;
+    color: #166534;
+}
+.stock-badge.stock-out {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+/* ── Phase 1: Price cell ── */
+.price-cell { line-height: 1.6; }
+.price-row { display: flex; gap: 4px; font-size: 13px; align-items: baseline; }
+.price-label { color: #888; min-width: 36px; }
+.price-cost .price-value { color: #333; }
+.price-sell .price-value { color: #0066cc; font-weight: 600; }
+
+/* ── Phase 1: Compact filter ── */
+.filter-collapsible { border: 1px solid var(--border-color, #e5e7eb); border-radius: 8px; margin-bottom: 16px; background: #fff; }
+.filter-collapsible-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; cursor: pointer; font-weight: 600; list-style: none; }
+.filter-collapsible-header::-webkit-details-marker { display: none; }
+.filter-form-compact { padding: 12px 16px; }
+.filter-row-main { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.filter-input-keyword { flex: 1 1 180px; min-width: 120px; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
+.filter-select { flex: 0 1 140px; min-width: 100px; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
+.filter-advanced { margin-top: 10px; }
+.filter-advanced summary { cursor: pointer; font-size: 13px; color: #666; padding: 4px 0; }
+.filter-advanced-body { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; }
+.filter-advanced-body .filter-group { min-width: 140px; }
+
+/* ── Phase 1: Loading overlay ── */
+.loading-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+.loading-content {
+    background: white;
+    padding: 40px;
+    border-radius: 12px;
+    text-align: center;
+    min-width: 280px;
+}
+.loading-spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid #e5e7eb;
+    border-top-color: #0066cc;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 16px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-message { font-size: 16px; font-weight: 600; margin: 0 0 8px; color: #111; }
+.loading-sub { font-size: 13px; color: #666; margin: 0; }
+
+/* ── Phase 1: Compact scrape form ── */
+.scrape-form-compact .form-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.scrape-form-compact .form-row .form-group { flex: 1 1 120px; margin-bottom: 0; }
+.scrape-form-compact .form-row .form-group--keyword { flex: 2 1 200px; }
+.scrape-form-compact .form-row .form-group--submit { flex: 0 0 auto; }
