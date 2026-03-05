@@ -518,9 +518,15 @@ def inline_update_product(product_id):
         
         <div id="bulkPriceMarginInput" class="form-group">
             <label>利益率 (%)</label>
-            <input type="number" id="bulkMarginValue" min="0" max="200" step="1" value="20"
+            <input type="number" id="bulkMarginValue" min="0" max="99" step="1" value="20"
                    placeholder="例: 20 (20%の利益率)">
-            <span class="text-muted text-small">仕入価格 ÷ (1 - 利益率/100) = 販売価格</span>
+            <!-- 
+                ※「利益率」は「販売価格に対する利益の割合」として計算します（既存UIの定義に準拠）。
+                   利益率20%の場合: 利益 = 販売価格 × 0.20 → 販売価格 = 仕入価格 ÷ (1 - 0.20) = 仕入価格 × 1.25
+                   ※「仕入価格に対する上乗せ率（markup）」ではありません（それは markup = 1.20 = 20%上乗せ）。
+                   100%以上は設定不可（販売価格が無限大になるため）。
+            -->
+            <span class="text-muted text-small">利益率 = 利益 ÷ 販売価格 × 100。販売価格 = 仕入価格 ÷ (1 − 利益率/100)</span>
         </div>
         
         <div id="bulkPriceFixedInput" class="form-group" style="display:none;">
@@ -562,6 +568,11 @@ def bulk_price_update():
     if mode not in ALLOWED_MODES:
         return jsonify({'error': 'Invalid mode'}), 400
     
+    # 利益率は 0以上100未満の値のみ受け付ける（100%以上は販売価格が無限大またはマイナスになるため）
+    if mode in ('margin', 'margin_plus_fixed'):
+        if not (0 <= margin < 100):
+            return jsonify({'error': '利益率は0以上100未満の値を入力してください'}), 400
+    
     session_db = SessionLocal()
     try:
         query = session_db.query(Product).filter_by(user_id=current_user.id)
@@ -577,15 +588,18 @@ def bulk_price_update():
             elif p.last_price is not None:
                 cost = p.last_price
                 if mode == 'margin':
-                    # 仕入価格 ÷ (1 - 利益率/100)
-                    if margin < 100:
+                    # 「利益率」は販売価格に対する利益の割合（既存UIの定義に準拠）
+                    # 利益率20% → 販売価格 = 仕入価格 ÷ (1 - 0.20) = 仕入価格 × 1.25
+                    # ※利益率は必ず 0 以上 100 未満の値を受け付ける（バリデーション済み）
+                    if 0 <= margin < 100:
                         p.selling_price = int(cost / (1 - margin / 100))
                 elif mode == 'fixed_add':
                     p.selling_price = cost + int(fixed)
                 elif mode == 'fixed':
                     p.selling_price = int(fixed)
                 elif mode == 'margin_plus_fixed':
-                    if margin < 100:
+                    # 利益率部分 + 固定額上乗せ
+                    if 0 <= margin < 100:
                         p.selling_price = int(cost / (1 - margin / 100)) + int(fixed)
             p.updated_at = datetime.utcnow()
             updated += 1
