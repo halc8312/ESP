@@ -1,6 +1,8 @@
 """
 Surugaya scraper - Product detail scraping for suruga-ya.jp
-Uses curl_cffi to bypass Cloudflare protection by impersonating Chrome's TLS fingerprint.
+Uses Scrapling (backed by curl_cffi) for HTTP fetching with stealthy Chrome
+impersonation to bypass Cloudflare protection. HTML parsing is done with
+BeautifulSoup after the page is fetched.
 """
 import html
 import json
@@ -11,7 +13,6 @@ import time
 from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
-from curl_cffi import requests
 
 logger = logging.getLogger("surugaya")
 
@@ -83,24 +84,13 @@ SELECTORS = {
 
 
 def get_session():
-    """Create a curl_cffi session that impersonates Chrome."""
-    session = requests.Session(impersonate="chrome120")
-    session.headers.update({
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-        "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1",
-        "Referer": BASE_URL + "/",
-        "Pragma": "no-cache",
-        "Cache-Control": "no-cache",
-    })
-    return session
+    """
+    Create a scraping session backed by Scrapling FetcherSession.
+    Impersonates Chrome with auto-generated stealthy headers (stealthy_headers=True),
+    replacing the previous manual 10-line header configuration.
+    """
+    from services.scraping_client import get_scraping_session
+    return get_scraping_session()
 
 
 def _is_cloudflare_block(resp) -> bool:
@@ -503,12 +493,8 @@ def _search_product_urls_via_yahoo(keyword: str, max_items: int) -> list:
     urls = []
 
     try:
-        session = requests.Session(impersonate="chrome120")
-        session.headers.update({
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            "Referer": "https://search.yahoo.co.jp/",
-        })
+        from services.scraping_client import get_scraping_session
+        session = get_scraping_session()
         resp = session.get(search_url, timeout=20)
         if resp.status_code >= 400:
             logger.warning(f"Yahoo fallback search returned {resp.status_code}")

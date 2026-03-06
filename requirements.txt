@@ -12,3 +12,4 @@ Flask-APScheduler
 undetected-chromedriver
 beautifulsoup4
 curl_cffi
+scrapling

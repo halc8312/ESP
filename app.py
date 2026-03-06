@@ -72,7 +72,18 @@ from services.monitor_service import MonitorService
 
 scheduler = APScheduler()
 scheduler.init_app(app)
-scheduler.start()
+
+# Prevent duplicate scheduler startup when Gunicorn spawns multiple workers.
+# Use an advisory file lock so only one worker process runs the scheduler.
+import fcntl as _fcntl
+import tempfile as _tempfile
+_scheduler_lock_path = os.path.join(_tempfile.gettempdir(), "esp_scheduler.lock")
+try:
+    _scheduler_lock_fd = open(_scheduler_lock_path, "w")
+    _fcntl.flock(_scheduler_lock_fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+    scheduler.start()
+except (IOError, OSError):
+    pass  # Another worker process is already running the scheduler
 
 # Register Job
 @scheduler.task('interval', id='patrol_job', minutes=15)

@@ -333,31 +333,159 @@ def scrape_item_detail(driver, url: str):
         "variants": next_data_variants
     }
 
+def scrape_item_detail_light(url: str) -> dict:
+    """
+    Light HTTP-only scrape for Yahoo Shopping using Scrapling Fetcher.
+    Extracts data from the embedded __NEXT_DATA__ JSON without launching a browser.
+    Memory: ~5 MB (vs ~400 MB for Chrome). Falls back to returning an empty dict on error.
+    """
+    result = {
+        "url": url, "title": "", "price": None, "status": "on_sale",
+        "description": "", "image_urls": [], "variants": []
+    }
+    try:
+        from services.scraping_client import fetch_static
+        page = fetch_static(url)
+
+        script_el = page.find("#__NEXT_DATA__")
+        if not script_el:
+            return {}
+
+        json_str = str(script_el.text or "").strip()
+        if not json_str:
+            return {}
+
+        data = json.loads(json_str)
+        item = data.get("props", {}).get("pageProps", {}).get("item", {})
+        if not item:
+            return {}
+
+        # Title
+        if item.get("name"):
+            result["title"] = item["name"]
+
+        # Price
+        if item.get("applicablePrice"):
+            result["price"] = int(item["applicablePrice"])
+        elif item.get("price"):
+            result["price"] = int(item["price"])
+
+        # Images
+        image_urls = []
+        json_images = item.get("images")
+        if isinstance(json_images, dict):
+            image_list = []
+            for key in ("list", "itemImageList", "detailImageList"):
+                image_list.extend(json_images.get(key, []))
+            if "mainImage" in json_images:
+                image_list.append(json_images["mainImage"])
+            for img in image_list:
+                if isinstance(img, dict):
+                    img_url = img.get("src") or img.get("url") or img.get("path")
+                    if not img_url and img.get("id"):
+                        img_url = f"https://item-shopping.c.yimg.jp/i/n/{img['id']}"
+                elif isinstance(img, str):
+                    img_url = img
+                else:
+                    img_url = ""
+                if img_url and img_url.startswith("http") and img_url not in image_urls:
+                    image_urls.append(img_url)
+        result["image_urls"] = image_urls
+
+        # Variants (two-axis)
+        next_data_variants = []
+        spec_list = item.get("specList", [])
+        base_price = result["price"]
+
+        if isinstance(item.get("stockTableTwoAxis"), dict):
+            two_axis = item["stockTableTwoAxis"]
+            first_opt = two_axis.get("firstOption", {})
+            axis1_label = first_opt.get("name") or (spec_list[1].get("name") if len(spec_list) > 1 else "Option 1")
+            for opt1 in first_opt.get("choiceList", []):
+                v_name1 = opt1.get("choiceName")
+                sec_opt = opt1.get("secondOption", {})
+                axis2_label = sec_opt.get("name") or (spec_list[0].get("name") if len(spec_list) > 0 else "Option 2")
+                for opt2 in sec_opt.get("choiceList", []):
+                    v_name2 = opt2.get("choiceName")
+                    stock_info = opt2.get("stock", {})
+                    qty = stock_info.get("quantity", 0)
+                    v_price = opt2.get("price") or base_price
+                    if v_name1 and v_name2:
+                        next_data_variants.append({
+                            "option1_name": axis1_label, "option1_value": v_name1,
+                            "option2_name": axis2_label, "option2_value": v_name2,
+                            "price": v_price, "inventory_qty": qty
+                        })
+        elif isinstance(item.get("stockTableOneAxis"), dict):
+            one_axis = item["stockTableOneAxis"]
+            first_opt = one_axis.get("firstOption", {})
+            axis1_label = first_opt.get("name") or (spec_list[0].get("name") if len(spec_list) > 0 else "Option 1")
+            for opt1 in first_opt.get("choiceList", []):
+                v_name1 = opt1.get("choiceName")
+                stock_info = opt1.get("stock", {})
+                qty = stock_info.get("quantity", 0)
+                v_price = opt1.get("price") or base_price
+                if v_name1:
+                    next_data_variants.append({
+                        "option1_name": axis1_label, "option1_value": v_name1,
+                        "price": v_price, "inventory_qty": qty
+                    })
+        result["variants"] = next_data_variants
+
+        # Status
+        stock = item.get("stock", {})
+        if isinstance(stock, dict) and (stock.get("isSoldOut") or stock.get("quantity", 1) <= 0):
+            result["status"] = "sold"
+
+        print(f"DEBUG [light]: Yahoo light scrape success -> {result['title'][:40]}")
+        return result
+
+    except Exception as e:
+        print(f"Yahoo Light Scrape Error: {e}")
+        return {}
+
+
 def scrape_single_item(url: str, headless: bool = True):
     """
-    One-shot scraping for Yahoo Shopping
+    One-shot scraping for Yahoo Shopping.
+    Tries HTTP-only Scrapling fetch first; falls back to Selenium on failure.
     """
-    driver = None
     metrics = get_metrics()
     metrics.start('yahoo', 'single')
     try:
         print(f"DEBUG: Starting Yahoo scrape for {url}")
-        driver = create_driver(headless=headless)
-        data = scrape_item_detail(driver, url)
-        log_scrape_result('yahoo', url, data)
-        if data["title"]:
-            print(f"DEBUG: Success -> {data['title']}")
-            print(f"DEBUG: Variants found -> {len(data['variants'])}")
-        metrics.finish()
-        return [data]
+
+        # Attempt 1: HTTP-only (fast, low memory)
+        data = scrape_item_detail_light(url)
+        if data and data.get("title"):
+            log_scrape_result('yahoo', url, data)
+            print(f"DEBUG: Light scrape success -> {data['title']}")
+            print(f"DEBUG: Variants found -> {len(data.get('variants', []))}")
+            metrics.finish()
+            return [data]
+
+        print(f"DEBUG: Light scrape failed or empty, falling back to Selenium")
+
+        # Attempt 2: Selenium fallback
+        driver = None
+        try:
+            driver = create_driver(headless=headless)
+            data = scrape_item_detail(driver, url)
+            log_scrape_result('yahoo', url, data)
+            if data["title"]:
+                print(f"DEBUG: Selenium success -> {data['title']}")
+                print(f"DEBUG: Variants found -> {len(data['variants'])}")
+            metrics.finish()
+            return [data]
+        finally:
+            if driver:
+                driver.quit()
+
     except Exception as e:
         print(f"Yahoo Scrape Error: {e}")
         metrics.record_attempt(False, url, str(e))
         metrics.finish()
         return []
-    finally:
-        if driver:
-            driver.quit()
 
 
 def scrape_search_result(
