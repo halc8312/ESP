@@ -92,14 +92,21 @@ def fetch_static(url: str, timeout: int = 30, **kwargs):
     return Fetcher.get(url, stealthy_headers=True, timeout=timeout, **kwargs)
 
 
-def fetch_dynamic(url: str, **kwargs):
+def fetch_dynamic(url: str, headless: bool = True, network_idle: bool = True, **kwargs):
     """
-    Fetch a URL using Scrapling StealthyFetcher (Playwright-based browser).
-    Use for JS-rendered SPAs where HTTP-only fetching is insufficient.
+    Scrapling StealthyFetcher（Playwright ベース）でページ取得。
 
-    Note: Requires Playwright browsers to be installed first via:
-      python -m scrapling install
-    Currently intended for future migration of Mercari / SNKRDUNK scrapers.
+    前提: Dockerfile に `RUN python -m scrapling install` が追加済みであること。
+
+    Args:
+        url: 取得するURL
+        headless: ヘッドレスモードで実行するか (default: True)
+        network_idle: ネットワークアイドル待機するか (default: True)
     """
     from scrapling import StealthyFetcher
-    return StealthyFetcher.fetch(url, **kwargs)
+    return StealthyFetcher.fetch(
+        url,
+        headless=headless,
+        network_idle=network_idle,
+        **kwargs
+    )
