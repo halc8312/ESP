@@ -329,6 +329,55 @@ def scrape_item_detail_light(url: str) -> dict:
             result["auction_id"] = match.group(1)
         result["auction_id"] = item_detail.get("auctionID", result["auction_id"])
 
+        # Images
+        images_data = item_detail.get("images") or item_detail.get("imageList") or []
+        if isinstance(images_data, list):
+            for img in images_data:
+                if isinstance(img, dict):
+                    img_url = img.get("url") or img.get("src") or img.get("image") or img.get("imageUrl")
+                elif isinstance(img, str):
+                    img_url = img
+                else:
+                    img_url = None
+                if img_url and img_url.startswith("http") and img_url not in result["image_urls"]:
+                    result["image_urls"].append(img_url)
+        elif isinstance(images_data, dict):
+            for key in ("list", "itemImageList", "detailImageList"):
+                for img in images_data.get(key, []):
+                    img_url = img.get("url") or img.get("src") if isinstance(img, dict) else img
+                    if img_url and img_url.startswith("http") and img_url not in result["image_urls"]:
+                        result["image_urls"].append(img_url)
+        # Fallback: og:image meta tag
+        if not result["image_urls"]:
+            og_img = page.css("meta[property='og:image']")
+            if og_img:
+                img_url = str(og_img[0].attrib.get("content", ""))
+                if img_url and img_url.startswith("http"):
+                    result["image_urls"].append(img_url)
+
+        # Description
+        desc = item_detail.get("description") or item_detail.get("itemDescription") or ""
+        if not desc:
+            meta_desc = page.css("meta[name='description']")
+            if meta_desc:
+                desc = str(meta_desc[0].attrib.get("content", ""))
+        result["description"] = desc
+
+        # Status: check auction ended flags
+        is_finished = (
+            item_detail.get("isFinished")
+            or item_detail.get("isClosed")
+            or item_detail.get("isEnd")
+            or item_detail.get("status", "") in ("closed", "finished", "ended")
+        )
+        if is_finished:
+            result["status"] = "sold"
+        else:
+            # Fallback: check page text for ended indicators
+            page_text = str(page.get_all_text())
+            if "終了" in page_text or "落札" in page_text:
+                result["status"] = "sold"
+
         # Default variant
         if result["price"]:
             result["variants"] = [{

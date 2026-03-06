@@ -3,6 +3,7 @@ SNKRDUNK (snkrdunk.com) scraping module.
 Based on rakuma_db.py architecture, adapted for SNKRDUNK's DOM structure.
 """
 import logging
+import json
 import re
 import time
 from selenium.webdriver.common.by import By
@@ -152,16 +153,160 @@ def scrape_item_detail(driver, url: str):
     }
 
 
+def scrape_item_detail_light(url: str) -> dict:
+    """
+    Light HTTP-only scrape for SNKRDUNK using Scrapling Fetcher.
+    Extracts data from the embedded __NEXT_DATA__ JSON without launching a browser.
+    Memory: ~5 MB (vs ~400 MB for Chrome). Returns empty dict on failure.
+    """
+    try:
+        from services.scraping_client import fetch_static
+        page = fetch_static(url)
+
+        script_el = page.find("#__NEXT_DATA__")
+        if not script_el:
+            return {}
+
+        json_str = str(script_el.text or "").strip()
+        if not json_str:
+            return {}
+
+        data = json.loads(json_str)
+        page_props = data.get("props", {}).get("pageProps", {})
+
+        # Explore multiple common Next.js paths for product data
+        item = (
+            page_props.get("item")
+            or page_props.get("product")
+            or page_props.get("initialState", {}).get("item", {})
+            or page_props.get("initialState", {}).get("product", {})
+            or {}
+        )
+
+        if not item:
+            return {}
+
+        result = {
+            "url": url,
+            "title": "",
+            "price": None,
+            "status": "on_sale",
+            "description": "",
+            "image_urls": [],
+            "variants": [],
+        }
+
+        # Title
+        result["title"] = (
+            item.get("name")
+            or item.get("title")
+            or item.get("productName")
+            or item.get("nameEn")
+            or ""
+        )
+
+        # Price
+        price_raw = (
+            item.get("minPrice")
+            or item.get("price")
+            or item.get("lowestPrice")
+            or item.get("currentPrice")
+        )
+        if price_raw is not None:
+            try:
+                result["price"] = int(price_raw)
+            except (ValueError, TypeError):
+                m = re.search(r"([\d,]+)", str(price_raw))
+                if m:
+                    result["price"] = int(m.group(1).replace(",", ""))
+
+        # Images
+        images_raw = item.get("images") or item.get("imageList") or item.get("thumbnails") or []
+        if isinstance(images_raw, list):
+            for img in images_raw:
+                if isinstance(img, dict):
+                    img_url = img.get("url") or img.get("src") or img.get("imageUrl")
+                elif isinstance(img, str):
+                    img_url = img
+                else:
+                    img_url = None
+                if img_url and img_url.startswith("http") and img_url not in result["image_urls"]:
+                    result["image_urls"].append(img_url)
+        elif isinstance(images_raw, dict):
+            for key in ("list", "main", "items"):
+                for img in images_raw.get(key, []):
+                    img_url = img.get("url") or img.get("src") if isinstance(img, dict) else img
+                    if img_url and img_url.startswith("http") and img_url not in result["image_urls"]:
+                        result["image_urls"].append(img_url)
+        # Fallback: og:image
+        if not result["image_urls"]:
+            og_img = page.css("meta[property='og:image']")
+            if og_img:
+                src = str(og_img[0].attrib.get("content", ""))
+                if src and src.startswith("http"):
+                    result["image_urls"].append(src)
+
+        # Description
+        result["description"] = (
+            item.get("description")
+            or item.get("itemDescription")
+            or item.get("detail")
+            or ""
+        )
+        if not result["description"]:
+            meta_desc = page.css("meta[name='description']")
+            if meta_desc:
+                result["description"] = str(meta_desc[0].attrib.get("content", ""))
+
+        # Status
+        sold_out = (
+            item.get("isSoldOut")
+            or item.get("soldOut")
+            or item.get("status", "") in ("sold_out", "sold", "inactive", "SOLD_OUT")
+            or item.get("stock", 1) == 0
+        )
+        if sold_out:
+            result["status"] = "sold"
+        else:
+            page_text = str(page.get_all_text())
+            if "SOLD OUT" in page_text or "売り切れ" in page_text or "在庫なし" in page_text:
+                result["status"] = "sold"
+
+        if result["title"]:
+            print(f"DEBUG [light]: SNKRDUNK light scrape success -> {result['title'][:40]}")
+        return result
+
+    except Exception as e:
+        logging.debug(f"SNKRDUNK light scrape error: {e}")
+        return {}
+
+
 def scrape_single_item(url: str, headless: bool = True):
     """
     指定されたSNKRDUNK商品URLを1件だけスクレイピングして list[dict] を返す。
+    Scrapling HTTP-onlyで試み、失敗時はSeleniumにフォールバック。
     save_scraped_items_to_db にそのまま渡せるようにリストに包んでいる。
     """
-    driver = None
     metrics = get_metrics()
     metrics.start('snkrdunk', 'single')
+
+    # Attempt 1: HTTP-only (fast, low memory)
     try:
-        print(f"DEBUG: Starting SNKRDUNK scrape_single_item for {url}")
+        data = scrape_item_detail_light(url)
+        if data and data.get("title"):
+            log_scrape_result('snkrdunk', url, data)
+            print(f"DEBUG: SNKRDUNK light scrape success -> {data['title']}")
+            metrics.finish()
+            return [data]
+    except Exception as e:
+        logging.debug(f"SNKRDUNK light scrape attempt failed: {e}")
+
+    logging.debug("SNKRDUNK light scrape failed, falling back to Selenium")
+
+    # Attempt 2: Selenium fallback
+    driver = None
+    try:
+        print(f"DEBUG: Starting SNKRDUNK Selenium scrape for {url}")
         driver = create_driver(headless=headless)
 
         data = scrape_item_detail(driver, url)

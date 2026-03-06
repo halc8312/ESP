@@ -272,6 +272,27 @@ def scrape_item_detail_light(url: str) -> dict:
         elif isinstance(images, list):
             result["image_urls"] = [img for img in images if isinstance(img, str)]
 
+        # Additional images from HTML (thumbnails, sub-images)
+        extra_imgs = page.css(".product-detail-image-sub__button img, .product-detail-image-main img, img[src*='hardoff']")
+        for img_el in extra_imgs:
+            src = str(img_el.attrib.get("src", ""))
+            if src and src.startswith("http") and src not in result["image_urls"]:
+                result["image_urls"].append(src)
+
+        # Condition from JSON-LD itemCondition
+        item_condition = json_ld.get("itemCondition", "")
+        if item_condition:
+            # Extract readable label from URL like "https://schema.org/UsedCondition"
+            result["condition"] = item_condition.split("/")[-1].replace("Condition", "")
+        # Fallback: CSS selectors for condition/rank display on page
+        if not result["condition"]:
+            for sel in (".product-detail-spec-list__value", ".product-rank", "[class*='rank']"):
+                cond_els = page.css(sel)
+                if cond_els:
+                    result["condition"] = str(cond_els[0].text or "").strip()
+                    if result["condition"]:
+                        break
+
         if result["price"]:
             result["variants"] = [{
                 "option1_value": result.get("condition") or "Default Title",

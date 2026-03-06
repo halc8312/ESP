@@ -432,6 +432,14 @@ def scrape_item_detail_light(url: str) -> dict:
                     })
         result["variants"] = next_data_variants
 
+        # Description
+        desc = item.get("description") or item.get("itemDescription") or ""
+        if not desc:
+            meta_desc = page.css("meta[name='description']")
+            if meta_desc:
+                desc = str(meta_desc[0].attrib.get("content", ""))
+        result["description"] = desc
+
         # Status
         stock = item.get("stock", {})
         if isinstance(stock, dict) and (stock.get("isSoldOut") or stock.get("quantity", 1) <= 0):
