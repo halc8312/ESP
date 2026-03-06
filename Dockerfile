@@ -49,7 +49,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Playwright ブラウザのインストール（scrapling 経由）
 # これにより Chromium + 必要なシステムライブラリがインストールされる
 # ソースコードのコピー前に実行することで Docker キャッシュを活用
-RUN python -m scrapling install
+RUN scrapling install
 
 # ソースコードのコピー
 COPY . .
