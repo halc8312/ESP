@@ -13,3 +13,5 @@ undetected-chromedriver
 beautifulsoup4
 curl_cffi
 scrapling
+playwright
+browserforge
