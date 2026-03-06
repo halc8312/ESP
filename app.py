@@ -138,6 +138,7 @@ from routes.archive import archive_bp
 from routes.trash import trash_bp
 from routes.pricelist import pricelist_bp
 from routes.catalog import catalog_bp
+from routes.api import api_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(shops_bp)
@@ -152,6 +153,7 @@ app.register_blueprint(archive_bp)
 app.register_blueprint(trash_bp)
 app.register_blueprint(pricelist_bp)
 app.register_blueprint(catalog_bp)
+app.register_blueprint(api_bp)
 
 
 
