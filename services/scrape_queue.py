@@ -50,7 +50,8 @@ class ScrapeJob:
 
 
 # ブラウザ（Selenium/Playwright）が必要なサイト
-BROWSER_SITES = frozenset({"mercari", "rakuma"})
+# Stage 1 完了: "rakuma" を削除（StealthyFetcher / Playwright で http_executor から処理）
+BROWSER_SITES = frozenset({"mercari"})
 
 
 class ScrapeQueue:

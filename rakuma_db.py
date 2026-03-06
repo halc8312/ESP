@@ -1,24 +1,34 @@
 """
 Rakuma (fril.jp) scraping module.
 Based on mercari_db.py architecture, adapted for Rakuma's DOM structure.
+
+Stage 1: Selenium → Playwright (Scrapling StealthyFetcher) migration.
+- scrape_item_detail: StealthyFetcher.fetch() (single-shot)
+- scrape_search_result: Playwright async API (scroll support)
 """
+import asyncio
 import logging
 import re
 import time
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from mercari_db import create_driver
 from selector_config import get_selectors, get_valid_domains
 from scrape_metrics import get_metrics, log_scrape_result, check_scrape_health
 
 
-def scrape_item_detail(driver, url: str):
+def scrape_item_detail(url: str, driver=None):
     """
-    ラクマの商品ページから詳細情報を取得する
+    ラクマの商品ページから詳細情報を取得する。
+
+    Scrapling StealthyFetcher（Playwright ベース）を使用。
+    driver 引数は後方互換のために保持するが、使用しない。
     """
+    from scrapling import StealthyFetcher
+
     try:
-        driver.get(url)
+        page = StealthyFetcher.fetch(
+            url,
+            headless=True,
+            network_idle=True,
+        )
     except Exception as e:
         logging.error(f"Error accessing {url}: {e}")
         return {
@@ -26,21 +36,14 @@ def scrape_item_detail(driver, url: str):
             "description": "", "image_urls": [], "variants": []
         }
 
-    wait = WebDriverWait(driver, 10)
-    try:
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        time.sleep(2)  # ラクマはSPA系なので少し待機
-    except Exception:
-        pass
-
     # ---- タイトル ----
     title = ""
     title_selectors = get_selectors('rakuma', 'detail', 'title') or ["h1.item__name", "h1"]
     try:
         for selector in title_selectors:
-            title_els = driver.find_elements(By.CSS_SELECTOR, selector)
-            if title_els:
-                title = title_els[0].text.strip()
+            el = page.css_first(selector)
+            if el:
+                title = (el.text or "").strip()
                 if title:
                     break
     except Exception as e:
@@ -51,9 +54,9 @@ def scrape_item_detail(driver, url: str):
     price_selectors = get_selectors('rakuma', 'detail', 'price') or ["span.item__price", ".item__price"]
     try:
         for selector in price_selectors:
-            price_els = driver.find_elements(By.CSS_SELECTOR, selector)
-            if price_els:
-                price_text = price_els[0].text
+            el = page.css_first(selector)
+            if el:
+                price_text = el.text or ""
                 m = re.search(r"[¥￥]\s*([\d,]+)", price_text) or re.search(r"([\d,]+)", price_text)
                 if m:
                     price = int(m.group(1).replace(",", ""))
@@ -64,7 +67,7 @@ def scrape_item_detail(driver, url: str):
     # 予備の価格取得（body全体から）
     if price is None:
         try:
-            body_text = driver.find_element(By.TAG_NAME, "body").text
+            body_text = page.get_text() or ""
             m = re.search(r"[¥￥]\s*([\d,]+)", body_text)
             if not m:
                 m = re.search(r"([\d,]+)\s*円", body_text)
@@ -78,9 +81,9 @@ def scrape_item_detail(driver, url: str):
     desc_selectors = get_selectors('rakuma', 'detail', 'description') or ["div.item__description", ".item-description"]
     try:
         for selector in desc_selectors:
-            desc_els = driver.find_elements(By.CSS_SELECTOR, selector)
-            if desc_els:
-                description = desc_els[0].text.strip()
+            el = page.css_first(selector)
+            if el:
+                description = (el.text or "").strip()
                 if description:
                     break
     except Exception as e:
@@ -91,12 +94,12 @@ def scrape_item_detail(driver, url: str):
     image_selectors = get_selectors('rakuma', 'detail', 'images') or [".sp-image"]
     try:
         for selector in image_selectors:
-            imgs = driver.find_elements(By.CSS_SELECTOR, selector)
+            imgs = page.css(selector)
             for img in imgs:
                 # 遅延読み込み対応: src, data-lazy, data-src をチェック
-                src = img.get_attribute("src")
+                src = img.attrib.get("src", "")
                 if not src or "placeholder" in src.lower() or "blank" in src.lower():
-                    src = img.get_attribute("data-lazy") or img.get_attribute("data-src")
+                    src = img.attrib.get("data-lazy") or img.attrib.get("data-src") or ""
                 if src and src not in image_urls and src.startswith("http"):
                     image_urls.append(src)
     except Exception as e:
@@ -105,16 +108,16 @@ def scrape_item_detail(driver, url: str):
     # ---- ステータス（売り切れ判定） ----
     status = "on_sale"
     try:
-        body_text = driver.find_element(By.TAG_NAME, "body").text
+        body_text = page.get_text() or ""
         # ラクマの売り切れ表示パターン
         if "SOLDOUT" in body_text or "SOLD OUT" in body_text or "売り切れ" in body_text:
             status = "sold"
-        
+
         # CSSセレクタでも確認
         sold_selectors = ["span.soldout", ".label-soldout", ".item-sell-out-badge"]
         for sel in sold_selectors:
-            sold_els = driver.find_elements(By.CSS_SELECTOR, sel)
-            if sold_els:
+            sold_el = page.css_first(sel)
+            if sold_el:
                 status = "sold"
                 break
     except Exception as e:
@@ -122,7 +125,6 @@ def scrape_item_detail(driver, url: str):
 
     # ---- バリエーション（ラクマは基本的に単品販売） ----
     variants = []
-    # ラクマはメルカリShopsのようなバリエーション機能がないため、空配列
 
     return {
         "url": url,
@@ -140,14 +142,12 @@ def scrape_single_item(url: str, headless: bool = True):
     指定されたラクマ商品URLを1件だけスクレイピングして list[dict] を返す。
     save_scraped_items_to_db にそのまま渡せるようにリストに包んでいる。
     """
-    driver = None
     metrics = get_metrics()
     metrics.start('rakuma', 'single')
     try:
         print(f"DEBUG: Starting Rakuma scrape_single_item for {url}")
-        driver = create_driver(headless=headless)
 
-        data = scrape_item_detail(driver, url)
+        data = scrape_item_detail(url)
         log_scrape_result('rakuma', url, data)
 
         if data["title"]:
@@ -165,12 +165,113 @@ def scrape_single_item(url: str, headless: bool = True):
         metrics.record_attempt(False, url, str(e))
         metrics.finish()
         return []
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except Exception as e:
-                logging.debug("Error quitting driver: %s", e)
+
+
+def _get_or_create_event_loop():
+    """スレッドセーフなイベントループ取得"""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
+
+
+async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int):
+    """Playwright async API を使用してラクマ検索結果をスクレイピングする。"""
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+            ]
+        )
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+        )
+        pw_page = await context.new_page()
+
+        try:
+            await pw_page.goto(search_url, wait_until="networkidle", timeout=30000)
+        except Exception as e:
+            logging.warning(f"Navigation timeout/error for {search_url}: {e}")
+
+        print(f"DEBUG: Page Title = {await pw_page.title()}")
+
+        # 商品リンクを収集
+        hrefs = set()
+        scroll_attempts = 0
+        link_selectors = get_selectors('rakuma', 'search', 'item_links') or [
+            "a.link_search_image",
+            "a.link_search_title"
+        ]
+
+        while len(hrefs) < max_items * 2 and scroll_attempts < max_scroll * 2:
+            await pw_page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await pw_page.wait_for_timeout(2000)
+
+            new_links = []
+            for selector in link_selectors:
+                new_links = await pw_page.query_selector_all(selector)
+                if new_links:
+                    break
+
+            if not new_links:
+                break
+
+            for nl in new_links:
+                h = await nl.get_attribute("href")
+                if h:
+                    hrefs.add(h)
+
+            if len(hrefs) >= max_items * 1.5:
+                break
+
+            scroll_attempts += 1
+
+        await browser.close()
+
+    print(f"DEBUG: Found {len(hrefs)} unique links on search page.")
+
+    # URLリストをフィルタ
+    valid_domains = get_valid_domains('rakuma', 'search') or ["item.fril.jp", "fril.jp"]
+    item_urls = [
+        h for h in hrefs
+        if any(domain in h for domain in valid_domains)
+    ]
+
+    # 各商品を StealthyFetcher でスクレイピング
+    filtered_items = []
+    for item_url in item_urls:
+        if len(filtered_items) >= max_items:
+            break
+
+        print(f"DEBUG: Scraping Rakuma item {item_url}")
+        try:
+            data = scrape_item_detail(item_url)
+            if data["title"] and data["status"] != "error":
+                print(f"DEBUG: Success -> {data['title']}")
+                filtered_items.append(data)
+            else:
+                print("DEBUG: Failed to get valid data (empty title or error)")
+        except Exception as e:
+            print(f"DEBUG: Error scraping {item_url}: {e}")
+
+        time.sleep(1)
+
+    return filtered_items
 
 
 def scrape_search_result(
@@ -181,100 +282,18 @@ def scrape_search_result(
 ):
     """
     ラクマ検索URLから複数商品をスクレイピングして list[dict] を返す。
+
+    Playwright async API を使用してスクロール付き検索を実行し、
+    各商品詳細は StealthyFetcher で取得する。
     """
-    driver = None
     try:
         print(f"DEBUG: Starting Rakuma scrape_search_result")
-        driver = create_driver(headless=headless)
-
-        print(f"DEBUG: Navigating to {search_url}")
-        driver.get(search_url)
-        print(f"DEBUG: Page Title = {driver.title}")
-
-        wait = WebDriverWait(driver, 15)
-        try:
-            wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        except Exception:
-            print("DEBUG: Timeout waiting for body")
-
-        # 商品リンクを収集
-        links = []
-        scroll_attempts = 0
-        link_selectors = get_selectors('rakuma', 'search', 'item_links') or [
-            "a.link_search_image",
-            "a.link_search_title"
-        ]
-
-        while len(links) < max_items * 2 and scroll_attempts < max_scroll * 2:
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
-
-            for selector in link_selectors:
-                new_links = driver.find_elements(By.CSS_SELECTOR, selector)
-                if new_links:
-                    break
-
-            if not new_links:
-                break
-
-            # 重複除去
-            current_hrefs = {l.get_attribute("href") for l in links if l.get_attribute("href")}
-            for nl in new_links:
-                h = nl.get_attribute("href")
-                if h and h not in current_hrefs:
-                    links.append(nl)
-
-            if len(links) >= max_items * 1.5:
-                break
-
-            scroll_attempts += 1
-
-        print(f"DEBUG: Found {len(links)} unique links on search page.")
-
-        # URLリストを作成
-        item_urls = []
-        seen = set()
-        valid_domains = get_valid_domains('rakuma', 'search') or ["item.fril.jp", "fril.jp"]
-
-        for link in links:
-            href = link.get_attribute("href")
-            if not href or href in seen:
-                continue
-            # ドメインチェック
-            is_valid = any(domain in href for domain in valid_domains)
-            if is_valid:
-                seen.add(href)
-                item_urls.append(href)
-
-        # 各商品をスクレイピング
-        filtered_items = []
-        for url in item_urls:
-            if len(filtered_items) >= max_items:
-                break
-
-            print(f"DEBUG: Scraping Rakuma item {url}")
-            try:
-                data = scrape_item_detail(driver, url)
-                if data["title"] and data["status"] != "error":
-                    print(f"DEBUG: Success -> {data['title']}")
-                    filtered_items.append(data)
-                else:
-                    print("DEBUG: Failed to get valid data (empty title or error)")
-            except Exception as e:
-                print(f"DEBUG: Error scraping {url}: {e}")
-
-            time.sleep(1)
-
-        return filtered_items
-
+        loop = _get_or_create_event_loop()
+        return loop.run_until_complete(
+            _scrape_search_async(search_url, max_items, max_scroll)
+        )
     except Exception as e:
         print(f"CRITICAL ERROR during Rakuma scraping: {e}")
         import traceback
         traceback.print_exc()
         return []
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except Exception as e:
-                logging.debug("Error quitting driver: %s", e)

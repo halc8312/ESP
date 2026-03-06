@@ -1,15 +1,12 @@
 """
 Rakuma (fril.jp) lightweight patrol scraper.
 Only fetches price and stock status.
+
+Stage 1: Selenium → Playwright (Scrapling StealthyFetcher) migration.
 """
 import re
-import time
 import logging
 from typing import Optional
-
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
 from services.patrol.base_patrol import BasePatrol, PatrolResult
 
@@ -17,58 +14,34 @@ logger = logging.getLogger("patrol.rakuma")
 
 
 class RakumaPatrol(BasePatrol):
-    """Lightweight Rakuma price/stock scraper."""
+    """Lightweight Rakuma price/stock scraper using Scrapling StealthyFetcher."""
     
     def fetch(self, url: str, driver=None) -> PatrolResult:
         """
         Fetch price and status from a Rakuma product page.
+
+        Playwright（Scrapling StealthyFetcher）を使用してラクマの価格・在庫を取得。
+        driver 引数は後方互換のために保持するが、使用しない。
         """
-        own_driver = False
-        
         try:
-            if driver is None:
-                from mercari_db import create_driver
-                driver = create_driver(headless=True)
-                own_driver = True
-            
-            driver.get(url)
-            
-            # Wait for page load
-            try:
-                WebDriverWait(driver, 8).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "body"))
-                )
-                time.sleep(0.5)
-            except Exception:
-                pass
-            
-            # Get body text
-            try:
-                body_text = driver.find_element(By.TAG_NAME, "body").text
-            except Exception:
-                body_text = ""
-            
+            from scrapling import StealthyFetcher
+            page = StealthyFetcher.fetch(url, headless=True, network_idle=True)
+            body_text = page.get_text() or ""
+
             # --- Price extraction ---
-            price = self._extract_price(driver, body_text)
-            
+            price = self._extract_price_from_page(page, body_text)
+
             # --- Status extraction ---
             status = self._extract_status(body_text)
-            
+
             return PatrolResult(price=price, status=status, variants=[])
-            
+
         except Exception as e:
             logger.error(f"Rakuma patrol error for {url}: {e}")
             return PatrolResult(error=str(e))
-            
-        finally:
-            if own_driver and driver:
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
     
-    def _extract_price(self, driver, body_text: str) -> Optional[int]:
-        """Extract price from page."""
+    def _extract_price_from_page(self, page, body_text: str) -> Optional[int]:
+        """Extract price from Scrapling page object."""
         # Try common Rakuma selectors
         price_selectors = [
             ".item-price", 
@@ -78,9 +51,9 @@ class RakumaPatrol(BasePatrol):
         
         for selector in price_selectors:
             try:
-                els = driver.find_elements(By.CSS_SELECTOR, selector)
+                els = page.css(selector)
                 for el in els:
-                    text = el.text
+                    text = el.text or ""
                     match = re.search(r"([\d,]+)", text)
                     if match:
                         return int(match.group(1).replace(",", ""))
