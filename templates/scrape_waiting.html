@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block title %}商品抽出中...{% endblock %}
+{% block header_title %}商品抽出中{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>商品抽出</h1>
+</div>
+
+<div class="content-card">
+    <div class="content-card-body" style="text-align: center; padding: 40px 20px;">
+        <div id="status-container">
+            <div class="loading-spinner" style="margin: 0 auto 24px;" aria-hidden="true"></div>
+            <p id="status-message" style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">
+                スクレイピング中...
+            </p>
+            <p id="queue-position" style="color: var(--text-muted, #888); margin-bottom: 4px;"></p>
+            <p id="elapsed-time" style="color: var(--text-muted, #888); font-size: 0.9rem;"></p>
+        </div>
+
+        <div id="error-container" style="display: none; margin-top: 20px;">
+            <p id="error-message" class="error" style="margin-bottom: 16px;"></p>
+            <a href="{{ url_for('scrape.scrape_form') }}" class="btn btn-primary">
+                もう一度試す
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    "use strict";
+
+    var jobId = {{ job_id | tojson }};
+    var pollInterval = 2000;
+    var pollTimer = null;
+
+    function updateUI(data) {
+        var msgEl = document.getElementById("status-message");
+        var posEl = document.getElementById("queue-position");
+        var timeEl = document.getElementById("elapsed-time");
+
+        if (data.status === "queued") {
+            msgEl.textContent = "キュー待機中" + (data.queue_position ? "（" + data.queue_position + "番目）" : "");
+            posEl.textContent = "しばらくお待ちください...";
+        } else if (data.status === "running") {
+            msgEl.textContent = "スクレイピング中...";
+            posEl.textContent = "";
+        }
+
+        if (data.elapsed_seconds !== undefined) {
+            timeEl.textContent = "経過時間: " + data.elapsed_seconds + "秒";
+        }
+    }
+
+    function showError(message) {
+        document.getElementById("status-container").style.display = "none";
+        var errContainer = document.getElementById("error-container");
+        errContainer.style.display = "block";
+        document.getElementById("error-message").textContent = "エラーが発生しました: " + message;
+    }
+
+    function pollStatus() {
+        fetch("/api/scrape/status/" + jobId)
+            .then(function (response) {
+                if (!response.ok) {
+                    throw new Error("HTTPエラー: " + response.status);
+                }
+                return response.json();
+            })
+            .then(function (data) {
+                if (data.status === "completed") {
+                    window.location.href = "/scrape/result/" + jobId;
+                    return;
+                }
+
+                if (data.status === "failed") {
+                    showError(data.error || "不明なエラー");
+                    return;
+                }
+
+                updateUI(data);
+                pollTimer = setTimeout(pollStatus, pollInterval);
+            })
+            .catch(function (err) {
+                showError(err.message || "通信エラー");
+            });
+    }
+
+    pollStatus();
+})();
+</script>
+{% endblock %}
