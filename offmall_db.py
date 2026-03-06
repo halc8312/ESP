@@ -272,6 +272,29 @@ def scrape_item_detail_light(url: str) -> dict:
         elif isinstance(images, list):
             result["image_urls"] = [img for img in images if isinstance(img, str)]
 
+        # Additional images: og:image meta tag
+        og_el = page.css("meta[property='og:image']")
+        if og_el:
+            og_url = str(og_el[0].attrib.get("content", "") or "")
+            if og_url.startswith("http") and og_url not in result["image_urls"]:
+                result["image_urls"].insert(0, og_url)
+
+        # Additional images: product image elements in page
+        for img_el in page.css("img[src*='hardoff']"):
+            src = str(img_el.attrib.get("src", "") or "")
+            if src.startswith("http") and src not in result["image_urls"]:
+                result["image_urls"].append(src)
+
+        # Condition (item rank) from JSON-LD itemCondition or page elements
+        condition = json_ld.get("itemCondition", "")
+        if condition:
+            result["condition"] = re.sub(r"https?://schema\.org/", "", condition)
+        else:
+            # Try to find condition rank in page text (e.g. "Aランク", "Bランク")
+            cond_els = page.css(".item-condition, .condition, [class*='rank'], [class*='condition']")
+            if cond_els:
+                result["condition"] = str(cond_els[0].text or "").strip()
+
         if result["price"]:
             result["variants"] = [{
                 "option1_value": result.get("condition") or "Default Title",

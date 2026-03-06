@@ -17,13 +17,14 @@ from services.patrol.rakuma_patrol import RakumaPatrol
 from services.patrol.surugaya_patrol import SurugayaPatrol
 from services.patrol.offmall_patrol import OffmallPatrol
 from services.patrol.yahuoku_patrol import YahuokuPatrol
+from services.patrol.snkrdunk_patrol import SnkrdunkPatrol
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("patrol")
 
 # Sites that require a browser (Selenium/Chrome)
-_BROWSER_SITES = frozenset({"mercari", "snkrdunk"})
+_BROWSER_SITES = frozenset({"mercari"})
 
 
 class MonitorService:
@@ -41,6 +42,7 @@ class MonitorService:
         'surugaya': SurugayaPatrol(),
         'offmall': OffmallPatrol(),
         'yahuoku': YahuokuPatrol(),
+        'snkrdunk': SnkrdunkPatrol(),
     }
     
     @staticmethod

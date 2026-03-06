@@ -318,6 +318,55 @@ def scrape_item_detail_light(url: str) -> dict:
         if result["price"] is None:
             result["price"] = item_detail.get("currentPrice") or item_detail.get("price")
 
+        # Description
+        description = item_detail.get("description", "") or item_detail.get("itemDescription", "")
+        if description:
+            result["description"] = description
+        else:
+            # Fallback: meta[name='description']
+            meta_el = page.css("meta[name='description']")
+            if meta_el:
+                result["description"] = str(meta_el[0].attrib.get("content", "") or "")
+
+        # Images
+        image_urls = []
+        for key in ("images", "image", "imageList"):
+            imgs = item_detail.get(key)
+            if imgs is None:
+                continue
+            if isinstance(imgs, str) and imgs.startswith("http"):
+                if imgs not in image_urls:
+                    image_urls.append(imgs)
+            elif isinstance(imgs, list):
+                for img in imgs:
+                    if isinstance(img, str) and img.startswith("http") and img not in image_urls:
+                        image_urls.append(img)
+                    elif isinstance(img, dict):
+                        img_url = img.get("url") or img.get("src") or img.get("image") or img.get("imageUrl")
+                        if img_url and img_url.startswith("http") and img_url not in image_urls:
+                            image_urls.append(img_url)
+            elif isinstance(imgs, dict):
+                img_url = imgs.get("url") or imgs.get("src") or imgs.get("image") or imgs.get("imageUrl")
+                if img_url and img_url.startswith("http") and img_url not in image_urls:
+                    image_urls.append(img_url)
+        # Fallback: og:image meta tag
+        if not image_urls:
+            og_el = page.css("meta[property='og:image']")
+            if og_el:
+                og_url = str(og_el[0].attrib.get("content", "") or "")
+                if og_url.startswith("http"):
+                    image_urls.append(og_url)
+        result["image_urls"] = image_urls
+
+        # Status: check JSON flags first, then page text
+        status_flag = item_detail.get("status") or item_detail.get("isFinished") or item_detail.get("isClosed")
+        if status_flag in (True, "closed", "finished", "ended"):
+            result["status"] = "sold"
+        else:
+            page_text = str(page.get_all_text())
+            if "終了" in page_text or "落札" in page_text:
+                result["status"] = "sold"
+
         # Seller
         seller_data = item_detail.get("seller", {})
         if isinstance(seller_data, dict):
