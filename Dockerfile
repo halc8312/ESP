@@ -57,10 +57,15 @@ USER myuser
 # アプリケーション起動コマンド
 # Gunicornを使ってFlaskアプリ(app.pyの中のapp)を起動
 # --worker-class gthread: スレッドベースワーカー（スクレイピング中もヘルスチェックに応答可能）
-# --workers 2: 2ワーカープロセス（合計8スレッド）
-# --threads 4: 4スレッド/ワーカー（同時リクエスト処理能力を拡大）
-# --max-requests 100: メモリリーク対策のため100リクエストごとにワーカー再起動
-# --max-requests-jitter 20: 再起動タイミングをランダム化（一斉再起動を防止）
-# --timeout 600: 処理が10分までかかってもタイムアウトしないように設定
+# --workers 1: ★Stage 0 必須★ ScrapeQueue はプロセス内のインメモリシングルトン。
+#              workers > 1 にすると job_id を作ったプロセスと status をポーリングする
+#              プロセスが異なる場合があり、「Job not found (404)」が返って
+#              待機ページが即エラー表示になる。Stage 1以降でRedis/DB永続化後に増やすこと。
+# --threads 8: 1ワーカーで同時8リクエストを処理（workers=2 の合計8スレッドと同等）
+# --max-requests 0: ワーカー自動再起動を無効化。
+#                   Stage 0 のスクレイピングジョブはバックグラウンドデーモンスレッドで実行される。
+#                   --max-requests によるワーカー再起動はデーモンスレッドを強制終了し、
+#                   実行中ジョブが全滅するため Stage 0 では 0（無効）にする。
+# --timeout 600: スクレイピングが10分かかってもタイムアウトしないように設定
 # --bind: Renderの$PORT環境変数にバインド
-CMD gunicorn --worker-class gthread --workers 2 --threads 4 --max-requests 100 --max-requests-jitter 20 --timeout 600 --bind 0.0.0.0:${PORT:-10000} app:app
+CMD gunicorn --worker-class gthread --workers 1 --threads 8 --max-requests 0 --timeout 600 --bind 0.0.0.0:${PORT:-10000} app:app

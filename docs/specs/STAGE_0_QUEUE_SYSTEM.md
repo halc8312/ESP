@@ -582,6 +582,202 @@ def test_queue_position():
 
 ---
 
+## トラブルシュート: デプロイ後一発目から全サイト失敗するケース
+
+### 症状
+
+- Stage 0 デプロイ直後、どのECサイト（Mercari・Yahoo・Rakuma等）でスクレイピングしても全て失敗する
+- ログ上では1件だけのジョブが処理中なのに、待機ページが即時エラー表示になる
+- `"HTTPエラー: 404"` や `"Job not found"` がブラウザのコンソールまたは待機ページに表示される
+- Scrapling など HTTP ベースのフェッチャーすら動作しない（スクレイパー固有の問題ではなく、キュー層の問題）
+
+---
+
+### 根本原因 1（最重要）: Gunicorn の複数ワーカーとプロセスローカルシングルトン
+
+**原因**:
+`get_queue()` が返す `ScrapeQueue` インスタンスはプロセスごとのインメモリシングルトン（`_queue` モジュール変数）である。
+Gunicorn を `--workers 2` 以上で起動すると、各ワーカープロセスが独立した `_queue` を持つ。
+
+```
+Worker A: /scrape/run (POST) → job_id = "abc-123" を Worker A の _queue に登録 → リダイレクト
+             ↓
+Worker B: /api/scrape/status/abc-123 (GET) → Worker B の _queue には "abc-123" が存在しない
+             ↓
+Worker B: return 404 "Job not found"
+             ↓
+scrape_waiting.html: showError("HTTPエラー: 404") → ユーザーに即エラー表示
+```
+
+**検出パターン**:
+- Gunicorn 起動コマンドに `--workers 2` 以上が指定されている
+- ブラウザの Network タブで `/api/scrape/status/<job_id>` が `404` を返している
+- サーバーログに `"Job not found"` が記録されるが、同じワーカーのログには当該 job_id の `Enqueued job ...` が存在しない
+
+**修正方法**:
+`Dockerfile` または起動コマンドを `--workers 1` に変更する。
+スループットは `--threads` を増やすことで補う（例: `--threads 8` で同時8リクエスト処理）。
+
+```dockerfile
+# ❌ Stage 0 では使用禁止 — workers > 1 はインメモリキューを壊す
+CMD gunicorn --workers 2 --threads 4 ...
+
+# ✅ Stage 0 の正しい設定
+CMD gunicorn --worker-class gthread --workers 1 --threads 8 --max-requests 0 --timeout 600 ...
+```
+
+> **Stage 1 以降への移行**: ジョブ情報を DB（`ScrapeJob` テーブル）または Redis に永続化し、
+> `get_queue()` がプロセスをまたいで同じストアを参照できるようにしてから `--workers` を増やすこと。
+
+---
+
+### 根本原因 2: `--max-requests` によるワーカー自動再起動
+
+**原因**:
+`--max-requests 100` はメモリリーク対策として設定されることが多いが、
+ワーカープロセスを再起動するとプロセス内のすべてのデーモンスレッド（`ThreadPoolExecutor` のワーカースレッドおよび `_cleanup_thread`）が強制終了される。
+実行中スクレイピングジョブは状態が RUNNING のまま消失し、ポーリングクライアントは永久に完了を待ち続ける。
+
+**検出パターン**:
+- ログに `"Running job ..."` が記録されるが、`"Completed job ..."` または `"Failed job ..."` が現れない
+- ワーカー再起動後、旧 job_id へのポーリングが 404 を返す
+- `--max-requests 100` 前後のタイミング（Gunicorn の `[INFO] Worker restarting (max requests)` ログ）で失敗が集中する
+
+**修正方法**:
+Stage 0 では `--max-requests 0`（無効）にする。
+メモリリーク対策が必要な場合は、Stage 1 以降でジョブ完了後にリソースを明示的に解放する仕組みを設けてから再度有効にすること。
+
+---
+
+### 根本原因 3: Flask アプリケーションコンテキストの欠如
+
+**原因**:
+`ThreadPoolExecutor` のワーカースレッドは Flask のリクエストコンテキストも
+アプリケーションコンテキストも持たない。
+`current_app`、`g`、`session`（リクエストコンテキスト変数）を直接参照するコードは
+`RuntimeError: Working outside of application context` または
+`RuntimeError: Working outside of request context` で失敗する。
+
+**検出パターン**:
+- `_run_job` ログに `RuntimeError: Working outside of application context` が記録される
+- タスク関数内で `current_app.config[...]`、`g.db`、未ガードの `session` にアクセスしている
+- `services/product_service.py` の `save_scraped_items_to_db` は `has_request_context()` で保護済みだが、
+  新規コードがこの対策を見落とす場合がある
+
+**修正方法**:
+バックグラウンドスレッドから Flask コンテキスト変数にアクセスする必要がある場合は、
+`_run_job` 内でアプリケーションコンテキストをプッシュする。
+
+```python
+# services/scrape_queue.py の _run_job 内でアプリコンテキストが必要な場合
+from flask import current_app
+
+def _run_job(self, job_id: str):
+    with self._lock:
+        job = self._jobs.get(job_id)
+        if job is None:
+            return
+        job.status = JobStatus.RUNNING
+        job.started_at = time.time()
+
+    logger.info(f"Running job {job_id}")
+
+    # Flask アプリコンテキストをバックグラウンドスレッドにプッシュする例
+    # app オブジェクトへの参照が必要（app.py で get_queue() を初期化する際に渡すか、
+    # current_app._get_current_object() を enqueue() 時に保存しておく）
+    try:
+        result = job.task_fn(*job.task_args, **job.task_kwargs)
+        ...
+```
+
+> **現状の `routes/scrape.py`**: タスク関数（`_build_scrape_task` が返すクロージャ）は
+> `SessionLocal()` を直接使い、`has_request_context()` ガードも適用済みのため、
+> 現時点ではコンテキスト問題は発生しない。
+> ただし今後バックグラウンドタスク内で Flask 拡張（Flask-SQLAlchemy 等）を使う場合は必須。
+
+---
+
+### 根本原因 4: ライブラリのインポート時副作用（scrapling 依存関係）
+
+**原因**:
+`scrapling` パッケージ（v0.4.1）は `playwright`、`browserforge`、`curl_cffi` を
+モジュールレベルで `import` する（`eager import`）。
+これらが `requirements.txt` に記載されていない場合、
+`import scrapling` 時点で `ModuleNotFoundError` が発生し、
+HTTP 系スクレイパーモジュール全体のインポートが失敗する。
+その結果、スクレイパー固有の問題ではなく、**全サイトでスクレイピングが一切動かない**という症状になる。
+
+**検出パターン**:
+- アプリ起動ログに `ModuleNotFoundError: No module named 'playwright'`（または `browserforge`、`curl_cffi`）
+- 特定のサイトだけでなく全サイトが同時に失敗する
+- `pip list` で `playwright`、`browserforge`、`curl_cffi` が存在しない
+
+**修正方法**:
+`requirements.txt` に以下を明示的に追加する。
+
+```
+playwright
+browserforge
+curl_cffi
+```
+
+---
+
+### 根本原因 5: `ScrapeQueue` シングルトンの初期化タイミング（import 副作用）
+
+**原因**:
+`get_queue()` は遅延初期化（初回呼び出し時に `ScrapeQueue()` を生成）だが、
+`ScrapeQueue.__init__` は `_cleanup_thread`（デーモンスレッド）を即時起動する。
+`--preload` オプション付きの Gunicorn や、テスト・開発環境でモジュールを
+複数回インポートした場合、意図せずスレッドが多重起動する可能性がある。
+
+**検出パターン**:
+- 起動ログに複数の `_cleanup_thread` が見られる
+- テスト実行時に `ScrapeQueue()` を直接インスタンス化するとスレッドが蓄積する
+
+**修正方法（推奨）**:
+テストでは `ScrapeQueue()` の直接インスタンス化後、`_cleanup_thread` をモックする。
+本番では `--preload` を使用しない（または使用する場合は `post_fork` フックで再初期化する）。
+
+---
+
+### トラブルシュート チェックリスト
+
+デプロイ後に全サイト失敗する場合、以下の順番で確認する：
+
+1. **Gunicorn worker 数の確認**
+   ```bash
+   # 起動コマンドで --workers 1 になっているか確認
+   ps aux | grep gunicorn
+   ```
+   → `--workers 2` 以上なら `--workers 1` に変更してデプロイし直す
+
+2. **`--max-requests` の確認**
+   ```bash
+   grep max.requests Dockerfile
+   ```
+   → `--max-requests 100` など小さい値が設定されていれば `--max-requests 0` に変更する
+
+3. **ライブラリの存在確認**
+   ```bash
+   pip show playwright browserforge curl_cffi
+   ```
+   → 存在しなければ `requirements.txt` に追加して再ビルドする
+
+4. **ジョブのステータスを直接確認**
+   ```bash
+   # サーバーログで job_id の Enqueued/Running/Completed/Failed を追う
+   grep "job_id_here" /var/log/gunicorn/error.log
+   ```
+
+5. **Flask アプリコンテキストエラーの確認**
+   ```bash
+   grep "Working outside" /var/log/gunicorn/error.log
+   ```
+   → エラーがあれば該当コードに `has_request_context()` または `with app.app_context():` を追加する
+
+---
+
 ## 次の Agent への引き継ぎ（Stage 1 の担当者へ）
 
 Stage 0 完了後、`services/scrape_queue.py` には以下の定数があります：
@@ -601,3 +797,30 @@ BROWSER_SITES = frozenset({"mercari"})  # rakuma は Playwright に移行済み
 
 また、`services/scrape_queue.py` の `_run_job` メソッド内で Flask アプリケーションコンテキストが
 必要な場合は、`app.py` で `app.app_context()` を使用した初期化コードを追加してください。
+
+### Stage 1 以降でのキュー拡張 Tips
+
+キューシステムを拡張する際は以下に注意してください：
+
+1. **`--workers 1` の制約を解除するには**
+   - ジョブ情報を `ScrapeJob` DBテーブルに永続化し、`get_queue()` がDBからジョブを読み書きするよう変更する
+   - その後、Gunicorn を `--workers 2` に戻して `--max-requests`（値はメモリ使用量実測後に設定。
+     一般的には 200〜500 程度）と `--max-requests-jitter`（例: `--max-requests-jitter 50`）も再設定可能
+
+2. **executor / worker の初期化タイミングに注意**
+   - `ScrapeQueue()` は `import` 時ではなく `get_queue()` 初回呼び出し時に生成される（遅延初期化）
+   - Gunicorn の `--preload` オプションを使う場合は `post_fork` フックで `_queue = None` にリセットし、
+     フォーク後のワーカープロセスで再初期化させること（フォーク後にスレッドを引き継がないため）
+
+3. **Flask worker context 差異への対応**
+   - バックグラウンドスレッドはリクエストコンテキスト変数（`current_user`、`session`、`g`）にアクセスできない
+   - `current_app` はアプリケーションコンテキストがあればアクセス可能（`with app.app_context():` でプッシュ）
+   - タスク関数に必要な値（`user_id` など）はクロージャで捕捉するか引数で渡す
+   - DB 操作は `SessionLocal()` を直接使い、`finally: session_db.close()` を忘れずに
+   - Flask 拡張（Flask-SQLAlchemy 等）を使う場合は `with app.app_context():` でラップする
+
+4. **`import` 副作用の警戒**
+   - スクレイパーモジュール（`yahoo_db`, `rakuma_db` 等）が import 時にネットワーク接続や
+     ブラウザ起動を行っていないか確認する
+   - `scrapling` の eager import 問題（`playwright`, `browserforge`, `curl_cffi`）は
+     `requirements.txt` への明示記載で回避する（上記「根本原因 4」参照）
