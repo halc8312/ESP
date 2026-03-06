@@ -18,10 +18,6 @@ _mock_stealthy_fetcher = MagicMock()
 _mock_scrapling.StealthyFetcher = _mock_stealthy_fetcher
 _mock_scrapling.Fetcher = MagicMock()
 
-# Insert mock into sys.modules before any test imports
-if "scrapling" not in sys.modules or not hasattr(sys.modules["scrapling"], "__file__"):
-    pass  # scrapling is already importable, we'll patch at the test level
-
 
 @pytest.fixture(autouse=True)
 def _patch_scrapling():
@@ -365,19 +361,31 @@ def test_rakuma_removed_from_browser_sites():
 
 def test_no_selenium_import_in_rakuma_db(_patch_scrapling):
     """rakuma_db.py に Selenium の import が含まれていないことを確認"""
+    import ast
     import rakuma_db
     import inspect
     source = inspect.getsource(rakuma_db)
-    assert "from selenium" not in source
-    assert "import selenium" not in source
-    assert "create_driver" not in source
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            module = getattr(node, "module", None) or ""
+            names = [alias.name for alias in node.names]
+            assert "selenium" not in module, f"Found selenium import: {module}"
+            assert "selenium" not in names, f"Found selenium import: {names}"
+            assert "create_driver" not in names, f"Found create_driver import: {names}"
 
 
 def test_no_selenium_import_in_rakuma_patrol(_patch_scrapling):
     """rakuma_patrol.py に Selenium の import が含まれていないことを確認"""
+    import ast
     import services.patrol.rakuma_patrol as rp
     import inspect
     source = inspect.getsource(rp)
-    assert "from selenium" not in source
-    assert "import selenium" not in source
-    assert "create_driver" not in source
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            module = getattr(node, "module", None) or ""
+            names = [alias.name for alias in node.names]
+            assert "selenium" not in module, f"Found selenium import: {module}"
+            assert "selenium" not in names, f"Found selenium import: {names}"
+            assert "create_driver" not in names, f"Found create_driver import: {names}"

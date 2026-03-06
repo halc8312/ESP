@@ -30,7 +30,7 @@
 - ラクマは `http_executor` で処理されるようになった
 
 ### 6. テスト
-- `tests/test_rakuma_playwright.py` を新規作成（21テストケース）
+- `tests/test_rakuma_playwright.py` を新規作成（18テストケース）
 - `tests/test_scrape_queue.py` を更新（rakuma の BROWSER_SITES 分類を変更）
 
 ## Render 互換性検証結果
