@@ -197,10 +197,111 @@ def scrape_item_detail(driver, url: str) -> dict:
     return result
 
 
+def scrape_item_detail_light(url: str) -> dict:
+    """
+    Light HTTP-only scrape for Offmall using Scrapling Fetcher.
+    Extracts data from embedded JSON-LD without launching a browser.
+    Memory: ~5 MB (vs ~400 MB for Chrome). Returns empty dict on failure.
+    """
+    try:
+        from services.scraping_client import fetch_static
+        page = fetch_static(url)
+
+        # Check for sold/removed page
+        page_text = str(page.get_all_text())
+        if "対象の商品はございません" in page_text or "ページが見つかりません" in page_text:
+            return {
+                "url": url, "title": "Sold/Removed", "price": None,
+                "status": "sold", "description": "", "image_urls": [],
+                "variants": [], "brand": "", "condition": ""
+            }
+
+        # Extract JSON-LD
+        result = {
+            "url": url, "title": "", "price": None, "status": "unknown",
+            "description": "", "image_urls": [], "variants": [],
+            "brand": "", "condition": ""
+        }
+
+        scripts = page.css("script[type='application/ld+json']")
+        json_ld = {}
+        for script_el in scripts:
+            try:
+                raw = str(script_el.text or "").strip()
+                if not raw:
+                    continue
+                data = json.loads(raw)
+                if isinstance(data, dict) and data.get("@type") == "Product":
+                    json_ld = data
+                    break
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict) and item.get("@type") == "Product":
+                            json_ld = item
+                            break
+                if json_ld:
+                    break
+            except (json.JSONDecodeError, Exception):
+                continue
+
+        if not json_ld:
+            return {}
+
+        result["title"] = json_ld.get("name", "")
+        brand = json_ld.get("brand", {})
+        result["brand"] = brand.get("name", "") if isinstance(brand, dict) else str(brand or "")
+        result["description"] = json_ld.get("description", "")
+
+        offers = json_ld.get("offers", {})
+        if isinstance(offers, dict):
+            price_str = str(offers.get("price", ""))
+            if price_str:
+                try:
+                    result["price"] = int(float(price_str))
+                except (ValueError, TypeError):
+                    pass
+            availability = offers.get("availability", "")
+            if "InStock" in availability:
+                result["status"] = "active"
+            elif "OutOfStock" in availability:
+                result["status"] = "sold"
+
+        images = json_ld.get("image", [])
+        if isinstance(images, str):
+            result["image_urls"] = [images]
+        elif isinstance(images, list):
+            result["image_urls"] = [img for img in images if isinstance(img, str)]
+
+        if result["price"]:
+            result["variants"] = [{
+                "option1_value": result.get("condition") or "Default Title",
+                "price": result["price"],
+                "sku": "",
+                "inventory_qty": 1 if result["status"] == "active" else 0
+            }]
+
+        if result["title"]:
+            print(f"DEBUG [light]: Offmall light scrape success -> {result['title'][:40]}")
+        return result
+
+    except Exception as e:
+        logger.debug(f"Offmall light scrape error: {e}")
+        return {}
+
+
 def scrape_single_item(url: str, headless: bool = True) -> list:
     """
-    指定されたオフモール商品URLを1件だけスクレイピング
+    指定されたオフモール商品URLを1件だけスクレイピング。
+    Scrapling HTTP-onlyで試み、失敗時はSeleniumにフォールバック。
     """
+    # Attempt 1: HTTP-only (fast, low memory)
+    data = scrape_item_detail_light(url)
+    if data and data.get("title"):
+        return [data]
+
+    logger.debug("Offmall light scrape failed, falling back to Selenium")
+
+    # Attempt 2: Selenium fallback
     driver = None
     try:
         driver = create_driver(headless=headless)

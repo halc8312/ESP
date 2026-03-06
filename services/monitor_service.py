@@ -1,6 +1,7 @@
 """
 Monitor Service - Lightweight Patrol for price/stock updates.
 Uses efficient patrol scrapers that only fetch price and stock data.
+Non-Mercari sites use HTTP-only fetching (Scrapling) to avoid launching Chrome.
 """
 import logging
 from datetime import datetime
@@ -21,11 +22,15 @@ from services.patrol.yahuoku_patrol import YahuokuPatrol
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("patrol")
 
+# Sites that require a browser (Selenium/Chrome)
+_BROWSER_SITES = frozenset({"mercari", "snkrdunk"})
+
 
 class MonitorService:
     """
     Lightweight patrol service for efficient price/stock monitoring.
-    Uses shared WebDriver across items for speed.
+    Uses HTTP-only fetching for non-Mercari sites (no Chrome required).
+    Shares a single WebDriver across Mercari items for speed.
     """
     
     # Site-specific patrol instances
@@ -43,6 +48,7 @@ class MonitorService:
         """
         Check items that haven't been updated for the longest time.
         Uses lightweight patrol for speed (price/stock only).
+        Non-Mercari sites use HTTP-only Scrapling fetch (no Chrome needed).
         
         Args:
             limit: Number of products to check (increased from 5 to 15 due to speed)
@@ -53,9 +59,9 @@ class MonitorService:
         
         try:
             # Find products sorted by updated_at ascending (oldest first)
-            # Exclude archived products
+            # Exclude archived products - include all supported sites
             products = session_db.query(Product).filter(
-                Product.site.in_(['mercari', 'yahoo', 'rakuma']),
+                Product.site.in_(list(MonitorService._patrols.keys())),
                 Product.archived != True
             ).order_by(asc(Product.updated_at)).limit(limit).all()
 
@@ -63,10 +69,6 @@ class MonitorService:
                 logger.info("No products to monitor.")
                 return
 
-            # Create shared driver for efficiency
-            from mercari_db import create_driver
-            driver = create_driver(headless=True)
-            
             updated_count = 0
             error_count = 0
 
@@ -80,8 +82,15 @@ class MonitorService:
                         logger.warning(f"No patrol for site: {product.site}")
                         continue
                     
-                    # Fetch price/stock with shared driver
-                    result = patrol.fetch(product.source_url, driver=driver)
+                    if product.site in _BROWSER_SITES:
+                        # Browser-required sites: create/reuse shared Chrome driver
+                        if driver is None:
+                            from mercari_db import create_driver
+                            driver = create_driver(headless=True)
+                        result = patrol.fetch(product.source_url, driver=driver)
+                    else:
+                        # HTTP-only sites: no Chrome needed (Scrapling Fetcher)
+                        result = patrol.fetch(product.source_url, driver=None)
                     
                     if not result.success:
                         logger.warning(f"Patrol failed: {result.error}")

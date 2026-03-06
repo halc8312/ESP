@@ -57,7 +57,10 @@ USER myuser
 # アプリケーション起動コマンド
 # Gunicornを使ってFlaskアプリ(app.pyの中のapp)を起動
 # --worker-class gthread: スレッドベースワーカー（スクレイピング中もヘルスチェックに応答可能）
-# --threads 2: 2スレッド（1つはスクレイピング、もう1つはリクエスト応答用）
+# --workers 2: 2ワーカープロセス（合計8スレッド）
+# --threads 4: 4スレッド/ワーカー（同時リクエスト処理能力を拡大）
+# --max-requests 100: メモリリーク対策のため100リクエストごとにワーカー再起動
+# --max-requests-jitter 20: 再起動タイミングをランダム化（一斉再起動を防止）
 # --timeout 600: 処理が10分までかかってもタイムアウトしないように設定
 # --bind: Renderの$PORT環境変数にバインド
-CMD gunicorn --worker-class gthread --threads 2 --timeout 600 --bind 0.0.0.0:${PORT:-10000} app:app
+CMD gunicorn --worker-class gthread --workers 2 --threads 4 --max-requests 100 --max-requests-jitter 20 --timeout 600 --bind 0.0.0.0:${PORT:-10000} app:app

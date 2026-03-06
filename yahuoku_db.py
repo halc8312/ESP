@@ -261,10 +261,105 @@ def scrape_item_detail(driver, url: str) -> dict:
     return result
 
 
+def scrape_item_detail_light(url: str) -> dict:
+    """
+    Light HTTP-only scrape for Yahoo Auctions using Scrapling Fetcher.
+    Extracts data from the embedded __NEXT_DATA__ JSON without launching a browser.
+    Memory: ~5 MB (vs ~400 MB for Chrome). Returns empty dict on failure.
+    """
+    try:
+        from services.scraping_client import fetch_static
+        page = fetch_static(url)
+
+        script_el = page.find("#__NEXT_DATA__")
+        if not script_el:
+            return {}
+
+        json_str = str(script_el.text or "").strip()
+        if not json_str:
+            return {}
+
+        data = json.loads(json_str)
+        props = data.get("props", {})
+        page_props = props.get("pageProps", {})
+
+        # Try primary path
+        initial_state = page_props.get("initialState", {})
+        item_detail = initial_state.get("item", {}).get("detail", {}).get("item", {})
+
+        # Try alternative path
+        if not item_detail:
+            initial_props = page_props.get("initialProps", {})
+            item_detail = initial_props.get("auctionItem", {})
+
+        if not item_detail:
+            return {}
+
+        result = {
+            "url": url,
+            "title": item_detail.get("title", ""),
+            "price": None,
+            "status": "active",
+            "description": "",
+            "image_urls": [],
+            "variants": [],
+            "auction_id": "",
+            "seller": "",
+            "end_time": "",
+        }
+
+        # Price
+        price_data = item_detail.get("price", {})
+        if isinstance(price_data, dict):
+            result["price"] = price_data.get("current") or price_data.get("bid")
+        elif isinstance(price_data, (int, float)):
+            result["price"] = int(price_data)
+        # Alternative path (auctionItem)
+        if result["price"] is None:
+            result["price"] = item_detail.get("currentPrice") or item_detail.get("price")
+
+        # Seller
+        seller_data = item_detail.get("seller", {})
+        if isinstance(seller_data, dict):
+            result["seller"] = seller_data.get("name", "")
+
+        # Auction ID
+        match = re.search(r"/auction/([a-zA-Z0-9]+)", url)
+        if match:
+            result["auction_id"] = match.group(1)
+        result["auction_id"] = item_detail.get("auctionID", result["auction_id"])
+
+        # Default variant
+        if result["price"]:
+            result["variants"] = [{
+                "option1_value": "Default Title",
+                "price": result["price"],
+                "sku": result["auction_id"],
+                "inventory_qty": 1 if result["status"] == "active" else 0
+            }]
+
+        if result["title"]:
+            print(f"DEBUG [light]: Yahuoku light scrape success -> {result['title'][:40]}")
+        return result
+
+    except Exception as e:
+        logger.debug(f"Yahuoku light scrape error: {e}")
+        return {}
+
+
 def scrape_single_item(url: str, headless: bool = True) -> list:
     """
-    指定されたヤフオク商品URLを1件だけスクレイピング
+    指定されたヤフオク商品URLを1件だけスクレイピング。
+    Scrapling HTTP-onlyで試み、失敗時はSeleniumにフォールバック。
     """
+    # Attempt 1: HTTP-only (fast, low memory)
+    data = scrape_item_detail_light(url)
+    if data and data.get("title"):
+        return [data]
+
+    logger.debug("Yahuoku light scrape failed, falling back to Selenium")
+
+    # Attempt 2: Selenium fallback
     driver = None
     try:
         driver = create_driver(headless=headless)
