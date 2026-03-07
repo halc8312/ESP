@@ -90,30 +90,37 @@
     "rakuma": {
         "detail": {
             "title": [
-                "h1.item-name",
-                "h1.item__name",
+                "h1[class*='item']",
+                "h1[class*='name']",
+                ".item-box--title",
+                ".item-box--description-title",
                 "h1"
             ],
             "price": [
-                ".item-price__price",
-                "span.item__price",
-                ".item__price",
-                ".item-price"
+                ".item-box--price",
+                "[class*='item-price']",
+                ".price",
+                "strong[class*='price']"
             ],
             "description": [
-                ".item-description__text",
-                "div.item__description",
-                ".item-description"
+                ".item-box--description",
+                "[class*='item-description']",
+                ".description",
+                "p[class*='description']"
             ],
             "images": [
-                ".sp-image",
-                ".item-bundle-image img"
+                ".item-box--image img",
+                ".item-box--image-main img",
+                "img[class*='item-image']",
+                "img[src*='img.fril.jp']",
+                "img[src*='fril']"
             ]
         },
         "search": {
             "item_links": [
                 "a.link_search_image",
-                "a.link_search_title"
+                "a.link_search_title",
+                "a[href*='item.fril.jp']"
             ],
             "valid_domains": [
                 "item.fril.jp",

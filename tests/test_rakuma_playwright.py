@@ -1,7 +1,8 @@
 """
-Unit tests for Stage 1: Rakuma Playwright (Scrapling StealthyFetcher) migration.
-Tests verify that rakuma_db.py and rakuma_patrol.py use StealthyFetcher
-instead of Selenium.
+Unit tests for Rakuma scraping module (rakuma_db.py) and patrol (rakuma_patrol.py).
+Tests verify that:
+  - rakuma_db.py uses Fetcher/AsyncFetcher (HTTP) for item detail pages (SSR)
+  - rakuma_patrol.py uses StealthyFetcher (Playwright)
 """
 import sys
 import types
@@ -13,36 +14,43 @@ from unittest.mock import patch, MagicMock, AsyncMock
 # Mock scrapling module to avoid transitive dependency issues in test env
 # ---------------------------------------------------------------------------
 
-_mock_scrapling = types.ModuleType("scrapling")
-_mock_stealthy_fetcher = MagicMock()
-_mock_scrapling.StealthyFetcher = _mock_stealthy_fetcher
-_mock_scrapling.Fetcher = MagicMock()
-
-
 @pytest.fixture(autouse=True)
 def _patch_scrapling():
-    """Ensure scrapling.StealthyFetcher.fetch is patchable in every test."""
-    # We only need to ensure the import path works for patching
-    # Save and restore original module if it exists
+    """Patch scrapling and scrapling.fetchers modules for every test."""
     original = sys.modules.get("scrapling")
-    # Install a mock scrapling module for test patching
+    original_fetchers = sys.modules.get("scrapling.fetchers")
+
+    # Install mock scrapling module
     mock_mod = types.ModuleType("scrapling")
     mock_mod.StealthyFetcher = MagicMock()
     mock_mod.Fetcher = MagicMock()
-    sys.modules["scrapling"] = mock_mod
 
-    # Also clear any cached imports of rakuma_db/rakuma_patrol so they re-import
+    # Install mock scrapling.fetchers module
+    mock_fetchers_mod = types.ModuleType("scrapling.fetchers")
+    mock_async_fetcher = MagicMock()
+    mock_async_fetcher.get = AsyncMock()
+    mock_fetchers_mod.AsyncFetcher = mock_async_fetcher
+
+    sys.modules["scrapling"] = mock_mod
+    sys.modules["scrapling.fetchers"] = mock_fetchers_mod
+
+    # Clear any cached imports of rakuma_db/rakuma_patrol so they re-import
     for key in list(sys.modules.keys()):
         if "rakuma_db" in key or "rakuma_patrol" in key:
             del sys.modules[key]
 
     yield mock_mod
 
-    # Restore original
+    # Restore originals
     if original is not None:
         sys.modules["scrapling"] = original
     else:
         sys.modules.pop("scrapling", None)
+
+    if original_fetchers is not None:
+        sys.modules["scrapling.fetchers"] = original_fetchers
+    else:
+        sys.modules.pop("scrapling.fetchers", None)
 
     # Clear cached imports again
     for key in list(sys.modules.keys()):
@@ -75,7 +83,7 @@ def test_scrape_item_detail_structure(_patch_scrapling):
     mock_page.css_first.side_effect = css_first_side_effect
     mock_page.css.return_value = []
 
-    _patch_scrapling.StealthyFetcher.fetch.return_value = mock_page
+    _patch_scrapling.Fetcher.get.return_value = mock_page
 
     from rakuma_db import scrape_item_detail
     result = scrape_item_detail("https://item.fril.jp/test")
@@ -107,7 +115,7 @@ def test_scrape_item_detail_title_extraction(_patch_scrapling):
     mock_page.css_first.side_effect = css_first_side_effect
     mock_page.css.return_value = []
 
-    _patch_scrapling.StealthyFetcher.fetch.return_value = mock_page
+    _patch_scrapling.Fetcher.get.return_value = mock_page
 
     from rakuma_db import scrape_item_detail
     result = scrape_item_detail("https://item.fril.jp/test")
@@ -131,7 +139,7 @@ def test_scrape_item_detail_price_extraction(_patch_scrapling):
     mock_page.css_first.side_effect = css_first_side_effect
     mock_page.css.return_value = []
 
-    _patch_scrapling.StealthyFetcher.fetch.return_value = mock_page
+    _patch_scrapling.Fetcher.get.return_value = mock_page
 
     from rakuma_db import scrape_item_detail
     result = scrape_item_detail("https://item.fril.jp/test")
@@ -150,7 +158,7 @@ def test_scrape_item_detail_sold_status(_patch_scrapling):
     mock_page.css_first.side_effect = css_first_side_effect
     mock_page.css.return_value = []
 
-    _patch_scrapling.StealthyFetcher.fetch.return_value = mock_page
+    _patch_scrapling.Fetcher.get.return_value = mock_page
 
     from rakuma_db import scrape_item_detail
     result = scrape_item_detail("https://item.fril.jp/sold")
@@ -174,7 +182,7 @@ def test_scrape_item_detail_image_extraction(_patch_scrapling):
     mock_page.css_first.side_effect = css_first_side_effect
     mock_page.css.return_value = [mock_img1, mock_img2]
 
-    _patch_scrapling.StealthyFetcher.fetch.return_value = mock_page
+    _patch_scrapling.Fetcher.get.return_value = mock_page
 
     from rakuma_db import scrape_item_detail
     result = scrape_item_detail("https://item.fril.jp/test")
@@ -186,7 +194,7 @@ def test_scrape_item_detail_image_extraction(_patch_scrapling):
 
 def test_scrape_item_detail_error_handling(_patch_scrapling):
     """scrape_item_detail がエラー時に正しいレスポンスを返すことを確認"""
-    _patch_scrapling.StealthyFetcher.fetch.side_effect = Exception("Connection error")
+    _patch_scrapling.Fetcher.get.side_effect = Exception("Connection error")
 
     from rakuma_db import scrape_item_detail
     result = scrape_item_detail("https://item.fril.jp/error")
@@ -203,13 +211,13 @@ def test_scrape_item_detail_driver_arg_ignored(_patch_scrapling):
     mock_page.css_first.return_value = None
     mock_page.css.return_value = []
 
-    _patch_scrapling.StealthyFetcher.fetch.return_value = mock_page
+    _patch_scrapling.Fetcher.get.return_value = mock_page
 
     from rakuma_db import scrape_item_detail
     result = scrape_item_detail("https://item.fril.jp/test", driver="fake_driver")
 
-    # StealthyFetcher.fetch が呼ばれたことを確認（driver は使用されない）
-    _patch_scrapling.StealthyFetcher.fetch.assert_called_once()
+    # Fetcher.get が呼ばれたことを確認（driver は使用されない）
+    _patch_scrapling.Fetcher.get.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +231,7 @@ def test_scrape_single_item_returns_list(_patch_scrapling):
     mock_page.css_first.return_value = None
     mock_page.css.return_value = []
 
-    _patch_scrapling.StealthyFetcher.fetch.return_value = mock_page
+    _patch_scrapling.Fetcher.get.return_value = mock_page
 
     from rakuma_db import scrape_single_item
     result = scrape_single_item("https://item.fril.jp/test")
@@ -239,7 +247,7 @@ def test_scrape_single_item_no_selenium(_patch_scrapling):
     mock_page.css_first.return_value = None
     mock_page.css.return_value = []
 
-    _patch_scrapling.StealthyFetcher.fetch.return_value = mock_page
+    _patch_scrapling.Fetcher.get.return_value = mock_page
 
     from rakuma_db import scrape_single_item
 

@@ -2,10 +2,12 @@
 Rakuma (fril.jp) scraping module.
 Based on mercari_db.py architecture, adapted for Rakuma's DOM structure.
 
-Stage 1: Selenium → Playwright (Scrapling StealthyFetcher) migration.
-- scrape_item_detail: StealthyFetcher.fetch() (single-shot, sync)
-- _scrape_item_detail_async: StealthyFetcher.async_fetch() (async版)
-- scrape_search_result: Playwright async API (scroll support)
+item.fril.jp は SSR（サーバーサイドレンダリング）で提供されているため、
+ブラウザ不要の HTTP フェッチャーを使用する。
+
+- scrape_item_detail: Fetcher.get() (HTTP, sync)
+- _scrape_item_detail_async: AsyncFetcher.get() (HTTP, async)
+- scrape_search_result: Playwright async API (scroll support, 変更なし)
 """
 import asyncio
 import logging
@@ -170,17 +172,18 @@ def scrape_item_detail(url: str, driver=None):
     """
     ラクマの商品ページから詳細情報を取得する（同期版）。
 
-    Scrapling StealthyFetcher（Playwright ベース）を使用。
+    Scrapling Fetcher（HTTP リクエストベース）を使用。
+    item.fril.jp は SSR のためブラウザ不要。
     driver 引数は後方互換のために保持するが、使用しない。
     トップレベル（asyncioループ外）からの呼び出し用。
     """
-    from scrapling import StealthyFetcher
+    from scrapling import Fetcher
 
     try:
-        page = StealthyFetcher.fetch(
+        page = Fetcher.get(
             url,
-            headless=True,
-            network_idle=True,
+            stealthy_headers=True,
+            follow_redirects=True,
         )
     except Exception as e:
         logging.error(f"Error accessing {url}: {e}")
@@ -196,17 +199,14 @@ async def _scrape_item_detail_async(url: str) -> dict:
     """
     ラクマの商品ページから詳細情報を取得する（async版）。
 
-    Scrapling AsyncFetcher を使用。
+    Scrapling AsyncFetcher（HTTP リクエストベース）を使用。
+    item.fril.jp は SSR のためブラウザ不要。
     _scrape_search_async 内（asyncioループ内）からの呼び出し用。
     """
-    from scrapling import StealthyFetcher
+    from scrapling.fetchers import AsyncFetcher
 
     try:
-        page = await StealthyFetcher.async_fetch(
-            url,
-            headless=True,
-            network_idle=True,
-        )
+        page = await AsyncFetcher.get(url, stealthy_headers=True, follow_redirects=True)
     except Exception as e:
         logging.error(f"Error accessing {url}: {e}")
         return {
@@ -332,7 +332,7 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
         if any(domain in h for domain in valid_domains)
     ]
 
-    # 各商品を async版 StealthyFetcher でスクレイピング
+    # 各商品を AsyncFetcher (HTTP) でスクレイピング
     filtered_items = []
     for item_url in item_urls:
         if len(filtered_items) >= max_items:
@@ -364,7 +364,7 @@ def scrape_search_result(
     ラクマ検索URLから複数商品をスクレイピングして list[dict] を返す。
 
     Playwright async API を使用してスクロール付き検索を実行し、
-    各商品詳細は StealthyFetcher (async) で取得する。
+    各商品詳細は AsyncFetcher (HTTP) で取得する。
     """
     try:
         print(f"DEBUG: Starting Rakuma scrape_search_result")
