@@ -1,4 +1,4 @@
-from mercari_db import create_driver
+from yahoo_db import create_driver
 from selenium.webdriver.common.by import By
 import time
 

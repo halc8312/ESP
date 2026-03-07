@@ -702,7 +702,7 @@ def _fetch_soup_with_selenium(url: str, headless: bool = True, wait_seconds: int
     """Fallback HTML fetch via Selenium (Render-safe fallback path)."""
     driver = None
     try:
-        from mercari_db import create_driver
+        from yahoo_db import create_driver
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait

@@ -9,7 +9,7 @@ import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from mercari_db import create_driver
+from yahoo_db import create_driver
 from selector_config import get_selectors, get_valid_domains
 from scrape_metrics import get_metrics, log_scrape_result, check_scrape_health
 

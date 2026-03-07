@@ -51,7 +51,7 @@ class ScrapeJob:
 
 # ブラウザ（Selenium/Playwright）が必要なサイト
 # Stage 1 完了: "rakuma" を削除（StealthyFetcher / Playwright で http_executor から処理）
-BROWSER_SITES = frozenset({"mercari"})
+BROWSER_SITES = frozenset()
 
 
 class ScrapeQueue:

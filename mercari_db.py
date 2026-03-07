@@ -1,11 +1,7 @@
 import logging
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+import asyncio
+from playwright.async_api import async_playwright
+from scrapling import StealthyFetcher
 import time
 import re
 import os
@@ -34,328 +30,258 @@ except ImportError:
     def log_scrape_result(*a): return True
     def check_scrape_health(*a): return {"action_required": False}
 
-def _get_chrome_version():
-    """インストール済みChromeのメジャーバージョンを検出する"""
-    import subprocess
+def _get_or_create_event_loop():
+    """
+    現在のスレッドのイベントループを取得、または新規作成する。
+    Flask + Gunicorn gthread 環境での asyncio 使用に対応。
+    """
     try:
-        # Linux (Docker/Render)
-        result = subprocess.run(
-            ["google-chrome", "--version"],
-            capture_output=True, text=True, timeout=5
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
+
+
+
+async def _extract_shops_variants_async(page, label_texts: list) -> list:
+    """
+    メルカリShopsのバリエーションを Playwright で取得。
+    """
+    found_options = []
+    
+    for label_text in label_texts:
+        # ラベルテキストを含む要素を XPath で検索
+        labels = await page.query_selector_all(
+            f"xpath=//*[contains(text(), '{label_text}')]"
         )
-        if result.returncode == 0:
-            # "Google Chrome 145.0.7632.116" -> "145"
-            version_str = result.stdout.strip().split()[-1]
-            major = version_str.split(".")[0]
-            logging.info(f"Detected Chrome version: {version_str} (major: {major})")
-            return major
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    
-    try:
-        # Windows
-        import winreg
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Google\Chrome\BLBeacon")
-        version, _ = winreg.QueryValueEx(key, "version")
-        major = version.split(".")[0]
-        logging.info(f"Detected Chrome version: {version} (major: {major})")
-        return major
-    except Exception:
-        pass
-    
-    logging.warning("Could not detect Chrome version, using latest")
-    return None
-
-
-def create_driver(headless: bool = True):
-    """Chrome WebDriver を生成（Render/Docker 環境最適化版）"""
-    options = Options()
-
-    # --- Docker環境で必須の設定 ---
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--single-process")  # Docker環境での安定性向上
-    
-    # --- メモリ最適化（Docker/Render向け） ---
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-software-rasterizer")
-    options.add_argument("--disable-background-networking")
-    options.add_argument("--disable-default-apps")
-    options.add_argument("--window-size=1920,1080")
-    
-    # --- ページロード戦略: eager（DOMが使えた時点で次に進む） ---
-    options.page_load_strategy = 'eager'
-    
-    # --- ヘッドレスモードの設定 ---
-    if headless:
-        options.add_argument("--headless=new")
-
-    # --- Bot検知対策 ---
-    user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    options.add_argument(f'user-agent={user_agent}')
-    options.add_argument('--disable-blink-features=AutomationControlled')
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
-
-    try:
-        # インストール済みChromeバージョンに合うDriverを取得
-        chrome_major = _get_chrome_version()
-        if chrome_major:
-            service = Service(ChromeDriverManager(driver_version=f"{chrome_major}").install())
-        else:
-            service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
         
-        # --- タイムアウト設定 ---
-        driver.set_page_load_timeout(60)  # ページ読み込み60秒まで
-        driver.set_script_timeout(30)     # スクリプト実行30秒まで
+        for label in labels:
+            try:
+                tag_name = await label.evaluate("el => el.tagName.toLowerCase()")
+                if tag_name in ['script', 'style']:
+                    continue
+                
+                # 親要素の nextElementSibling（コンテナ）を取得
+                container = await label.evaluate_handle(
+                    "el => el.parentElement && el.parentElement.nextElementSibling"
+                )
+                
+                # Check for truthful element handle (not None and not evaluating to null)
+                is_valid = await container.evaluate("el => el !== null")
+                if not is_valid:
+                    continue
+                
+                # コンテナの直下の子要素を取得
+                children = await container.query_selector_all(":scope > *")
+                
+                if children:
+                    options = []
+                    for child in children:
+                        raw_text = await child.inner_text()
+                        raw_text = raw_text.strip()
+                        if not raw_text:
+                            continue
+                        
+                        # 1行目のみ取得
+                        val = raw_text.split('\n')[0].strip()
+                        
+                        # 価格・在庫情報を削除（正規表現クリーニング）
+                        val = re.sub(r'[¥￥]\s*[\d,]+', '', val)
+                        val = re.sub(r'[\d,]+\s*円', '', val)
+                        val = re.sub(r'残り\d+点', '', val)
+                        val = re.sub(r'売り切れ|在庫なし', '', val)
+                        val = val.strip()
+                        
+                        # 不要なボタンを除外
+                        if val and val not in ["いいね", "シェア", "もっと見る"]:
+                            if val not in options:
+                                options.append(val)
+                    
+                    if options:
+                        found_options = options
+                        break
+                        
+            except Exception:
+                continue
         
-        return driver
-    except Exception as e:
-        logging.error(f"Failed to initialize WebDriver: {e}")
-        raise e
+        if found_options:
+            break
+    
+    return found_options
 
 
-def scrape_shops_product(driver, url: str):
-    """メルカリShopsの商品ページ用スクレイピング"""
-    try:
-        driver.get(url)
-    except Exception as e:
-        print(f"Error accessing {url}: {e}")
-        return {
-            "url": url, "title": "", "price": None, "status": "error", 
-            "description": "", "image_urls": [], "variants": []
-        }
+async def _scrape_shops_product_async(url: str) -> dict:
+    """メルカリShops商品ページを Playwright で取得"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage"]
+        )
+        context = await browser.new_context()
+        page = await context.new_page()
+        
+        try:
+            await page.goto(url, wait_until="networkidle")
+            await page.wait_for_timeout(2000)  # Shopsはロードが遅いことがあるため待機
+            
+            # ---- タイトル ----
+            title = ""
+            title_selectors = get_selectors('mercari', 'shops', 'title') or ["[data-testid='product-name']", "h1"]
+            for selector in title_selectors:
+                elements = await page.query_selector_all(selector)
+                if elements:
+                    title = (await elements[0].inner_text()).strip()
+                    break
 
-    wait = WebDriverWait(driver, 10)
-    try:
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        time.sleep(2) # Shopsはロードが遅いことがあるため待機
-    except Exception:
-        pass
-
-    # ---- タイトル ----
-    title = ""
-    title_selectors = get_selectors('mercari', 'shops', 'title') or ["[data-testid='product-name']", "h1"]
-    try:
-        for selector in title_selectors:
-            title_el = driver.find_elements(By.CSS_SELECTOR, selector)
-            if title_el:
-                title = title_el[0].text.strip()
-                break
-    except Exception:
-        pass
-
-    # ---- 価格 ----
-    price = None
-    price_selectors = get_selectors('mercari', 'shops', 'price') or ["[data-testid='product-price']"]
-    try:
-        for selector in price_selectors:
-            price_els = driver.find_elements(By.CSS_SELECTOR, selector)
-            if price_els:
-                price_text = price_els[0].text
-                m = re.search(r"([\d,]+)", price_text)
+            # ---- 価格 ----
+            price = None
+            price_selectors = get_selectors('mercari', 'shops', 'price') or ["[data-testid='product-price']"]
+            for selector in price_selectors:
+                elements = await page.query_selector_all(selector)
+                if elements:
+                    price_text = await elements[0].inner_text()
+                    m = re.search(r"([\d,]+)", price_text)
+                    if m:
+                        price = int(m.group(1).replace(",", ""))
+                        break
+                        
+            # 予備の価格取得ロジック
+            if price is None:
+                body_text = await page.evaluate("document.body.innerText")
+                m = re.search(r"([\d,]+)\s*円", body_text)
                 if m:
                     price = int(m.group(1).replace(",", ""))
-                    break
-    except Exception:
-        pass
-    
-    # 予備の価格取得ロジック
-    if price is None:
-        try:
-            body_text = driver.find_element(By.TAG_NAME, "body").text
-            m = re.search(r"([\d,]+)\s*円", body_text)
-            if m:
-                price = int(m.group(1).replace(",", ""))
-        except Exception:
-            pass
 
-    # ---- 説明文 ----
-    description = ""
-    desc_selectors = get_selectors('mercari', 'shops', 'description') or ["[data-testid='product-description']"]
-    try:
-        for selector in desc_selectors:
-            desc_els = driver.find_elements(By.CSS_SELECTOR, selector)
-            if desc_els:
-                description = desc_els[0].text.strip()
-                if description:
-                    break
-    except Exception:
-        pass
+            # ---- 説明文 ----
+            description = ""
+            desc_selectors = get_selectors('mercari', 'shops', 'description') or ["[data-testid='product-description']"]
+            for selector in desc_selectors:
+                elements = await page.query_selector_all(selector)
+                if elements:
+                    description = (await elements[0].inner_text()).strip()
+                    if description:
+                        break
 
-    # 説明文フォールバック: meta description
-    if not description:
-        try:
-            meta = driver.find_element(By.CSS_SELECTOR, "meta[name='description']")
-            description = meta.get_attribute("content") or ""
-        except Exception:
-            pass
+            # 説明文フォールバック: meta description
+            if not description:
+                meta = await page.query_selector("meta[name='description']")
+                if meta:
+                    description = await meta.get_attribute("content") or ""
 
-    # 説明文フォールバック: body text から抽出
-    if not description:
-        try:
-            body_text = driver.find_element(By.TAG_NAME, "body").text
-            if "商品の説明" in body_text:
-                after = body_text.split("商品の説明", 1)[1]
-                end_pos = len(after)
-                for marker in ["商品の情報", "ショップ情報", "おすすめ商品", "レビュー"]:
-                    idx = after.find(marker)
-                    if idx != -1 and idx < end_pos:
-                        end_pos = idx
-                description = after[:end_pos].strip()[:500]
-        except Exception:
-            pass
+            # 説明文フォールバック: body text から抽出
+            if not description:
+                body_text = await page.evaluate("document.body.innerText")
+                if "商品の説明" in body_text:
+                    after = body_text.split("商品の説明", 1)[1]
+                    end_pos = len(after)
+                    for marker in ["商品の情報", "ショップ情報", "おすすめ商品", "レビュー"]:
+                        idx = after.find(marker)
+                        if idx != -1 and idx < end_pos:
+                            end_pos = idx
+                    description = after[:end_pos].strip()[:500]
 
-    # ---- 画像 ----
-    image_urls = []
-    image_selectors = get_selectors('mercari', 'shops', 'images') or ["img[src*='mercari'][src*='static']"]
-    try:
-        for selector in image_selectors:
-            imgs = driver.find_elements(By.CSS_SELECTOR, selector)
-            for img in imgs:
-                src = img.get_attribute("src")
-                if src and src not in image_urls:
-                    image_urls.append(src)
-    except Exception:
-        pass
+            # ---- 画像 ----
+            image_urls = []
+            image_selectors = get_selectors('mercari', 'shops', 'images') or ["img[src*='mercari'][src*='static']"]
+            for selector in image_selectors:
+                imgs = await page.query_selector_all(selector)
+                for img in imgs:
+                    src = await img.get_attribute("src")
+                    if src and src not in image_urls:
+                        image_urls.append(src)
 
-    # ---- バリエーション（簡易取得） ----
-    variants = []
-    item_data_update = {}
-    try:
-        # トラブルシューティング: Shopsのバリエーション取得 (DOM構造解析に基づく)
-        # ラベル(span/p) -> 親(div) -> 兄弟(div) -> 子要素(div/a) 
-        # テキストには価格や在庫情報が含まれるためクリーニングが必要
-        def extract_options(label_texts):
-            found_options = []
-            for label_text in label_texts:
-                xpath = f"//*[contains(text(), '{label_text}')]"
-                labels = driver.find_elements(By.XPATH, xpath)
+            # ---- バリエーション（簡易取得） ----
+            variants = []
+            item_data_update = {}
+            
+            colors = await _extract_shops_variants_async(page, ['カラー', 'Color'])
+            types = await _extract_shops_variants_async(page, ['種類', 'サイズ', 'Size'])
+            
+            print(f"DEBUG Colors found: {colors}")
+            print(f"DEBUG Types found: {types}")
+
+            # 色と種類を組み合わせてバリエーションを作成
+            if colors and types:
+                option1_name = "カラー"
+                option2_name = "サイズ/種類"
+                for color in colors:
+                    for type_val in types:
+                        variants.append({
+                            "option1_name": option1_name,
+                            "option1_value": color,
+                            "option2_name": option2_name,
+                            "option2_value": type_val,
+                            "price": price,
+                            "inventory_qty": 1 
+                        })
+                item_data_update = {"option1_name": option1_name, "option2_name": option2_name}
                 
-                for label in labels:
-                    try:
-                        # Skip if script or style
-                        if label.tag_name in ['script', 'style']: continue
-                        
-                        # 親の兄弟要素（コンテナ）を探す
-                        parent = label.find_element(By.XPATH, "..")
-                        container = driver.execute_script("return arguments[0].nextElementSibling", parent)
-                        
-                        if container:
-                            # コンテナ内の直下の子要素をオプション候補とする
-                            children = container.find_elements(By.XPATH, "./*")
-                            if children:
-                                for child in children:
-                                    raw_text = child.text.strip()
-                                    if not raw_text: continue
-                                    
-                                    # 1行目を取得（価格や在庫情報は改行されることが多いが、念のためRegexで掃除）
-                                    val = raw_text.split('\n')[0].strip()
-                                    
-                                    # Regex cleaning
-                                    val = re.sub(r'[¥￥]\s*[\d,]+', '', val) # Remove price
-                                    val = re.sub(r'[\d,]+\s*円', '', val)    # Remove price
-                                    val = re.sub(r'残り\d+点', '', val)      # Remove stock info
-                                    val = re.sub(r'売り切れ', '', val)       # Remove status
-                                    val = re.sub(r'在庫なし', '', val)       # Remove status
-                                    val = val.strip()
-
-                                    # いいね！ボタンなどを除外
-                                    if "いいね" in val or "シェア" in val or "もっと見る" in val or not val: continue
-                                    
-                                    if val and val not in found_options:
-                                        found_options.append(val)
-                                
-                                if found_options:
-                                    return found_options
-                    except:
-                        continue
-            return found_options
-
-        colors = extract_options(['カラー', 'Color'])
-        types = extract_options(['種類', 'サイズ', 'Size'])
-
-        print(f"DEBUG Colors found: {colors}")
-        print(f"DEBUG Types found: {types}")
-
-        # 色と種類を組み合わせてバリエーションを作成
-        if colors and types:
-            option1_name = "カラー"
-            option2_name = "サイズ/種類"
-            for color in colors:
-                for type_val in types:
+            elif colors: # 色だけの場合
+                option1_name = "カラー"
+                for color in colors:
                     variants.append({
                         "option1_name": option1_name,
                         "option1_value": color,
-                        "option2_name": option2_name,
-                        "option2_value": type_val,
                         "price": price,
-                        "inventory_qty": 1 
+                        "inventory_qty": 1
                     })
-            item_data_update = {"option1_name": option1_name, "option2_name": option2_name}
+                item_data_update = {"option1_name": option1_name}
+
+            elif types: # 種類だけの場合
+                option1_name = "種類" # デフォルト
+                for type_val in types:
+                    variants.append({
+                        "option1_name": option1_name,
+                        "option1_value": type_val,
+                        "price": price,
+                        "inventory_qty": 1
+                    })
+                item_data_update = {"option1_name": option1_name}
+
+            # ---- ステータス ----
+            status = "on_sale"
+            body_text = await page.evaluate("document.body.innerText")
+            if "売り切れ" in body_text or "在庫なし" in body_text:
+                status = "sold"
+
+            # Update item_data with found option names
+            item_data = {
+                "url": url,
+                "title": title,
+                "price": price,
+                "status": status,
+                "description": description,
+                "image_urls": image_urls,
+                "variants": variants
+            }
+            item_data.update(item_data_update)
+            return item_data
             
-        elif colors: # 色だけの場合
-            option1_name = "カラー"
-            for color in colors:
-                variants.append({
-                    "option1_name": option1_name,
-                    "option1_value": color,
-                    "price": price,
-                    "inventory_qty": 1
-                })
-            item_data_update = {"option1_name": option1_name}
+        finally:
+            await browser.close()
 
-        elif types: # 種類だけの場合
-            option1_name = "種類" # デフォルト
-            for type_val in types:
-                variants.append({
-                    "option1_name": option1_name,
-                    "option1_value": type_val,
-                    "price": price,
-                    "inventory_qty": 1
-                })
-            item_data_update = {"option1_name": option1_name}
 
-    except Exception as e:
-        print(f"Error extracting variants: {e}")
-        pass
-    
-    # ---- ステータス ----
-    status = "on_sale"
-    try:
-        body_text = driver.find_element(By.TAG_NAME, "body").text
-        if "売り切れ" in body_text or "在庫なし" in body_text:
-            status = "sold"
-    except Exception:
-        pass
-
-    # Update item_data with found option names
-    item_data = {
-        "url": url,
-        "title": title,
-        "price": price,
-        "status": status,
-        "description": description,
-        "image_urls": image_urls,
-        "variants": variants
-    }
-    item_data.update(item_data_update)
-    return item_data
+def scrape_shops_product(url: str, driver=None) -> dict:
+    """メルカリShops商品ページ用スクレイピング（同期ラッパー）"""
+    loop = _get_or_create_event_loop()
+    return loop.run_until_complete(_scrape_shops_product_async(url))
 
 
 
-
-def scrape_item_detail(driver, url: str):
+def scrape_item_detail(url: str, driver=None):
     """1つの商品ページから詳細情報を取得して dict で返す"""
     
     # Shops URL判定
     if "/shops/product/" in url:
-        return scrape_shops_product(driver, url)
+        return scrape_shops_product(url)
 
     try:
-        driver.get(url)
+        page = StealthyFetcher.fetch(url, headless=True, network_idle=True)
     except Exception as e:
         print(f"Error accessing {url}: {e}")
         return {
@@ -363,25 +289,17 @@ def scrape_item_detail(driver, url: str):
             "description": "", "image_urls": [], "variants": []
         }
 
-    wait = WebDriverWait(driver, 10)
-
-    # eagerモードなのでbodyの出現を軽く待つ
-    try:
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-    except Exception:
-        pass
-
     # ---- タイトル ----
     try:
-        title_el = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
-        title = title_el.text.strip()
+        title_nodes = page.css("h1")
+        title_el = title_nodes[0] if title_nodes else None
+        title = title_el.text.strip() if title_el else ""
     except Exception:
         title = ""
 
     # ---- ページ全体のテキスト ----
     try:
-        body_el = driver.find_element(By.TAG_NAME, "body")
-        body_text = body_el.text
+        body_text = page.get_text() or ""
     except Exception:
         body_text = ""
 
@@ -391,9 +309,9 @@ def scrape_item_detail(driver, url: str):
     try:
         # メルカリのクラス名は頻繁に変わるため、data-testidがあれば優先
         for selector in price_selectors:
-            price_el = driver.find_elements(By.CSS_SELECTOR, selector)
-            if price_el:
-                price_text = price_el[0].text
+            price_nodes = page.css(selector)
+            if price_nodes:
+                price_text = price_nodes[0].text or ""
                 m = re.search(r"[¥￥]\s*([\d,]+)", price_text) or re.search(r"([\d,]+)", price_text)
                 if m:
                     price = int(m.group(1).replace(",", ""))
@@ -416,9 +334,13 @@ def scrape_item_detail(driver, url: str):
     try:
         if "売り切れ" in body_text or "Sold" in body_text:
              # ボタンチェックも念のため
-             sold_btns = driver.find_elements(By.XPATH, "//button[contains(., '売り切れ')]")
-             if sold_btns:
-                 status = "sold"
+             try:
+                 for btn in page.css("button"):
+                     if "売り切れ" in (btn.text or ""):
+                         status = "sold"
+                         break
+             except Exception:
+                 status = "sold"  # Fallback
         
         if status == "unknown" and ("購入手続きへ" in body_text or "Buy this item" in body_text):
              status = "on_sale"
@@ -446,12 +368,10 @@ def scrape_item_detail(driver, url: str):
         "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']"
     ]
     try:
-        # 画像取得も少し待つ
-        time.sleep(1)
         for selector in image_selectors:
-            img_elements = driver.find_elements(By.CSS_SELECTOR, selector)
+            img_elements = page.css(selector)
             for img in img_elements:
-                src = img.get_attribute("src")
+                src = img.attrib.get("src")
                 if src and src not in image_urls:
                     image_urls.append(src)
     except Exception:
@@ -464,11 +384,6 @@ def scrape_item_detail(driver, url: str):
         # 選択式のUI（ボタン）がある場合はそれを優先
         selectors = [
              "mer-item-thumbnail ~ div button", # 新UI
-             "//div[contains(text(), '種類')]/..//button",
-             "//div[contains(text(), 'サイズ')]/..//button",
-             "//div[contains(text(), 'カラー')]/..//button",
-             "//p[contains(text(), 'サイズ')]/..//button",
-             "//p[contains(text(), 'カラー')]/..//button",
              "button[aria-haspopup='listbox']",
              "div[role='radiogroup'] div[role='radio']",
              "div[data-testid='product-variant-selector'] button"
@@ -476,17 +391,13 @@ def scrape_item_detail(driver, url: str):
         
         found_elements = []
         for sel in selectors:
-            if sel.startswith("//"):
-                found_elements = driver.find_elements(By.XPATH, sel)
-            else:
-                found_elements = driver.find_elements(By.CSS_SELECTOR, sel)
-            
+            found_elements = page.css(sel)
             if found_elements and len(found_elements) > 1:
                 break
                 
         seen_opts = set()
         for el in found_elements:
-            text_val = el.text.strip()
+            text_val = el.text.strip() if el.text else ""
             if text_val and text_val not in seen_opts:
                 seen_opts.add(text_val)
                 variants.append({
@@ -508,6 +419,86 @@ def scrape_item_detail(driver, url: str):
     }
 
 
+async def _scrape_search_async(
+    search_url: str,
+    max_items: int,
+    max_scroll: int,
+) -> list[str]:
+    """ページスクロールしながら商品リンクを収集する非同期関数"""
+    
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-extensions",
+                "--disable-background-networking",
+            ]
+        )
+        
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            # Bot検知対策
+            extra_http_headers={
+                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            }
+        )
+        page = await context.new_page()
+        
+        # Bot 検知対策: webdriver フラグを隠す
+        await page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        """)
+        
+        try:
+            print(f"DEBUG: Navigating to {search_url}")
+            await page.goto(search_url, wait_until="networkidle", timeout=30000)
+            
+            item_urls = set()
+            
+            for scroll_count in range(max_scroll * 2):
+                # 現在表示されているリンクを収集（/item/ あるいはテストデータ等）
+                links = await page.query_selector_all("a[href*='/item/']")
+                if not links:
+                    links = await page.query_selector_all("li[data-testid='item-cell'] a")
+                    
+                for link in links:
+                    href = await link.get_attribute("href")
+                    if href and "/item/" in href:
+                        # 絶対URLに変換
+                        if href.startswith("/"):
+                            href = f"https://jp.mercari.com{href}"
+                        item_urls.add(href)
+                
+                if len(item_urls) >= max_items * 2:
+                    break
+                
+                # ページを下にスクロール
+                prev_count = len(item_urls)
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(2000)  # 2秒待機（新アイテム読み込み）
+                
+                # スクロール後に新しいリンクが増えていない場合は終了
+                links_after = await page.query_selector_all("a[href*='/item/']")
+                if not links_after:
+                     links_after = await page.query_selector_all("li[data-testid='item-cell'] a")
+                if len(links_after) <= len(links):
+                    # 成長していなければストップ
+                    break
+            
+            print(f"DEBUG: Found {len(item_urls)} valid item URLs.")
+            return list(item_urls)[:max_items * 2]  # 最大 max_items * 2 件
+            
+        finally:
+            await browser.close()
+
+
 def scrape_search_result(
     search_url: str,
     max_items: int = 5,
@@ -516,93 +507,37 @@ def scrape_search_result(
 ):
     """
     メルカリ検索URLから複数商品をスクレイピングして list[dict] を返す。
+    Playwright を直接使用してページスクロール取得を実現。
     """
-    driver = None
+    loop = _get_or_create_event_loop()
+    
     try:
-        print("DEBUG: Starting scrape_search_result (Low Memory Config)")
-        driver = create_driver(headless=headless)
-        items = []
-
-        print(f"DEBUG: Navigating to {search_url}")
-        driver.get(search_url)
-        print(f"DEBUG: Page Title = {driver.title}")
-        
-        # ページロード戦略をeagerにしたので、bodyが出るまで明示的に少し待つ
-        wait = WebDriverWait(driver, 15)
-        try:
-            wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        except Exception:
-            print("DEBUG: Timeout waiting for body")
-
-        # Try to collect enough links to satisfy max_items
-        links = []
-        scroll_attempts = 0
-        while len(links) < max_items * 2 and scroll_attempts < max_scroll * 2: # Fetch more potential links
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
-            
-            new_links = driver.find_elements(By.CSS_SELECTOR, "a[href*='/item/']")
-            if not new_links:
-                new_links = driver.find_elements(By.CSS_SELECTOR, "li[data-testid='item-cell'] a")
-            
-            if not new_links:
-                # No items found via either selector, stop scrolling/searching
-                break
-
-            # Simple dedup based on current view
-            current_hrefs = {l.get_attribute("href") for l in links}
-            for nl in new_links:
-                h = nl.get_attribute("href")
-                if h and "/item/" in h and h not in current_hrefs:
-                    links.append(nl)
-            
-            if len(links) >= max_items * 1.5: # buffer
-                break
-                
-            scroll_attempts += 1
-
-        print(f"DEBUG: Found {len(links)} unique links on search page.")
-        
-        item_urls = []
-        seen = set()
-        for link in links:
-            href = link.get_attribute("href")
-            if not href or "/item/" not in href or href in seen:
-                continue
-            seen.add(href)
-            item_urls.append(href)
-
-        filtered_items = []
-        for url in item_urls:
-            if len(filtered_items) >= max_items:
-                break
-                
-            print(f"DEBUG: Scraping item {url}")
-            try:
-                data = scrape_item_detail(driver, url)
-                if data["title"] and data["status"] != "error":
-                     print(f"DEBUG: Success -> {data['title']}")
-                     filtered_items.append(data)
-                else:
-                     print("DEBUG: Failed to get valid data (empty title or error)")
-            except Exception as e:
-                print(f"DEBUG: Error scraping {url}: {e}")
-                
-            time.sleep(1) 
-        
-        return filtered_items
-
+        item_urls = loop.run_until_complete(
+            _scrape_search_async(search_url, max_items, max_scroll)
+        )
     except Exception as e:
-        print(f"CRITICAL ERROR during scraping: {e}")
-        import traceback
-        traceback.print_exc()
+        logging.error(f"Search scrape failed: {e}")
         return []
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except Exception as e:
-                logging.debug("Error quitting driver: %s", e)
+    
+    filtered_items = []
+    for url in item_urls:
+        if len(filtered_items) >= max_items:
+            break
+            
+        print(f"DEBUG: Scraping item {url}")
+        try:
+            data = scrape_item_detail(url)
+            if data and data.get("title") and data.get("status") != "error":
+                 print(f"DEBUG: Success -> {data['title']}")
+                 filtered_items.append(data)
+            else:
+                 print("DEBUG: Failed to get valid data (empty title or error)")
+        except Exception as e:
+            print(f"DEBUG: Error scraping {url}: {e}")
+            
+        time.sleep(1) 
+    
+    return filtered_items
 
 
 def scrape_single_item(url: str, headless: bool = True):
@@ -610,17 +545,15 @@ def scrape_single_item(url: str, headless: bool = True):
     指定された商品URLを1件だけスクレイピングして list[dict] を返す。
     save_scraped_items_to_db にそのまま渡せるようにリストに包んでいる。
     """
-    driver = None
     metrics = get_metrics()
     metrics.start('mercari', 'single')
     try:
         print(f"DEBUG: Starting scrape_single_item for {url}")
-        driver = create_driver(headless=headless)
         
-        data = scrape_item_detail(driver, url)
+        data = scrape_item_detail(url)
         log_scrape_result('mercari', url, data)
         
-        if data["title"]:
+        if data.get("title"):
             print(f"DEBUG: Success -> {data['title']}")
         else:
             print("DEBUG: Failed to get title")
@@ -635,9 +568,3 @@ def scrape_single_item(url: str, headless: bool = True):
         metrics.record_attempt(False, url, str(e))
         metrics.finish()
         return []
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except Exception as e:
-                logging.debug("Error quitting driver: %s", e)

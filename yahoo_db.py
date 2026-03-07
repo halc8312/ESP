@@ -4,11 +4,82 @@ import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from mercari_db import create_driver
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from selector_config import get_selectors, get_valid_domains
 from scrape_metrics import get_metrics, log_scrape_result, check_scrape_health
 
 import json
+
+def _get_chrome_version():
+    """インストール済みChromeのメジャーバージョンを検出する"""
+    import subprocess
+    try:
+        # Linux (Docker/Render)
+        result = subprocess.run(
+            ["google-chrome", "--version"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            version_str = result.stdout.strip().split()[-1]
+            major = version_str.split(".")[0]
+            logging.info(f"Detected Chrome version: {version_str} (major: {major})")
+            return major
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    
+    try:
+        # Windows
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Google\Chrome\BLBeacon")
+        version, _ = winreg.QueryValueEx(key, "version")
+        major = version.split(".")[0]
+        logging.info(f"Detected Chrome version: {version} (major: {major})")
+        return major
+    except Exception:
+        pass
+    
+    logging.warning("Could not detect Chrome version, using latest")
+    return None
+
+def create_driver(headless: bool = True):
+    """Chrome WebDriver を生成"""
+    options = Options()
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--single-process")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-software-rasterizer")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-default-apps")
+    options.add_argument("--window-size=1920,1080")
+    options.page_load_strategy = 'eager'
+    
+    if headless:
+        options.add_argument("--headless=new")
+
+    user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    options.add_argument(f'user-agent={user_agent}')
+    options.add_argument('--disable-blink-features=AutomationControlled')
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+
+    try:
+        chrome_major = _get_chrome_version()
+        if chrome_major:
+            service = Service(ChromeDriverManager(driver_version=f"{chrome_major}").install())
+        else:
+            service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.set_page_load_timeout(60)
+        driver.set_script_timeout(30)
+        return driver
+    except Exception as e:
+        logging.error(f"Failed to initialize WebDriver: {e}")
+        raise e
 
 def scrape_item_detail(driver, url: str):
     """
