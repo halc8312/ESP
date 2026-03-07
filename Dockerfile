@@ -46,13 +46,13 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Playwright ブラウザのインストール（scrapling 経由）
-# PLAYWRIGHT_BROWSERS_PATH を共有ディレクトリに設定することで、
-# root でインストールしたブラウザを非 root ユーザー（myuser）でも参照できる。
-# デフォルトでは ~/.cache/ms-playwright/ にインストールされるため、
-# root インストール → myuser 実行 の組み合わせで「Executable doesn't exist」エラーが発生する。
+# Playwright / Patchright ブラウザのインストール
+# PLAYWRIGHT_BROWSERS_PATH / PATCHRIGHT_BROWSERS_PATH を同じ共有ディレクトリに設定し、
+# root でインストールしたブラウザを非 root ユーザー（myuser）でも参照できるようにする。
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+ENV PATCHRIGHT_BROWSERS_PATH=/opt/ms-playwright
 RUN scrapling install \
+    && patchright install chromium \
     && chmod -R 755 /opt/ms-playwright
 
 # ソースコードのコピー
