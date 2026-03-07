@@ -206,8 +206,7 @@ async def _scrape_item_detail_async(url: str) -> dict:
     from scrapling.fetchers import AsyncFetcher
 
     try:
-        fetcher = AsyncFetcher(stealthy_headers=True, follow_redirects=True)
-        page = await fetcher.get(url)
+        page = await AsyncFetcher.get(url, stealthy_headers=True, follow_redirects=True)
     except Exception as e:
         logging.error(f"Error accessing {url}: {e}")
         return {

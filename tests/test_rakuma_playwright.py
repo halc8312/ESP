@@ -27,7 +27,9 @@ def _patch_scrapling():
 
     # Install mock scrapling.fetchers module
     mock_fetchers_mod = types.ModuleType("scrapling.fetchers")
-    mock_fetchers_mod.AsyncFetcher = MagicMock()
+    mock_async_fetcher = MagicMock()
+    mock_async_fetcher.get = AsyncMock()
+    mock_fetchers_mod.AsyncFetcher = mock_async_fetcher
 
     sys.modules["scrapling"] = mock_mod
     sys.modules["scrapling.fetchers"] = mock_fetchers_mod
