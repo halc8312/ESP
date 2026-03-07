@@ -1,7 +1,7 @@
 """
 Monitor Service - Lightweight Patrol for price/stock updates.
 Uses efficient patrol scrapers that only fetch price and stock data.
-Non-Mercari sites use HTTP-only fetching (Scrapling) to avoid launching Chrome.
+All sites use HTTP/Playwright fetching (Scrapling) — no Chrome/Selenium required.
 """
 import logging
 from datetime import datetime
@@ -24,14 +24,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("patrol")
 
 # Sites that require a browser (Selenium/Chrome)
-_BROWSER_SITES = frozenset({"mercari"})
+# Stage 2 完了: "mercari" を削除（StealthyFetcher / Playwright で処理）
+# Stage 3 完了後にこの定数自体を削除予定
+_BROWSER_SITES = frozenset()
 
 
 class MonitorService:
     """
     Lightweight patrol service for efficient price/stock monitoring.
-    Uses HTTP-only fetching for non-Mercari sites (no Chrome required).
-    Shares a single WebDriver across Mercari items for speed.
+    All sites use HTTP/Playwright Scrapling fetch — no Chrome/Selenium required.
     """
     
     # Site-specific patrol instances
@@ -50,15 +51,14 @@ class MonitorService:
         """
         Check items that haven't been updated for the longest time.
         Uses lightweight patrol for speed (price/stock only).
-        Non-Mercari sites use HTTP-only Scrapling fetch (no Chrome needed).
-        
+        All sites use HTTP/Playwright Scrapling fetch (no Chrome needed).
+
         Args:
             limit: Number of products to check (increased from 5 to 15 due to speed)
         """
         logger.info(f"--- Starting Lightweight Patrol (Limit: {limit}) ---")
         session_db = SessionLocal()
-        driver = None
-        
+
         try:
             # Find products sorted by updated_at ascending (oldest first)
             # Exclude archived products - include all supported sites
@@ -77,60 +77,48 @@ class MonitorService:
             for product in products:
                 try:
                     logger.info(f"Patrol: {product.source_url[:50]}...")
-                    
+
                     # Choose patrol scraper
                     patrol = MonitorService._patrols.get(product.site)
                     if not patrol:
                         logger.warning(f"No patrol for site: {product.site}")
                         continue
-                    
-                    if product.site in _BROWSER_SITES:
-                        # Browser-required sites: create/reuse shared Chrome driver
-                        if driver is None:
-                            from mercari_db import create_driver
-                            driver = create_driver(headless=True)
-                        result = patrol.fetch(product.source_url, driver=driver)
-                    else:
-                        # HTTP-only sites: no Chrome needed (Scrapling Fetcher)
-                        result = patrol.fetch(product.source_url, driver=None)
-                    
+
+                    # 全サイトが driver 不要（Scrapling HTTP/Playwright）
+                    result = patrol.fetch(product.source_url)
+
                     if not result.success:
                         logger.warning(f"Patrol failed: {result.error}")
                         error_count += 1
                         continue
-                    
+
                     # Update product with new data
                     changes = MonitorService._apply_patrol_result(
                         session_db, product, result
                     )
-                    
+
                     if changes > 0:
                         updated_count += 1
                         logger.info(f"Updated {product.id}: {changes} changes")
-                        
+
                         # Recalculate selling price if needed
                         if product.pricing_rule_id:
                             update_product_selling_price(product.id)
-                    
+
                     # Always update timestamp even if no changes
                     product.updated_at = datetime.utcnow()
                     session_db.commit()
-                    
+
                 except Exception as e:
                     logger.error(f"Error checking product {product.id}: {e}")
                     error_count += 1
                     continue
-            
+
             logger.info(f"Patrol complete: {updated_count} updated, {error_count} errors")
-                    
+
         except Exception as e:
             logger.error(f"Patrol fatal error: {e}")
         finally:
-            if driver:
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
             session_db.close()
             logger.info("--- Patrol Finished ---")
     
