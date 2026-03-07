@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("patrol")
 
 # Sites that require a browser (Selenium/Chrome)
-_BROWSER_SITES = frozenset({"mercari"})
+_BROWSER_SITES = frozenset()
 
 
 class MonitorService:
@@ -84,15 +84,8 @@ class MonitorService:
                         logger.warning(f"No patrol for site: {product.site}")
                         continue
                     
-                    if product.site in _BROWSER_SITES:
-                        # Browser-required sites: create/reuse shared Chrome driver
-                        if driver is None:
-                            from mercari_db import create_driver
-                            driver = create_driver(headless=True)
-                        result = patrol.fetch(product.source_url, driver=driver)
-                    else:
-                        # HTTP-only sites: no Chrome needed (Scrapling Fetcher)
-                        result = patrol.fetch(product.source_url, driver=None)
+                    # All sites now use driver-less scraping or manage drivers internally
+                    result = patrol.fetch(product.source_url)
                     
                     if not result.success:
                         logger.warning(f"Patrol failed: {result.error}")
@@ -126,11 +119,6 @@ class MonitorService:
         except Exception as e:
             logger.error(f"Patrol fatal error: {e}")
         finally:
-            if driver:
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
             session_db.close()
             logger.info("--- Patrol Finished ---")
     
