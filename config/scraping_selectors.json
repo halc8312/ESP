@@ -90,6 +90,8 @@
     "rakuma": {
         "detail": {
             "title": [
+                "h1.item__name",
+                ".soldout-section .name",
                 "h1[class*='item']",
                 "h1[class*='name']",
                 ".item-box--title",
@@ -97,22 +99,27 @@
                 "h1"
             ],
             "price": [
+                "span.item__price",
+                ".soldout-section .price",
                 ".item-box--price",
                 "[class*='item-price']",
                 ".price",
                 "strong[class*='price']"
             ],
             "description": [
+                "div.item__description",
                 ".item-box--description",
                 "[class*='item-description']",
                 ".description",
                 "p[class*='description']"
             ],
             "images": [
+                ".sp-image",
+                ".soldout-section .image",
+                "img[src*='img.fril.jp']",
                 ".item-box--image img",
                 ".item-box--image-main img",
                 "img[class*='item-image']",
-                "img[src*='img.fril.jp']",
                 "img[src*='fril']"
             ]
         },

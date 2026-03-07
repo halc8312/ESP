@@ -33,7 +33,8 @@ def _parse_item_page(page, url: str) -> dict:
     # <title> タグからタイトル候補を取得
     page_title = ""
     try:
-        title_el = page.css_first("title")
+        title_nodes = page.css("title")
+        title_el = title_nodes[0] if title_nodes else None
         if title_el:
             page_title = (title_el.text or "").strip()
             logging.debug(f"<title> tag content: {page_title}")
@@ -54,7 +55,8 @@ def _parse_item_page(page, url: str) -> dict:
     title_selectors = get_selectors('rakuma', 'detail', 'title') or ["h1.item__name", "h1"]
     try:
         for selector in title_selectors:
-            el = page.css_first(selector)
+            nodes = page.css(selector)
+            el = nodes[0] if nodes else None
             if el:
                 title = (el.text or "").strip()
                 if title:
@@ -78,7 +80,8 @@ def _parse_item_page(page, url: str) -> dict:
     price_selectors = get_selectors('rakuma', 'detail', 'price') or ["span.item__price", ".item__price"]
     try:
         for selector in price_selectors:
-            el = page.css_first(selector)
+            nodes = page.css(selector)
+            el = nodes[0] if nodes else None
             if el:
                 price_text = el.text or ""
                 m = re.search(r"[¥￥]\s*([\d,]+)", price_text) or re.search(r"([\d,]+)", price_text)
@@ -104,7 +107,8 @@ def _parse_item_page(page, url: str) -> dict:
     desc_selectors = get_selectors('rakuma', 'detail', 'description') or ["div.item__description", ".item-description"]
     try:
         for selector in desc_selectors:
-            el = page.css_first(selector)
+            nodes = page.css(selector)
+            el = nodes[0] if nodes else None
             if el:
                 description = (el.text or "").strip()
                 if description:
@@ -134,6 +138,14 @@ def _parse_item_page(page, url: str) -> dict:
                 src = img.attrib.get("src", "")
                 if not src or "placeholder" in src.lower() or "blank" in src.lower():
                     src = img.attrib.get("data-lazy") or img.attrib.get("data-src") or ""
+                
+                # Handling div background-images for sold-out items
+                if not src:
+                    style = img.attrib.get("style", "")
+                    m = re.search(r'background-image:\s*url\(([^)]+)\)', style)
+                    if m:
+                        src = m.group(1).strip("'\"")
+
                 if src and src not in image_urls and src.startswith("http"):
                     image_urls.append(src)
     except Exception as e:
@@ -145,9 +157,10 @@ def _parse_item_page(page, url: str) -> dict:
         if "SOLDOUT" in body_text or "SOLD OUT" in body_text or "売り切れ" in body_text:
             status = "sold"
 
-        sold_selectors = ["span.soldout", ".label-soldout", ".item-sell-out-badge"]
+        sold_selectors = ["span.soldout", ".soldout-section", ".label-soldout", ".item-sell-out-badge"]
         for sel in sold_selectors:
-            sold_el = page.css_first(sel)
+            nodes = page.css(sel)
+            sold_el = nodes[0] if nodes else None
             if sold_el:
                 status = "sold"
                 break
