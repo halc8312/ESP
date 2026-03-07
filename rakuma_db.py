@@ -3,7 +3,8 @@ Rakuma (fril.jp) scraping module.
 Based on mercari_db.py architecture, adapted for Rakuma's DOM structure.
 
 Stage 1: Selenium → Playwright (Scrapling StealthyFetcher) migration.
-- scrape_item_detail: StealthyFetcher.fetch() (single-shot)
+- scrape_item_detail: StealthyFetcher.fetch() (single-shot, sync)
+- _scrape_item_detail_async: StealthyFetcher.async_fetch() (async版)
 - scrape_search_result: Playwright async API (scroll support)
 """
 import asyncio
@@ -14,28 +15,11 @@ from selector_config import get_selectors, get_valid_domains
 from scrape_metrics import get_metrics, log_scrape_result, check_scrape_health
 
 
-def scrape_item_detail(url: str, driver=None):
+def _parse_item_page(page, url: str) -> dict:
     """
-    ラクマの商品ページから詳細情報を取得する。
-
-    Scrapling StealthyFetcher（Playwright ベース）を使用。
-    driver 引数は後方互換のために保持するが、使用しない。
+    Scrapling の page オブジェクトから商品情報を抽出する共通ロジック。
+    sync / async 両方の fetch 結果に対して使える。
     """
-    from scrapling import StealthyFetcher
-
-    try:
-        page = StealthyFetcher.fetch(
-            url,
-            headless=True,
-            network_idle=True,
-        )
-    except Exception as e:
-        logging.error(f"Error accessing {url}: {e}")
-        return {
-            "url": url, "title": "", "price": None, "status": "error",
-            "description": "", "image_urls": [], "variants": []
-        }
-
     # ---- タイトル ----
     title = ""
     title_selectors = get_selectors('rakuma', 'detail', 'title') or ["h1.item__name", "h1"]
@@ -96,7 +80,6 @@ def scrape_item_detail(url: str, driver=None):
         for selector in image_selectors:
             imgs = page.css(selector)
             for img in imgs:
-                # 遅延読み込み対応: src, data-lazy, data-src をチェック
                 src = img.attrib.get("src", "")
                 if not src or "placeholder" in src.lower() or "blank" in src.lower():
                     src = img.attrib.get("data-lazy") or img.attrib.get("data-src") or ""
@@ -109,11 +92,9 @@ def scrape_item_detail(url: str, driver=None):
     status = "on_sale"
     try:
         body_text = page.get_text() or ""
-        # ラクマの売り切れ表示パターン
         if "SOLDOUT" in body_text or "SOLD OUT" in body_text or "売り切れ" in body_text:
             status = "sold"
 
-        # CSSセレクタでも確認
         sold_selectors = ["span.soldout", ".label-soldout", ".item-sell-out-badge"]
         for sel in sold_selectors:
             sold_el = page.css_first(sel)
@@ -135,6 +116,57 @@ def scrape_item_detail(url: str, driver=None):
         "image_urls": image_urls,
         "variants": variants
     }
+
+
+def scrape_item_detail(url: str, driver=None):
+    """
+    ラクマの商品ページから詳細情報を取得する（同期版）。
+
+    Scrapling StealthyFetcher（Playwright ベース）を使用。
+    driver 引数は後方互換のために保持するが、使用しない。
+    トップレベル（asyncioループ外）からの呼び出し用。
+    """
+    from scrapling import StealthyFetcher
+
+    try:
+        page = StealthyFetcher.fetch(
+            url,
+            headless=True,
+            network_idle=True,
+        )
+    except Exception as e:
+        logging.error(f"Error accessing {url}: {e}")
+        return {
+            "url": url, "title": "", "price": None, "status": "error",
+            "description": "", "image_urls": [], "variants": []
+        }
+
+    return _parse_item_page(page, url)
+
+
+async def _scrape_item_detail_async(url: str) -> dict:
+    """
+    ラクマの商品ページから詳細情報を取得する（async版）。
+
+    Scrapling AsyncFetcher を使用。
+    _scrape_search_async 内（asyncioループ内）からの呼び出し用。
+    """
+    from scrapling import StealthyFetcher
+
+    try:
+        page = await StealthyFetcher.async_fetch(
+            url,
+            headless=True,
+            network_idle=True,
+        )
+    except Exception as e:
+        logging.error(f"Error accessing {url}: {e}")
+        return {
+            "url": url, "title": "", "price": None, "status": "error",
+            "description": "", "image_urls": [], "variants": []
+        }
+
+    return _parse_item_page(page, url)
 
 
 def scrape_single_item(url: str, headless: bool = True):
@@ -252,7 +284,7 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
         if any(domain in h for domain in valid_domains)
     ]
 
-    # 各商品を StealthyFetcher でスクレイピング
+    # 各商品を async版 StealthyFetcher でスクレイピング
     filtered_items = []
     for item_url in item_urls:
         if len(filtered_items) >= max_items:
@@ -260,7 +292,7 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
 
         print(f"DEBUG: Scraping Rakuma item {item_url}")
         try:
-            data = scrape_item_detail(item_url)
+            data = await _scrape_item_detail_async(item_url)
             if data["title"] and data["status"] != "error":
                 print(f"DEBUG: Success -> {data['title']}")
                 filtered_items.append(data)
@@ -269,7 +301,7 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
         except Exception as e:
             print(f"DEBUG: Error scraping {item_url}: {e}")
 
-        time.sleep(1)
+        await asyncio.sleep(1)
 
     return filtered_items
 
@@ -284,7 +316,7 @@ def scrape_search_result(
     ラクマ検索URLから複数商品をスクレイピングして list[dict] を返す。
 
     Playwright async API を使用してスクロール付き検索を実行し、
-    各商品詳細は StealthyFetcher で取得する。
+    各商品詳細は StealthyFetcher (async) で取得する。
     """
     try:
         print(f"DEBUG: Starting Rakuma scrape_search_result")
