@@ -126,8 +126,8 @@ async def _scrape_shops_product_async(url: str) -> dict:
         page = await context.new_page()
         
         try:
-            await page.goto(url, wait_until="networkidle")
-            await page.wait_for_timeout(2000)  # Shopsはロードが遅いことがあるため待機
+            await page.goto(url, wait_until="domcontentloaded")
+            await page.wait_for_timeout(3000)  # Shopsはロードが遅いことがあるため待機
             
             # ---- タイトル ----
             title = ""
@@ -458,7 +458,8 @@ async def _scrape_search_async(
         
         try:
             print(f"DEBUG: Navigating to {search_url}")
-            await page.goto(search_url, wait_until="networkidle", timeout=30000)
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(2000) # 初期ロード待機
             
             item_urls = set()
             
