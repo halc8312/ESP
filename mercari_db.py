@@ -281,7 +281,7 @@ def scrape_item_detail(url: str, driver=None):
         return scrape_shops_product(url)
 
     try:
-        page = StealthyFetcher.fetch(url, headless=True, network_idle=True)
+        page = StealthyFetcher.fetch(url, headless=True, network_idle=False)
     except Exception as e:
         print(f"Error accessing {url}: {e}")
         return {
@@ -299,7 +299,7 @@ def scrape_item_detail(url: str, driver=None):
 
     # ---- ページ全体のテキスト ----
     try:
-        body_text = page.get_text() or ""
+        body_text = " ".join([el.text for el in page.css("body *") if el.text])
     except Exception:
         body_text = ""
 
