@@ -417,6 +417,8 @@ def _build_search_page_urls(search_url: str, first_soup: BeautifulSoup, max_scro
 
 
 def _should_use_selenium_fallback() -> bool:
+    # Env var kept as SURUGAYA_SELENIUM_FALLBACK for backward compatibility.
+    # The fallback now uses StealthyFetcher (Playwright) instead of Selenium.
     flag = os.getenv("SURUGAYA_SELENIUM_FALLBACK", "1").strip().lower()
     return flag not in ("0", "false", "off", "no")
 
@@ -699,76 +701,24 @@ def _extract_global_product_detail(source_url: str, global_url: str):
 
 
 def _fetch_soup_with_selenium(url: str, headless: bool = True, wait_seconds: int = 20):
-    """Fallback HTML fetch via Selenium (Render-safe fallback path)."""
-    driver = None
+    """Fallback HTML fetch via Scrapling StealthyFetcher (Playwright ベース)."""
     try:
-        from yahoo_db import create_driver
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support import expected_conditions as EC
-        from selenium.webdriver.support.ui import WebDriverWait
-    except Exception as exc:
-        return None, url, str(exc)
-
-    try:
-        driver = create_driver(headless=headless)
-        try:
-            # Apply stealth script before first navigation when possible.
-            driver.execute_cdp_cmd(
-                "Page.addScriptToEvaluateOnNewDocument",
-                {
-                    "source": """
-Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-Object.defineProperty(navigator, 'languages', {get: () => ['ja-JP', 'ja', 'en-US', 'en']});
-Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-""".strip()
-                },
-            )
-        except Exception:
-            pass
-        driver.get(url)
-        WebDriverWait(driver, wait_seconds).until(
-            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        from scrapling import StealthyFetcher
+        page = StealthyFetcher.fetch(
+            url,
+            headless=headless,
+            network_idle=True,
+            block_webrtc=True,
         )
-
-        challenge_retry_done = False
-        deadline = time.time() + max(6, wait_seconds)
-        while time.time() < deadline:
-            html_text = driver.page_source or ""
-            title_text = getattr(driver, "title", "") or ""
-            current_url = getattr(driver, "current_url", url) or url
-            if not html_text:
-                time.sleep(0.8)
-                continue
-
-            if not _looks_like_challenge_html(title_text, html_text):
-                soup = BeautifulSoup(html_text, "html.parser")
-                return soup, current_url, None
-
-            if not challenge_retry_done:
-                challenge_retry_done = True
-                try:
-                    driver.refresh()
-                except Exception:
-                    pass
-            time.sleep(1.2)
-
-        # Return last HTML even if challenge remained, for caller-side handling/logging.
-        html_text = driver.page_source or ""
-        current_url = getattr(driver, "current_url", url) or url
+        html_text = page.html or ""
         if not html_text:
-            return None, current_url, "Empty page source"
+            return None, url, "Empty page source"
         soup = BeautifulSoup(html_text, "html.parser")
         if _looks_like_challenge_soup(soup):
-            return None, current_url, "Cloudflare challenge page remained after Selenium wait"
-        return soup, current_url, None
+            return None, url, "Cloudflare challenge page after StealthyFetcher"
+        return soup, url, None
     except Exception as exc:
         return None, url, str(exc)
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except Exception:
-                pass
 
 
 def scrape_item_detail(session, url: str, headless: bool = True) -> dict:

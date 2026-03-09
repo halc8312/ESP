@@ -1,7 +1,6 @@
 """
 Offmall Patrol - Lightweight price and stock monitoring for netmall.hardoff.co.jp.
 Uses Scrapling HTTP fetch (no browser) with JSON-LD for fast, reliable extraction.
-Falls back to Selenium when a shared driver is provided.
 """
 import re
 import json
@@ -17,11 +16,10 @@ class OffmallPatrol(BasePatrol):
     def fetch(self, url: str, driver=None) -> PatrolResult:
         """
         Fetch price and stock status from Offmall product page.
-        Uses Scrapling HTTP-only fetch when driver is None (no Chrome needed).
+        Uses Scrapling HTTP-only fetch (no browser required).
+        driver 引数は後方互換のために保持するが、使用しない。
         """
-        if driver is None:
-            return self._fetch_with_scrapling(url)
-        return self._fetch_with_selenium(url, driver)
+        return self._fetch_with_scrapling(url)
 
     def _fetch_with_scrapling(self, url: str) -> PatrolResult:
         """HTTP-only fetch using Scrapling Fetcher with JSON-LD extraction."""
@@ -84,78 +82,4 @@ class OffmallPatrol(BasePatrol):
 
         except Exception as e:
             logger.debug(f"Offmall Scrapling patrol error: {e}")
-            return PatrolResult(error=str(e))
-
-    def _fetch_with_selenium(self, url: str, driver) -> PatrolResult:
-        """Selenium-based fetch using a shared driver."""
-        import time
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-
-        try:
-            driver.get(url)
-            WebDriverWait(driver, 8).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            time.sleep(1)
-
-            price = None
-            status = "unknown"
-
-            try:
-                scripts = driver.find_elements(By.CSS_SELECTOR, "script[type='application/ld+json']")
-                for script in scripts:
-                    try:
-                        data = json.loads(script.get_attribute("innerHTML"))
-                        if isinstance(data, dict) and data.get("@type") == "Product":
-                            offers = data.get("offers", {})
-                            if isinstance(offers, dict):
-                                price_str = str(offers.get("price", ""))
-                                if price_str:
-                                    price = int(float(price_str))
-                                availability = offers.get("availability", "")
-                                if "InStock" in availability:
-                                    status = "active"
-                                elif "OutOfStock" in availability:
-                                    status = "sold"
-                            break
-                    except json.JSONDecodeError:
-                        continue
-            except Exception:
-                pass
-
-            if price is None:
-                try:
-                    price_el = driver.find_element(By.CSS_SELECTOR, ".product-detail-price__main")
-                    price_text = price_el.text.strip()
-                    match = re.search(r"([\d,]+)", price_text)
-                    if match:
-                        price = int(match.group(1).replace(",", ""))
-                except Exception:
-                    pass
-
-            if status == "unknown":
-                try:
-                    cart_btn = driver.find_elements(By.CSS_SELECTOR, ".cart-add-button")
-                    if cart_btn:
-                        is_disabled = cart_btn[0].get_attribute("disabled")
-                        status = "sold" if is_disabled else "active"
-                    else:
-                        status = "sold"
-                except Exception:
-                    pass
-
-            variants = []
-            if price is not None:
-                variants.append({
-                    "name": "Default Title",
-                    "stock": 1 if status == "active" else 0,
-                    "price": price
-                })
-
-            return PatrolResult(price=price, status=status, variants=variants)
-
-        except Exception as e:
-            logger.error(f"Offmall Selenium patrol error: {e}")
             return PatrolResult(error=str(e))

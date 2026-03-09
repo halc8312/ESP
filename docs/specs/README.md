@@ -1,5 +1,9 @@
 # Playwright 移行 & キューシステム 仕様書 索引
 
+> **⚠️ 統合計画ドキュメント**: このディレクトリの Stage 計画と `reports.md` の Phase 計画は
+> **[docs/UNIFIED_ROADMAP.md](../UNIFIED_ROADMAP.md)** に統合されました。
+> 新しい実装は統合ロードマップを参照してください。
+
 > **注意**: このディレクトリの文書はリポジトリルートの `reports.md`（`/ESP/reports.md`）の「Phase」計画とは**別の独立した移行計画**です。
 > `reports.md` では UI/機能開発の Phase が定義されており、本ディレクトリはスクレイピングエンジンの技術的移行を扱います。
 > 混乱を避けるため、本計画では **「Stage」** という用語を使用します。
@@ -44,13 +48,16 @@ Stage 4: Selenium 完全削除 & クリーンアップ
 
 ## Stage サマリーテーブル
 
-| Stage | 名称                              | 主な変更ファイル                                          | リスク | 所要時間目安 |
-|-------|-----------------------------------|-----------------------------------------------------------|--------|--------------|
-| 0     | キューシステム構築                | `services/scrape_queue.py`（新規）<br>`routes/scrape.py`<br>`templates/scrape_form.html` | 低     | 1〜2日       |
-| 1     | ラクマ Playwright 移行            | `rakuma_db.py`<br>`services/patrol/rakuma_patrol.py`<br>`Dockerfile` | 中     | 1〜2日       |
-| 2     | メルカリパトロール Playwright 移行 | `services/patrol/mercari_patrol.py`<br>`services/monitor_service.py` | 中     | 1日          |
-| 3     | メルカリ全体 Playwright 移行      | `mercari_db.py`（~608行の全書き換え）<br>`tests/test_scraping_logic.py` | 高     | 2〜3日       |
-| 4     | Selenium 削除 & クリーンアップ    | `Dockerfile`<br>`requirements.txt`<br>デバッグスクリプト削除 | 低     | 半日         |
+| Stage | 名称                              | 状態     | 主な変更ファイル                                          |
+|-------|-----------------------------------|----------|-----------------------------------------------------------|
+| 0     | キューシステム構築                | ✅ 完了  | `services/scrape_queue.py`（新規）<br>`routes/scrape.py`<br>`templates/scrape_form.html` |
+| 1     | ラクマ Playwright 移行            | ✅ 完了  | `rakuma_db.py`<br>`services/patrol/rakuma_patrol.py`<br>`Dockerfile` |
+| 2     | メルカリパトロール Playwright 移行 | ✅ 完了  | `services/patrol/mercari_patrol.py`<br>`services/monitor_service.py` |
+| 3     | メルカリ全体 Playwright 移行      | ✅ 完了  | `mercari_db.py`（全書き換え）<br>`services/scrape_queue.py` |
+| 4a    | Selenium 削除（パトロール層）     | ✅ 完了  | `services/patrol/*_patrol.py`（`_fetch_with_selenium` 削除）<br>`surugaya_db.py`（Selenium fallback → StealthyFetcher）<br>デバッグスクリプト削除 |
+| 4b    | Selenium 削除（DB 層・Docker）    | 🔲 未着手 | `yahoo_db.py`, `yahuoku_db.py`, `snkrdunk_db.py`, `offmall_db.py`<br>`requirements.txt`, `Dockerfile` |
+
+> **詳細な残タスクは [docs/UNIFIED_ROADMAP.md](../UNIFIED_ROADMAP.md) を参照してください。**
 
 ---
 

@@ -1,7 +1,6 @@
 """
 Yahoo Shopping lightweight patrol scraper.
 Uses Scrapling HTTP fetch (no browser) for fast price/variant extraction.
-Falls back to Selenium if a shared driver is provided.
 """
 import json
 import re
@@ -19,12 +18,10 @@ class YahooPatrol(BasePatrol):
     def fetch(self, url: str, driver=None) -> PatrolResult:
         """
         Fetch price and variant stock from Yahoo Shopping.
-        Uses Scrapling HTTP-only fetch (no browser) when driver is None.
-        Falls back to Selenium extraction when a shared driver is provided.
+        Uses Scrapling HTTP-only fetch (no browser required).
+        driver 引数は後方互換のために保持するが、使用しない。
         """
-        if driver is None:
-            return self._fetch_with_scrapling(url)
-        return self._fetch_with_selenium(url, driver)
+        return self._fetch_with_scrapling(url)
 
     def _fetch_with_scrapling(self, url: str) -> PatrolResult:
         """HTTP-only fetch using Scrapling Fetcher - no browser needed."""
@@ -67,71 +64,6 @@ class YahooPatrol(BasePatrol):
             logger.debug(f"Yahoo Scrapling patrol error: {e}")
             return PatrolResult(error=str(e))
 
-    def _fetch_with_selenium(self, url: str, driver) -> PatrolResult:
-        """Selenium-based fetch using a shared driver."""
-        import time
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-
-        try:
-            driver.get(url)
-            try:
-                WebDriverWait(driver, 8).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "body"))
-                )
-                time.sleep(0.5)
-            except Exception:
-                pass
-
-            result = self._extract_from_next_data(driver)
-            if result.success:
-                return result
-            return self._extract_from_css(driver)
-
-        except Exception as e:
-            logger.error(f"Yahoo Selenium patrol error for {url}: {e}")
-            return PatrolResult(error=str(e))
-
-    def _extract_from_next_data(self, driver) -> PatrolResult:
-        """Extract data from __NEXT_DATA__ JSON script tag (Selenium)."""
-        try:
-            from selenium.webdriver.common.by import By
-            scripts = driver.find_elements(By.CSS_SELECTOR, "script[id='__NEXT_DATA__']")
-            if not scripts:
-                return PatrolResult(error="No __NEXT_DATA__ found")
-
-            json_text = scripts[0].get_attribute("textContent")
-            if not json_text:
-                return PatrolResult(error="Empty __NEXT_DATA__")
-
-            data = json.loads(json_text)
-            page_props = data.get("props", {}).get("pageProps", {})
-            sp = page_props.get("sp", {}) or page_props.get("initialState", {})
-            item = sp.get("item", {}) or sp.get("product", {})
-
-            if not item:
-                return PatrolResult(error="No item data in JSON")
-
-            price = None
-            if item.get("applicablePrice"):
-                price = int(item.get("applicablePrice"))
-            elif item.get("price"):
-                price = int(item.get("price"))
-
-            status = "active"
-            stock = item.get("stock", {})
-            if isinstance(stock, dict):
-                if stock.get("isSoldOut") or stock.get("quantity", 1) <= 0:
-                    status = "sold"
-
-            variants = self._extract_variants_from_json(item, price)
-            return PatrolResult(price=price, status=status, variants=variants)
-
-        except Exception as e:
-            logger.debug(f"__NEXT_DATA__ parse error: {e}")
-            return PatrolResult(error=str(e))
-    
     def _extract_variants_from_json(self, item: dict, base_price: Optional[int]) -> list:
         """Extract variant stock from JSON item data."""
         variants = []
@@ -168,28 +100,6 @@ class YahooPatrol(BasePatrol):
                         "price": v_price
                     })
         return variants
-    
-    def _extract_from_css(self, driver) -> PatrolResult:
-        """Fallback CSS selector extraction (Selenium)."""
-        try:
-            from selenium.webdriver.common.by import By
-            body_text = driver.find_element(By.TAG_NAME, "body").text
-        except Exception:
-            body_text = ""
-
-        price = None
-        match = re.search(r"([\d,]+)\s*円", body_text)
-        if match:
-            try:
-                price = int(match.group(1).replace(",", ""))
-            except ValueError:
-                pass
-
-        status = "active"
-        if "売り切れ" in body_text or "在庫切れ" in body_text:
-            status = "sold"
-
-        return PatrolResult(price=price, status=status, variants=[])
 
 
 def fetch_yahoo(url: str, driver=None) -> PatrolResult:

@@ -107,13 +107,13 @@ def test_scrape_item_detail_title_extraction(_patch_scrapling):
     mock_page = MagicMock()
     mock_page.get_text.return_value = "テスト商品名"
 
-    def css_first_side_effect(selector):
+    def css_side_effect(selector):
+        # _parse_item_page は page.css(selector) を使う
         if "item__name" in selector or selector == "h1":
-            return mock_el
-        return None
+            return [mock_el]
+        return []
 
-    mock_page.css_first.side_effect = css_first_side_effect
-    mock_page.css.return_value = []
+    mock_page.css.side_effect = css_side_effect
 
     _patch_scrapling.Fetcher.get.return_value = mock_page
 
@@ -251,10 +251,15 @@ def test_scrape_single_item_no_selenium(_patch_scrapling):
 
     from rakuma_db import scrape_single_item
 
-    # mercari_db.create_driver が呼ばれないことを確認
-    with patch("mercari_db.create_driver") as mock_create_driver:
-        result = scrape_single_item("https://item.fril.jp/test")
-        mock_create_driver.assert_not_called()
+    # Selenium の create_driver が mercari_db / yahoo_db に存在しないことを確認
+    import mercari_db
+    assert not hasattr(mercari_db, "create_driver"), (
+        "mercari_db.create_driver が存在する。Stage 3 完了後は削除されているはず。"
+    )
+
+    result = scrape_single_item("https://item.fril.jp/test")
+    # 結果がリスト形式であることを確認（空でも可）
+    assert isinstance(result, list)
 
 
 # ---------------------------------------------------------------------------
@@ -357,10 +362,12 @@ def test_fetch_rakuma_convenience_function(_patch_scrapling):
 # ---------------------------------------------------------------------------
 
 def test_rakuma_removed_from_browser_sites():
-    """Stage 1 完了: rakuma が BROWSER_SITES から削除されていることを確認"""
+    """Stage 3 完了: すべてのサイトが BROWSER_SITES から削除されていることを確認"""
     from services.scrape_queue import BROWSER_SITES
+    # Stage 3 完了後: mercari も Playwright(StealthyFetcher) に移行済み → BROWSER_SITES は空
     assert "rakuma" not in BROWSER_SITES
-    assert "mercari" in BROWSER_SITES
+    assert "mercari" not in BROWSER_SITES
+    assert len(BROWSER_SITES) == 0, f"BROWSER_SITES should be empty after Stage 3, got: {BROWSER_SITES}"
 
 
 # ---------------------------------------------------------------------------

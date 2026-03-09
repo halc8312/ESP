@@ -16,16 +16,17 @@ def test_enqueue_returns_job_id():
 
 
 def test_http_site_uses_http_executor():
-    """HTTP サイトが http_executor を使用することを確認"""
+    """全サイトが http_executor を使用することを確認（Stage 3 完了後）"""
     queue = ScrapeQueue()
-    assert "yahoo" not in BROWSER_SITES
-    assert "mercari" in BROWSER_SITES
-    # Stage 1 完了: rakuma は Playwright(StealthyFetcher) に移行済み → BROWSER_SITES から削除
+    # Stage 3 完了: すべてのサイトが http_executor で処理される
+    assert "mercari" not in BROWSER_SITES
     assert "rakuma" not in BROWSER_SITES
+    assert "yahoo" not in BROWSER_SITES
     assert "surugaya" not in BROWSER_SITES
     assert "offmall" not in BROWSER_SITES
     assert "yahuoku" not in BROWSER_SITES
     assert "snkrdunk" not in BROWSER_SITES
+    assert len(BROWSER_SITES) == 0, f"BROWSER_SITES should be empty after Stage 3, got: {BROWSER_SITES}"
 
 
 def test_get_status_returns_none_for_unknown_job():
@@ -170,13 +171,15 @@ def test_queue_position():
 
 
 def test_browser_site_classification():
-    """BROWSER_SITES の分類が正しいことを確認"""
-    assert "mercari" in BROWSER_SITES
+    """BROWSER_SITES が空であることを確認（Stage 3 完了後: 全サイト HTTP 移行済み）"""
+    # Stage 3 完了: mercari も Playwright/HTTP 移行済み → BROWSER_SITES は空集合
+    assert "mercari" not in BROWSER_SITES
     # Stage 1 完了: rakuma は BROWSER_SITES から削除済み
     assert "rakuma" not in BROWSER_SITES
     # HTTP サイト
     for http_site in ["yahoo", "yahuoku", "surugaya", "offmall", "snkrdunk"]:
         assert http_site not in BROWSER_SITES, f"{http_site} は BROWSER_SITES に含まれるべきではない"
+    assert len(BROWSER_SITES) == 0, "Stage 3 完了後: BROWSER_SITES は空であるべき"
 
 
 def test_status_transitions():

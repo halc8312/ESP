@@ -1,7 +1,6 @@
 """
 Surugaya Patrol - Lightweight price and stock monitoring.
 Uses Scrapling HTTP fetch (no browser) when no driver is provided.
-Falls back to Selenium when a shared driver is provided.
 """
 import re
 import logging
@@ -23,11 +22,10 @@ class SurugayaPatrol(BasePatrol):
     def fetch(self, url: str, driver=None) -> PatrolResult:
         """
         Fetch price and stock status from Surugaya product page.
-        Uses Scrapling HTTP-only fetch when driver is None (no Chrome needed).
+        Uses Scrapling HTTP-only fetch (no browser required).
+        driver 引数は後方互換のために保持するが、使用しない。
         """
-        if driver is None:
-            return self._fetch_with_scrapling(url)
-        return self._fetch_with_selenium(url, driver)
+        return self._fetch_with_scrapling(url)
 
     def _fetch_with_scrapling(self, url: str) -> PatrolResult:
         """HTTP-only fetch using Scrapling Fetcher - no browser needed."""
@@ -96,75 +94,4 @@ class SurugayaPatrol(BasePatrol):
 
         except Exception as e:
             logger.debug(f"Surugaya Scrapling patrol error: {e}")
-            return PatrolResult(error=str(e))
-
-    def _fetch_with_selenium(self, url: str, driver) -> PatrolResult:
-        """Selenium-based fetch using a shared driver."""
-        import time
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-
-        try:
-            driver.get(url)
-            WebDriverWait(driver, 8).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            time.sleep(1)
-
-            price = None
-            try:
-                price_els = driver.find_elements(By.CSS_SELECTOR, self.SELECTORS["price"])
-                for el in price_els:
-                    text = el.text
-                    match = re.search(r"([\d,]+)\s*円", text) or re.search(r"[¥￥]\s*([\d,]+)", text)
-                    if match:
-                        price = int(match.group(1).replace(",", ""))
-                        break
-            except Exception:
-                pass
-
-            if price is None:
-                try:
-                    body_text = driver.find_element(By.TAG_NAME, "body").text
-                    match = re.search(r"([\d,]+)\s*円\s*\(税込\)", body_text)
-                    if match:
-                        price = int(match.group(1).replace(",", ""))
-                except Exception:
-                    pass
-
-            status = "unknown"
-            try:
-                buy_btn = driver.find_elements(By.CSS_SELECTOR, self.SELECTORS["stock_available"])
-                sold_btn = driver.find_elements(By.CSS_SELECTOR, self.SELECTORS["stock_sold"])
-
-                if buy_btn:
-                    status = "active"
-                elif sold_btn:
-                    status = "sold"
-                else:
-                    body_text = driver.find_element(By.TAG_NAME, "body").text
-                    sold_keywords = ("売り切れ", "在庫なし", "品切れ", "販売終了")
-                    active_keywords = ("カートに入れる", "購入手続き", "注文する")
-                    if any(keyword in body_text for keyword in sold_keywords):
-                        status = "sold"
-                    elif any(keyword in body_text for keyword in active_keywords):
-                        status = "active"
-                    else:
-                        status = "unknown"
-            except Exception:
-                pass
-
-            variants = []
-            if price is not None:
-                variants.append({
-                    "name": "Default Title",
-                    "stock": 1 if status == "active" else 0,
-                    "price": price
-                })
-
-            return PatrolResult(price=price, status=status, variants=variants)
-
-        except Exception as e:
-            logger.error(f"Surugaya Selenium patrol error: {e}")
             return PatrolResult(error=str(e))
