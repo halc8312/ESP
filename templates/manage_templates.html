@@ -26,7 +26,7 @@
                 <tr>
                     <td>{{ t.id }}</td>
                     <td>{{ t.name }}</td>
-                    <td class="hide-mobile">{{ t.content[:50] if t.content else '' }}...</td>
+                    <td class="hide-mobile">{{ (t.content | striptags)[:50] if t.content else '' }}...</td>
                     <td>
                         <form method="POST" action="{{ url_for('delete_template', template_id=t.id) }}"
                             style="display:inline;">

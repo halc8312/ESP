@@ -379,7 +379,7 @@
 
     {% if pricelist.notes %}
     <div class="catalog-notes">
-        <p>{{ pricelist.notes }}</p>
+        {{ pricelist.notes | safe }}
     </div>
     {% endif %}
 
