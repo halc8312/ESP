@@ -69,15 +69,13 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/tinymce/6.8.3/tinymce.min.js"
-        integrity="sha512-GYBna8LOGXFw0EfrJgEy4bOo5ARCVNIUbfhyW5QEtguEwlOiXo1P6qez/7/cEHWVgSHYC/LuluwAot6aAXe+Gw=="
-        crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tinymce/6.8.3/tinymce.min.js" referrerpolicy="origin"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
         tinymce.init({
             selector: '#notes',
             menubar: false,
-            plugins: 'lists link paste',
+            plugins: 'lists link',
             toolbar: 'bold italic | bullist numlist | link | removeformat',
             paste_as_text: true,
             valid_elements: 'p,br,b,strong,i,em,ul,ol,li,a[href|target=_blank]',
