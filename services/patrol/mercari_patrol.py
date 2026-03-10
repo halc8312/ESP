@@ -31,7 +31,8 @@ class MercariPatrol(BasePatrol):
                 network_idle=True,  # JS ロード完了を待機
             )
             
-            body_text = page.get_text() or ""
+            body_els = page.css("body")
+            body_text = body_els[0].text if body_els else ""
             
             price = self._extract_price(page, body_text)
             status = self._extract_status(page, body_text)

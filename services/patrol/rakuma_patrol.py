@@ -26,7 +26,8 @@ class RakumaPatrol(BasePatrol):
         try:
             from scrapling import StealthyFetcher
             page = StealthyFetcher.fetch(url, headless=True, network_idle=True)
-            body_text = page.get_text() or ""
+            body_els = page.css("body")
+            body_text = body_els[0].text if body_els else ""
 
             # --- Price extraction ---
             price = self._extract_price_from_page(page, body_text)
