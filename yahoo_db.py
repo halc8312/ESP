@@ -197,8 +197,10 @@ def scrape_item_detail_light(url: str) -> dict:
                 result["description"] = str(meta_el[0].attrib.get("content", "") or "")
 
         stock = item.get("stock", {})
-        if isinstance(stock, dict) and (stock.get("isSoldOut") or stock.get("quantity", 1) <= 0):
-            result["status"] = "sold"
+        if isinstance(stock, dict):
+            qty = stock.get("quantity")
+            if stock.get("isSoldOut") or (qty is not None and qty <= 0):
+                result["status"] = "sold"
 
         return result
     except Exception as exc:
