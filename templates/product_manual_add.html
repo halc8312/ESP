@@ -8,7 +8,7 @@
 
 <div class="page-header">
     <h1>商品手動追加</h1>
-    <p class="page-subtitle">スクレイピングを使わず、在庫品を直接登録します</p>
+    <p class="page-subtitle">商品抽出機能を使わず、在庫品を直接登録します</p>
 </div>
 
 {% if errors %}
@@ -37,7 +37,8 @@
                         <select id="shop_id" name="shop_id">
                             <option value="">(共通 / 未所属)</option>
                             {% for shop in all_shops %}
-                            <option value="{{ shop.id }}" {% if form_data.shop_id == shop.id|string %}selected{% endif %}>{{ shop.name }}</option>
+                            <option value="{{ shop.id }}" {% if form_data.shop_id==shop.id|string %}selected{% endif %}>
+                                {{ shop.name }}</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -59,7 +60,8 @@
 
                     <div class="form-group">
                         <label for="description_en">商品説明（英語）</label>
-                        <textarea id="description_en" name="description_en" rows="5">{{ form_data.description_en }}</textarea>
+                        <textarea id="description_en" name="description_en"
+                            rows="5">{{ form_data.description_en }}</textarea>
                     </div>
                 </div>
             </div>
@@ -89,8 +91,7 @@
 
                     <div class="form-group">
                         <label for="tags">タグ</label>
-                        <input type="text" id="tags" name="tags" value="{{ form_data.tags }}"
-                            placeholder="カンマ区切りで入力">
+                        <input type="text" id="tags" name="tags" value="{{ form_data.tags }}" placeholder="カンマ区切りで入力">
                     </div>
                 </div>
             </div>
@@ -104,32 +105,38 @@
                 <div class="content-card-body">
                     <div class="form-group">
                         <label for="cost_price">仕入価格</label>
-                        <input type="number" id="cost_price" name="cost_price" value="{{ form_data.cost_price }}" min="0" required>
+                        <input type="number" id="cost_price" name="cost_price" value="{{ form_data.cost_price }}"
+                            min="0" required>
                     </div>
 
                     <div class="form-group">
                         <label for="selling_price">販売価格（任意）</label>
-                        <input type="number" id="selling_price" name="selling_price" value="{{ form_data.selling_price }}" min="0">
+                        <input type="number" id="selling_price" name="selling_price"
+                            value="{{ form_data.selling_price }}" min="0">
                     </div>
 
                     <div class="form-group">
                         <label for="inventory_qty">在庫数</label>
-                        <input type="number" id="inventory_qty" name="inventory_qty" value="{{ form_data.inventory_qty }}" min="0">
+                        <input type="number" id="inventory_qty" name="inventory_qty"
+                            value="{{ form_data.inventory_qty }}" min="0">
                     </div>
 
                     <div class="form-group">
                         <label for="stock_state">在庫状態</label>
                         <select id="stock_state" name="stock_state">
-                            <option value="on_sale" {% if form_data.stock_state == 'on_sale' %}selected{% endif %}>在庫あり</option>
-                            <option value="sold" {% if form_data.stock_state == 'sold' %}selected{% endif %}>在庫なし</option>
+                            <option value="on_sale" {% if form_data.stock_state=='on_sale' %}selected{% endif %}>在庫あり
+                            </option>
+                            <option value="sold" {% if form_data.stock_state=='sold' %}selected{% endif %}>在庫なし</option>
                         </select>
                     </div>
 
                     <div class="form-group">
                         <label for="publish_status">Shopify公開状態</label>
                         <select id="publish_status" name="publish_status">
-                            <option value="draft" {% if form_data.publish_status == 'draft' %}selected{% endif %}>下書き</option>
-                            <option value="active" {% if form_data.publish_status == 'active' %}selected{% endif %}>公開</option>
+                            <option value="draft" {% if form_data.publish_status=='draft' %}selected{% endif %}>下書き
+                            </option>
+                            <option value="active" {% if form_data.publish_status=='active' %}selected{% endif %}>公開
+                            </option>
                         </select>
                     </div>
 
