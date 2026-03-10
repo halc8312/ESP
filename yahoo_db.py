@@ -63,7 +63,47 @@ def scrape_item_detail_light(url: str) -> dict:
         page = fetch_static(url)
         item = _extract_item_from_page(page)
         if not item:
-            return {}
+            logger.debug("No JSON item data found, falling back to CSS selectors")
+            title_selectors = get_selectors("yahoo", "detail", "title") or ["[class*='styles_name__']", "h1"]
+            for sel in title_selectors:
+                els = page.css(sel)
+                if els and els[0].text:
+                    result["title"] = str(els[0].text).strip()
+                    break
+            
+            if not result.get("title"):
+                return {}
+                
+            price_selectors = get_selectors("yahoo", "detail", "price") or ["[class*='styles_price__']", ".price"]
+            for sel in price_selectors:
+                els = page.css(sel)
+                if els and els[0].text:
+                    price_str = str(els[0].text).strip()
+                    digits = ''.join(c for c in price_str if c.isdigit())
+                    if digits:
+                        result["price"] = int(digits)
+                        break
+
+            desc_selectors = get_selectors("yahoo", "detail", "description") or ["[class*='styles_content__']", ".description"]
+            for sel in desc_selectors:
+                els = page.css(sel)
+                if els and els[0].text:
+                    result["description"] = str(els[0].text).strip()
+                    break
+
+            image_selectors = get_selectors("yahoo", "detail", "images") or ["img"]
+            image_urls = []
+            for sel in image_selectors:
+                els = page.css(sel)
+                for el in els:
+                    src = el.attrib.get("src") or el.attrib.get("data-src")
+                    if src and src.startswith("http") and src not in image_urls:
+                        image_urls.append(str(src))
+                if image_urls:
+                    break
+            result["image_urls"] = image_urls
+            
+            return result
 
         if item.get("name"):
             result["title"] = item["name"]
@@ -196,6 +236,14 @@ def _extract_search_urls(page, base_url: str, max_items: int) -> list:
             if not href:
                 continue
             full_url = urljoin(base_url, href)
+            
+            if "shopping-item-reach.yahoo.co.jp" in full_url and "rdUrl=" in full_url:
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(full_url)
+                qs = parse_qs(parsed.query)
+                if "rdUrl" in qs:
+                    full_url = qs["rdUrl"][0]
+
             if not any(domain in full_url for domain in valid_domains):
                 continue
             if full_url in seen:

@@ -38,6 +38,7 @@
     "yahoo": {
         "detail": {
             "title": [
+                "[class*='styles_name__']",
                 "[class*='styles_itemName']",
                 "[class*='styles_itemTitle']",
                 ".mdItemName",
@@ -48,6 +49,7 @@
                 "h1"
             ],
             "price": [
+                "[class*='styles_price__']",
                 "[class*='styles_price']",
                 ".mdItemPrice",
                 ".elPrice",
@@ -56,6 +58,7 @@
                 ".price"
             ],
             "description": [
+                "[class*='styles_content__']",
                 "[class*='styles_itemDescription']",
                 ".mdItemDescription",
                 ".elItemInfo",
