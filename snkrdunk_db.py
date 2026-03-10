@@ -204,6 +204,7 @@ def scrape_single_item(url: str, headless: bool = True):
 
 def _extract_search_urls(page, base_url: str, max_items: int) -> list:
     link_selectors = get_selectors("snkrdunk", "search", "item_links") or [
+        "a[class*='resultProductTile']",
         "a[class*='productTile']",
         "a[href*='/products/']",
     ]

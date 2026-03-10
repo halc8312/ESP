@@ -85,7 +85,10 @@ def scrape_item_detail_light(url: str) -> dict:
 
         description = item_detail.get("description", "") or item_detail.get("itemDescription", "")
         if description:
-            result["description"] = description
+            if isinstance(description, list):
+                result["description"] = "\n".join(str(d) for d in description)
+            else:
+                result["description"] = str(description)
         else:
             meta_el = page.css("meta[name='description']")
             if meta_el:
