@@ -117,7 +117,7 @@ def scrape_item_detail_light(url: str) -> dict:
         json_images = item.get("images")
         if isinstance(json_images, dict):
             image_list = []
-            for key in ("list", "itemImageList", "detailImageList"):
+            for key in ("displayItemImageList", "list", "itemImageList", "detailImageList"):
                 image_list.extend(json_images.get(key, []))
             if "mainImage" in json_images:
                 image_list.append(json_images["mainImage"])

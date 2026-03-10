@@ -95,7 +95,7 @@ def scrape_item_detail_light(url: str) -> dict:
                 result["description"] = str(meta_el[0].attrib.get("content", "") or "")
 
         image_urls = []
-        for key in ("images", "image", "imageList"):
+        for key in ("img", "images", "image", "imageList"):
             imgs = item_detail.get(key)
             if imgs is None:
                 continue
@@ -122,8 +122,8 @@ def scrape_item_detail_light(url: str) -> dict:
                     image_urls.append(og_url)
         result["image_urls"] = image_urls
 
-        status_flag = item_detail.get("status") or item_detail.get("isFinished") or item_detail.get("isClosed")
-        if status_flag in (True, "closed", "finished", "ended"):
+        status_flag = item_detail.get("status") or item_detail.get("isFinished") or item_detail.get("isClosed") or item_detail.get("closeStatus")
+        if status_flag in (True, "closed", "finished", "ended", "closedBySystem", "closedBySeller"):
             result["status"] = "sold"
         else:
             page_text = str(page.get_all_text())

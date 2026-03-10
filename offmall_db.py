@@ -91,6 +91,30 @@ def scrape_item_detail_light(url: str) -> dict:
         result["brand"] = brand.get("name", "") if isinstance(brand, dict) else str(brand or "")
         result["description"] = json_ld.get("description", "")
 
+        # JSON-LD description is often just the URL on Offmall; fall back to HTML
+        if not result["description"] or result["description"].startswith("http"):
+            desc_parts = []
+            # Staff recommendation section
+            point_els = page.css("div.product-detail-point__box")
+            if point_els:
+                text = str(point_els[0].text or "").strip()
+                if text:
+                    desc_parts.append(text)
+            # Features/notes table in #panel1
+            for th_el in page.css("#panel1 th, .product-detail-spec th"):
+                th_text = str(th_el.text or "")
+                if "特徴" in th_text or "備考" in th_text or "商品説明" in th_text:
+                    # Navigate to sibling td
+                    parent = th_el.parent
+                    if parent:
+                        td_els = parent.css("td")
+                        if td_els:
+                            td_text = str(td_els[0].text or "").strip()
+                            if td_text:
+                                desc_parts.append(td_text)
+            if desc_parts:
+                result["description"] = "\n".join(desc_parts)
+
         offers = json_ld.get("offers", {})
         if isinstance(offers, dict):
             price_str = str(offers.get("price", ""))

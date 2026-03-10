@@ -1,29 +1,450 @@
 {
-  "timestamp": "2026-03-04T00:59:31.631482",
+  "timestamp": "2026-03-11T02:28:55.937332",
   "summary": {
     "total": 8,
-    "passed": 7,
-    "failed": 1
+    "passed": 6,
+    "failed": 2
   },
   "details": [
+    {
+      "site": "rakuma",
+      "url": "https://item.fril.jp/fed8b046583deff9f860ce320f64633c",
+      "success": true,
+      "errors": [],
+      "duration": 0.8061790466308594,
+      "data": {
+        "url": "https://item.fril.jp/fed8b046583deff9f860ce320f64633c",
+        "title": "【PS5】バイオハザード ヴィレッジ Z Version ゴールドエディション",
+        "price": 1800,
+        "status": "on_sale",
+        "description": "",
+        "image_urls": [
+          "https://img.fril.jp/img/819009653/l/2811614664.jpg?1772540118",
+          "https://img.fril.jp/img/819009653/l/2811614662.jpg?1772540118",
+          "https://img.fril.jp/user/17081269/s/17081269.jpg?1616847605",
+          "https://img.fril.jp/img/817484235/m/2805165788.jpg?1771747823",
+          "https://img.fril.jp/img/819951233/m/2815379066.jpg?1773018644",
+          "https://img.fril.jp/img/819850085/m/2815040695.jpg?1772960628",
+          "https://img.fril.jp/img/818141792/m/2807944843.jpg?1772091616",
+          "https://img.fril.jp/img/820219307/m/2816590244.jpg?1773142138",
+          "https://img.fril.jp/img/818145646/m/2807968020.jpg?1772093792",
+          "https://img.fril.jp/img/818505012/m/2809519849.jpg?1772292163",
+          "https://img.fril.jp/img/815313219/m/2795648894.jpg?1770689769",
+          "https://img.fril.jp/img/819000334/m/2811571005.jpg?1772535430",
+          "https://img.fril.jp/img/820163227/m/2816269299.jpg?1773117667",
+          "https://img.fril.jp/img/820211337/m/2816557497.jpg?1773139180",
+          "https://img.fril.jp/img/820210778/m/2816554930.jpg?1773138977",
+          "https://img.fril.jp/img/820178875/m/2816364925.jpg?1773123638",
+          "https://img.fril.jp/img/820167656/m/2816292419.jpg?1773119571",
+          "https://img.fril.jp/img/820199266/m/2816489240.jpg?1773133522",
+          "https://img.fril.jp/img/820105811/m/2816080971.jpg?1773101373",
+          "https://img.fril.jp/img/820105356/m/2816078092.jpg?1773100953",
+          "https://img.fril.jp/img/820106267/m/2816083314.jpg?1773101814",
+          "https://img.fril.jp/img/820105775/m/2816080694.jpg?1773101333",
+          "https://img.fril.jp/img/820104666/m/2816074449.jpg?1773100262",
+          "https://img.fril.jp/img/820104959/m/2816076175.jpg?1773100575",
+          "https://asset.fril.jp/assets/new_web/logo_non_padding_twoline-88d4d12d9d4816dc0483d7d235508629afbe7dce1cc637f37a356375d56ed973.svg",
+          "https://asset.fril.jp/assets/new_web/logo_non_padding_oneline-2b82a84384e3da7af0eae8b33e113c9ea018b711480c2f36c32916c8a7f852a2.svg",
+          "https://asset.fril.jp/assets/v3/popup/logo-0ba8845a0752975814f3edfc3b236a26b2c49f692128bb831c3ee146589190c5.png",
+          "https://asset.fril.jp/assets/v3/sign_in/icon_rakuten_white-0eb1deb39c4980c9333da9d9d140724775c6fd369cff56a000412beaa61d886f.png",
+          "https://asset.fril.jp/assets/safety_badges/identification-user-outline-c1ea65e83d0b6221d759eefa62133ae75dcfb5cb67f8d9a875d9758017430076.svg",
+          "https://asset.fril.jp/assets/safety_badges/support-agent-a6db00f6a0de9b3279109b0ed5aa1d18a92ee5dba689782938628a788cd4f07a.svg",
+          "https://asset.fril.jp/assets/new_web/item_square_dummy-e093d031b2a9738d2115341c1aa868b76ba6b0aa513492bd0068e673e7a6d3f6.png",
+          "https://asset.fril.jp/assets/new_web/icon-x-166df5e59867c52d69f791e2566140922a1e521dc281b69eb59e7438165e3dcc.png",
+          "https://asset.fril.jp/assets/new_web/icon-facebook-1a25d5b26a65896fb90c6b38503ad2bfcde84f78b66d670347d212018781b2b5.png",
+          "https://asset.fril.jp/assets/new_web/icon-line-6db6ecdc05f67f632ec40c964574e0a98bbbd6739e69beeffd13c3ac6385f2d7.png",
+          "https://asset.fril.jp/assets/new_web/icon_user-9e49e957def667b1abdaae57b9e81d66c31b27f8559d80e2eb682cfbb24e18cd.png",
+          "https://asset.fril.jp/assets/new_web/icon-verified-badge-178e2665b2afa925c984e980a73993ad82ab44ac8575378962c1c600cf30b6bc.png",
+          "https://asset.fril.jp/assets/v3/top_pickup_brand/brand_thumbnail_01-05e0df9d96b7011a6feb6e77063509fde8b9645931237d487f83c3d1f42f31dd.png",
+          "https://asset.fril.jp/assets/v3/top_pickup_brand/brand_thumbnail_02-8537d9181dde67b3d2f89306d18840ddc519cb91a898652b57969d7c8f40faf0.png",
+          "https://asset.fril.jp/assets/v3/top_pickup_brand/brand_thumbnail_03-985a4617f2d6de63b15bac2e994bdb36423cca8e5d7d9d3ab2586d965985a4a9.png",
+          "https://asset.fril.jp/assets/v3/top_pickup_brand/brand_thumbnail_04-24493e1a076a2dc30cb0a6dd66833e3ef730d2b4e58d0d0cb714e72af83d569c.png",
+          "https://asset.fril.jp/assets/v3/top_pickup_brand/brand_thumbnail_05-2e1c4e83c4716941b3fe9021b660e80d4c25880cea930d0c8d90ed9c96133c89.png",
+          "https://asset.fril.jp/assets/v3/top_pickup_brand/brand_thumbnail_06-001af4b1f3e224832fb6080a8aebee784c8b3781ec41e03891d015d5d3ad8eeb.png",
+          "https://asset.fril.jp/assets/new_web/logo_rakuten-0ca3d746135f3a647610f0ce3be36fdc9be23fc8ca2c19896a0121991a1b91f4.png",
+          "https://asset.fril.jp/assets/new_web/logo_gogreen-c5b7841b448d531849cfc93daceb767e47f61f005aaae6f6b65f32bf97fb361b.svg"
+        ],
+        "variants": []
+      }
+    },
+    {
+      "site": "yahuoku",
+      "url": "https://page.auctions.yahoo.co.jp/auction/g1221465796",
+      "success": true,
+      "errors": [],
+      "duration": 0.7104196548461914,
+      "data": {
+        "url": "https://page.auctions.yahoo.co.jp/auction/g1221465796",
+        "title": "【購入後 鑑定付き】メガリザードンYex MUR仕様 [MC 766/742](スタートデッキ100「バトルコレクション」)",
+        "price": 402010,
+        "status": "sold",
+        "description": "※こちらしっかりと、スニーカーダンクでの鑑定付きになっているか確認の上ご入札ください。\n\nスタートデッキから排出された個体になります。\n\n対応するデッキNo.カードもお付けします。\nこちらは通常のナンバーカードとは異なる特殊仕様の金文字となっております。\n\n発送の際は衝撃対策をいたします。\n\n【注意事項】...",
+        "image_urls": [
+          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img1200x888-17724306357931xmow7u20594.jpg",
+          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img947x1200-17724306358210rouddx20594.jpg",
+          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-177243063584307pl5tj20594.jpg",
+          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-17724306358669qjp5ql20594.jpg",
+          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-177243063588879vesqj20594.jpg",
+          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-17724306359105zvanxf20594.jpg",
+          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-17724306359325y37rhm20594.jpg",
+          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-17724306359516gaqgvs20594.jpg",
+          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-17724306359733napph220594.jpg",
+          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-17724306359968ajfq3e20594.jpg"
+        ],
+        "variants": [
+          {
+            "option1_value": "Default Title",
+            "price": 402010,
+            "sku": "g1221465796",
+            "inventory_qty": 0
+          }
+        ],
+        "auction_id": "g1221465796",
+        "seller": "",
+        "end_time": ""
+      }
+    },
+    {
+      "site": "surugaya",
+      "url": "https://www.suruga-ya.jp/product/detail/109003813",
+      "success": true,
+      "errors": [],
+      "duration": 0.9041235446929932,
+      "data": {
+        "url": "https://www.suruga-ya.jp/product/detail/109003813",
+        "title": "ニンテンドースイッチソフト　ゼルダの伝説 知恵のかりもの",
+        "price": 5980,
+        "status": "active",
+        "description": "管理番号\n新品 ：109003813000\n中古 ：109003813001\nメーカー\n任天堂\n発売日\n2024/09/26\n定価\n7,678円\n型番\nHAC-P-BDGEA\nシリーズプロデューサー\n青沼英二\nカテゴリ\nゲーム\nＴＶゲーム\nニンテンドースイッチ",
+        "image_urls": [
+          "https://cdn.suruga-ya.jp/database/pics_webp/game/109003813.jpg.webp",
+          "https://cdn.suruga-ya.jp/pics_webp/boxart_m/109003813m.jpg.webp",
+          "https://cdn.suruga-ya.jp/pics_webp/boxart_m/109003813_1m.jpg.webp?v=b8d83ceac60957758628",
+          "https://cdn.suruga-ya.jp/pics_webp/boxart_m/109003813_2m.jpg.webp?v=117940fca734c0c27ded",
+          "https://cdn.suruga-ya.jp/pics_webp/boxart_m/109003813_3m.jpg.webp?v=117940fca734c0c27ded",
+          "https://cdn.suruga-ya.jp/pics_webp/boxart_m/109003813_4m.jpg.webp?v=419dce1f5df7f58fdb62",
+          "https://cdn.suruga-ya.jp/pics_webp/boxart_m/109003813_5m.jpg.webp?v=a3e86046db7ca2eaa6b8",
+          "https://cdn.suruga-ya.jp/pics_webp/boxart_m/109003813_6m.jpg.webp?v=87caed20575adf39b048",
+          "https://cdn.suruga-ya.jp/pics_webp/boxart_m/109003813_7m.jpg.webp?v=ebee12f0d69dc575d261",
+          "https://cdn.suruga-ya.jp/pics_webp/boxart_m/109003813_8m.jpg.webp?v=e452d1f0ec48dd7868a6",
+          "https://cdn.suruga-ya.jp/pics_webp/boxart_m/109003813_9m.jpg.webp?v=e452d1f0ec48dd7868a6"
+        ],
+        "variants": [
+          {
+            "option1_value": "新品",
+            "price": 5980,
+            "sku": "",
+            "inventory_qty": 1
+          }
+        ],
+        "condition": "新品",
+        "category": "駿河屋TOP > ゲーム > ＴＶゲーム > ニンテンドースイッチ"
+      }
+    },
+    {
+      "site": "offmall",
+      "url": "https://netmall.hardoff.co.jp/product/5966534/",
+      "success": true,
+      "errors": [],
+      "duration": 0.414017915725708,
+      "data": {
+        "url": "https://netmall.hardoff.co.jp/product/5966534/",
+        "title": "【ジャンク品】　KENWOOD　L-02T入荷！",
+        "price": 90000,
+        "status": "active",
+        "description": "https://netmall.hardoff.co.jp/product/5966534/",
+        "image_urls": [
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/40591a0f349c885c94950335e5ba6707.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/ef779fcda0326c7b69362b6ce14c6aba.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/c1320a574b4e29e56bfe9577d8e61a14.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/df9a1a3292aad6de913f3f1f98dcc576.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/f584261b9ed454d65783145da36efdee.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/48a113fca4dffb8c915b275c8f901b6d.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/45634f64c01a662417530eedb85a771d.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/a140038b1cddc032d26103819a3e9b8e.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/578f396186384bd5a3dcc21fe2366b06.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/3651222f40dfbbcad0fba8c0120d9c5d.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/6f3088830c855b500c3a4f2c6e6b2780.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/bbb15205958e1abecb05bb94de53a36b.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/175c0b1f9ea58ab198dfed4cda809486.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/876e1b091c1a5d55d042d5900238213d.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/f0b28f5f8f29fba96322f82fd7b34f31.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/7efdc1d0f83766db7e0b79292f0f4825.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/71d9f06d4c40ce02590c85e3a571303e.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/4dc72c5b9045d533f29aceada32d6862.jpg",
+          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/532a326ac3e672901c7ca7b5526c33d7.jpg",
+          "https://contents-blog.netmall.hardoff.co.jp/images/shop_parse_img/ikou/020004.jpg",
+          "https://netmall.hardoff.co.jp/assets/images/common/icon-camera-1387b286f1.svg",
+          "https://netmall.hardoff.co.jp/assets/images/common/icon-instrument-6b1809ce1b.svg",
+          "https://netmall.hardoff.co.jp/assets/images/common/icon-game-47aec2ef7e.svg",
+          "https://netmall.hardoff.co.jp/assets/images/common/icon-baseball-c38f9cad11.svg",
+          "https://netmall.hardoff.co.jp/assets/images/common/icon-tshirt-a3d2673953.svg",
+          "https://netmall.hardoff.co.jp/assets/images/common/icon-minicar-2d78d57b43.svg",
+          "https://netmall.hardoff.co.jp/assets/images/common/icon-cutlery-567f17a5b7.svg",
+          "https://netmall.hardoff.co.jp/assets/images/common/icon-alcohol-09ac7e29ea.svg"
+        ],
+        "variants": [
+          {
+            "option1_value": "Default Title",
+            "price": 90000,
+            "sku": "",
+            "inventory_qty": 1
+          }
+        ],
+        "brand": "KENWOOD",
+        "condition": ""
+      }
+    },
     {
       "site": "mercari",
       "url": "https://jp.mercari.com/item/m53054743401",
       "success": true,
       "errors": [],
-      "duration": 21.273509740829468,
+      "duration": 13.261521339416504,
       "data": {
         "url": "https://jp.mercari.com/item/m53054743401",
         "title": "ポケットモンスター バイオレット Nintendo Switch",
         "price": 3400,
         "status": "sold",
-        "description": "新たなポケモンとの出会いを楽しむアクションRPG。\n\n- ゲームタイトル: ポケットモンスター バイオレット\n\n使用しない為出品します\n動作確認済みです\n自宅管理の為神経質な方はご遠慮下さい\n\nご覧いただきありがとうございます。\n2時間前",
+        "description": "新たなポケモンとの出会いを楽しむアクションRPG。\n\n- ゲームタイトル: ポケットモンスター バイオレット\n\n使用しない為出品します\n動作確認済みです\n自宅管理の為神経質な方はご遠慮下さい\n\nご覧いただきありがとうございます。 3日前",
         "image_urls": [
           "https://static.mercdn.net/item/detail/orig/photos/m53054743401_1.jpg?1772540026",
           "https://static.mercdn.net/item/detail/orig/photos/m53054743401_2.jpg?1772540026",
           "https://static.mercdn.net/item/detail/orig/photos/m53054743401_3.jpg?1772540026"
         ],
         "variants": []
+      }
+    },
+    {
+      "site": "yahoo",
+      "url": "https://store.shopping.yahoo.co.jp/nextfreedom/igress-008.html",
+      "success": true,
+      "errors": [],
+      "duration": 0.8437681198120117,
+      "data": {
+        "url": "https://store.shopping.yahoo.co.jp/nextfreedom/igress-008.html",
+        "title": "tシャツ メンズ 半袖 無地 厚手 Tシャツ ヘビーウェイト 3枚組 白 黒 ドライ 大きいサイズ まとめ買い BALLOT バロット",
+        "price": 3980,
+        "status": "on_sale",
+        "description": "ASTYSHOPのtシャツ メンズ 半袖 無地 厚手 Tシャツ ヘビーウェイト 3枚組 白 黒 ドライ 大きいサイズ まとめ買い BALLOT バロット:igress-008ならYahoo!ショッピング！ランキングや口コミも豊富なネット通販。LINEアカウント連携でPayPayポイント毎日5%（上限あり）スマホアプリも充実で毎日どこからでも気になる商品をその場でお求めいただけます。",
+        "image_urls": [
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_i_20260209163402",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_1_d_20241007191557",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_2_d_20260302190410",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_1_d_20230417130222",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_3_d_20240702183407",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_6_d_20260209163418",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_7_d_20260209163426",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_8_d_20260209163434",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_9_d_20260209163442",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_10_d_20260209163449",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_11_d_20260209163458",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_12_d_20260209163506",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_12_d_20260209163531",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_12_d_20260224144341",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_10_d_20221007120644",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_11_d_20221007120658",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_12_d_20221007120709",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_13_d_20221007120722",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_14_d_20240627180353",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_18_d_20250806143449",
+          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_18_d_20240823174038",
+          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-047a2558e250d10a7067441d5ee00228/24817572-6d44ee94c99e9122e203105fb0b16cf6/img/1771917860/thumbnail.jpg"
+        ],
+        "variants": [
+          {
+            "option1_name": "カラー",
+            "option1_value": "ブラック",
+            "option2_name": "サイズ",
+            "option2_value": "S",
+            "price": 3980,
+            "inventory_qty": 15
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ブラック",
+            "option2_name": "サイズ",
+            "option2_value": "M",
+            "price": 3980,
+            "inventory_qty": 47
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ブラック",
+            "option2_name": "サイズ",
+            "option2_value": "L",
+            "price": 3980,
+            "inventory_qty": 69
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ブラック",
+            "option2_name": "サイズ",
+            "option2_value": "XL",
+            "price": 3980,
+            "inventory_qty": 57
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ブラック",
+            "option2_name": "サイズ",
+            "option2_value": "2XL",
+            "price": 3980,
+            "inventory_qty": 34
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ブラック",
+            "option2_name": "サイズ",
+            "option2_value": "3XL",
+            "price": 3980,
+            "inventory_qty": 31
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ホワイト",
+            "option2_name": "サイズ",
+            "option2_value": "S",
+            "price": 3980,
+            "inventory_qty": 10
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ホワイト",
+            "option2_name": "サイズ",
+            "option2_value": "M",
+            "price": 3980,
+            "inventory_qty": 48
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ホワイト",
+            "option2_name": "サイズ",
+            "option2_value": "L",
+            "price": 3980,
+            "inventory_qty": 62
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ホワイト",
+            "option2_name": "サイズ",
+            "option2_value": "XL",
+            "price": 3980,
+            "inventory_qty": 47
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ホワイト",
+            "option2_name": "サイズ",
+            "option2_value": "2XL",
+            "price": 3980,
+            "inventory_qty": 58
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ホワイト",
+            "option2_name": "サイズ",
+            "option2_value": "3XL",
+            "price": 3980,
+            "inventory_qty": 42
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ネイビー",
+            "option2_name": "サイズ",
+            "option2_value": "S",
+            "price": 3980,
+            "inventory_qty": 9
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ネイビー",
+            "option2_name": "サイズ",
+            "option2_value": "M",
+            "price": 3980,
+            "inventory_qty": 8
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ネイビー",
+            "option2_name": "サイズ",
+            "option2_value": "L",
+            "price": 3980,
+            "inventory_qty": 17
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ネイビー",
+            "option2_name": "サイズ",
+            "option2_value": "XL",
+            "price": 3980,
+            "inventory_qty": 17
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ネイビー",
+            "option2_name": "サイズ",
+            "option2_value": "2XL",
+            "price": 3980,
+            "inventory_qty": 11
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "ネイビー",
+            "option2_name": "サイズ",
+            "option2_value": "3XL",
+            "price": 3980,
+            "inventory_qty": 10
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "グレー",
+            "option2_name": "サイズ",
+            "option2_value": "S",
+            "price": 3980,
+            "inventory_qty": 11
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "グレー",
+            "option2_name": "サイズ",
+            "option2_value": "M",
+            "price": 3980,
+            "inventory_qty": 11
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "グレー",
+            "option2_name": "サイズ",
+            "option2_value": "L",
+            "price": 3980,
+            "inventory_qty": 12
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "グレー",
+            "option2_name": "サイズ",
+            "option2_value": "XL",
+            "price": 3980,
+            "inventory_qty": 28
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "グレー",
+            "option2_name": "サイズ",
+            "option2_value": "2XL",
+            "price": 3980,
+            "inventory_qty": 8
+          },
+          {
+            "option1_name": "カラー",
+            "option1_value": "グレー",
+            "option2_name": "サイズ",
+            "option2_value": "3XL",
+            "price": 3980,
+            "inventory_qty": 9
+          }
+        ]
       }
     },
     {
@@ -34,7 +455,7 @@
         "Title missing or too short",
         "Price is None"
       ],
-      "duration": 19.428007125854492,
+      "duration": 15.112762928009033,
       "data": {
         "url": "https://jp.mercari.com/shops/product/xhF79ibHz3KwucSXev32C5",
         "title": "",
@@ -51,25 +472,13 @@
           "https://assets.mercari-shops-static.com/-/large/plain/xCNw4WFhyvaPUvc7zpcXM8.jpg@jpg",
           "https://assets.mercari-shops-static.com/-/large/plain/eDkr7wQr7EZq8MHkrZtXYc.jpg@jpg",
           "https://assets.mercari-shops-static.com/-/large/plain/JQcjmwWySAd33EKLnQUXXZ.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/b6xXrX62ERWjSA8CawQq2k.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/CUHGS7EhPy4LMve8x3rVwM.jpg@jpg",
           "https://assets.mercari-shops-static.com/-/small/plain/2JMgc3Soads2VJoegDCNPj.png@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JMr9EhyMpAD6sVDo2rLLb.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JMr3VPUo4pPdKefCmw8yC.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JMr3VMej4yZkgrPEXS9xE.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JMr3VMshZ727DxGD4QVFB.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JMr3VMacRcYqeEtGCfYFc.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JMquMszLAmdhTpvdGgrqX.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/MwnGSZrgo2wC4VKsVaTNqJ.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/6vRJP8A8qFRbd76GZmbBc7.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JKTU7S5pz4tp2zLKaQ4MX.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/U7rRzECAYaGK3qyjNUVPb5.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/PCrb3SEfZZfeefVBFmfLXQ.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JJmJqKrG9mD4AXYwKLpgU.png@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/MpABkDGtzz9HwSRFqkHDpE.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JGmEQNQYJtevmxiSnePgx.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/sBZvA2y82G9TGweJ6HaExE.jpg@jpg",
-          "https://assets.mercari-shops-static.com/-/small/plain/2JJYyBsByWwWsxJ8gVYhio.jpg@jpg"
+          "https://assets.mercari-shops-static.com/-/small/plain/2JNDziSeQu6Uw9f7SMN939.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JNDzB6HXXqzr3vrqUEw4u.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JNDypobMeTrTt9FE5zVfs.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JNDwKDTMKadhQP8rHMLan.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JNDw737dJyvj8nWD26mxL.jpg@jpg",
+          "https://assets.mercari-shops-static.com/-/small/plain/2JNDvasAzSkxKHgzv7UcSF.jpg@jpg"
         ],
         "variants": [
           {
@@ -174,424 +583,23 @@
       }
     },
     {
-      "site": "surugaya",
-      "url": "https://www.suruga-ya.jp/product/detail/109003813",
-      "success": true,
-      "errors": [],
-      "duration": 0.7623605728149414,
-      "data": {
-        "url": "https://www.suruga-ya.jp/product/detail/109003813",
-        "title": "ニンテンドースイッチソフト　ゼルダの伝説 知恵のかりもの",
-        "price": 5980,
-        "status": "active",
-        "description": "管理番号\n新品 ：109003813000\n中古 ：109003813001\nメーカー\n任天堂\n発売日\n2024/09/26\n定価\n7,678円\n型番\nHAC-P-BDGEA\nシリーズプロデューサー\n青沼英二\nカテゴリ\nゲーム\nＴＶゲーム\nニンテンドースイッチ",
-        "image_urls": [
-          "https://cdn.suruga-ya.jp/database/pics_webp/game/109003813.jpg.webp"
-        ],
-        "variants": [
-          {
-            "option1_value": "新品",
-            "price": 5980,
-            "sku": "",
-            "inventory_qty": 1
-          }
-        ],
-        "condition": "新品",
-        "category": "駿河屋TOP > ゲーム > ＴＶゲーム > ニンテンドースイッチ > ゲーム > ＴＶゲーム > ニンテンドースイッチ"
-      }
-    },
-    {
-      "site": "rakuma",
-      "url": "https://item.fril.jp/fed8b046583deff9f860ce320f64633c",
-      "success": true,
-      "errors": [],
-      "duration": 16.137836694717407,
-      "data": {
-        "url": "https://item.fril.jp/fed8b046583deff9f860ce320f64633c",
-        "title": "【PS5】バイオハザード ヴィレッジ Z Version ゴールドエディション",
-        "price": 3780,
-        "status": "on_sale",
-        "description": "商品説明\n【PS5ソフト】 BIOHAZARD VILLAGE Z Version GOLD EDITION [Best Price]\n\n※新品未開封の状態でお送り致しますので、初期不良等はメーカーに問い合わせお願い致します。\n※返品、返金、交換は出来ません。\n\n※ゆうパケットポストminiにて発送致しますので、ポスト投函になります。\n※なるべく当日発送致しますが、時間によっては翌日発送になります。\n\n※受け取られましたら、受取評価をお願い致します。\n\nブランド：カプコン  バイオハザード\nソフトウェア対象年齢：18歳以上対象\nパッケージ種類：通常版\n\nCAPCOM\n型番：ELJM-30739\n約4時間前",
-        "image_urls": [
-          "https://img.fril.jp/img/819009653/l/2811614664.jpg?1772540118",
-          "https://img.fril.jp/img/819009653/l/2811614662.jpg?1772540118"
-        ],
-        "variants": []
-      }
-    },
-    {
-      "site": "yahoo",
-      "url": "https://store.shopping.yahoo.co.jp/nextfreedom/igress-008.html",
-      "success": true,
-      "errors": [],
-      "duration": 19.11518120765686,
-      "data": {
-        "url": "https://store.shopping.yahoo.co.jp/nextfreedom/igress-008.html",
-        "title": "tシャツ メンズ 半袖 無地 厚手 Tシャツ ヘビーウェイト 3枚組 白 黒 ドライ 大きいサイズ まとめ買い BALLOT バロット",
-        "price": 3980,
-        "status": "sold",
-        "description": "ASTYSHOPのtシャツ メンズ 半袖 無地 厚手 Tシャツ ヘビーウェイト 3枚組 白 黒 ドライ 大きいサイズ まとめ買い BALLOT バロット:igress-008ならYahoo!ショッピング！ランキングや口コミも豊富なネット通販。LINEアカウント連携でPayPayポイント毎日5%（上限あり）スマホアプリも充実で毎日どこからでも気になる商品をその場でお求めいただけます。",
-        "image_urls": [
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_i_20260209163402",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_1_d_20241007191557",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_2_d_20260302190410",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_1_d_20230417130222",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_3_d_20240702183407",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_6_d_20260209163418",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_7_d_20260209163426",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_8_d_20260209163434",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_9_d_20260209163442",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_10_d_20260209163449",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_11_d_20260209163458",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_12_d_20260209163506",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_12_d_20260209163531",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_12_d_20260224144341",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_10_d_20221007120644",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_11_d_20221007120658",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_12_d_20221007120709",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_13_d_20221007120722",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_14_d_20240627180353",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_18_d_20250806143449",
-          "https://item-shopping.c.yimg.jp/i/n/nextfreedom_igress-008_18_d_20240823174038",
-          "data:image/svg+xml,%3csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20version=%271.1%27%20width=%27600%27%20height=%27600%27/%3e",
-          "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
-          "https://www.paypay-card.co.jp/images/yjcard/paypay/campaign/bnr/apply/shp_promotion_1029_600.png",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/24870798-190ef95f2ae62ba51edf8d46dbca44e5/img/1772199195/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/23767576-588fa4bda15cc4ad0401d7ca4a056d68/img/1766291518/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/21907250-43625d404f68061cb1091a4836b29ff6/img/1755677093/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/21586757-52c8b17b8c56272c604972790be4b43a/img/1753782620/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/21317735-4eb3ffa7836654788d806ffa6e0b25f3/img/1752144725/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/21015273-45f6c02c19d7f5fb269f6fd09d49ef3d/img/1750648853/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/20921895-c95924893ef4201625cc00b2ea65f65d/img/1750043615/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/20901489-024d73784801db59b608076164975133/img/1749936667/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/20881983-78f676fb7ca587ca4b801fdc0faa6ee9/img/1749810159/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/20867817-1efad613b375c8f62d4323a8d6ce4a13/img/1749728182/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/20688924-ed118fd0c74f0fce9cfddebcb7455b19/img/1748860500/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/20675121-42258310f35cda90ed35bdb318edfb45/img/1748784370/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/20527605-82002196a5758bf8248cb4201addb81f/img/1748138445/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/19784043-70d94fd85a47854c310ad00fc9035c9c/img/1742993691/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-4a5efdaf4a623475fb20ffad5afd65f8/19599909-87b7f8139abd783345d99cbc45bceeb2/img/1742094290/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-2a59e76abdcd504ae065fd8cf64c8419/18378320-301a790155950953cc89dc2dc8dbf524/img/1735613865/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-2a59e76abdcd504ae065fd8cf64c8419/18244826-7aefe706e05a81fc2f2f0de5bb6ddf74/img/1735000449/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-2a59e76abdcd504ae065fd8cf64c8419/17943101-390b59212f73c7111faeb6658d58c3ae/img/1733320496/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-2a59e76abdcd504ae065fd8cf64c8419/16956995-fc7f9b1757f1e4edf30a853567390d23/img/1728467659/thumbnail.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-2a59e76abdcd504ae065fd8cf64c8419/16691249-e322b5f000330903ad1e6513f8d65960/img/1727227800/thumbnail.jpg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/71d0a942-e29f-4433-8036-f6c9dfd83eef.jpg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/b0759f35-913b-4f12-b738-20cd32552042.jpeg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/3d7b68d4-505d-411c-97e5-cea1f5c386cb.jpg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/5040893e-6c61-43ee-bb53-ebe842e452a9.jpg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/139bd6f8-155b-44c4-b317-1d64c0a29bb9.jpeg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/56eb96e9-b266-431c-9e93-bd1ad4dc96dc.jpeg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/07633458-27a1-4abc-961c-68322f77b6c1.jpeg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/d814f274-6920-4e2c-a382-9c0094f9b1e7.jpeg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/f1e46c49-fb9e-498c-98e6-a97f1efa4aa8.jpeg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/7c61b5ec-9037-4537-90fb-a2b0e1ec15d5.jpeg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/ad627b6e-22e7-477e-9a77-5fc2e778252a.jpeg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/1e791c69-6032-4af4-8ede-cf12708ce7fb.jpeg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/5e704d66-3a9e-496b-9de9-7b278455a3d7.jpeg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/0aabc414-b24e-4878-8748-90324ac5e3ed.jpeg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/604a4c23-f482-45a5-a88c-77775588e238.jpeg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/313f2cd9-eab8-4cd1-84e2-c5f7d99e179c.jpeg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/792faee4-b97e-42cd-8a6d-9dff3d0ce5b1.jpg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/c327fb66-8e88-4a3f-853d-d226a7cf3434.jpg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/92ace465-12a6-40e8-9a23-60e3e191350b.jpg",
-          "https://review-shopping.c.yimg.jp/images/nextfreedom_igress-008/21a3c173-8b27-4f0d-a06f-90235469e8e6.jpg",
-          "https://yvpub-pctr.c.yimg.jp/dk/yvpub-bucket001-west/contents/yvpub-content-047a2558e250d10a7067441d5ee00228/24817572-6d44ee94c99e9122e203105fb0b16cf6/img/1771917860/thumbnail.jpg"
-        ],
-        "variants": [
-          {
-            "option1_name": "カラー",
-            "option1_value": "ブラック",
-            "option2_name": "サイズ",
-            "option2_value": "S",
-            "price": 3980,
-            "inventory_qty": 15
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ブラック",
-            "option2_name": "サイズ",
-            "option2_value": "M",
-            "price": 3980,
-            "inventory_qty": 49
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ブラック",
-            "option2_name": "サイズ",
-            "option2_value": "L",
-            "price": 3980,
-            "inventory_qty": 76
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ブラック",
-            "option2_name": "サイズ",
-            "option2_value": "XL",
-            "price": 3980,
-            "inventory_qty": 66
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ブラック",
-            "option2_name": "サイズ",
-            "option2_value": "2XL",
-            "price": 3980,
-            "inventory_qty": 37
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ブラック",
-            "option2_name": "サイズ",
-            "option2_value": "3XL",
-            "price": 3980,
-            "inventory_qty": 36
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ホワイト",
-            "option2_name": "サイズ",
-            "option2_value": "S",
-            "price": 3980,
-            "inventory_qty": 13
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ホワイト",
-            "option2_name": "サイズ",
-            "option2_value": "M",
-            "price": 3980,
-            "inventory_qty": 59
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ホワイト",
-            "option2_name": "サイズ",
-            "option2_value": "L",
-            "price": 3980,
-            "inventory_qty": 82
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ホワイト",
-            "option2_name": "サイズ",
-            "option2_value": "XL",
-            "price": 3980,
-            "inventory_qty": 68
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ホワイト",
-            "option2_name": "サイズ",
-            "option2_value": "2XL",
-            "price": 3980,
-            "inventory_qty": 59
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ホワイト",
-            "option2_name": "サイズ",
-            "option2_value": "3XL",
-            "price": 3980,
-            "inventory_qty": 48
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ネイビー",
-            "option2_name": "サイズ",
-            "option2_value": "S",
-            "price": 3980,
-            "inventory_qty": 9
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ネイビー",
-            "option2_name": "サイズ",
-            "option2_value": "M",
-            "price": 3980,
-            "inventory_qty": 9
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ネイビー",
-            "option2_name": "サイズ",
-            "option2_value": "L",
-            "price": 3980,
-            "inventory_qty": 19
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ネイビー",
-            "option2_name": "サイズ",
-            "option2_value": "XL",
-            "price": 3980,
-            "inventory_qty": 20
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ネイビー",
-            "option2_name": "サイズ",
-            "option2_value": "2XL",
-            "price": 3980,
-            "inventory_qty": 13
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "ネイビー",
-            "option2_name": "サイズ",
-            "option2_value": "3XL",
-            "price": 3980,
-            "inventory_qty": 11
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "グレー",
-            "option2_name": "サイズ",
-            "option2_value": "S",
-            "price": 3980,
-            "inventory_qty": 11
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "グレー",
-            "option2_name": "サイズ",
-            "option2_value": "M",
-            "price": 3980,
-            "inventory_qty": 12
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "グレー",
-            "option2_name": "サイズ",
-            "option2_value": "L",
-            "price": 3980,
-            "inventory_qty": 13
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "グレー",
-            "option2_name": "サイズ",
-            "option2_value": "XL",
-            "price": 3980,
-            "inventory_qty": 32
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "グレー",
-            "option2_name": "サイズ",
-            "option2_value": "2XL",
-            "price": 3980,
-            "inventory_qty": 9
-          },
-          {
-            "option1_name": "カラー",
-            "option1_value": "グレー",
-            "option2_name": "サイズ",
-            "option2_value": "3XL",
-            "price": 3980,
-            "inventory_qty": 10
-          }
-        ]
-      }
-    },
-    {
-      "site": "offmall",
-      "url": "https://netmall.hardoff.co.jp/product/5966534/",
-      "success": true,
-      "errors": [],
-      "duration": 13.135298013687134,
-      "data": {
-        "url": "https://netmall.hardoff.co.jp/product/5966534/",
-        "title": "【ジャンク品】　KENWOOD　L-02T入荷！",
-        "price": 90000,
-        "status": "active",
-        "description": "https://netmall.hardoff.co.jp/product/5966534/",
-        "image_urls": [
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/40591a0f349c885c94950335e5ba6707.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/ef779fcda0326c7b69362b6ce14c6aba.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/c1320a574b4e29e56bfe9577d8e61a14.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/df9a1a3292aad6de913f3f1f98dcc576.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/f584261b9ed454d65783145da36efdee.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/48a113fca4dffb8c915b275c8f901b6d.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/45634f64c01a662417530eedb85a771d.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/a140038b1cddc032d26103819a3e9b8e.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/578f396186384bd5a3dcc21fe2366b06.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/3651222f40dfbbcad0fba8c0120d9c5d.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/6f3088830c855b500c3a4f2c6e6b2780.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/bbb15205958e1abecb05bb94de53a36b.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/175c0b1f9ea58ab198dfed4cda809486.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/876e1b091c1a5d55d042d5900238213d.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/f0b28f5f8f29fba96322f82fd7b34f31.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/7efdc1d0f83766db7e0b79292f0f4825.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/71d9f06d4c40ce02590c85e3a571303e.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/4dc72c5b9045d533f29aceada32d6862.jpg",
-          "https://p1-d9ebd2ee.imageflux.jp/c!/w=1280,h=1280,a=0,u=1,q=75/201266/532a326ac3e672901c7ca7b5526c33d7.jpg"
-        ],
-        "variants": [
-          {
-            "option1_value": "Default Title",
-            "price": 90000,
-            "sku": "",
-            "inventory_qty": 1
-          }
-        ],
-        "brand": "KENWOOD",
-        "condition": ""
-      }
-    },
-    {
       "site": "snkrdunk",
       "url": "https://snkrdunk.com/products/CT8013-170",
-      "success": true,
-      "errors": [],
-      "duration": 12.454164505004883,
+      "success": false,
+      "errors": [
+        "Description missing or too short"
+      ],
+      "duration": 36.83053970336914,
       "data": {
         "url": "https://snkrdunk.com/products/CT8013-170",
         "title": "Nike Air Jordan 12 \"Royalty\"",
         "price": 35200,
         "status": "on_sale",
-        "description": "商品紹介\n【スニダンで購入可】10/9発売 Nike Air Jordan 12 \"Royalty\" 抽選/定価/販売店舗まとめ\nNIKE(ナイキ)よりAIR JORDAN 12(エア ジョーダン 12)の新色が海外で登場！10月9日発売！ \"AIR JORDAN 12\"(エア ジョーダン 12)は1996年にリリースされたAJシリーズの12作目。一枚革のアッパーに旭日旗をイメージした斬新なシルエットは、当時ストリートからの支持は低かったものの、本来のバッシュとしての機能や履き心地は抜群だった。ジョーダンが求めた反発性の高い\"ズームエア\"を採用し、チャールズ・バークレーやロン・ハーパーなど、名だたるプレーヤー達が着用していた。96年頃のジョーダンと言えば、スコッティ・ピッペン、デニス・ロッドマンらと共に\"リーグ最強の3人組\"として暴れ回っていた頃。ブルズの全盛期に足元を支えていたのが\"AIR JOR\n紹介記事をもっと読む",
+        "description": "",
         "image_urls": [
           "https://cdn.snkrdunk.com/upload_bg_removed/20211118073437-0.webp?size=l"
         ],
         "variants": []
-      }
-    },
-    {
-      "site": "yahuoku",
-      "url": "https://page.auctions.yahoo.co.jp/auction/g1221465796",
-      "success": true,
-      "errors": [],
-      "duration": 13.023438453674316,
-      "data": {
-        "url": "https://page.auctions.yahoo.co.jp/auction/g1221465796",
-        "title": "【購入後 鑑定付き】メガリザードンYex MUR仕様 [MC 766/742](スタートデッキ100「バトルコレクション」)",
-        "price": 402010,
-        "status": "active",
-        "description": "メガリザードンYex （MC_766/742） MEGA スタートデッキ100 バトルコレクション\nこの製品の相場を見る\nほしい",
-        "image_urls": [
-          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-17724306359968ajfq3e20594.jpg",
-          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img1200x888-17724306357931xmow7u20594.jpg",
-          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img947x1200-17724306358210rouddx20594.jpg",
-          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-177243063584307pl5tj20594.jpg",
-          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-17724306358669qjp5ql20594.jpg",
-          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-177243063588879vesqj20594.jpg",
-          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-17724306359105zvanxf20594.jpg",
-          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-17724306359325y37rhm20594.jpg",
-          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-17724306359516gaqgvs20594.jpg",
-          "https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0203/user/26258ea15feef623d6c1efb3d8125f217269ba8774b10deb91935da868e58620/i-img900x1200-17724306359733napph220594.jpg"
-        ],
-        "variants": [
-          {
-            "option1_value": "Default Title",
-            "price": 402010,
-            "sku": "g1221465796",
-            "inventory_qty": 1
-          }
-        ],
-        "auction_id": "g1221465796",
-        "seller": "",
-        "end_time": ""
       }
     }
   ]
