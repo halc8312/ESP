@@ -142,16 +142,22 @@ def catalog_view(token):
 
         # Process items for display
         catalog_items = []
+        shop_logo = None
         for item in items:
             catalog_item = _build_catalog_item(item)
             if catalog_item is not None:
                 catalog_items.append(catalog_item)
+            
+            # Find the first available shop logo
+            if shop_logo is None and item.product and item.product.shop and item.product.shop.logo_url:
+                shop_logo = item.product.shop.logo_url
 
         return render_template(
             "catalog.html",
             pricelist=pl,
             items=catalog_items,
             currency_rate=pl.currency_rate,
+            shop_logo=shop_logo,
         )
     finally:
         session_db.close()

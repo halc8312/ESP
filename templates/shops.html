@@ -4,52 +4,73 @@
 {% block header_title %}ショップ管理{% endblock %}
 
 {% block content %}
-    <div class="page-header">
-        <h1>ショップ管理</h1>
-    </div>
+<div class="page-header">
+    <h1>ショップ管理</h1>
+</div>
 
-    <!-- 新規追加フォーム -->
-    <div class="content-card">
-        <div class="content-card-header">
-            <h3>新規ショップ追加</h3>
-        </div>
-        <div class="content-card-body">
-            <form method="POST" class="shop-add-form" style="display:flex; gap:10px; flex-wrap: wrap;">
-                <input type="text" name="name" placeholder="ショップ名 (例: 文具店A)" required autocomplete="organization" style="flex: 1; min-width: 200px;">
-                <button type="submit" class="add-btn">追加</button>
-            </form>
-        </div>
+<!-- 新規追加フォーム -->
+<div class="content-card">
+    <div class="content-card-header">
+        <h3>新規ショップ追加</h3>
     </div>
+    <div class="content-card-body">
+        <form method="POST" class="shop-add-form" style="display:flex; gap:10px; flex-wrap: wrap;">
+            <input type="text" name="name" placeholder="ショップ名 (例: 文具店A)" required autocomplete="organization"
+                style="flex: 1; min-width: 200px;">
+            <input type="url" name="logo_url" placeholder="ロゴ画像URL (任意)" style="flex: 2; min-width: 250px;">
+            <button type="submit" class="add-btn">追加</button>
+        </form>
+    </div>
+</div>
 
-    <!-- 登録済みショップ -->
-    <div class="content-card">
-        <div class="content-card-header">
-            <h3>登録済みショップ</h3>
-        </div>
-        <div class="content-card-body" style="padding: 0;">
-            <div class="table-responsive">
-                <table>
-                    <tr>
-                        <th>ID</th>
-                        <th>ショップ名</th>
-                        <th>商品数</th>
-                        <th>操作</th>
-                    </tr>
-                    {% for s in shops %}
-                    <tr>
-                        <td>{{ s.id }}</td>
-                        <td>{{ s.name }}</td>
-                        <td>{{ s.product_count }}</td>
-                        <td>
-                            <form method="POST" action="{{ url_for('delete_shop', shop_id=s.id) }}" style="display:inline;">
+<!-- 登録済みショップ -->
+<div class="content-card">
+    <div class="content-card-header">
+        <h3>登録済みショップ</h3>
+    </div>
+    <div class="content-card-body" style="padding: 0;">
+        <div class="table-responsive">
+            <table>
+                <tr>
+                    <th>ID</th>
+                    <th>ショップ名</th>
+                    <th>商品数</th>
+                    <th>操作</th>
+                </tr>
+                {% for s in shops %}
+                <tr>
+                    <td>{{ s.id }}</td>
+                    <td>{{ s.name }}</td>
+                    <td>{{ s.product_count }}</td>
+                    <td>
+                        <div style="display: flex; gap: 8px;">
+                            <button type="button" class="btn-secondary"
+                                onclick="document.getElementById('edit-form-{{ s.id }}').style.display='table-row';">編集</button>
+                            <form method="POST" action="{{ url_for('shops.delete_shop', shop_id=s.id) }}"
+                                style="display:inline;">
                                 <button type="submit" onclick="return confirm('削除すると紐付いている商品も影響を受けます。本当によろしいですか？');"
                                     class="btn-danger">削除</button>
                             </form>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </table>
-            </div>
+                        </div>
+                    </td>
+                </tr>
+                <!-- 編集用フォーム（デフォルト非表示） -->
+                <tr id="edit-form-{{ s.id }}" style="display: none; background-color: var(--bg-secondary);">
+                    <td colspan="4">
+                        <form method="POST" action="{{ url_for('shops.edit_shop', shop_id=s.id) }}"
+                            style="display:flex; gap:10px; padding: 10px;">
+                            <input type="text" name="name" value="{{ s.name }}" required style="flex: 1;">
+                            <input type="url" name="logo_url" value="{{ s.logo_url or '' }}" placeholder="ロゴURL"
+                                style="flex: 2;">
+                            <button type="submit" class="btn-primary">保存</button>
+                            <button type="button" class="btn-secondary"
+                                onclick="document.getElementById('edit-form-{{ s.id }}').style.display='none';">キャンセル</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </table>
         </div>
     </div>
+</div>
 {% endblock %}

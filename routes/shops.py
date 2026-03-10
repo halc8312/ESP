@@ -17,11 +17,12 @@ def manage_shops():
     try:
         if request.method == "POST":
             name = request.form.get("name")
+            logo_url = request.form.get("logo_url", "").strip()
             if name:
                 # Check duplication for this user
                 existing = session_db.query(Shop).filter_by(user_id=current_user.id, name=name).first()
                 if not existing:
-                    new_shop = Shop(name=name, user_id=current_user.id)
+                    new_shop = Shop(name=name, logo_url=logo_url, user_id=current_user.id)
                     session_db.add(new_shop)
                     try:
                         session_db.commit()
@@ -64,6 +65,24 @@ def delete_shop(shop_id):
             session_db.commit()
             if session.get('current_shop_id') == shop_id:
                 session.pop('current_shop_id', None)
+    finally:
+        session_db.close()
+    return redirect(url_for('shops.manage_shops'))
+
+
+@shops_bp.route("/shops/<int:shop_id>/edit", methods=["POST"])
+@login_required
+def edit_shop(shop_id):
+    session_db = SessionLocal()
+    try:
+        shop = session_db.query(Shop).filter_by(id=shop_id, user_id=current_user.id).one_or_none()
+        if shop:
+            name = request.form.get("name")
+            logo_url = request.form.get("logo_url", "").strip()
+            if name:
+                shop.name = name
+                shop.logo_url = logo_url
+                session_db.commit()
     finally:
         session_db.close()
     return redirect(url_for('shops.manage_shops'))

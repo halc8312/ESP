@@ -45,6 +45,8 @@ def run_migrations():
         ("products", "deleted_at", "ALTER TABLE products ADD COLUMN deleted_at DATETIME"),
         # Price list layout
         ("price_lists", "layout", "ALTER TABLE price_lists ADD COLUMN layout VARCHAR DEFAULT 'grid'"),
+        # Shop logo
+        ("shops", "logo_url", "ALTER TABLE shops ADD COLUMN logo_url VARCHAR"),
     ]
     
     with engine.connect() as conn:
