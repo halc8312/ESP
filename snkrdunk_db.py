@@ -38,12 +38,65 @@ def scrape_item_detail_light(url: str) -> dict:
     HTTP-only SNKRDUNK detail scrape using the embedded __NEXT_DATA__ JSON.
     """
     try:
-        from services.scraping_client import fetch_static
+        from services.scraping_client import fetch_dynamic, fetch_static
 
-        page = fetch_static(url)
+        try:
+            page = fetch_dynamic(url, headless=True, network_idle=True)
+        except Exception as exc:
+            logger.debug("SNKRDUNK dynamic fetch failed, retrying static fetch: %s", exc)
+            page = fetch_static(url)
+            
         script_el = page.find("#__NEXT_DATA__")
+        
+        result = _empty_result(url, status="on_sale")
+
         if not script_el:
-            return {}
+            logger.debug("No JSON item data found, falling back to CSS selectors")
+            
+            title_selectors = get_selectors("snkrdunk", "detail", "title") or ["h1.product-name-en", "p.product-name-jp", "h1"]
+            for sel in title_selectors:
+                els = page.css(sel)
+                if els and els[0].text:
+                    result["title"] = str(els[0].text).strip()
+                    break
+
+            if not result.get("title"):
+                return {}
+
+            price_selectors = get_selectors("snkrdunk", "detail", "price") or ["span.product-lowest-price"]
+            for sel in price_selectors:
+                els = page.css(sel)
+                if els and els[0].text:
+                    price_str = str(els[0].text).strip()
+                    digits = ''.join(c for c in price_str if c.isdigit())
+                    if digits:
+                        result["price"] = int(digits)
+                        break
+
+            desc_selectors = get_selectors("snkrdunk", "detail", "description") or ["div.product-acd-content.product-content-info-detail"]
+            for sel in desc_selectors:
+                els = page.css(sel)
+                if els and els[0].text:
+                    result["description"] = str(els[0].text).strip()
+                    break
+                    
+            image_selectors = get_selectors("snkrdunk", "detail", "images") or [".product-img img"]
+            image_urls = []
+            for sel in image_selectors:
+                els = page.css(sel)
+                for el in els:
+                    src = el.attrib.get("src") or el.attrib.get("data-src")
+                    if src and src.startswith("http") and src not in image_urls:
+                        image_urls.append(str(src))
+                if image_urls:
+                    break
+            result["image_urls"] = image_urls
+            
+            page_text = str(page.get_all_text() or "")
+            if "SOLD OUT" in page_text or "売り切れ" in page_text or "在庫なし" in page_text:
+                result["status"] = "sold"
+                
+            return result
 
         json_str = str(script_el.text or "").strip()
         if not json_str:
@@ -61,8 +114,6 @@ def scrape_item_detail_light(url: str) -> dict:
         )
         if not item:
             return {}
-
-        result = _empty_result(url, status="on_sale")
         result["title"] = item.get("name") or item.get("title") or item.get("productName", "")
 
         price_raw = item.get("price") or item.get("lowestPrice") or item.get("minPrice")
