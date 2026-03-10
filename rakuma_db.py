@@ -17,6 +17,21 @@ from selector_config import get_selectors, get_valid_domains
 from scrape_metrics import get_metrics, log_scrape_result, check_scrape_health
 
 
+def _first_node(page, selector: str):
+    """Support both `page.css()` and older mocks exposing only `css_first()`."""
+    try:
+        nodes = page.css(selector)
+        if nodes:
+            return nodes[0]
+    except Exception:
+        pass
+
+    try:
+        return page.css_first(selector)
+    except Exception:
+        return None
+
+
 def _parse_item_page(page, url: str) -> dict:
     """
     Scrapling の page オブジェクトから商品情報を抽出する共通ロジック。
@@ -55,8 +70,7 @@ def _parse_item_page(page, url: str) -> dict:
     title_selectors = get_selectors('rakuma', 'detail', 'title') or ["h1.item__name", "h1"]
     try:
         for selector in title_selectors:
-            nodes = page.css(selector)
-            el = nodes[0] if nodes else None
+            el = _first_node(page, selector)
             if el:
                 title = (el.text or "").strip()
                 if title:
@@ -80,8 +94,7 @@ def _parse_item_page(page, url: str) -> dict:
     price_selectors = get_selectors('rakuma', 'detail', 'price') or ["span.item__price", ".item__price"]
     try:
         for selector in price_selectors:
-            nodes = page.css(selector)
-            el = nodes[0] if nodes else None
+            el = _first_node(page, selector)
             if el:
                 price_text = el.text or ""
                 m = re.search(r"[¥￥]\s*([\d,]+)", price_text) or re.search(r"([\d,]+)", price_text)
@@ -107,8 +120,7 @@ def _parse_item_page(page, url: str) -> dict:
     desc_selectors = get_selectors('rakuma', 'detail', 'description') or ["div.item__description", ".item-description"]
     try:
         for selector in desc_selectors:
-            nodes = page.css(selector)
-            el = nodes[0] if nodes else None
+            el = _first_node(page, selector)
             if el:
                 description = (el.text or "").strip()
                 if description:

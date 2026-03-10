@@ -18,18 +18,18 @@
             --text-primary: #f0f0f5;
             --text-secondary: #9898a8;
             --text-muted: #686878;
-            --accent: #6366f1;
-            --accent-light: #818cf8;
-            --accent-glow: rgba(99, 102, 241, 0.15);
+            --accent: #d97706;
+            --accent-light: #fbbf24;
+            --accent-glow: rgba(251, 191, 36, 0.14);
             --green: #22c55e;
             --green-bg: rgba(34, 197, 94, 0.12);
             --red: #ef4444;
             --red-bg: rgba(239, 68, 68, 0.12);
-            --border: rgba(255, 255, 255, 0.06);
-            --border-hover: rgba(255, 255, 255, 0.12);
-            --radius: 12px;
-            --radius-sm: 8px;
-            --shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+            --border: rgba(255, 255, 255, 0.08);
+            --border-hover: rgba(255, 255, 255, 0.16);
+            --radius: 16px;
+            --radius-sm: 10px;
+            --shadow: 0 10px 36px rgba(0, 0, 0, 0.28);
         }
 
         * {
@@ -40,15 +40,22 @@
 
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--bg-primary);
+            background:
+                radial-gradient(circle at top left, rgba(217, 119, 6, 0.12), transparent 28%),
+                linear-gradient(180deg, #09090c 0%, #111118 100%);
             color: var(--text-primary);
             line-height: 1.6;
             min-height: 100vh;
         }
 
-        /* Header */
+        body.catalog-layout-editorial {
+            background:
+                radial-gradient(circle at top right, rgba(59, 130, 246, 0.12), transparent 30%),
+                linear-gradient(180deg, #090b12 0%, #111827 100%);
+        }
+
         .catalog-header {
-            background: var(--bg-secondary);
+            background: rgba(19, 19, 26, 0.88);
             border-bottom: 1px solid var(--border);
             padding: 24px 0;
             position: sticky;
@@ -79,7 +86,6 @@
             color: var(--accent-light);
         }
 
-        /* Currency Switcher */
         .currency-switcher {
             display: flex;
             align-items: center;
@@ -112,7 +118,6 @@
             border-color: var(--accent);
         }
 
-        /* Notes */
         .catalog-notes {
             max-width: 1280px;
             margin: 20px auto 0;
@@ -121,7 +126,7 @@
 
         .catalog-notes p {
             background: var(--accent-glow);
-            border: 1px solid rgba(99, 102, 241, 0.2);
+            border: 1px solid rgba(251, 191, 36, 0.22);
             padding: 14px 18px;
             border-radius: var(--radius-sm);
             font-size: 14px;
@@ -129,7 +134,6 @@
             line-height: 1.7;
         }
 
-        /* Stats Bar */
         .stats-bar {
             max-width: 1280px;
             margin: 20px auto;
@@ -143,7 +147,7 @@
             background: var(--bg-card);
             border: 1px solid var(--border);
             padding: 8px 16px;
-            border-radius: 20px;
+            border-radius: 999px;
             font-size: 13px;
             color: var(--text-secondary);
             font-weight: 500;
@@ -154,17 +158,25 @@
             margin-right: 4px;
         }
 
-        /* Grid */
         .catalog-grid {
             max-width: 1280px;
             margin: 0 auto;
             padding: 0 20px 40px;
+        }
+
+        body.catalog-layout-grid .catalog-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
             gap: 16px;
         }
 
-        /* Product Card */
+        body.catalog-layout-editorial .catalog-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            max-width: 1120px;
+        }
+
         .product-card {
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -173,21 +185,46 @@
             transition: all 0.3s ease;
             display: flex;
             flex-direction: column;
+            box-shadow: var(--shadow);
         }
 
         .product-card:hover {
             border-color: var(--border-hover);
             background: var(--bg-card-hover);
             transform: translateY(-2px);
-            box-shadow: var(--shadow);
+        }
+
+        body.catalog-layout-editorial .product-card {
+            display: grid;
+            grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+            min-height: 300px;
+        }
+
+        body.catalog-layout-editorial .product-card:nth-child(even) .product-card-media {
+            order: 2;
+        }
+
+        body.catalog-layout-editorial .product-card:nth-child(even) .product-card-body {
+            order: 1;
+        }
+
+        .product-card-media {
+            position: relative;
+            background: var(--bg-secondary);
         }
 
         .product-card-image {
             width: 100%;
+            height: 100%;
             aspect-ratio: 1;
             object-fit: cover;
             background: var(--bg-secondary);
             display: block;
+        }
+
+        body.catalog-layout-editorial .product-card-image {
+            aspect-ratio: auto;
+            min-height: 100%;
         }
 
         .product-card-image-placeholder {
@@ -201,12 +238,31 @@
             font-size: 36px;
         }
 
+        body.catalog-layout-editorial .product-card-image-placeholder {
+            min-height: 100%;
+            aspect-ratio: auto;
+        }
+
         .product-card-body {
             padding: 16px;
             flex: 1;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 10px;
+        }
+
+        body.catalog-layout-editorial .product-card-body {
+            padding: 24px;
+            justify-content: center;
+            gap: 14px;
+        }
+
+        .product-card-kicker {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--accent-light);
         }
 
         .product-card-title {
@@ -221,6 +277,31 @@
             overflow: hidden;
         }
 
+        body.catalog-layout-editorial .product-card-title {
+            font-size: 24px;
+            line-height: 1.25;
+            -webkit-line-clamp: 3;
+            line-clamp: 3;
+        }
+
+        .product-card-meta {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .meta-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-size: 12px;
+        }
+
         .product-card-price {
             font-size: 20px;
             font-weight: 700;
@@ -228,11 +309,41 @@
             letter-spacing: -0.02em;
         }
 
+        body.catalog-layout-editorial .product-card-price {
+            font-size: 30px;
+        }
+
         .product-card-footer {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-top: auto;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .product-card-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 4px;
+        }
+
+        .quick-view-btn {
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--text-primary);
+            padding: 9px 14px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+        }
+
+        .quick-view-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: var(--border-hover);
+            transform: translateY(-1px);
         }
 
         .stock-badge {
@@ -259,7 +370,6 @@
             color: var(--text-secondary);
         }
 
-        /* Footer */
         .catalog-footer {
             border-top: 1px solid var(--border);
             padding: 24px 20px;
@@ -268,24 +378,217 @@
             font-size: 13px;
         }
 
-        /* Responsive */
+        body.modal-open {
+            overflow: hidden;
+        }
+
+        .product-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 220;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            background: rgba(4, 7, 17, 0.76);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        .product-modal.is-open {
+            display: flex;
+        }
+
+        .product-modal-content {
+            width: min(1040px, 100%);
+            max-height: min(88vh, 920px);
+            overflow: auto;
+            background: linear-gradient(180deg, rgba(24, 24, 31, 0.98), rgba(16, 16, 22, 0.98));
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+            padding: 24px;
+            position: relative;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--text-primary);
+            width: 40px;
+            height: 40px;
+            border-radius: 999px;
+            font-size: 20px;
+            cursor: pointer;
+        }
+
+        .modal-layout {
+            display: grid;
+            grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
+            gap: 24px;
+        }
+
+        .modal-gallery {
+            display: grid;
+            gap: 14px;
+            align-content: start;
+        }
+
+        .modal-main-image,
+        .modal-main-image-placeholder {
+            width: 100%;
+            aspect-ratio: 1;
+            border-radius: 18px;
+            object-fit: cover;
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .modal-main-image-placeholder {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 48px;
+            color: var(--text-muted);
+        }
+
+        .modal-thumbnails {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .modal-thumbnail {
+            width: 72px;
+            height: 72px;
+            border-radius: 12px;
+            object-fit: cover;
+            border: 2px solid transparent;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .modal-thumbnail.is-active {
+            border-color: var(--accent-light);
+        }
+
+        .modal-info {
+            display: grid;
+            gap: 14px;
+            align-content: start;
+        }
+
+        .modal-info-header {
+            display: grid;
+            gap: 8px;
+        }
+
+        .modal-product-title {
+            font-size: 30px;
+            line-height: 1.2;
+            letter-spacing: -0.03em;
+        }
+
+        .modal-product-title-en {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .modal-product-price {
+            font-size: 34px;
+            color: var(--accent-light);
+            font-weight: 700;
+        }
+
+        .modal-stock-info {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .modal-description {
+            color: var(--text-secondary);
+            font-size: 14px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            padding: 16px 18px;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            min-height: 120px;
+        }
+
+        .modal-source-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 12px 16px;
+            border-radius: 999px;
+            background: linear-gradient(135deg, rgba(217, 119, 6, 0.18), rgba(251, 191, 36, 0.12));
+            border: 1px solid rgba(251, 191, 36, 0.28);
+            color: var(--text-primary);
+            text-decoration: none;
+            font-weight: 600;
+            width: fit-content;
+        }
+
+        .modal-loading {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        @media (max-width: 900px) {
+            body.catalog-layout-editorial .product-card {
+                grid-template-columns: 1fr;
+            }
+
+            body.catalog-layout-editorial .product-card:nth-child(even) .product-card-media,
+            body.catalog-layout-editorial .product-card:nth-child(even) .product-card-body {
+                order: initial;
+            }
+
+            .modal-layout {
+                grid-template-columns: 1fr;
+            }
+        }
+
         @media (max-width: 640px) {
-            .catalog-grid {
+            body.catalog-layout-grid .catalog-grid {
                 grid-template-columns: repeat(2, 1fr);
                 gap: 10px;
                 padding: 0 12px 32px;
+            }
+
+            body.catalog-layout-editorial .catalog-grid {
+                padding: 0 12px 32px;
+                gap: 14px;
             }
 
             .product-card-body {
                 padding: 10px;
             }
 
+            body.catalog-layout-editorial .product-card-body {
+                padding: 14px;
+            }
+
             .product-card-title {
                 font-size: 12px;
             }
 
+            body.catalog-layout-editorial .product-card-title {
+                font-size: 18px;
+            }
+
             .product-card-price {
                 font-size: 16px;
+            }
+
+            body.catalog-layout-editorial .product-card-price {
+                font-size: 24px;
             }
 
             .header-inner {
@@ -303,9 +606,36 @@
             .catalog-notes {
                 padding: 0 12px;
             }
+
+            .product-modal {
+                padding: 12px;
+            }
+
+            .product-modal-content {
+                padding: 18px;
+                border-radius: 18px;
+            }
+
+            .modal-close {
+                top: 12px;
+                right: 12px;
+            }
+
+            .modal-product-title {
+                font-size: 22px;
+                padding-right: 36px;
+            }
+
+            .modal-product-price {
+                font-size: 24px;
+            }
+
+            .modal-thumbnail {
+                width: 60px;
+                height: 60px;
+            }
         }
 
-        /* Animations */
         @keyframes fadeInUp {
             from {
                 opacity: 0;
@@ -356,8 +686,9 @@
     </style>
 </head>
 
-<body>
-    <!-- Header -->
+<body class="catalog-layout-{{ pricelist.layout or 'grid' }}">
+    {% set site_display = {'mercari': 'Mercari', 'yahuoku': 'Yahoo Auctions', 'yahoo': 'Yahoo Shopping', 'snkrdunk': 'SNKRDUNK', 'surugaya': 'Surugaya', 'rakuma': 'Rakuma', 'offmall': 'Off Mall', 'manual': 'Manual'} %}
+
     <header class="catalog-header">
         <div class="header-inner">
             <h1 class="catalog-title"><span>●</span> {{ pricelist.name }}</h1>
@@ -383,26 +714,34 @@
     </div>
     {% endif %}
 
-    <!-- Stats -->
     <div class="stats-bar">
         <div class="stat-badge"><strong>{{ items|length }}</strong> products</div>
         <div class="stat-badge">
             <strong>{{ items|selectattr('in_stock')|list|length }}</strong> in stock
         </div>
+        <div class="stat-badge"><strong>{{ 'Editorial' if pricelist.layout == 'editorial' else 'Grid' }}</strong> layout</div>
         <div class="stat-badge" id="rateDisplay">⏳ Loading live rates...</div>
         <div class="stat-badge" id="rateSource" style="font-size: 11px; opacity: 0.7;">Powered by open.er-api.com</div>
     </div>
 
-    <!-- Product Grid -->
-    <div class="catalog-grid">
+    <section class="catalog-grid">
         {% for item in items %}
-        <div class="product-card">
-            {% if item.thumb_url %}
-            <img src="{{ item.thumb_url }}" alt="{{ item.title }}" class="product-card-image" loading="lazy">
-            {% else %}
-            <div class="product-card-image-placeholder">📦</div>
-            {% endif %}
+        <article class="product-card" data-product-id="{{ item.product_id }}">
+            <div class="product-card-media">
+                {% if item.thumb_url %}
+                <img src="{{ item.thumb_url }}" alt="{{ item.title }}" class="product-card-image" loading="lazy">
+                {% else %}
+                <div class="product-card-image-placeholder">📦</div>
+                {% endif %}
+            </div>
             <div class="product-card-body">
+                {% if pricelist.layout == 'editorial' %}
+                <div class="product-card-kicker">{{ site_display.get(item.site, item.site|title) }}</div>
+                <div class="product-card-meta">
+                    <span class="meta-pill">{{ item.image_urls|length }} images</span>
+                    <span class="meta-pill">{{ 'Available' if item.in_stock else 'Unavailable' }}</span>
+                </div>
+                {% endif %}
                 <div class="product-card-title">{{ item.title }}</div>
                 <div class="product-card-price" data-jpy-price="{{ item.price }}">
                     ¥{{ "{:,}".format(item.price) }}
@@ -415,21 +754,48 @@
                     <span class="stock-badge out-of-stock">Out of Stock</span>
                     {% endif %}
                 </div>
+                <div class="product-card-actions">
+                    <button type="button" class="quick-view-btn" onclick="openProductModal({{ item.product_id }})">Quick View</button>
+                </div>
+            </div>
+        </article>
+        {% endfor %}
+    </section>
+
+    <div id="productModal" class="product-modal" aria-hidden="true" onclick="closeModalOnBackdrop(event)">
+        <div class="product-modal-content" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+            <button type="button" class="modal-close" aria-label="Close" onclick="closeProductModal()">×</button>
+            <div class="modal-layout">
+                <div class="modal-gallery">
+                    <img id="modalMainImage" src="" alt="" class="modal-main-image" hidden>
+                    <div id="modalMainImagePlaceholder" class="modal-main-image-placeholder">📦</div>
+                    <div id="modalThumbnails" class="modal-thumbnails"></div>
+                </div>
+                <div class="modal-info">
+                    <div class="modal-info-header">
+                        <div id="modalKicker" class="product-card-kicker">Loading</div>
+                        <h2 id="modalTitle" class="modal-product-title">Loading...</h2>
+                        <div id="modalTitleEn" class="modal-product-title-en" hidden></div>
+                    </div>
+                    <div id="modalPrice" class="modal-product-price" data-jpy-price="">¥0</div>
+                    <div id="modalStock" class="modal-stock-info"></div>
+                    <div id="modalDescription" class="modal-description">
+                        <span class="modal-loading">Loading product details...</span>
+                    </div>
+                    <a id="modalSourceLink" class="modal-source-link" href="#" target="_blank" rel="noopener" hidden>View Source</a>
+                </div>
             </div>
         </div>
-        {% endfor %}
     </div>
 
-    <!-- Footer -->
     <footer class="catalog-footer">
         <p>Prices are subject to change. Contact us for ordering details.</p>
     </footer>
 
     <script>
-        // Fallback rate from admin settings
         const FALLBACK_JPY_RATE = {{ currency_rate }};
-
-        // Will be populated from API or fallback
+        const CATALOG_TOKEN = {{ pricelist.token|tojson }};
+        const DETAIL_CACHE = {};
         let RATES_FROM_JPY = {};
         let ratesReady = false;
 
@@ -438,15 +804,24 @@
             'AUD': 'A$', 'CAD': 'C$', 'CNY': '¥', 'KRW': '₩'
         };
 
+        const SITE_LABELS = {
+            mercari: 'Mercari',
+            yahuoku: 'Yahoo Auctions',
+            yahoo: 'Yahoo Shopping',
+            snkrdunk: 'SNKRDUNK',
+            surugaya: 'Surugaya',
+            rakuma: 'Rakuma',
+            offmall: 'Off Mall',
+            manual: 'Manual'
+        };
+
         const DECIMALS = { 'JPY': 0, 'KRW': 0 };
 
-        // Fetch live rates from free API (no API key required)
         async function fetchLiveRates() {
             const rateDisplay = document.getElementById('rateDisplay');
             rateDisplay.textContent = '⏳ Loading rates...';
 
             try {
-                // open.er-api.com — free, no key required
                 const resp = await fetch('https://open.er-api.com/v6/latest/JPY');
                 const data = await resp.json();
 
@@ -456,21 +831,20 @@
                     const jpyPerUsd = 1 / data.rates['USD'];
                     rateDisplay.textContent = `✅ Live Rate: 1 USD = ¥${Math.round(jpyPerUsd)}`;
                     const rateSource = document.getElementById('rateSource');
-                    if (rateSource) rateSource.textContent = `✅ API: open.er-api.com (updated: ${data.time_last_update_utc || 'now'})`;
-                    console.log('Exchange rates loaded from API');
+                    if (rateSource) {
+                        rateSource.textContent = `✅ API: open.er-api.com (updated: ${data.time_last_update_utc || 'now'})`;
+                    }
                     return;
                 }
             } catch (e) {
                 console.warn('API rate fetch failed, using fallback:', e);
             }
 
-            // Fallback: calculate approximate rates from admin-set JPY/USD rate
             useFallbackRates();
         }
 
         function useFallbackRates() {
             const jpyRate = FALLBACK_JPY_RATE;
-            // Build rates as "1 JPY = X foreign currency"
             RATES_FROM_JPY = {
                 'JPY': 1,
                 'USD': 1 / jpyRate,
@@ -485,24 +859,32 @@
             const rateDisplay = document.getElementById('rateDisplay');
             rateDisplay.textContent = `⚠️ Fallback Rate: 1 USD = ¥${jpyRate}`;
             const rateSource = document.getElementById('rateSource');
-            if (rateSource) rateSource.textContent = '⚠️ API unavailable — using fallback rates';
+            if (rateSource) {
+                rateSource.textContent = '⚠️ API unavailable — using fallback rates';
+            }
         }
 
         function switchCurrency(currency) {
-            if (!ratesReady) return;
+            if (!ratesReady) {
+                return;
+            }
 
             const priceElements = document.querySelectorAll('[data-jpy-price]');
             const rateDisplay = document.getElementById('rateDisplay');
 
             priceElements.forEach(el => {
                 const jpyPrice = parseInt(el.getAttribute('data-jpy-price'));
-                if (isNaN(jpyPrice)) return;
+                if (isNaN(jpyPrice)) {
+                    return;
+                }
 
                 if (currency === 'JPY') {
                     el.textContent = '¥' + jpyPrice.toLocaleString();
                 } else {
                     const rate = RATES_FROM_JPY[currency];
-                    if (!rate) return;
+                    if (!rate) {
+                        return;
+                    }
                     const converted = jpyPrice * rate;
                     const decimals = DECIMALS[currency] !== undefined ? DECIMALS[currency] : 2;
                     const symbol = SYMBOLS[currency] || currency + ' ';
@@ -514,22 +896,205 @@
                 }
             });
 
-            // Update rate display
             if (currency === 'JPY') {
                 const jpyPerUsd = RATES_FROM_JPY['USD'] ? Math.round(1 / RATES_FROM_JPY['USD']) : FALLBACK_JPY_RATE;
                 rateDisplay.textContent = `Rate: 1 USD = ¥${jpyPerUsd}`;
             } else {
                 const rate = RATES_FROM_JPY[currency];
                 if (rate) {
-                    // Show how much 1 unit of foreign currency costs in JPY
                     const jpyPer = Math.round(1 / rate);
                     rateDisplay.textContent = `Rate: 1 ${currency} = ¥${jpyPer.toLocaleString()}`;
                 }
             }
         }
 
-        // Fetch rates on page load
-        document.addEventListener('DOMContentLoaded', fetchLiveRates);
+        function formatPriceFromJpy(jpyPrice, currency) {
+            if (currency === 'JPY') {
+                return '¥' + jpyPrice.toLocaleString();
+            }
+
+            const rate = RATES_FROM_JPY[currency];
+            if (!rate) {
+                return '¥' + jpyPrice.toLocaleString();
+            }
+
+            const converted = jpyPrice * rate;
+            const decimals = DECIMALS[currency] !== undefined ? DECIMALS[currency] : 2;
+            const symbol = SYMBOLS[currency] || currency + ' ';
+
+            return symbol + converted.toLocaleString(undefined, {
+                minimumFractionDigits: decimals,
+                maximumFractionDigits: decimals
+            });
+        }
+
+        function currentCurrency() {
+            const select = document.getElementById('currencySelect');
+            return select ? select.value : 'JPY';
+        }
+
+        function closeModalOnBackdrop(event) {
+            if (event.target === event.currentTarget) {
+                closeProductModal();
+            }
+        }
+
+        function closeProductModal() {
+            const modal = document.getElementById('productModal');
+            if (!modal) {
+                return;
+            }
+            modal.classList.remove('is-open');
+            modal.setAttribute('aria-hidden', 'true');
+            document.body.classList.remove('modal-open');
+        }
+
+        function renderModalGallery(images, title) {
+            const mainImage = document.getElementById('modalMainImage');
+            const placeholder = document.getElementById('modalMainImagePlaceholder');
+            const thumbnails = document.getElementById('modalThumbnails');
+
+            if (!mainImage || !placeholder || !thumbnails) {
+                return;
+            }
+
+            thumbnails.innerHTML = '';
+
+            if (!images || images.length === 0) {
+                mainImage.hidden = true;
+                mainImage.removeAttribute('src');
+                placeholder.style.display = 'flex';
+                return;
+            }
+
+            placeholder.style.display = 'none';
+            mainImage.hidden = false;
+            mainImage.src = images[0];
+            mainImage.alt = title || 'product image';
+
+            images.forEach(function (imageUrl, index) {
+                const thumb = document.createElement('img');
+                thumb.src = imageUrl;
+                thumb.alt = (title || 'product image') + ' ' + (index + 1);
+                thumb.className = 'modal-thumbnail' + (index === 0 ? ' is-active' : '');
+                thumb.addEventListener('click', function () {
+                    mainImage.src = imageUrl;
+                    thumbnails.querySelectorAll('.modal-thumbnail').forEach(function (node) {
+                        node.classList.remove('is-active');
+                    });
+                    thumb.classList.add('is-active');
+                });
+                thumbnails.appendChild(thumb);
+            });
+        }
+
+        function renderProductModal(data) {
+            const modal = document.getElementById('productModal');
+            const title = document.getElementById('modalTitle');
+            const titleEn = document.getElementById('modalTitleEn');
+            const kicker = document.getElementById('modalKicker');
+            const price = document.getElementById('modalPrice');
+            const stock = document.getElementById('modalStock');
+            const description = document.getElementById('modalDescription');
+            const sourceLink = document.getElementById('modalSourceLink');
+
+            if (!modal || !title || !titleEn || !kicker || !price || !stock || !description || !sourceLink) {
+                return;
+            }
+
+            title.textContent = data.title || 'Untitled';
+            if (data.title_en) {
+                titleEn.hidden = false;
+                titleEn.textContent = data.title_en;
+            } else {
+                titleEn.hidden = true;
+                titleEn.textContent = '';
+            }
+
+            kicker.textContent = SITE_LABELS[data.site] || data.site || 'Product';
+            price.dataset.jpyPrice = String(data.price || 0);
+            price.textContent = formatPriceFromJpy(data.price || 0, currentCurrency());
+
+            stock.innerHTML = '';
+            const stockBadge = document.createElement('span');
+            stockBadge.className = 'stock-badge ' + (data.in_stock ? 'in-stock' : 'out-of-stock');
+            stockBadge.textContent = data.in_stock ? 'In Stock' : 'Out of Stock';
+            stock.appendChild(stockBadge);
+
+            const stockQty = document.createElement('span');
+            stockQty.className = 'stock-qty';
+            stockQty.textContent = data.in_stock ? 'Qty: ' + (data.stock || 0) : 'Qty: 0';
+            stock.appendChild(stockQty);
+
+            if (data.description && data.description.trim()) {
+                description.textContent = data.description;
+            } else if (data.description_en && data.description_en.trim()) {
+                description.textContent = data.description_en;
+            } else {
+                description.textContent = 'No description available.';
+            }
+
+            if (data.source_url) {
+                sourceLink.hidden = false;
+                sourceLink.href = data.source_url;
+                sourceLink.textContent = 'View Source';
+            } else {
+                sourceLink.hidden = true;
+                sourceLink.removeAttribute('href');
+            }
+
+            renderModalGallery(data.image_urls || [], data.title || 'product image');
+
+            modal.classList.add('is-open');
+            modal.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('modal-open');
+        }
+
+        async function openProductModal(productId) {
+            if (!productId) {
+                return;
+            }
+
+            if (DETAIL_CACHE[productId]) {
+                renderProductModal(DETAIL_CACHE[productId]);
+                return;
+            }
+
+            const description = document.getElementById('modalDescription');
+            if (description) {
+                description.innerHTML = '<span class=\"modal-loading\">Loading product details...</span>';
+            }
+
+            try {
+                const response = await fetch(`/catalog/${CATALOG_TOKEN}/product/${productId}`);
+                if (!response.ok) {
+                    throw new Error('Failed to load product detail');
+                }
+
+                const data = await response.json();
+                DETAIL_CACHE[productId] = data;
+                renderProductModal(data);
+            } catch (error) {
+                if (description) {
+                    description.textContent = 'Failed to load product details.';
+                }
+                const modal = document.getElementById('productModal');
+                if (modal) {
+                    modal.classList.add('is-open');
+                    modal.setAttribute('aria-hidden', 'false');
+                    document.body.classList.add('modal-open');
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            fetchLiveRates();
+            document.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape') {
+                    closeProductModal();
+                }
+            });
+        });
     </script>
 </body>
 

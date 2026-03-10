@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}商品抽出中...{% endblock %}
+{% block title %}商品抽出中{% endblock %}
 {% block header_title %}商品抽出中{% endblock %}
 
 {% block content %}
@@ -13,7 +13,7 @@
         <div id="status-container">
             <div class="loading-spinner" style="margin: 0 auto 24px;" aria-hidden="true"></div>
             <p id="status-message" style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">
-                スクレイピング中...
+                商品を抽出しています...
             </p>
             <p id="queue-position" style="color: var(--text-muted, #888); margin-bottom: 4px;"></p>
             <p id="elapsed-time" style="color: var(--text-muted, #888); font-size: 0.9rem;"></p>
@@ -47,7 +47,7 @@
             msgEl.textContent = "キュー待機中" + (data.queue_position ? "（" + data.queue_position + "番目）" : "");
             posEl.textContent = "しばらくお待ちください...";
         } else if (data.status === "running") {
-            msgEl.textContent = "スクレイピング中...";
+            msgEl.textContent = "商品を抽出しています...";
             posEl.textContent = "";
         }
 

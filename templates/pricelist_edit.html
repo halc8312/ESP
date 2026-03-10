@@ -10,6 +10,8 @@
     <h1>{% if pricelist %}✏️ 価格表編集{% else %}＋ 新規価格表作成{% endif %}</h1>
 </div>
 
+{% set layout_value = selected_layout or (pricelist.layout if pricelist and pricelist.layout else 'grid') %}
+
 {% if error %}
 <div
     style="background: #fce4ec; border: 1px solid #ef9a9a; padding: 12px; border-radius: 6px; margin-bottom: 16px; color: #c62828;">
@@ -30,6 +32,26 @@
                 <label for="notes">備考（顧客へのメッセージ）</label>
                 <textarea id="notes" name="notes" rows="3"
                     placeholder="例: Thank you for your interest!">{{ pricelist.notes if pricelist else '' }}</textarea>
+            </div>
+
+            <input type="hidden" name="currency_rate" value="{{ pricelist.currency_rate if pricelist else 150 }}">
+
+            <div class="form-group">
+                <label>公開レイアウト</label>
+                <div style="display: grid; gap: 12px;">
+                    <label
+                        style="display: block; border: 1px solid {% if layout_value == 'grid' %}#90caf9{% else %}#d9dde3{% endif %}; background: {% if layout_value == 'grid' %}#e3f2fd{% else %}#fff{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
+                        <input type="radio" name="layout" value="grid" {% if layout_value == 'grid' %}checked{% endif %}>
+                        <strong style="display: block; margin-top: 6px;">グリッド</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">既存のカード型。商品点数が多い価格表向け。</span>
+                    </label>
+                    <label
+                        style="display: block; border: 1px solid {% if layout_value == 'editorial' %}#f4b183{% else %}#d9dde3{% endif %}; background: {% if layout_value == 'editorial' %}#fff4e8{% else %}#fff{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
+                        <input type="radio" name="layout" value="editorial" {% if layout_value == 'editorial' %}checked{% endif %}>
+                        <strong style="display: block; margin-top: 6px;">エディトリアル</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">画像を大きく見せる縦積み型。少数精鋭の提案向け。</span>
+                    </label>
+                </div>
             </div>
 
             <div class="form-group"

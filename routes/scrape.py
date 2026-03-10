@@ -3,7 +3,7 @@ Scraping routes.
 """
 import traceback
 from urllib.parse import urlencode
-from flask import Blueprint, render_template, request, session, redirect, url_for
+from flask import Blueprint, jsonify, render_template, request, session, redirect, url_for
 from flask_login import login_required, current_user
 
 from database import SessionLocal
@@ -43,7 +43,7 @@ def _detect_site_from_url(url: str) -> str:
     return "mercari"
 
 
-def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, category, limit, user_id):
+def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, category, limit, user_id, persist_to_db=True):
     """
     スクレイピングタスク関数を構築して返す。
     バックグラウンドスレッドで実行される。
@@ -53,8 +53,15 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
         items = []
         new_count = 0
         updated_count = 0
+        excluded_count = 0
         error_msg = ""
         search_url = ""
+
+        def finalize(scraped_items, target_site):
+            nonlocal items, excluded_count, new_count, updated_count
+            items, excluded_count = filter_excluded_items(scraped_items, user_id)
+            if persist_to_db:
+                new_count, updated_count = save_scraped_items_to_db(items, site=target_site, user_id=user_id)
 
         try:
             if target_url:
@@ -69,10 +76,7 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                     "mercari": scrape_single_item,
                 }
                 scraper_fn = scraper_map.get(_site, scrape_single_item)
-                items = scraper_fn(target_url, headless=True)
-
-                items, _ = filter_excluded_items(items, user_id)
-                new_count, updated_count = save_scraped_items_to_db(items, site=_site, user_id=user_id)
+                finalize(scraper_fn(target_url, headless=True), _site)
 
             else:
                 params = {}
@@ -97,8 +101,7 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                         max_scroll=3,
                         headless=True,
                     )
-                    items, _ = filter_excluded_items(items, user_id)
-                    new_count, updated_count = save_scraped_items_to_db(items, user_id=user_id, site="yahoo")
+                    finalize(items, "yahoo")
 
                 elif site == "rakuma":
                     base = "https://fril.jp/s?"
@@ -110,8 +113,7 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                         max_scroll=3,
                         headless=True,
                     )
-                    items, _ = filter_excluded_items(items, user_id)
-                    new_count, updated_count = save_scraped_items_to_db(items, user_id=user_id, site="rakuma")
+                    finalize(items, "rakuma")
 
                 elif site == "surugaya":
                     base = "https://www.suruga-ya.jp/search?"
@@ -125,8 +127,7 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                         max_scroll=3,
                         headless=True,
                     )
-                    items, _ = filter_excluded_items(items, user_id)
-                    new_count, updated_count = save_scraped_items_to_db(items, user_id=user_id, site="surugaya")
+                    finalize(items, "surugaya")
 
                 elif site == "offmall":
                     base = "https://netmall.hardoff.co.jp/search?"
@@ -138,8 +139,7 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                         max_scroll=3,
                         headless=True,
                     )
-                    items, _ = filter_excluded_items(items, user_id)
-                    new_count, updated_count = save_scraped_items_to_db(items, user_id=user_id, site="offmall")
+                    finalize(items, "offmall")
 
                 elif site == "yahuoku":
                     base = "https://auctions.yahoo.co.jp/search/search?"
@@ -151,8 +151,7 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                         max_scroll=3,
                         headless=True,
                     )
-                    items, _ = filter_excluded_items(items, user_id)
-                    new_count, updated_count = save_scraped_items_to_db(items, user_id=user_id, site="yahuoku")
+                    finalize(items, "yahuoku")
 
                 elif site == "snkrdunk":
                     base = "https://snkrdunk.com/search?"
@@ -164,8 +163,7 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                         max_scroll=3,
                         headless=True,
                     )
-                    items, _ = filter_excluded_items(items, user_id)
-                    new_count, updated_count = save_scraped_items_to_db(items, user_id=user_id, site="snkrdunk")
+                    finalize(items, "snkrdunk")
 
                 else:
                     # Mercari (default)
@@ -177,8 +175,7 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                         max_scroll=3,
                         headless=True,
                     )
-                    items, _ = filter_excluded_items(items, user_id)
-                    new_count, updated_count = save_scraped_items_to_db(items, user_id=user_id, site="mercari")
+                    finalize(items, "mercari")
 
         except Exception as e:
             traceback.print_exc()
@@ -190,6 +187,7 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
             "items": items,
             "new_count": new_count,
             "updated_count": updated_count,
+            "excluded_count": excluded_count,
             "error_msg": error_msg,
             "search_url": search_url,
             "keyword": keyword or "",
@@ -199,6 +197,7 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
             "category": category,
             "limit": limit,
             "site": site,
+            "persist_to_db": persist_to_db,
         }
 
     return task
@@ -231,6 +230,8 @@ def scrape_run():
     category = request.form.get("category")
     limit_str = request.form.get("limit", "10")
     limit = int(limit_str) if limit_str.isdigit() else 10
+    response_mode = request.form.get("response_mode", "").strip().lower()
+    preview_mode = response_mode == "preview"
 
     # URL から site を推定する（キュー振り分けに使用）
     if target_url:
@@ -248,6 +249,7 @@ def scrape_run():
         category=category,
         limit=limit,
         user_id=current_user.id,
+        persist_to_db=not preview_mode,
     )
 
     queue = get_queue()
@@ -256,6 +258,15 @@ def scrape_run():
         task_fn=task_fn,
         user_id=current_user.id,
     )
+
+    if preview_mode:
+        return jsonify(
+            {
+                "job_id": job_id,
+                "status_url": url_for('api.get_scrape_status', job_id=job_id),
+                "register_url": url_for('scrape.register_selected'),
+            }
+        ), 202
 
     return redirect(url_for('scrape.scrape_status', job_id=job_id))
 
@@ -283,7 +294,7 @@ def scrape_status(job_id):
 def scrape_result(job_id):
     """スクレイピング完了後の結果表示ページ"""
     queue = get_queue()
-    status = queue.get_status(job_id)
+    status = queue.get_status(job_id, user_id=current_user.id)
 
     session_db = SessionLocal()
     try:
@@ -321,7 +332,7 @@ def scrape_result(job_id):
                 items=[],
                 new_count=0,
                 updated_count=0,
-                error_msg=status.get("error") or "スクレイピング中にエラーが発生しました",
+                error_msg=status.get("error") or "商品抽出中にエラーが発生しました",
                 all_shops=all_shops,
                 current_shop_id=current_shop_id,
             )
@@ -349,3 +360,60 @@ def scrape_result(job_id):
         )
     finally:
         session_db.close()
+
+
+@scrape_bp.route("/scrape/register-selected", methods=["POST"])
+@login_required
+def register_selected():
+    payload = request.get_json(silent=True) or {}
+    job_id = payload.get("job_id")
+    raw_indices = payload.get("selected_indices") or []
+
+    if not job_id:
+        return jsonify({"error": "job_id is required"}), 400
+
+    try:
+        selected_indices = [int(idx) for idx in raw_indices]
+    except (TypeError, ValueError):
+        return jsonify({"error": "selected_indices must be integers"}), 400
+
+    if not selected_indices:
+        return jsonify({"error": "No items selected"}), 400
+
+    queue = get_queue()
+    status = queue.get_status(job_id, user_id=current_user.id)
+    if status is None:
+        return jsonify({"error": "Job not found"}), 404
+    if status["status"] != "completed":
+        return jsonify({"error": "Job is not completed yet"}), 409
+
+    result = status.get("result") or {}
+    items = result.get("items") or []
+    selected_items = []
+    seen = set()
+
+    for idx in selected_indices:
+        if idx in seen:
+            continue
+        if idx < 0 or idx >= len(items):
+            continue
+        seen.add(idx)
+        selected_items.append(items[idx])
+
+    if not selected_items:
+        return jsonify({"error": "No valid items selected"}), 400
+
+    new_count, updated_count = save_scraped_items_to_db(
+        selected_items,
+        user_id=current_user.id,
+        site=result.get("site", "mercari"),
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "registered_count": len(selected_items),
+            "new_count": new_count,
+            "updated_count": updated_count,
+        }
+    )

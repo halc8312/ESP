@@ -36,10 +36,15 @@ def run_migrations():
         # Pricing columns
         ("products", "pricing_rule_id", "ALTER TABLE products ADD COLUMN pricing_rule_id INTEGER"),
         ("products", "selling_price", "ALTER TABLE products ADD COLUMN selling_price INTEGER"),
+        # English product copy
+        ("products", "custom_title_en", "ALTER TABLE products ADD COLUMN custom_title_en VARCHAR"),
+        ("products", "custom_description_en", "ALTER TABLE products ADD COLUMN custom_description_en TEXT"),
         # Archive column
         ("products", "archived", "ALTER TABLE products ADD COLUMN archived BOOLEAN DEFAULT FALSE"),
         # Trash column
         ("products", "deleted_at", "ALTER TABLE products ADD COLUMN deleted_at DATETIME"),
+        # Price list layout
+        ("price_lists", "layout", "ALTER TABLE price_lists ADD COLUMN layout VARCHAR DEFAULT 'grid'"),
     ]
     
     with engine.connect() as conn:
@@ -75,12 +80,18 @@ scheduler.init_app(app)
 
 # Prevent duplicate scheduler startup when Gunicorn spawns multiple workers.
 # Use an advisory file lock so only one worker process runs the scheduler.
-import fcntl as _fcntl
+# Windows lacks fcntl, so fall back to a single-process start there.
+try:
+    import fcntl as _fcntl
+except ModuleNotFoundError:
+    _fcntl = None
 import tempfile as _tempfile
 _scheduler_lock_path = os.path.join(_tempfile.gettempdir(), "esp_scheduler.lock")
+
 try:
-    _scheduler_lock_fd = open(_scheduler_lock_path, "w")
-    _fcntl.flock(_scheduler_lock_fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+    if _fcntl is not None:
+        _scheduler_lock_fd = open(_scheduler_lock_path, "w")
+        _fcntl.flock(_scheduler_lock_fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
     scheduler.start()
 except (IOError, OSError):
     pass  # Another worker process is already running the scheduler

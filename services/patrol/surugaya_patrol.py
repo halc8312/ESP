@@ -1,19 +1,18 @@
 """
-Surugaya Patrol - Lightweight price and stock monitoring.
-Uses Scrapling HTTP fetch (no browser) when no driver is provided.
-Falls back to Selenium when a shared driver is provided.
+Surugaya patrol scraper.
+Uses Scrapling HTTP fetches only.
 """
-import re
 import logging
+import re
+
 from services.patrol.base_patrol import BasePatrol, PatrolResult
 
-logger = logging.getLogger("patrol")
+logger = logging.getLogger("patrol.surugaya")
 
 
 class SurugayaPatrol(BasePatrol):
-    """Lightweight patrol for suruga-ya.jp"""
+    """Lightweight patrol for suruga-ya.jp."""
 
-    # CSS Selectors for patrol (minimal set) - Updated 2026-01-07
     SELECTORS = {
         "price": ".price_group .text-price-detail, .price_group label",
         "stock_available": ".btn_buy, .cart1, #cart-add",
@@ -21,26 +20,18 @@ class SurugayaPatrol(BasePatrol):
     }
 
     def fetch(self, url: str, driver=None) -> PatrolResult:
-        """
-        Fetch price and stock status from Surugaya product page.
-        Uses Scrapling HTTP-only fetch when driver is None (no Chrome needed).
-        """
-        if driver is None:
-            return self._fetch_with_scrapling(url)
-        return self._fetch_with_selenium(url, driver)
+        """Fetch price and stock status. The driver argument is ignored."""
+        return self._fetch_with_scrapling(url)
 
     def _fetch_with_scrapling(self, url: str) -> PatrolResult:
-        """HTTP-only fetch using Scrapling Fetcher - no browser needed."""
         try:
-            from services.scraping_client import fetch_static
             from bs4 import BeautifulSoup
-            page = fetch_static(url)
+            from services.scraping_client import fetch_static
 
-            # Use raw HTML for BeautifulSoup parsing (same logic as surugaya_db.py)
+            page = fetch_static(url)
             soup = BeautifulSoup(page.body, "html.parser")
 
             price = None
-            # Try CSS selectors via BeautifulSoup
             for selector in self.SELECTORS["price"].split(", "):
                 for el in soup.select(selector.strip()):
                     text = el.get_text(strip=True)
@@ -54,9 +45,8 @@ class SurugayaPatrol(BasePatrol):
                 if price is not None:
                     break
 
-            # Fallback: search full page text
+            body_text = soup.get_text(" ", strip=True)
             if price is None:
-                body_text = soup.get_text(" ", strip=True)
                 match = re.search(r"([\d,]+)\s*円\s*\(税込\)", body_text)
                 if match:
                     try:
@@ -64,7 +54,6 @@ class SurugayaPatrol(BasePatrol):
                     except ValueError:
                         pass
 
-            # Stock status
             status = "unknown"
             for selector in self.SELECTORS["stock_available"].split(", "):
                 if soup.select(selector.strip()):
@@ -76,95 +65,18 @@ class SurugayaPatrol(BasePatrol):
                         status = "sold"
                         break
             if status == "unknown":
-                body_text = soup.get_text(" ", strip=True)
                 sold_keywords = ("売り切れ", "在庫なし", "品切れ", "販売終了")
                 active_keywords = ("カートに入れる", "購入手続き", "注文する")
-                if any(k in body_text for k in sold_keywords):
+                if any(keyword in body_text for keyword in sold_keywords):
                     status = "sold"
-                elif any(k in body_text for k in active_keywords):
+                elif any(keyword in body_text for keyword in active_keywords):
                     status = "active"
 
             variants = []
             if price is not None:
-                variants.append({
-                    "name": "Default Title",
-                    "stock": 1 if status == "active" else 0,
-                    "price": price
-                })
+                variants.append({"name": "Default Title", "stock": 1 if status == "active" else 0, "price": price})
 
             return PatrolResult(price=price, status=status, variants=variants)
-
-        except Exception as e:
-            logger.debug(f"Surugaya Scrapling patrol error: {e}")
-            return PatrolResult(error=str(e))
-
-    def _fetch_with_selenium(self, url: str, driver) -> PatrolResult:
-        """Selenium-based fetch using a shared driver."""
-        import time
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-
-        try:
-            driver.get(url)
-            WebDriverWait(driver, 8).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            time.sleep(1)
-
-            price = None
-            try:
-                price_els = driver.find_elements(By.CSS_SELECTOR, self.SELECTORS["price"])
-                for el in price_els:
-                    text = el.text
-                    match = re.search(r"([\d,]+)\s*円", text) or re.search(r"[¥￥]\s*([\d,]+)", text)
-                    if match:
-                        price = int(match.group(1).replace(",", ""))
-                        break
-            except Exception:
-                pass
-
-            if price is None:
-                try:
-                    body_text = driver.find_element(By.TAG_NAME, "body").text
-                    match = re.search(r"([\d,]+)\s*円\s*\(税込\)", body_text)
-                    if match:
-                        price = int(match.group(1).replace(",", ""))
-                except Exception:
-                    pass
-
-            status = "unknown"
-            try:
-                buy_btn = driver.find_elements(By.CSS_SELECTOR, self.SELECTORS["stock_available"])
-                sold_btn = driver.find_elements(By.CSS_SELECTOR, self.SELECTORS["stock_sold"])
-
-                if buy_btn:
-                    status = "active"
-                elif sold_btn:
-                    status = "sold"
-                else:
-                    body_text = driver.find_element(By.TAG_NAME, "body").text
-                    sold_keywords = ("売り切れ", "在庫なし", "品切れ", "販売終了")
-                    active_keywords = ("カートに入れる", "購入手続き", "注文する")
-                    if any(keyword in body_text for keyword in sold_keywords):
-                        status = "sold"
-                    elif any(keyword in body_text for keyword in active_keywords):
-                        status = "active"
-                    else:
-                        status = "unknown"
-            except Exception:
-                pass
-
-            variants = []
-            if price is not None:
-                variants.append({
-                    "name": "Default Title",
-                    "stock": 1 if status == "active" else 0,
-                    "price": price
-                })
-
-            return PatrolResult(price=price, status=status, variants=variants)
-
-        except Exception as e:
-            logger.error(f"Surugaya Selenium patrol error: {e}")
-            return PatrolResult(error=str(e))
+        except Exception as exc:
+            logger.debug("Surugaya patrol error: %s", exc)
+            return PatrolResult(error=str(exc))

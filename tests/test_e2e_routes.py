@@ -4,7 +4,7 @@ Tests all routes after the app.py split to ensure functionality is preserved.
 """
 import pytest
 from datetime import datetime
-from models import User, Shop, Product, Variant, ProductSnapshot, DescriptionTemplate
+from models import User, Shop, Product, Variant, ProductSnapshot, DescriptionTemplate, PriceList, PriceListItem, CatalogPageView
 
 
 class TestAuthenticationRoutes:
@@ -178,6 +178,122 @@ class TestMainRoutes:
         response = client.get('/?page=2')
         assert response.status_code == 200
 
+    def test_manual_add_requires_login(self, client):
+        """Test manual add page requires authentication"""
+        response = client.get('/products/manual-add', follow_redirects=True)
+        assert response.request.path == '/login'
+
+    def test_manual_add_page_loads(self, client, db_session):
+        """Test manual add page loads for authenticated user"""
+        user = User(username='manualaddloadtest')
+        user.set_password('testpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'manualaddloadtest',
+            'password': 'testpassword'
+        })
+
+        response = client.get('/products/manual-add')
+        assert response.status_code == 200
+        assert '商品手動追加'.encode('utf-8') in response.data
+
+    def test_manual_add_creates_product_snapshot_and_variant(self, client, db_session):
+        """Test manual add creates a product, snapshot, and default variant"""
+        user = User(username='manualaddcreatetest')
+        user.set_password('testpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        shop = Shop(name='Manual Add Shop', user_id=user.id)
+        db_session.add(shop)
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'manualaddcreatetest',
+            'password': 'testpassword'
+        })
+
+        response = client.post('/products/manual-add', data={
+            'shop_id': str(shop.id),
+            'title': '手動登録商品',
+            'title_en': 'Manual Product',
+            'description': '日本語説明',
+            'description_en': 'English Description',
+            'cost_price': '2500',
+            'selling_price': '4200',
+            'inventory_qty': '3',
+            'stock_state': 'on_sale',
+            'publish_status': 'active',
+            'site': 'manual',
+            'source_url': '',
+            'tags': 'tag1,tag2',
+            'sku': 'MANUAL-001',
+            'image_urls': 'https://img.example.com/1.jpg|https://img.example.com/2.jpg|ftp://ignored.example.com/3.jpg'
+        }, follow_redirects=False)
+
+        assert response.status_code == 302
+        assert '/product/' in response.headers['Location']
+
+        product = db_session.query(Product).filter_by(user_id=user.id, last_title='手動登録商品').one()
+        assert product.shop_id == shop.id
+        assert product.site == 'manual'
+        assert product.last_price == 2500
+        assert product.selling_price == 4200
+        assert product.last_status == 'on_sale'
+        assert product.status == 'active'
+        assert product.custom_title_en == 'Manual Product'
+        assert product.custom_description_en == 'English Description'
+
+        snapshot = db_session.query(ProductSnapshot).filter_by(product_id=product.id).one()
+        assert snapshot.title == '手動登録商品'
+        assert snapshot.price == 2500
+        assert snapshot.status == 'on_sale'
+        assert snapshot.description == '日本語説明'
+        assert snapshot.image_urls == 'https://img.example.com/1.jpg|https://img.example.com/2.jpg'
+
+        variant = db_session.query(Variant).filter_by(product_id=product.id).one()
+        assert variant.option1_value == 'Default Title'
+        assert variant.sku == 'MANUAL-001'
+        assert variant.price == 4200
+        assert variant.inventory_qty == 3
+
+    def test_manual_add_rejects_other_users_shop(self, client, db_session):
+        """Test manual add enforces shop ownership"""
+        owner = User(username='manualaddowner')
+        owner.set_password('testpassword')
+        db_session.add(owner)
+        db_session.commit()
+
+        foreign_shop = Shop(name='Foreign Shop', user_id=owner.id)
+        db_session.add(foreign_shop)
+        db_session.commit()
+
+        user = User(username='manualaddother')
+        user.set_password('testpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'manualaddother',
+            'password': 'testpassword'
+        })
+
+        response = client.post('/products/manual-add', data={
+            'shop_id': str(foreign_shop.id),
+            'title': '不正ショップ商品',
+            'cost_price': '1200',
+            'inventory_qty': '1',
+            'stock_state': 'on_sale',
+            'publish_status': 'draft',
+            'site': 'manual'
+        })
+
+        assert response.status_code == 200
+        assert '選択したショップが見つかりません'.encode('utf-8') in response.data
+        assert db_session.query(Product).filter_by(user_id=user.id, last_title='不正ショップ商品').count() == 0
+
 
 class TestShopsRoutes:
     """E2E tests for shop routes (routes/shops.py)"""
@@ -295,6 +411,311 @@ class TestShopsRoutes:
         assert deleted_template is None
 
 
+class TestPriceListRoutes:
+    """E2E tests for price list routes and public catalog"""
+
+    def _login_user(self, client, db_session, username='pricelisttest'):
+        user = User(username=username)
+        user.set_password('testpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': username,
+            'password': 'testpassword'
+        })
+        return user
+
+    def _create_catalog_fixture(self, db_session, username='catalogfixture', layout='editorial'):
+        user = User(username=username)
+        user.set_password('testpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        product = Product(
+            user_id=user.id,
+            site='manual',
+            source_url='https://example.com/manual-product',
+            last_title='Catalog Layout Product',
+            last_price=3200,
+            last_status='on_sale',
+            status='active',
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        db_session.add(product)
+        db_session.commit()
+
+        variant = Variant(
+            product_id=product.id,
+            option1_value='Default Title',
+            price=3200,
+            inventory_qty=2,
+            position=1
+        )
+        db_session.add(variant)
+
+        snapshot = ProductSnapshot(
+            product_id=product.id,
+            title='Catalog Layout Product',
+            price=3200,
+            status='on_sale',
+            description='Catalog description',
+            image_urls='https://img.example.com/catalog-layout.jpg|https://img.example.com/catalog-layout-2.jpg',
+            scraped_at=datetime.utcnow()
+        )
+        db_session.add(snapshot)
+
+        pricelist = PriceList(
+            user_id=user.id,
+            name='Editorial Catalog',
+            token=f'{username}-token',
+            layout=layout,
+            currency_rate=150,
+            is_active=True
+        )
+        db_session.add(pricelist)
+        db_session.commit()
+
+        item = PriceListItem(
+            price_list_id=pricelist.id,
+            product_id=product.id,
+            visible=True,
+            sort_order=0
+        )
+        db_session.add(item)
+        db_session.commit()
+
+        return user, product, pricelist, item
+
+    def test_pricelist_create_saves_layout(self, client, db_session):
+        """Test creating a price list persists selected layout"""
+        user = self._login_user(client, db_session, 'pricelistcreatetest')
+
+        response = client.post('/pricelists/create', data={
+            'name': 'Editorial List',
+            'notes': 'Test notes',
+            'currency_rate': '150',
+            'layout': 'editorial'
+        }, follow_redirects=False)
+
+        assert response.status_code == 302
+        assert '/pricelists/' in response.headers['Location']
+
+        pricelist = db_session.query(PriceList).filter_by(user_id=user.id, name='Editorial List').one()
+        assert pricelist.layout == 'editorial'
+
+    def test_pricelist_edit_updates_layout(self, client, db_session):
+        """Test editing a price list can switch layout"""
+        user = self._login_user(client, db_session, 'pricelistedittest')
+
+        pricelist = PriceList(
+            user_id=user.id,
+            name='Grid List',
+            token='grid-list-token',
+            layout='grid',
+            currency_rate=150,
+            is_active=True
+        )
+        db_session.add(pricelist)
+        db_session.commit()
+
+        response = client.post(f'/pricelists/{pricelist.id}/edit', data={
+            'name': 'Grid List',
+            'notes': 'Updated notes',
+            'currency_rate': '150',
+            'layout': 'editorial',
+            'is_active': 'on'
+        }, follow_redirects=False)
+
+        assert response.status_code == 302
+        db_session.refresh(pricelist)
+        assert pricelist.layout == 'editorial'
+
+    def test_catalog_view_uses_pricelist_layout(self, client, db_session):
+        """Test public catalog renders the selected layout class"""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='cataloglayouttest',
+            layout='editorial'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+        assert response.status_code == 200
+        assert b'catalog-layout-editorial' in response.data
+        assert b'Editorial' in response.data
+        assert b'Catalog Layout Product' in response.data
+
+    def test_catalog_view_renders_product_modal_shell(self, client, db_session):
+        """Test public catalog includes quick-view modal markup"""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogmodaltest',
+            layout='grid'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+        assert response.status_code == 200
+        assert b'Quick View' in response.data
+        assert b'productModal' in response.data
+        assert str(product.id).encode('utf-8') in response.data
+
+    def test_catalog_product_detail_endpoint_returns_json(self, client, db_session):
+        """Test catalog detail endpoint returns modal payload"""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogdetailapitest',
+            layout='editorial'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}/product/{product.id}')
+        assert response.status_code == 200
+        assert response.json['product_id'] == product.id
+        assert response.json['title'] == 'Catalog Layout Product'
+        assert response.json['price'] == 3200
+        assert response.json['description'] == 'Catalog description'
+        assert response.json['site'] == 'manual'
+        assert response.json['in_stock'] is True
+        assert response.json['image_urls'] == [
+            'https://img.example.com/catalog-layout.jpg',
+            'https://img.example.com/catalog-layout-2.jpg',
+        ]
+
+    def test_catalog_product_detail_returns_404_for_missing_item(self, client, db_session):
+        """Test catalog detail endpoint rejects products outside the price list"""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogdetailmissingtest',
+            layout='grid'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}/product/999999')
+        assert response.status_code == 404
+        assert response.json['error'] == 'Not found'
+
+    def test_catalog_view_records_page_view(self, client, db_session):
+        """Test opening the catalog records a page view"""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogviewrecordtest',
+            layout='grid'
+        )
+
+        response = client.get(
+            f'/catalog/{pricelist.token}',
+            headers={
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile',
+                'Referer': 'https://www.google.com/search?q=esp'
+            },
+            environ_base={'REMOTE_ADDR': '203.0.113.55'}
+        )
+
+        assert response.status_code == 200
+
+        views = db_session.query(CatalogPageView).filter_by(pricelist_id=pricelist.id).all()
+        assert len(views) == 1
+        assert views[0].product_id is None
+        assert views[0].user_agent_short == 'Mobile'
+        assert views[0].referrer_domain == 'www.google.com'
+        assert len(views[0].ip_hash) == 16
+
+    def test_catalog_product_detail_records_product_view(self, client, db_session):
+        """Test opening product detail JSON records a product-level view"""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogdetailrecordtest',
+            layout='editorial'
+        )
+
+        response = client.get(
+            f'/catalog/{pricelist.token}/product/{product.id}',
+            headers={'Referer': 'https://www.instagram.com/some-post'},
+            environ_base={'REMOTE_ADDR': '198.51.100.42'}
+        )
+
+        assert response.status_code == 200
+
+        views = (
+            db_session.query(CatalogPageView)
+            .filter_by(pricelist_id=pricelist.id)
+            .order_by(CatalogPageView.id.asc())
+            .all()
+        )
+        assert len(views) == 1
+        assert views[0].product_id == product.id
+        assert views[0].referrer_domain == 'www.instagram.com'
+
+    def test_pricelist_analytics_requires_login(self, client, db_session):
+        """Test analytics page requires authentication"""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='analyticsloginrequiredtest',
+            layout='grid'
+        )
+
+        response = client.get(f'/pricelists/{pricelist.id}/analytics', follow_redirects=True)
+        assert response.request.path == '/login'
+
+    def test_pricelist_analytics_page_shows_metrics(self, client, db_session):
+        """Test analytics page renders recorded metrics for owner"""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='analyticsmetricstest',
+            layout='editorial'
+        )
+
+        db_session.add_all([
+            CatalogPageView(
+                pricelist_id=pricelist.id,
+                ip_hash='abc123abc123abcd',
+                user_agent_short='Desktop',
+                referrer_domain='direct',
+                product_id=None
+            ),
+            CatalogPageView(
+                pricelist_id=pricelist.id,
+                ip_hash='def456def456def4',
+                user_agent_short='Mobile',
+                referrer_domain='www.google.com',
+                product_id=product.id
+            ),
+        ])
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'analyticsmetricstest',
+            'password': 'testpassword'
+        })
+
+        response = client.get(f'/pricelists/{pricelist.id}/analytics')
+        assert response.status_code == 200
+        assert 'アクセス解析'.encode('utf-8') in response.data
+        assert '総ページビュー'.encode('utf-8') in response.data
+        assert b'dailyViewsChart' in response.data
+        assert b'Catalog Layout Product' in response.data
+
+    def test_pricelist_analytics_hides_other_users_list(self, client, db_session):
+        """Test analytics page enforces ownership"""
+        owner, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='analyticsownertest',
+            layout='grid'
+        )
+
+        other_user = User(username='analyticsotheruser')
+        other_user.set_password('testpassword')
+        db_session.add(other_user)
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'analyticsotheruser',
+            'password': 'testpassword'
+        })
+
+        response = client.get(f'/pricelists/{pricelist.id}/analytics')
+        assert response.status_code == 404
+
+
 class TestProductRoutes:
     """E2E tests for product routes (routes/products.py)"""
     
@@ -405,6 +826,8 @@ class TestProductRoutes:
         response = client.post(f'/product/{product.id}', data={
             'title': 'Updated Title',
             'description': 'Updated Description',
+            'title_en': 'Updated English Title',
+            'description_en': 'Updated English Description',
             'status': 'active',
             'vendor': 'Test Vendor',
             'tags': 'tag1,tag2',
@@ -421,7 +844,236 @@ class TestProductRoutes:
         # Verify updates
         db_session.refresh(product)
         assert product.custom_title == 'Updated Title'
+        assert product.custom_title_en == 'Updated English Title'
+        assert product.custom_description_en == 'Updated English Description'
         assert product.status == 'active'
+
+    def test_product_detail_update_reorders_and_removes_images(self, client, db_session):
+        """Test image updates create a new latest snapshot without mutating history"""
+        user, product, variant = self._setup_user_with_product(client, db_session, 'productimagetest')
+        snapshot = ProductSnapshot(
+            product_id=product.id,
+            scraped_at=datetime(2025, 1, 1, 12, 0, 0),
+            title='Snapshot Title',
+            price=1000,
+            status='on_sale',
+            description='Snapshot Description',
+            image_urls='https://img.example.com/1.jpg|https://img.example.com/2.jpg|https://img.example.com/3.jpg'
+        )
+        db_session.add(snapshot)
+        db_session.commit()
+
+        response = client.post(f'/product/{product.id}', data={
+            'title': 'Updated Title',
+            'description': 'Updated Description',
+            'status': 'active',
+            'vendor': 'Test Vendor',
+            'tags': 'tag1,tag2',
+            'handle': 'custom-handle',
+            'image_urls_json': '["https://img.example.com/2.jpg", "https://img.example.com/1.jpg"]',
+            'v_ids': [str(variant.id)],
+            f'v_opt1_{variant.id}': 'Size M',
+            f'v_price_{variant.id}': '2000',
+            f'v_sku_{variant.id}': 'UPDATED-SKU',
+            f'v_qty_{variant.id}': '5'
+        }, follow_redirects=True)
+
+        assert response.status_code == 200
+
+        snapshots = (
+            db_session.query(ProductSnapshot)
+            .filter_by(product_id=product.id)
+            .order_by(ProductSnapshot.scraped_at.asc(), ProductSnapshot.id.asc())
+            .all()
+        )
+        assert len(snapshots) == 2
+        assert snapshots[0].image_urls == 'https://img.example.com/1.jpg|https://img.example.com/2.jpg|https://img.example.com/3.jpg'
+        assert snapshots[-1].image_urls == 'https://img.example.com/2.jpg|https://img.example.com/1.jpg'
+        assert snapshots[-1].title == 'Snapshot Title'
+        assert snapshots[-1].description == 'Snapshot Description'
+
+    def test_product_detail_update_creates_snapshot_for_manual_images(self, client, db_session):
+        """Test manual image URL additions create a snapshot when none exists yet"""
+        user, product, variant = self._setup_user_with_product(client, db_session, 'productmanualimagetest')
+
+        response = client.post(f'/product/{product.id}', data={
+            'title': 'Manual Image Product',
+            'description': 'Manual image description',
+            'status': 'active',
+            'vendor': 'Test Vendor',
+            'tags': 'tag1,tag2',
+            'handle': 'custom-handle',
+            'image_urls_json': '["https://img.example.com/manual-1.jpg", "/media/manual-2.jpg", "ftp://ignored.example.com/nope.jpg", "https://img.example.com/manual-1.jpg"]',
+            'v_ids': [str(variant.id)],
+            f'v_opt1_{variant.id}': 'Size M',
+            f'v_price_{variant.id}': '2000',
+            f'v_sku_{variant.id}': 'UPDATED-SKU',
+            f'v_qty_{variant.id}': '5'
+        }, follow_redirects=True)
+
+        assert response.status_code == 200
+
+        snapshot = (
+            db_session.query(ProductSnapshot)
+            .filter_by(product_id=product.id)
+            .order_by(ProductSnapshot.scraped_at.desc(), ProductSnapshot.id.desc())
+            .first()
+        )
+        assert snapshot is not None
+        assert snapshot.title == 'Manual Image Product'
+        assert snapshot.description == 'Manual image description'
+        assert snapshot.image_urls == 'https://img.example.com/manual-1.jpg|/media/manual-2.jpg'
+
+    def test_inline_update_custom_title_en(self, client, db_session):
+        """Test inline PATCH updates English title"""
+        user, product, _ = self._setup_user_with_product(client, db_session, 'inlineentitletest')
+
+        response = client.patch(
+            f'/api/products/{product.id}/inline-update',
+            json={
+                'field': 'custom_title_en',
+                'value': 'Inline English Title'
+            }
+        )
+
+        assert response.status_code == 200
+        assert response.json['ok'] is True
+        assert response.json['field'] == 'custom_title_en'
+        assert response.json['value'] == 'Inline English Title'
+
+        db_session.refresh(product)
+        assert product.custom_title_en == 'Inline English Title'
+
+    def test_inline_update_selling_price(self, client, db_session):
+        """Test inline PATCH updates selling price"""
+        user, product, _ = self._setup_user_with_product(client, db_session, 'inlinepricetest')
+
+        response = client.patch(
+            f'/api/products/{product.id}/inline-update',
+            json={
+                'field': 'selling_price',
+                'value': 3456
+            }
+        )
+
+        assert response.status_code == 200
+        assert response.json['ok'] is True
+        assert response.json['field'] == 'selling_price'
+        assert response.json['value'] == 3456
+
+        db_session.refresh(product)
+        assert product.selling_price == 3456
+
+    def test_inline_update_rejects_invalid_field(self, client, db_session):
+        """Test inline PATCH rejects unsupported fields"""
+        user, product, _ = self._setup_user_with_product(client, db_session, 'inlineinvalidfieldtest')
+
+        response = client.patch(
+            f'/api/products/{product.id}/inline-update',
+            json={
+                'field': 'custom_title',
+                'value': 'should fail'
+            }
+        )
+
+        assert response.status_code == 400
+        assert response.json['error'] == 'Unsupported field'
+
+    def test_inline_update_returns_404_for_other_user(self, client, db_session):
+        """Test inline PATCH enforces product ownership"""
+        user1 = User(username='inline_owner')
+        user1.set_password('test')
+        db_session.add(user1)
+        db_session.commit()
+
+        product = Product(
+            user_id=user1.id,
+            site='mercari',
+            source_url='https://jp.mercari.com/item/inline-owner',
+            last_title='Owner Product',
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        db_session.add(product)
+        db_session.commit()
+
+        user2 = User(username='inline_other')
+        user2.set_password('test')
+        db_session.add(user2)
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'inline_other',
+            'password': 'test'
+        })
+
+        response = client.patch(
+            f'/api/products/{product.id}/inline-update',
+            json={
+                'field': 'custom_title_en',
+                'value': 'Not allowed'
+            }
+        )
+
+        assert response.status_code == 404
+        assert response.json['error'] == 'Product not found'
+
+    def test_bulk_price_margin_update(self, client, db_session):
+        """Test bulk price API applies margin-based selling price"""
+        user, product, _ = self._setup_user_with_product(client, db_session, 'bulkpricemargintest')
+
+        response = client.post(
+            '/api/products/bulk-price',
+            json={
+                'ids': [product.id],
+                'mode': 'margin',
+                'value': 20
+            }
+        )
+
+        assert response.status_code == 200
+        assert response.json['ok'] is True
+        assert response.json['updated_count'] == 1
+        assert response.json['skipped_count'] == 0
+
+        db_session.refresh(product)
+        assert product.selling_price == 1250
+
+    def test_bulk_price_reset(self, client, db_session):
+        """Test bulk price API can reset manual selling prices"""
+        user, product, _ = self._setup_user_with_product(client, db_session, 'bulkpriceresettest')
+        product.selling_price = 9999
+        db_session.commit()
+
+        response = client.post(
+            '/api/products/bulk-price',
+            json={
+                'ids': [product.id],
+                'mode': 'reset'
+            }
+        )
+
+        assert response.status_code == 200
+        assert response.json['updated_count'] == 1
+
+        db_session.refresh(product)
+        assert product.selling_price is None
+
+    def test_bulk_price_rejects_invalid_margin(self, client, db_session):
+        """Test bulk price API validates margin range"""
+        user, product, _ = self._setup_user_with_product(client, db_session, 'bulkpriceinvalidmargintest')
+
+        response = client.post(
+            '/api/products/bulk-price',
+            json={
+                'ids': [product.id],
+                'mode': 'margin',
+                'value': 100
+            }
+        )
+
+        assert response.status_code == 400
+        assert response.json['error'] == 'margin must satisfy 0 <= margin < 100'
 
 
 class TestScrapeRoutes:

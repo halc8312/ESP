@@ -20,6 +20,10 @@
         style="padding: 10px 16px; background: #f3e5f5; color: #7b1fa2; text-decoration: none; border-radius: 6px; border: 1px solid #ce93d8;">
         👁️ プレビュー
     </a>
+    <a href="{{ url_for('catalog.pricelist_analytics', pricelist_id=pricelist.id) }}"
+        style="padding: 10px 16px; background: #e8f7ff; color: #0b5f8a; text-decoration: none; border-radius: 6px; border: 1px solid #9dd0f2;">
+        📊 アクセス解析
+    </a>
 </div>
 
 {% if items %}

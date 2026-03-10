@@ -58,9 +58,10 @@ Stage 4: Selenium 完全削除 & クリーンアップ
 | 2     | メルカリパトロール Playwright 移行 | `services/patrol/mercari_patrol.py`<br>`services/monitor_service.py` | 中     | ✅ 完了 |
 | 3     | メルカリ全体 Playwright 移行      | `mercari_db.py`（~608行の全書き換え）<br>`tests/test_scraping_logic.py` | 高     | ✅ 完了 |
 | 4a    | パトロール層 Selenium 削除        | `services/monitor_service.py`（driver 渡し廃止）         | 低     | ✅ 完了 |
-| 4b    | DB 層 Selenium 削除               | `yahoo_db.py`（`create_driver` 削除）<br>`offmall_db.py`, `snkrdunk_db.py`, `yahuoku_db.py`, `surugaya_db.py`<br>`Dockerfile`, `requirements.txt` | 低〜中 | ❌ **未完了** |
+| 4b    | DB 層 Selenium 削除               | `yahoo_db.py`（`create_driver` 削除）<br>`offmall_db.py`, `snkrdunk_db.py`, `yahuoku_db.py`, `surugaya_db.py`<br>`Dockerfile`, `requirements.txt` | 低〜中 | ✅ **完了** |
 
-> **Stage 4b の詳細** は [`docs/UNIFIED_ROADMAP.md`](../UNIFIED_ROADMAP.md) の「Block A」を参照してください。
+> **Stage 4b の詳細** は [`docs/UNIFIED_ROADMAP.md`](../UNIFIED_ROADMAP.md) の「Block A」を参照してください。  
+> **完了記録** は [`STAGE_4_RESULTS.md`](./STAGE_4_RESULTS.md) を参照してください。
 
 ---
 
@@ -74,6 +75,7 @@ Stage 4: Selenium 完全削除 & クリーンアップ
 | [STAGE_2_MERCARI_PATROL.md](./STAGE_2_MERCARI_PATROL.md) | Stage 2: メルカリパトロール移行仕様    |
 | [STAGE_3_MERCARI_FULL.md](./STAGE_3_MERCARI_FULL.md)  | Stage 3: メルカリ全体移行仕様              |
 | [STAGE_4_SELENIUM_REMOVAL.md](./STAGE_4_SELENIUM_REMOVAL.md) | Stage 4: Selenium 削除仕様          |
+| [STAGE_4_RESULTS.md](./STAGE_4_RESULTS.md) | Stage 4b: Selenium 完全削除の完了記録 |
 
 ---
 

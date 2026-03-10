@@ -250,9 +250,10 @@ def test_scrape_single_item_no_selenium(_patch_scrapling):
     _patch_scrapling.Fetcher.get.return_value = mock_page
 
     from rakuma_db import scrape_single_item
+    import mercari_db
 
-    # mercari_db.create_driver が呼ばれないことを確認
-    with patch("mercari_db.create_driver") as mock_create_driver:
+    # Stage 3 完了後は create_driver 自体が存在しない。互換テストのため create=True で監視する。
+    with patch.object(mercari_db, "create_driver", create=True) as mock_create_driver:
         result = scrape_single_item("https://item.fril.jp/test")
         mock_create_driver.assert_not_called()
 
@@ -357,10 +358,10 @@ def test_fetch_rakuma_convenience_function(_patch_scrapling):
 # ---------------------------------------------------------------------------
 
 def test_rakuma_removed_from_browser_sites():
-    """Stage 1 完了: rakuma が BROWSER_SITES から削除されていることを確認"""
+    """Stage 3 完了: rakuma / mercari ともに BROWSER_SITES から削除済みであることを確認"""
     from services.scrape_queue import BROWSER_SITES
     assert "rakuma" not in BROWSER_SITES
-    assert "mercari" in BROWSER_SITES
+    assert "mercari" not in BROWSER_SITES
 
 
 # ---------------------------------------------------------------------------

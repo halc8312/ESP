@@ -7,7 +7,6 @@ BeautifulSoup after the page is fetched.
 import html
 import json
 import logging
-import os
 import re
 import time
 from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urljoin, urlparse, urlunparse
@@ -416,19 +415,12 @@ def _build_search_page_urls(search_url: str, first_soup: BeautifulSoup, max_scro
     return page_urls
 
 
-def _should_use_selenium_fallback() -> bool:
-    flag = os.getenv("SURUGAYA_SELENIUM_FALLBACK", "1").strip().lower()
-    return flag not in ("0", "false", "off", "no")
-
-
 def _should_use_yahoo_search_fallback() -> bool:
-    flag = os.getenv("SURUGAYA_YAHOO_SEARCH_FALLBACK", "1").strip().lower()
-    return flag not in ("0", "false", "off", "no")
+    return True
 
 
 def _should_use_global_domain_fallback() -> bool:
-    flag = os.getenv("SURUGAYA_GLOBAL_DOMAIN_FALLBACK", "1").strip().lower()
-    return flag not in ("0", "false", "off", "no")
+    return True
 
 
 def _extract_keyword_from_search_url(search_url: str) -> str:
@@ -698,79 +690,6 @@ def _extract_global_product_detail(source_url: str, global_url: str):
     return item, None
 
 
-def _fetch_soup_with_selenium(url: str, headless: bool = True, wait_seconds: int = 20):
-    """Fallback HTML fetch via Selenium (Render-safe fallback path)."""
-    driver = None
-    try:
-        from yahoo_db import create_driver
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support import expected_conditions as EC
-        from selenium.webdriver.support.ui import WebDriverWait
-    except Exception as exc:
-        return None, url, str(exc)
-
-    try:
-        driver = create_driver(headless=headless)
-        try:
-            # Apply stealth script before first navigation when possible.
-            driver.execute_cdp_cmd(
-                "Page.addScriptToEvaluateOnNewDocument",
-                {
-                    "source": """
-Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-Object.defineProperty(navigator, 'languages', {get: () => ['ja-JP', 'ja', 'en-US', 'en']});
-Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-""".strip()
-                },
-            )
-        except Exception:
-            pass
-        driver.get(url)
-        WebDriverWait(driver, wait_seconds).until(
-            EC.presence_of_element_located((By.TAG_NAME, "body"))
-        )
-
-        challenge_retry_done = False
-        deadline = time.time() + max(6, wait_seconds)
-        while time.time() < deadline:
-            html_text = driver.page_source or ""
-            title_text = getattr(driver, "title", "") or ""
-            current_url = getattr(driver, "current_url", url) or url
-            if not html_text:
-                time.sleep(0.8)
-                continue
-
-            if not _looks_like_challenge_html(title_text, html_text):
-                soup = BeautifulSoup(html_text, "html.parser")
-                return soup, current_url, None
-
-            if not challenge_retry_done:
-                challenge_retry_done = True
-                try:
-                    driver.refresh()
-                except Exception:
-                    pass
-            time.sleep(1.2)
-
-        # Return last HTML even if challenge remained, for caller-side handling/logging.
-        html_text = driver.page_source or ""
-        current_url = getattr(driver, "current_url", url) or url
-        if not html_text:
-            return None, current_url, "Empty page source"
-        soup = BeautifulSoup(html_text, "html.parser")
-        if _looks_like_challenge_soup(soup):
-            return None, current_url, "Cloudflare challenge page remained after Selenium wait"
-        return soup, current_url, None
-    except Exception as exc:
-        return None, url, str(exc)
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except Exception:
-                pass
-
-
 def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
     """
     駿河屋の商品ページから詳細情報を取得する (curl_cffi版)
@@ -801,17 +720,6 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
             page_url = resp.url or url
         except Exception as exc:
             print(f"[SURUGAYA] ERROR during page load: {exc}")
-
-    # Fallback for Render/Cloudflare 403: retry with real browser only for Surugaya.
-    if soup is None and _should_use_selenium_fallback():
-        status_code = resp.status_code if resp is not None else "N/A"
-        print(f"[SURUGAYA] INFO: Trying Selenium fallback for item page (status={status_code})")
-        selenium_soup, selenium_url, selenium_error = _fetch_soup_with_selenium(url, headless=headless)
-        if selenium_soup is not None:
-            soup = selenium_soup
-            page_url = selenium_url or url
-        elif selenium_error:
-            print(f"[SURUGAYA] ERROR: Selenium fallback failed: {selenium_error}")
 
     if soup is None:
         if _should_use_global_domain_fallback():
@@ -938,18 +846,11 @@ def scrape_search_result(
             soup = BeautifulSoup(first_resp.content, "html.parser")
             base_search_url = first_resp.url or search_url
         else:
-            status_code = first_resp.status_code if first_resp is not None else "N/A"
-            if _should_use_selenium_fallback():
-                print(f"[SURUGAYA] Search: INFO: Trying Selenium fallback (status={status_code})")
-                selenium_soup, selenium_url, selenium_error = _fetch_soup_with_selenium(
-                    search_url,
-                    headless=headless,
+            if first_resp is not None and _is_cloudflare_block(first_resp):
+                logger.warning(
+                    "Surugaya search page blocked (status=%s); using fallback URL discovery if available.",
+                    first_resp.status_code,
                 )
-                if selenium_soup is not None:
-                    soup = selenium_soup
-                    base_search_url = selenium_url or search_url
-                else:
-                    logger.error(f"Surugaya search Selenium fallback error: {selenium_error}")
 
         if soup is None:
             if first_resp is not None and _is_cloudflare_block(first_resp):
@@ -983,15 +884,6 @@ def scrape_search_result(
                     page_soup = None
                     if page_error is None and page_resp is not None and not _is_cloudflare_block(page_resp):
                         page_soup = BeautifulSoup(page_resp.content, "html.parser")
-                    elif _should_use_selenium_fallback():
-                        selenium_soup, _, selenium_error = _fetch_soup_with_selenium(
-                            page_url,
-                            headless=headless,
-                        )
-                        if selenium_soup is not None:
-                            page_soup = selenium_soup
-                        else:
-                            logger.warning(f"Surugaya page Selenium fallback failed: {page_url} ({selenium_error})")
 
                     if page_soup is None:
                         if page_error is not None:

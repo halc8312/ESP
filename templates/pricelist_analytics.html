@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+
+{% block title %}アクセス解析 - {{ pricelist.name }}{% endblock %}
+{% block header_title %}アクセス解析{% endblock %}
+
+{% block content %}
+<a href="{{ url_for('pricelist.pricelist_list') }}" class="back-link">&laquo; 価格表一覧に戻る</a>
+
+<div class="page-header">
+    <h1>📊 {{ pricelist.name }} のアクセス解析</h1>
+    <p class="page-subtitle">公開カタログの閲覧数、流入元、商品詳細の閲覧傾向</p>
+</div>
+
+<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
+    <a href="{{ url_for('catalog.catalog_view', token=pricelist.token) }}" target="_blank" class="btn btn-secondary"
+        style="text-decoration: none;">👁️ カタログを開く</a>
+    <a href="{{ url_for('pricelist.pricelist_items', pricelist_id=pricelist.id) }}" class="btn btn-primary"
+        style="text-decoration: none;">📦 商品管理に戻る</a>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 18px;">
+    <div class="content-card"><div class="content-card-body"><strong style="display:block; font-size: 13px; color:#666;">総ページビュー</strong><div style="font-size: 28px; font-weight: 700;">{{ total_views }}</div></div></div>
+    <div class="content-card"><div class="content-card-body"><strong style="display:block; font-size: 13px; color:#666;">推定ユニーク</strong><div style="font-size: 28px; font-weight: 700;">{{ unique_visitors }}</div></div></div>
+    <div class="content-card"><div class="content-card-body"><strong style="display:block; font-size: 13px; color:#666;">直近7日</strong><div style="font-size: 28px; font-weight: 700;">{{ last_7d_views }}</div></div></div>
+    <div class="content-card"><div class="content-card-body"><strong style="display:block; font-size: 13px; color:#666;">直近30日</strong><div style="font-size: 28px; font-weight: 700;">{{ last_30d_views }}</div></div></div>
+    <div class="content-card"><div class="content-card-body"><strong style="display:block; font-size: 13px; color:#666;">商品詳細表示</strong><div style="font-size: 28px; font-weight: 700;">{{ product_detail_views }}</div></div></div>
+</div>
+
+{% if total_views == 0 %}
+<div class="content-card">
+    <div class="content-card-body" style="text-align: center; padding: 40px;">
+        <p style="font-size: 18px; color: #666; margin-bottom: 8px;">まだアクセス記録がありません</p>
+        <p style="font-size: 14px; color: #888;">公開カタログの閲覧と商品詳細モーダルの表示が始まると、ここに集計が出ます。</p>
+    </div>
+</div>
+{% else %}
+<div style="display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; align-items: start;">
+    <div class="content-card">
+        <div class="content-card-header"><h2>日別ページビュー</h2></div>
+        <div class="content-card-body"><canvas id="dailyViewsChart" height="120"></canvas></div>
+    </div>
+    <div style="display: grid; gap: 16px;">
+        <div class="content-card">
+            <div class="content-card-header"><h2>デバイス比率</h2></div>
+            <div class="content-card-body"><canvas id="deviceChart" height="180"></canvas></div>
+        </div>
+        <div class="content-card">
+            <div class="content-card-header"><h2>流入カテゴリ</h2></div>
+            <div class="content-card-body"><canvas id="referrerChart" height="180"></canvas></div>
+        </div>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
+    <div class="content-card">
+        <div class="content-card-header"><h2>人気商品</h2></div>
+        <div class="content-card-body">
+            {% if top_products %}
+            <div class="table-responsive">
+                <table class="product-table">
+                    <thead>
+                        <tr><th>商品</th><th>詳細表示数</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for item in top_products %}
+                        <tr>
+                            <td class="product-title-cell">{{ item.title }}</td>
+                            <td>{{ item.views }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted">商品詳細モーダルの閲覧はまだありません。</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="content-card">
+        <div class="content-card-header"><h2>参照元ドメイン</h2></div>
+        <div class="content-card-body">
+            {% if top_referrers %}
+            <div class="table-responsive">
+                <table class="product-table">
+                    <thead>
+                        <tr><th>ドメイン</th><th>PV</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for ref in top_referrers %}
+                        <tr>
+                            <td>{{ ref.domain }}</td>
+                            <td>{{ ref.views }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted">参照元情報はまだありません。</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="content-card" style="margin-top: 16px;">
+    <div class="content-card-header"><h2>最近のアクセス</h2></div>
+    <div class="content-card-body">
+        {% if recent_views %}
+        <div class="table-responsive">
+            <table class="product-table">
+                <thead>
+                    <tr>
+                        <th>日時</th>
+                        <th>デバイス</th>
+                        <th>流入カテゴリ</th>
+                        <th>参照元</th>
+                        <th>商品詳細</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for view in recent_views %}
+                    <tr>
+                        <td>{{ view.viewed_at.strftime('%Y-%m-%d %H:%M') if view.viewed_at else '-' }}</td>
+                        <td>{{ view.device }}</td>
+                        <td>{{ view.referrer_group }}</td>
+                        <td>{{ view.referrer_domain }}</td>
+                        <td>{{ view.product_title or '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">最近のアクセスはまだありません。</p>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" referrerpolicy="origin"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const chartData = {{ chart_data|tojson }};
+        if (!chartData || !chartData.daily_labels || !chartData.daily_labels.length || typeof Chart === 'undefined') {
+            return;
+        }
+
+        const axisColor = '#667085';
+        const gridColor = 'rgba(102, 112, 133, 0.15)';
+
+        const dailyCanvas = document.getElementById('dailyViewsChart');
+        if (dailyCanvas) {
+            new Chart(dailyCanvas, {
+                type: 'line',
+                data: {
+                    labels: chartData.daily_labels,
+                    datasets: [{
+                        label: 'PV',
+                        data: chartData.daily_values,
+                        borderColor: '#1976d2',
+                        backgroundColor: 'rgba(25, 118, 210, 0.12)',
+                        fill: true,
+                        tension: 0.32
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { ticks: { color: axisColor }, grid: { color: gridColor } },
+                        y: { ticks: { color: axisColor, precision: 0 }, grid: { color: gridColor } }
+                    }
+                }
+            });
+        }
+
+        const deviceCanvas = document.getElementById('deviceChart');
+        if (deviceCanvas) {
+            new Chart(deviceCanvas, {
+                type: 'doughnut',
+                data: {
+                    labels: chartData.device_labels,
+                    datasets: [{
+                        data: chartData.device_values,
+                        backgroundColor: ['#1976d2', '#26a69a', '#ffa726']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false
+                }
+            });
+        }
+
+        const referrerCanvas = document.getElementById('referrerChart');
+        if (referrerCanvas) {
+            new Chart(referrerCanvas, {
+                type: 'bar',
+                data: {
+                    labels: chartData.referrer_labels,
+                    datasets: [{
+                        label: 'PV',
+                        data: chartData.referrer_values,
+                        backgroundColor: ['#546e7a', '#7e57c2', '#ef6c00', '#78909c']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { color: axisColor }, grid: { display: false } },
+                        y: { ticks: { color: axisColor, precision: 0 }, grid: { color: gridColor } }
+                    }
+                }
+            });
+        }
+    });
+</script>
+{% endblock %}

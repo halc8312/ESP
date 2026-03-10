@@ -12,6 +12,15 @@ from models import Shop, Product, ProductSnapshot, Variant, PriceList, PriceList
 
 pricelist_bp = Blueprint('pricelist', __name__)
 
+PRICE_LIST_LAYOUTS = {"grid", "editorial"}
+
+
+def _normalize_layout(value):
+    layout = (value or "").strip().lower()
+    if layout in PRICE_LIST_LAYOUTS:
+        return layout
+    return "grid"
+
 
 @pricelist_bp.route("/pricelists")
 @login_required
@@ -56,6 +65,7 @@ def pricelist_create():
             name = request.form.get("name", "").strip()
             notes = request.form.get("notes", "").strip()
             currency_rate = int(request.form.get("currency_rate", 150))
+            layout = _normalize_layout(request.form.get("layout"))
 
             if not name:
                 all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
@@ -64,6 +74,7 @@ def pricelist_create():
                     "pricelist_edit.html",
                     pricelist=None,
                     error="名前を入力してください",
+                    selected_layout=layout,
                     all_shops=all_shops,
                     current_shop_id=current_shop_id,
                 )
@@ -74,6 +85,7 @@ def pricelist_create():
                 token=str(uuid.uuid4()),
                 notes=notes,
                 currency_rate=currency_rate,
+                layout=layout,
             )
             session_db.add(new_pl)
             session_db.commit()
@@ -84,6 +96,7 @@ def pricelist_create():
         return render_template(
             "pricelist_edit.html",
             pricelist=None,
+            selected_layout="grid",
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
@@ -109,6 +122,7 @@ def pricelist_edit(pricelist_id):
             pl.name = request.form.get("name", pl.name).strip()
             pl.notes = request.form.get("notes", "").strip()
             pl.currency_rate = int(request.form.get("currency_rate", 150))
+            pl.layout = _normalize_layout(request.form.get("layout"))
             pl.is_active = "is_active" in request.form
             pl.updated_at = datetime.utcnow()
             session_db.commit()
@@ -119,6 +133,7 @@ def pricelist_edit(pricelist_id):
         return render_template(
             "pricelist_edit.html",
             pricelist=pl,
+            selected_layout=pl.layout or "grid",
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )

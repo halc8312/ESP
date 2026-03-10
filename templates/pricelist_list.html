@@ -27,6 +27,7 @@
                 <div style="font-size: 13px; color: #666;">
                     <span>📦 {{ pl.item_count }}商品</span>
                     <span style="margin-left: 12px;">💱 レート自動取得</span>
+                    <span style="margin-left: 12px;">🧭 {{ 'エディトリアル' if pl.layout == 'editorial' else 'グリッド' }}</span>
                     {% if pl.is_active %}
                     <span style="margin-left: 12px; color: #22c55e;">● 公開中</span>
                     {% else %}
@@ -56,6 +57,10 @@
                 <a href="{{ url_for('catalog.catalog_view', token=pl.token) }}" target="_blank" class="btn"
                     style="font-size: 12px; padding: 6px 10px; background: #f3e5f5; border: 1px solid #ce93d8; border-radius: 4px; text-decoration: none; color: #7b1fa2;">
                     👁️ プレビュー
+                </a>
+                <a href="{{ url_for('catalog.pricelist_analytics', pricelist_id=pl.id) }}" class="btn"
+                    style="font-size: 12px; padding: 6px 10px; background: #e8f7ff; border: 1px solid #9dd0f2; border-radius: 4px; text-decoration: none; color: #0b5f8a;">
+                    📊 解析
                 </a>
                 <form action="{{ url_for('pricelist.pricelist_delete', pricelist_id=pl.id) }}" method="post"
                     style="display: inline;" onsubmit="return confirm('本当に削除しますか？')">

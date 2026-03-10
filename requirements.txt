@@ -3,13 +3,10 @@ SQLAlchemy
 requests
 pandas
 gunicorn
-selenium
-webdriver-manager
 Flask-Login
 pytest
 pytest-flask
 Flask-APScheduler
-undetected-chromedriver
 beautifulsoup4
 curl_cffi
 scrapling

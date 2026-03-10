@@ -1,7 +1,7 @@
 # 現在のアーキテクチャ概要
 
-> **対象読者**: 将来の AI エージェント（Playwright 移行を担当する各 Stage の実装者）
-> **目的**: 移行作業の前提知識として現在のコードベース構造を正確に把握するためのリファレンスドキュメント
+> **更新日**: 2026-03-10  
+> **対象読者**: 現在のコードベースを前提に追加実装・保守を行う作業者
 
 ---
 
@@ -9,281 +9,309 @@
 
 ```
 ESP/
-├── app.py                          # Flaskアプリのエントリポイント、APScheduler設定
-├── models.py                       # SQLAlchemy ORM（Product, Variant, Shop, User）
-├── database.py                     # DB接続・SessionLocal
-├── requirements.txt                # Python依存ライブラリ
-├── Dockerfile                      # Docker設定（Chrome + Python 3.11-slim）
+├── app.py                          # Flask アプリ本体、Blueprint 登録、軽量マイグレーション、Scheduler 起動
+├── models.py                       # SQLAlchemy ORM（Product, Variant, Shop, User, Template など）
+├── database.py                     # DB 接続・SessionLocal
+├── requirements.txt                # Python 依存ライブラリ
+├── Dockerfile                      # Python 3.11 slim + Playwright/Patchright 実行環境
 │
-├── mercari_db.py                   # メルカリスクレイパー（Selenium、~608行）
-├── rakuma_db.py                    # ラクマスクレイパー（Selenium、~184行）
-├── yahoo_db.py                     # ヤフーショッピングスクレイパー（HTTP/Scrapling）
-├── yahuoku_db.py                   # ヤフオクスクレイパー（HTTP/Scrapling）
-├── surugaya_db.py                  # 駿河屋スクレイパー（HTTP/Scrapling + Seleniumフォールバック）
-├── offmall_db.py                   # オフモールスクレイパー（HTTP/Scrapling）
-├── snkrdunk_db.py                  # SNKRDUNKスクレイパー（HTTP/Scrapling）
+├── mercari_db.py                   # メルカリスクレイパー（StealthyFetcher / Playwright）
+├── rakuma_db.py                    # ラクマスクレイパー（検索: Playwright、詳細: HTTP Fetcher）
+├── yahoo_db.py                     # Yahoo Shopping スクレイパー（HTTP / Scrapling）
+├── yahuoku_db.py                   # ヤフオクスクレイパー（HTTP / Scrapling）
+├── surugaya_db.py                  # 駿河屋スクレイパー（HTTP / Scrapling）
+├── offmall_db.py                   # オフモールスクレイパー（HTTP / Scrapling）
+├── snkrdunk_db.py                  # SNKRDUNK スクレイパー（詳細: HTTP、検索: dynamic fetch）
 │
 ├── routes/
-│   ├── scrape.py                   # スクレイピングリクエスト処理（同期）
-│   ├── products.py                 # 商品一覧・詳細
-│   ├── auth.py                     # 認証
+│   ├── main.py                     # 一覧・ダッシュボード
+│   ├── products.py                 # 商品詳細編集・商品更新
+│   ├── scrape.py                   # 商品抽出フォーム、キュー投入、待機画面、結果画面
+│   ├── api.py                      # 非同期ポーリング API、商品一覧のインライン更新 API
 │   └── ...
 │
 ├── services/
-│   ├── monitor_service.py          # パトロールサービス（15分間隔の価格監視）
-│   ├── scraping_client.py          # Scrapling HTTPラッパー
-│   ├── product_service.py          # 商品DB操作
+│   ├── scrape_queue.py             # インメモリ ScrapeQueue
+│   ├── scraping_client.py          # fetch_static / fetch_dynamic ラッパー
+│   ├── monitor_service.py          # 定期パトロール
+│   ├── product_service.py          # 抽出結果の DB 保存
 │   ├── filter_service.py           # 除外フィルタ
 │   └── patrol/
-│       ├── base_patrol.py          # BasePatrol, PatrolResult クラス
-│       ├── mercari_patrol.py       # Mercari軽量パトロール（~149行、Selenium）
-│       ├── rakuma_patrol.py        # Rakuma軽量パトロール（~109行、Selenium）
-│       ├── yahoo_patrol.py         # Yahoo軽量パトロール（HTTP/Scrapling）
-│       ├── yahuoku_patrol.py       # ヤフオク軽量パトロール（HTTP）
-│       ├── surugaya_patrol.py      # 駿河屋軽量パトロール（HTTP）
-│       ├── offmall_patrol.py       # オフモール軽量パトロール（HTTP）
-│       └── snkrdunk_patrol.py      # SNKRDUNK軽量パトロール（HTTP）
+│       ├── mercari_patrol.py       # メルカリ軽量パトロール
+│       ├── rakuma_patrol.py        # ラクマ軽量パトロール
+│       ├── yahoo_patrol.py         # Yahoo 軽量パトロール
+│       ├── yahuoku_patrol.py       # ヤフオク軽量パトロール
+│       ├── surugaya_patrol.py      # 駿河屋軽量パトロール
+│       ├── offmall_patrol.py       # オフモール軽量パトロール
+│       └── snkrdunk_patrol.py      # SNKRDUNK 軽量パトロール
 │
 ├── templates/
-│   ├── scrape_form.html            # スクレイピングフォーム（同期送信・待機）
-│   └── scrape_result.html          # スクレイピング結果表示
+│   ├── index.html                  # 商品一覧
+│   ├── product_manual_add.html     # 商品手動追加
+│   ├── product_detail.html         # 商品編集
+│   ├── pricelist_analytics.html    # 価格表アクセス解析
+│   ├── scrape_form.html            # 商品抽出フォーム
+│   ├── scrape_waiting.html         # 抽出待機画面
+│   └── scrape_result.html          # 抽出結果画面
 │
 ├── tests/
-│   └── test_scraping_logic.py      # Seleniumモックを使ったユニットテスト
-│
-├── selector_config.py              # CSS/XPathセレクタ設定
-├── scrape_metrics.py               # スクレイピング成功率メトリクス
+│   ├── test_scrape_queue.py
+│   ├── test_rakuma_playwright.py
+│   ├── test_scraping_logic.py
+│   └── test_stage4_selenium_removal.py
 │
 └── docs/
-    └── specs/                      # 本ディレクトリ（移行仕様書）
+    ├── UNIFIED_ROADMAP.md
+    └── specs/
 ```
 
 ---
 
 ## 2. サイト別スクレイピング方式
 
-| サイト       | ドメイン                           | 方式              | メモリ消費  | Seleniumを使用 |
-|--------------|------------------------------------|-------------------|-------------|----------------|
-| メルカリ     | jp.mercari.com                     | **Selenium/Chrome** | ~400MB    | ✅             |
-| メルカリShops | jp.mercari.com/shops/              | **Selenium/Chrome** | ~400MB    | ✅             |
-| ラクマ       | fril.jp / item.fril.jp             | **Selenium/Chrome** | ~400MB    | ✅             |
-| Yahoo Shopping | shopping.yahoo.co.jp             | HTTP (Scrapling)   | ~5MB       | ❌             |
-| ヤフオク     | auctions.yahoo.co.jp               | HTTP (Scrapling)   | ~5MB       | ❌             |
-| 駿河屋       | suruga-ya.jp                       | HTTP (Scrapling)   | ~5MB       | ❌（フォールバック有）|
-| オフモール   | netmall.hardoff.co.jp              | HTTP (Scrapling)   | ~5MB       | ❌             |
-| SNKRDUNK     | snkrdunk.com                       | HTTP (Scrapling)   | ~5MB       | ❌             |
+| サイト | ドメイン | 現在の方式 | 補足 |
+|--------|----------|------------|------|
+| メルカリ | `jp.mercari.com` | Scrapling `StealthyFetcher` / Playwright | 検索・詳細とも Selenium 依存なし |
+| ラクマ | `fril.jp`, `item.fril.jp` | 検索は Playwright、詳細は HTTP Fetcher | 検索はスクロール対応、詳細は browser 不要 |
+| Yahoo Shopping | `shopping.yahoo.co.jp` | HTTP (`fetch_static`) | 詳細・検索とも HTTP |
+| ヤフオク | `auctions.yahoo.co.jp` | HTTP (`fetch_static`) | 詳細・検索とも HTTP |
+| 駿河屋 | `suruga-ya.jp` | HTTP (`fetch_static`) | Selenium フォールバックは削除済み |
+| オフモール | `netmall.hardoff.co.jp` | HTTP (`fetch_static`) | JSON-LD 解析中心 |
+| SNKRDUNK | `snkrdunk.com` | 詳細は HTTP、検索は `fetch_dynamic` 優先 | dynamic fetch 失敗時は静的取得へフォールバック |
 
 ---
 
-## 3. 現在の依存ライブラリ（requirements.txt）
+## 3. 依存ライブラリ
+
+現在の `requirements.txt` の主な依存は以下の通り:
 
 ```
 Flask
 SQLAlchemy
-requests
-pandas
-gunicorn
-selenium
-webdriver-manager
 Flask-Login
+Flask-APScheduler
+gunicorn
+scrapling
+playwright
+patchright
+browserforge
+curl_cffi
+beautifulsoup4
+pandas
+requests
+msgspec
 pytest
 pytest-flask
-Flask-APScheduler
-undetected-chromedriver
-beautifulsoup4
-curl_cffi
-scrapling
 ```
 
-**重要**: `selenium`, `webdriver-manager`, `undetected-chromedriver` が Playwright 移行後に削除対象となる。
+補足:
+
+- Selenium / webdriver-manager / undetected-chromedriver は Stage 4b で削除済み
+- ブラウザ制御は Scrapling + Playwright / Patchright 系へ統一
 
 ---
 
-## 4. Dockerfileの現状
+## 4. デプロイ構成
 
-```dockerfile
-FROM python:3.11-slim
+### Docker
 
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
+- ベースイメージ: `python:3.11-slim`
+- Chrome の個別インストールは行わない
+- `scrapling install` と `patchright install chromium` を build 時に実行
+- `PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright` を共有利用
 
-# システム依存パッケージ（Chrome用ライブラリを含む）
-RUN apt-get update && apt-get install -y \
-    wget gnupg unzip curl \
-    libxss1 fonts-liberation libasound2 libnspr4 libnss3 \
-    libx11-xcb1 xdg-utils libgbm1 ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+### Gunicorn
 
-# Google Chrome インストール（公式リポジトリ経由）
-RUN set -eux \
-    && mkdir -p /usr/share/keyrings \
-    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub \
-    | gpg --dearmor --yes -o /usr/share/keyrings/google-linux-signing-keyring.gpg \
-    && echo "deb [arch=amd64 ...] http://dl.google.com/linux/chrome/deb/ stable main" \
-    > /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends google-chrome-stable \
-    && rm -rf /var/lib/apt/lists/*
+`Dockerfile` の実行コマンド:
 
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-
-RUN useradd -m myuser
-USER myuser
-
-CMD gunicorn --worker-class gthread --workers 2 --threads 4 \
-    --max-requests 100 --max-requests-jitter 20 \
-    --timeout 600 --bind 0.0.0.0:${PORT:-10000} app:app
+```bash
+gunicorn --worker-class gthread --workers 1 --threads 8 --max-requests 0 --timeout 600 --bind 0.0.0.0:${PORT:-10000} app:app
 ```
 
-**Gunicorn設定まとめ**:
-- `--workers 2`: 2ワーカープロセス
-- `--threads 4`: 4スレッド/ワーカー（合計8同時接続処理）
-- `--worker-class gthread`: スレッドベース（スクレイピング中もヘルスチェック応答可）
-- `--timeout 600`: 10分タイムアウト（スクレイピングが遅い場合対応）
+理由:
+
+- `ScrapeQueue` がプロセス内シングルトンのため `--workers 1` を維持
+- `--max-requests 0` でワーカー再起動によるバックグラウンドジョブ消失を防止
+- `gthread` により待機画面ポーリング中も他リクエストを捌ける
 
 ---
 
-## 5. メモリ使用量の詳細
+## 5. 商品抽出フロー
 
-| 項目                           | メモリ消費     |
-|--------------------------------|----------------|
-| OS + Python + Flask ベース     | ~300MB         |
-| HTTP スクレイプ（1リクエスト）  | ~5MB           |
-| Selenium/Chrome（1インスタンス）| ~400MB         |
-| Render Standard プラン上限      | 2GB            |
+### エンドポイント
 
-**現状の問題**: Selenium を同時に複数起動するとすぐにメモリ不足（OOM）になる。
-例: 2 ユーザーが同時にメルカリ検索 → 300 + 400×2 = 1,100MB（ギリギリ）
-5 ユーザー同時 → 300 + 400×5 = 2,300MB（**OOM クラッシュ**）
+| ルート | 役割 |
+|--------|------|
+| `/scrape` | 商品抽出フォーム表示 |
+| `/scrape/run` | フォーム入力をジョブ化してキュー投入 |
+| `/scrape/status/<job_id>` | 待機画面表示 |
+| `/scrape/register-selected` | プレビュー結果から選択した商品だけ DB 登録 |
+| `/products/manual-add` | スクレイピングなしで商品を初期登録 |
+| `/api/scrape/status/<job_id>` | ポーリング用ステータス JSON |
+| `/api/products/<id>/inline-update` | 商品一覧の `selling_price` / `custom_title_en` を PATCH 更新 |
+| `/api/products/bulk-price` | 選択商品の `selling_price` を一括更新 |
+| `/scrape/result/<job_id>` | 完了後の結果画面表示 |
+| `/catalog/<token>/product/<product_id>` | 公開カタログの詳細モーダル用 JSON |
+| `/pricelists/<id>/analytics` | 価格表 owner 向けアクセス解析画面 |
 
----
+### 実行の流れ
 
-## 6. 各ファイルの主要関数
+1. `routes/scrape.py` が URL またはサイト指定からスクレイパーを選択
+2. `services.scrape_queue.get_queue()` にジョブを登録
+3. バックグラウンドスレッドで各サイトの `scrape_single_item()` / `scrape_search_result()` を実行
+4. `filter_excluded_items()` を適用
+5. JS プレビュー経路では `/api/scrape/status/<job_id>` をポーリングし、同画面へ結果を描画
+6. 選択登録時のみ `/scrape/register-selected` から `save_scraped_items_to_db()` を実行
+7. 非 JS / 従来経路では既存どおり待機ページ → 結果ページフローを維持
 
-### `mercari_db.py`（~608行）
+注意:
 
-| 関数名                    | 役割                                                      |
-|---------------------------|-----------------------------------------------------------|
-| `_get_chrome_version()`   | インストール済みChromeのメジャーバージョン検出             |
-| `create_driver(headless)` | Chrome WebDriver を生成（Render/Docker 環境最適化版）      |
-| `scrape_shops_product(driver, url)` | メルカリShops商品ページのスクレイピング（バリエーション含む）|
-| `scrape_item_detail(driver, url)` | メルカリ通常商品ページのスクレイピング                  |
-| `scrape_search_result(search_url, max_items, max_scroll, headless)` | メルカリ検索結果から複数商品取得 |
-| `scrape_single_item(url, headless)` | 1商品URLをスクレイピングしてリストで返す              |
-
-### `rakuma_db.py`（~184行）
-
-| 関数名                       | 役割                                                   |
-|------------------------------|--------------------------------------------------------|
-| `scrape_item_detail(driver, url)` | ラクマ商品ページのスクレイピング（遅延画像対応）    |
-| `scrape_single_item(url, headless)` | 1商品URLをスクレイピングしてリストで返す          |
-| `scrape_search_result(search_url, max_items, max_scroll, headless)` | ラクマ検索結果から複数商品取得 |
-
-### `services/scraping_client.py`
-
-| 関数名                   | 役割                                                      |
-|--------------------------|-----------------------------------------------------------|
-| `fetch_static(url)`      | Scrapling Fetcher（HTTP only）でページ取得。約5MB/リクエスト |
-| `fetch_dynamic(url)`     | Scrapling StealthyFetcher（Playwright）でページ取得。将来の Selenium 代替 |
-| `get_scraping_session()` | Scrapling Session（curl_cffi互換ラッパー）を返す           |
-
-### `services/monitor_service.py`
-
-| メソッド                          | 役割                                                          |
-|-----------------------------------|---------------------------------------------------------------|
-| `MonitorService.check_stale_products(limit)` | 古い商品の価格・在庫を軽量パトロールで更新（15分間隔） |
-| `MonitorService._apply_patrol_result(session_db, product, result)` | パトロール結果をDBに適用 |
-
-**重要定数**:
-```python
-_BROWSER_SITES = frozenset({"mercari"})  # Seleniumが必要なサイト（現在）
-# ラクマも実際にはSeleniumを使用しているが、frozensetには含まれていない
-# → services/patrol/rakuma_patrol.py が独自にドライバーを作成
-```
-
-### `routes/scrape.py`
-
-| ルート             | メソッド | 役割                                                           |
-|--------------------|----------|----------------------------------------------------------------|
-| `/scrape`          | GET/POST | スクレイピングフォーム表示                                     |
-| `/scrape/run`      | POST     | スクレイピング実行（**同期処理** - リクエスト中ブロック）      |
-
-**現状の問題**: `/scrape/run` は同期処理のため、スクレイピング完了まで HTTP 接続を維持し続ける。
-複数ユーザーが同時送信すると Gunicorn スレッド数（8）が枯渇する。
+- JS プレビュー経路では抽出直後に DB 保存しない
+- 非 JS の通常送信では従来どおり即時保存フローを維持している
 
 ---
 
-## 7. データベーススキーマ概要
+## 6. 商品登録・編集フロー
 
-### `products` テーブル（主要フィールド）
+### 手動追加
 
-| フィールド          | 型       | 説明                               |
-|---------------------|----------|------------------------------------|
-| `id`               | Integer  | 主キー                             |
-| `user_id`          | Integer  | オーナーユーザーID（FK）           |
-| `site`             | String   | サイト識別子（"mercari", "rakuma" 等）|
-| `source_url`       | String   | 元商品URL                          |
-| `last_title`       | String   | 最終取得タイトル                   |
-| `last_price`       | Integer  | 最終取得価格（円）                 |
-| `last_status`      | String   | 最終取得ステータス（on_sale/sold） |
-| `archived`         | Boolean  | アーカイブ済みフラグ               |
-| `updated_at`       | DateTime | 最終更新日時（パトロール更新対象） |
+- `routes/main.py` の `/products/manual-add` で在庫品を直接登録できる
+- 登録時に `Product`、最新 `ProductSnapshot`、デフォルト `Variant` を同時作成する
+- `shop_id` は所有者チェックを行い、他ユーザーのショップは拒否する
+- 画像 URL は改行または `|` 区切りで入力し、`http(s)` と `/media/...` のみ保存する
+- 登録完了後は通常の `/product/<id>` 編集画面へ遷移する
 
-### `variants` テーブル
+### 商品編集
 
-| フィールド          | 型       | 説明                               |
-|---------------------|----------|------------------------------------|
-| `product_id`       | Integer  | 親商品ID（FK）                     |
-| `option1_value`    | String   | バリエーション値1（色など）        |
-| `option2_value`    | String   | バリエーション値2（サイズなど）    |
-| `price`            | Integer  | バリエーション価格                 |
-| `inventory_qty`    | Integer  | 在庫数                             |
+- `routes/products.py` の `/product/<id>` が編集画面を担当
+- GET 時は最新 `ProductSnapshot` を読み、`image_urls` を分解して画像一覧へ渡す
+- POST 時は `Product` 本体、`Variant` 群、SEO、英語タイトル/説明を更新する
+- 画像 UI は `templates/product_detail.html` 上で SortableJS を使い、`image_urls_json` 隠しフィールドへ現在順序を保持する
+- 画像順序や削除内容が変わった場合のみ、新しい `ProductSnapshot` を 1 件追加して `image_urls` を差し替える
+- 既存スナップショットは破壊せず残すため、export/catalog は常に「最新スナップショット」を参照して動作する
+- 公開カタログは `PriceList.layout` に応じて `grid` / `editorial` の 2 レイアウトを切り替える
+- 商品カードの詳細は `catalog_product_detail` JSON を fetch してモーダル表示する
+- `catalog_view` と `catalog_product_detail` では `CatalogPageView` を非同期依存なしで記録する
+- owner 向けの analytics 画面では PV、推定ユニーク、デバイス比率、流入カテゴリ、人気商品、最近のアクセスを表示する
 
 ---
 
-## 8. パトロールシステム詳細
+## 7. 定期パトロール
 
-### 仕組み
+### Scheduler
 
-1. `app.py` で APScheduler を起動（`fcntl.flock` で1プロセスのみ実行）
-2. 15分ごとに `MonitorService.check_stale_products(limit=15)` を呼び出し
-3. `updated_at` の古い順に最大15商品を選択
-4. `_BROWSER_SITES` に含まれる場合は共有 Chrome ドライバーを使用
-5. それ以外は Scrapling（HTTP only）を使用
+- `app.py` で `APScheduler` を起動
+- 15 分ごとに `MonitorService.check_stale_products(limit=15)` を実行
+- Windows では `fcntl` が存在しないため、ローカル検証時は単一プロセス起動にフォールバック
 
-### パトロール結果（PatrolResult）
+### パトロールの実態
 
-```python
-@dataclass
-class PatrolResult:
-    price: Optional[int] = None
-    status: Optional[str] = None  # "active" or "sold"
-    variants: List[dict] = field(default_factory=list)
-    success: bool = True
-    error: Optional[str] = None
-```
+- `services.monitor_service._BROWSER_SITES = frozenset()`
+- 各 patrol 実装は `patrol.fetch(url)` を driver なしで呼び出す
+- Stage 4a / 4b 後、Yahoo / オフモール / SNKRDUNK / ヤフオク / 駿河屋の Selenium デッドコードは削除済み
 
 ---
 
-## 9. Scrapling の現状
+## 8. データモデルの要点
 
-`scrapling` ライブラリはすでに `requirements.txt` に含まれており、`services/scraping_client.py` で使用されている。
+### `products`
 
-- `Fetcher.get()` → HTTP-only（curl_cffi ベース）→ **本番稼働中**
-- `StealthyFetcher.fetch()` → Playwright ベース → **未稼働**（`python -m scrapling install` が必要）
+主要フィールド:
 
-Playwright ブラウザのインストールは Dockerfile に追加が必要（Stage 1 の作業）。
+- `id`
+- `user_id`
+- `shop_id`
+- `site`
+- `source_url`
+- `last_title`
+- `last_price`
+- `last_status`
+- `custom_title`
+- `custom_description`
+- `custom_title_en`
+- `custom_description_en`
+- `pricing_rule_id`
+- `selling_price`
+- `archived`
+- `deleted_at`
+- `updated_at`
+
+### `variants`
+
+主要フィールド:
+
+- `product_id`
+- `option1_value`
+- `option2_value`
+- `price`
+- `inventory_qty`
+- `sku`
+- `grams`
+- `hs_code`
+- `country_of_origin`
+
+### `product_snapshots`
+
+- `product_id`
+- `scraped_at`
+- `title`
+- `price`
+- `status`
+- `description`
+- `image_urls`
+
+### `price_lists`
+
+- `user_id`
+- `name`
+- `token`
+- `is_active`
+- `currency_rate`
+- `layout`
+- `notes`
+
+### `catalog_page_views`
+
+- `pricelist_id`
+- `viewed_at`
+- `ip_hash`
+- `user_agent_short`
+- `referrer_domain`
+- `product_id`
+
+未実装のロードマップ項目:
+
+- なし
 
 ---
 
-## 10. 現状の課題まとめ
+## 9. 現在の制約と未着手事項
 
-1. **メモリ問題**: Selenium Chrome が1インスタンス約400MB消費。同時スクレイピング数を制限できていない
-2. **同期ブロッキング**: `routes/scrape.py` が同期処理でユーザーを長時間待機させる
-3. **スケーラビリティ**: 20ユーザー同時接続に対応できない
-4. **重いDockerイメージ**: Chrome + ChromeDriver により ~1.5GB のイメージサイズ
+### 完了済み
 
-これらを解決するのが Stage 0〜4 の移行計画。
+- Stage 4b: Selenium 完全削除
+- Block B の主要 UI 改善
+- Block C の主要機能追加
+- Block D-1 の商品手動追加
+- Block D-2 のカタログレイアウト切替
+- Block D-3 の商品詳細モーダル
+- Block D-4 のアクセス解析
+
+### 未着手 / 一部未着手
+
+- Block D: 完了
+- ライブサイト向け自動スモークテストの整備
+
+---
+
+## 10. 検証の基準
+
+Stage 4b 完了後の最低基準:
+
+- `tests/test_stage4_selenium_removal.py` が通る
+- `tests/test_scrape_queue.py` が通る
+- `tests/test_rakuma_playwright.py` が通る
+- `tests/test_scraping_logic.py` が通る
+- `rg -n "selenium|create_driver|webdriver_manager|undetected_chromedriver"` で本体コードに残骸がない
+
+詳細な完了記録は [`STAGE_4_RESULTS.md`](./STAGE_4_RESULTS.md) を参照。

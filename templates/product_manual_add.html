@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block title %}商品手動追加{% endblock %}
+{% block header_title %}商品手動追加{% endblock %}
+
+{% block content %}
+<a href="{{ url_for('index') }}" class="back-link">&laquo; 一覧に戻る</a>
+
+<div class="page-header">
+    <h1>商品手動追加</h1>
+    <p class="page-subtitle">スクレイピングを使わず、在庫品を直接登録します</p>
+</div>
+
+{% if errors %}
+<div class="content-card" style="border-color: var(--danger-color, #c62828); margin-bottom: 20px;">
+    <div class="content-card-body">
+        <strong style="display: block; margin-bottom: 8px; color: #c62828;">入力内容を確認してください</strong>
+        <ul style="margin: 0; padding-left: 18px;">
+            {% for error in errors %}
+            <li>{{ error }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endif %}
+
+<form method="POST">
+    <div class="product-edit-layout">
+        <div class="product-edit-main">
+            <div class="content-card">
+                <div class="content-card-header">
+                    <h2>基本情報</h2>
+                </div>
+                <div class="content-card-body">
+                    <div class="form-group">
+                        <label for="shop_id">所属ショップ</label>
+                        <select id="shop_id" name="shop_id">
+                            <option value="">(共通 / 未所属)</option>
+                            {% for shop in all_shops %}
+                            <option value="{{ shop.id }}" {% if form_data.shop_id == shop.id|string %}selected{% endif %}>{{ shop.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="title">商品名（日本語）</label>
+                        <input type="text" id="title" name="title" value="{{ form_data.title }}" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="title_en">商品名（英語）</label>
+                        <input type="text" id="title_en" name="title_en" value="{{ form_data.title_en }}">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="description">商品説明（日本語）</label>
+                        <textarea id="description" name="description" rows="6">{{ form_data.description }}</textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="description_en">商品説明（英語）</label>
+                        <textarea id="description_en" name="description_en" rows="5">{{ form_data.description_en }}</textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div class="content-card">
+                <div class="content-card-header">
+                    <h2>画像・参照情報</h2>
+                </div>
+                <div class="content-card-body">
+                    <div class="form-group">
+                        <label for="image_urls">画像 URL</label>
+                        <textarea id="image_urls" name="image_urls" rows="6"
+                            placeholder="1行に1件、または | 区切りで入力">{{ form_data.image_urls }}</textarea>
+                        <p class="text-small text-muted mb-0">`http(s)` または `/media/...` 形式のみ保存します。</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="source_url">元URL（任意）</label>
+                        <input type="url" id="source_url" name="source_url" value="{{ form_data.source_url }}"
+                            placeholder="https://example.com/item/123">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="site">サイト区分</label>
+                        <input type="text" id="site" name="site" value="{{ form_data.site }}" placeholder="manual">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="tags">タグ</label>
+                        <input type="text" id="tags" name="tags" value="{{ form_data.tags }}"
+                            placeholder="カンマ区切りで入力">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="product-edit-side">
+            <div class="content-card">
+                <div class="content-card-header">
+                    <h2>価格・在庫</h2>
+                </div>
+                <div class="content-card-body">
+                    <div class="form-group">
+                        <label for="cost_price">仕入価格</label>
+                        <input type="number" id="cost_price" name="cost_price" value="{{ form_data.cost_price }}" min="0" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="selling_price">販売価格（任意）</label>
+                        <input type="number" id="selling_price" name="selling_price" value="{{ form_data.selling_price }}" min="0">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="inventory_qty">在庫数</label>
+                        <input type="number" id="inventory_qty" name="inventory_qty" value="{{ form_data.inventory_qty }}" min="0">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="stock_state">在庫状態</label>
+                        <select id="stock_state" name="stock_state">
+                            <option value="on_sale" {% if form_data.stock_state == 'on_sale' %}selected{% endif %}>在庫あり</option>
+                            <option value="sold" {% if form_data.stock_state == 'sold' %}selected{% endif %}>在庫なし</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="publish_status">Shopify公開状態</label>
+                        <select id="publish_status" name="publish_status">
+                            <option value="draft" {% if form_data.publish_status == 'draft' %}selected{% endif %}>下書き</option>
+                            <option value="active" {% if form_data.publish_status == 'active' %}selected{% endif %}>公開</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="sku">SKU（任意）</label>
+                        <input type="text" id="sku" name="sku" value="{{ form_data.sku }}" placeholder="MANUAL-001">
+                    </div>
+                </div>
+            </div>
+
+            <div class="content-card">
+                <div class="content-card-header">
+                    <h2>登録メモ</h2>
+                </div>
+                <div class="content-card-body">
+                    <p class="text-small text-muted" style="margin-top: 0;">
+                        登録後は通常の商品編集画面へ遷移します。画像並べ替え、バリエーション追加、SEO 設定はその画面で続けて調整できます。
+                    </p>
+                    <button type="submit" class="btn btn-primary" style="width: 100%;">登録して編集へ進む</button>
+                    <a href="{{ url_for('index') }}" class="btn btn-secondary"
+                        style="display: inline-flex; width: 100%; justify-content: center; margin-top: 10px; text-decoration: none;">キャンセル</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+{% endblock %}

@@ -9,6 +9,11 @@
     <p class="page-subtitle">{{ selected_site or "全サイト" }} / {{ selected_status or "全ステータス" }}</p>
 </div>
 
+<div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;">
+    <a href="{{ url_for('main.product_manual_add') }}" class="btn btn-primary">＋ 商品を手動追加</a>
+    <a href="{{ url_for('scrape_form') }}" class="btn btn-secondary">スクレイピングで追加</a>
+</div>
+
 <!-- サイト別統計バッジ -->
 <div class="site-stats-bar">
     <a href="{{ url_for('index') }}" class="site-badge {{ 'active' if not selected_site else '' }}">
@@ -168,6 +173,7 @@
             <option value="prefix">タイトルに接頭辞を追加</option>
             <option value="suffix">タイトルに接尾辞を追加</option>
             <option value="replace">文字列を置換</option>
+            <option value="bulk_price">販売価格を一括設定</option>
             <option value="archive">アーカイブに移動</option>
             <option value="trash">🗑️ ゴミ箱へ移動</option>
         </select>
@@ -175,7 +181,7 @@
     </div>
 
 
-    {% set site_display = {'mercari': 'メルカリ', 'yahuoku': 'ヤフオク', 'yahoo': 'ヤフショ', 'snkrdunk': 'スニダン', 'surugaya': '駿河屋', 'rakuma': 'ラクマ', 'offmall': 'オフモール'} %}
+    {% set site_display = {'mercari': 'メルカリ', 'yahuoku': 'ヤフオク', 'yahoo': 'ヤフショ', 'snkrdunk': 'スニダン', 'surugaya': '駿河屋', 'rakuma': 'ラクマ', 'offmall': 'オフモール', 'manual': '手動'} %}
     <div class="table-responsive product-table-mobile-hidden">
 
         <table class="product-table">
@@ -207,7 +213,23 @@
                     <span class="product-thumb-placeholder" aria-hidden="true"></span>
                     {% endif %}
                 </td>
-                <td class="product-title-cell">{{ p.custom_title or p.last_title }}</td>
+                <td>
+                    <div class="product-title-cell">{{ p.custom_title or p.last_title }}</div>
+                    <div class="inline-edit-group">
+                        <label for="title_en_desktop_{{ p.id }}" class="inline-edit-label">ENタイトル</label>
+                        <input
+                            type="text"
+                            id="title_en_desktop_{{ p.id }}"
+                            class="inline-edit-input"
+                            data-url="{{ url_for('api.inline_update_product', product_id=p.id) }}"
+                            data-product-id="{{ p.id }}"
+                            data-field="custom_title_en"
+                            data-input-type="text"
+                            value="{{ p.custom_title_en or '' }}"
+                            placeholder="英語タイトルを入力">
+                        <div class="inline-edit-feedback" aria-live="polite"></div>
+                    </div>
+                </td>
                 <td class="price-cell">
                     <div class="price-row price-cost">
                         <span class="price-label">仕入:</span>
@@ -215,7 +237,21 @@
                     </div>
                     <div class="price-row price-sell">
                         <span class="price-label">販売:</span>
-                        <span class="price-value">{% if p.selling_price is not none %}¥{{ "{:,}".format(p.selling_price) }}{% else %}<span class="text-muted">未設定</span>{% endif %}</span>
+                        <span class="price-value" data-price-display="{{ p.id }}">{% if p.selling_price is not none %}¥{{ "{:,}".format(p.selling_price) }}{% else %}未設定{% endif %}</span>
+                    </div>
+                    <div class="inline-edit-group inline-edit-group--price">
+                        <label for="selling_price_desktop_{{ p.id }}" class="inline-edit-label">販売価格</label>
+                        <input
+                            type="number"
+                            id="selling_price_desktop_{{ p.id }}"
+                            class="inline-edit-input inline-edit-input--price"
+                            data-url="{{ url_for('api.inline_update_product', product_id=p.id) }}"
+                            data-product-id="{{ p.id }}"
+                            data-field="selling_price"
+                            data-input-type="number"
+                            value="{{ p.selling_price if p.selling_price is not none else '' }}"
+                            placeholder="販売価格">
+                        <div class="inline-edit-feedback" aria-live="polite"></div>
                     </div>
                 </td>
                 <td>
@@ -226,7 +262,11 @@
                     {% endif %}
                 </td>
                 <td>
+                    {% if p.source_url %}
                     <a href="{{ p.source_url }}" target="_blank" rel="noopener">{{ site_display.get(p.site, p.site) }}</a>
+                    {% else %}
+                    <span class="text-muted">{{ site_display.get(p.site, p.site) }}</span>
+                    {% endif %}
                 </td>
                 <td><a href="{{ url_for('product_detail', product_id=p.id) }}">編集</a></td>
                 <td class="hide-mobile">{{ p.updated_at }}</td>
@@ -252,9 +292,37 @@
             {% endif %}
             <div class="product-card-content">
                 <div class="product-card-title">{{ p.custom_title or p.last_title }}</div>
+                <div class="inline-edit-group">
+                    <label for="title_en_mobile_{{ p.id }}" class="inline-edit-label">ENタイトル</label>
+                    <input
+                        type="text"
+                        id="title_en_mobile_{{ p.id }}"
+                        class="inline-edit-input"
+                        data-url="{{ url_for('api.inline_update_product', product_id=p.id) }}"
+                        data-product-id="{{ p.id }}"
+                        data-field="custom_title_en"
+                        data-input-type="text"
+                        value="{{ p.custom_title_en or '' }}"
+                        placeholder="英語タイトルを入力">
+                    <div class="inline-edit-feedback" aria-live="polite"></div>
+                </div>
                 <div class="product-card-price">
-                    <div class="price-row price-sell"><span class="price-label">販売:</span> <span class="price-value">{% if p.selling_price is not none %}¥{{ "{:,}".format(p.selling_price) }}{% else %}<span class="text-muted">未設定</span>{% endif %}</span></div>
+                    <div class="price-row price-sell"><span class="price-label">販売:</span> <span class="price-value" data-price-display="{{ p.id }}">{% if p.selling_price is not none %}¥{{ "{:,}".format(p.selling_price) }}{% else %}未設定{% endif %}</span></div>
                     <div class="price-row price-cost"><span class="price-label">仕入:</span> <span class="price-value">{% if p.last_price is not none %}¥{{ "{:,}".format(p.last_price) }}{% else %}—{% endif %}</span></div>
+                </div>
+                <div class="inline-edit-group inline-edit-group--price">
+                    <label for="selling_price_mobile_{{ p.id }}" class="inline-edit-label">販売価格</label>
+                    <input
+                        type="number"
+                        id="selling_price_mobile_{{ p.id }}"
+                        class="inline-edit-input inline-edit-input--price"
+                        data-url="{{ url_for('api.inline_update_product', product_id=p.id) }}"
+                        data-product-id="{{ p.id }}"
+                        data-field="selling_price"
+                        data-input-type="number"
+                        value="{{ p.selling_price if p.selling_price is not none else '' }}"
+                        placeholder="販売価格">
+                    <div class="inline-edit-feedback" aria-live="polite"></div>
                 </div>
                 <div class="product-card-meta">
                     {% if p.last_status in ['出品中', 'active', 'on_sale', 'selling', '在庫あり', '販売中', '在庫○'] %}
@@ -266,7 +334,11 @@
             </div>
             <div class="product-card-actions">
                 <a href="{{ url_for('product_detail', product_id=p.id) }}" class="btn">編集</a>
+                {% if p.source_url %}
                 <a href="{{ p.source_url }}" target="_blank" rel="noopener" class="btn btn-muted">{{ site_display.get(p.site, p.site) }}</a>
+                {% else %}
+                <span class="btn btn-muted" style="display: inline-flex; align-items: center; justify-content: center;">{{ site_display.get(p.site, p.site) }}</span>
+                {% endif %}
             </div>
         </div>
         {% endfor %}
@@ -363,6 +435,8 @@
         if (batchEditButton) {
             batchEditButton.addEventListener('click', showBatchEditModal);
         }
+
+        setupInlineEditors();
     });
 
     // Batch edit functions
@@ -377,8 +451,173 @@
         document.getElementById('selectedCount').textContent = `(${checked}件選択中)`;
     }
 
+    function formatPriceDisplay(value) {
+        if (value === null || value === undefined || value === '') {
+            return '未設定';
+        }
+        const numeric = Number(value);
+        if (Number.isNaN(numeric)) {
+            return '未設定';
+        }
+        return `¥${numeric.toLocaleString('ja-JP')}`;
+    }
+
+    function setInlineFeedback(input, message, state) {
+        const feedback = input.parentElement.querySelector('.inline-edit-feedback');
+        if (!feedback) return;
+        feedback.textContent = message || '';
+        feedback.classList.remove('is-saving', 'is-success', 'is-error');
+        if (state) {
+            feedback.classList.add(state);
+        }
+    }
+
+    function syncInlineInputs(productId, field, value) {
+        document.querySelectorAll(`.inline-edit-input[data-product-id="${productId}"][data-field="${field}"]`).forEach(input => {
+            input.value = value === null || value === undefined ? '' : value;
+            input.dataset.lastSavedValue = input.value;
+        });
+    }
+
+    function syncPriceDisplays(productId, value) {
+        document.querySelectorAll(`[data-price-display="${productId}"]`).forEach(el => {
+            el.textContent = formatPriceDisplay(value);
+        });
+    }
+
+    async function saveInlineField(input) {
+        const currentValue = input.value;
+        const lastSavedValue = input.dataset.lastSavedValue ?? '';
+        if (currentValue === lastSavedValue || input.dataset.saving === 'true') {
+            return;
+        }
+
+        input.dataset.saving = 'true';
+        input.disabled = true;
+        setInlineFeedback(input, '保存中...', 'is-saving');
+
+        let payloadValue = currentValue;
+        if (input.dataset.inputType === 'number') {
+            payloadValue = currentValue === '' ? null : Number(currentValue);
+        }
+
+        try {
+            const response = await fetch(input.dataset.url, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    field: input.dataset.field,
+                    value: payloadValue
+                })
+            });
+
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || '保存に失敗しました');
+            }
+
+            syncInlineInputs(input.dataset.productId, data.field, data.value);
+            if (data.field === 'selling_price') {
+                syncPriceDisplays(input.dataset.productId, data.value);
+            }
+            setInlineFeedback(input, '保存済み', 'is-success');
+        } catch (error) {
+            setInlineFeedback(input, error.message || '保存に失敗しました', 'is-error');
+            input.value = lastSavedValue;
+        } finally {
+            input.disabled = false;
+            input.dataset.saving = 'false';
+        }
+    }
+
+    function setupInlineEditors() {
+        document.querySelectorAll('.inline-edit-input').forEach(input => {
+            input.dataset.lastSavedValue = input.value;
+
+            input.addEventListener('blur', function () {
+                saveInlineField(input);
+            });
+
+            input.addEventListener('change', function () {
+                if (input.dataset.inputType === 'number') {
+                    saveInlineField(input);
+                }
+            });
+
+            input.addEventListener('keydown', function (event) {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    input.blur();
+                }
+            });
+        });
+    }
+
     function getSelectedIds() {
         return Array.from(document.querySelectorAll('input[name="id"]:checked')).map(cb => cb.value);
+    }
+
+    async function handleBulkPriceAction(selectedIds) {
+        const mode = prompt(
+            '価格設定モードを入力してください:\nmargin / fixed_add / fixed / margin_plus_fixed / reset',
+            'margin'
+        );
+        if (!mode) return;
+
+        const normalizedMode = mode.trim();
+        let value = null;
+        let extraValue = null;
+
+        if (normalizedMode === 'margin') {
+            value = prompt('利益率 (%) を入力してください。0以上100未満です。', '20');
+        } else if (normalizedMode === 'fixed_add') {
+            value = prompt('仕入価格へ加算する金額を入力してください。', '1000');
+        } else if (normalizedMode === 'fixed') {
+            value = prompt('固定販売価格を入力してください。', '5000');
+        } else if (normalizedMode === 'margin_plus_fixed') {
+            value = prompt('利益率 (%) を入力してください。0以上100未満です。', '20');
+            if (value !== null) {
+                extraValue = prompt('利益率計算後に加算する固定額を入力してください。', '500');
+            }
+        } else if (normalizedMode !== 'reset') {
+            alert('未対応のモードです');
+            return;
+        }
+
+        if (normalizedMode !== 'reset' && (value === null || value === '')) {
+            return;
+        }
+        if (normalizedMode === 'margin_plus_fixed' && (extraValue === null || extraValue === '')) {
+            return;
+        }
+
+        const response = await fetch('{{ url_for("api.bulk_price_update") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                ids: selectedIds.map(id => Number(id)),
+                mode: normalizedMode,
+                value: value,
+                extra_value: extraValue
+            })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            alert(data.error || '一括価格設定に失敗しました');
+            return;
+        }
+
+        data.updated_products.forEach(item => {
+            syncInlineInputs(String(item.id), 'selling_price', item.selling_price);
+            syncPriceDisplays(String(item.id), item.selling_price);
+        });
+
+        alert(`一括価格設定を適用しました: 更新 ${data.updated_count}件 / スキップ ${data.skipped_count}件`);
     }
 
     function showBatchEditModal() {
@@ -391,6 +630,11 @@
         }
         if (selectedIds.length === 0) {
             alert('商品を選択してください');
+            return;
+        }
+
+        if (action === 'bulk_price') {
+            handleBulkPriceAction(selectedIds);
             return;
         }
 

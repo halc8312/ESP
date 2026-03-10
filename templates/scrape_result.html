@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}商品抽出結果{% endblock %}
-{% block header_title %}取得結果{% endblock %}
+{% block header_title %}商品抽出結果{% endblock %}
 
 {% block content %}
     <a href="{{ url_for('scrape_form') }}" class="back-link">&laquo; 条件を変更して再抽出</a>
@@ -57,7 +57,7 @@
     <!-- 結果サマリ -->
     <div class="dashboard-grid" style="grid-template-columns: repeat(3, 1fr);">
         <div class="stat-card">
-            <h3>取得件数</h3>
+            <h3>抽出件数</h3>
             <div class="value">{{ items|length }}</div>
         </div>
         <div class="stat-card">
@@ -73,7 +73,7 @@
     {% if items %}
     <div class="content-card">
         <div class="content-card-header">
-            <h3>取得した商品（プレビュー）</h3>
+            <h3>抽出した商品（プレビュー）</h3>
         </div>
         <div class="content-card-body" style="padding: 0;">
             <div class="table-responsive">

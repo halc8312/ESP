@@ -137,7 +137,7 @@ class ScrapeQueue:
         logger.info(f"Enqueued job {job_id} for site={site}, user_id={user_id}")
         return job_id
 
-    def get_status(self, job_id: str) -> Optional[dict]:
+    def get_status(self, job_id: str, user_id: int = None) -> Optional[dict]:
         """
         ジョブのステータスを返す。
 
@@ -155,6 +155,8 @@ class ScrapeQueue:
             job = self._jobs.get(job_id)
 
         if job is None:
+            return None
+        if user_id is not None and job.user_id != user_id:
             return None
 
         elapsed = time.time() - job.created_at

@@ -1,447 +1,78 @@
-import logging
-import re
-import time
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from selector_config import get_selectors, get_valid_domains
-from scrape_metrics import get_metrics, log_scrape_result, check_scrape_health
-
+"""
+Yahoo Shopping scraping module.
+Uses Scrapling HTTP fetches for product detail pages and search results.
+"""
 import json
+import logging
+from urllib.parse import urljoin
 
-def _get_chrome_version():
-    """インストール済みChromeのメジャーバージョンを検出する"""
-    import subprocess
-    try:
-        # Linux (Docker/Render)
-        result = subprocess.run(
-            ["google-chrome", "--version"],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0:
-            version_str = result.stdout.strip().split()[-1]
-            major = version_str.split(".")[0]
-            logging.info(f"Detected Chrome version: {version_str} (major: {major})")
-            return major
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    
-    try:
-        # Windows
-        import winreg
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Google\Chrome\BLBeacon")
-        version, _ = winreg.QueryValueEx(key, "version")
-        major = version.split(".")[0]
-        logging.info(f"Detected Chrome version: {version} (major: {major})")
-        return major
-    except Exception:
-        pass
-    
-    logging.warning("Could not detect Chrome version, using latest")
-    return None
+from selector_config import get_selectors, get_valid_domains
+from scrape_metrics import check_scrape_health, get_metrics, log_scrape_result
 
-def create_driver(headless: bool = True):
-    """Chrome WebDriver を生成"""
-    options = Options()
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--single-process")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-software-rasterizer")
-    options.add_argument("--disable-background-networking")
-    options.add_argument("--disable-default-apps")
-    options.add_argument("--window-size=1920,1080")
-    options.page_load_strategy = 'eager'
-    
-    if headless:
-        options.add_argument("--headless=new")
-
-    user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    options.add_argument(f'user-agent={user_agent}')
-    options.add_argument('--disable-blink-features=AutomationControlled')
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
-
-    try:
-        chrome_major = _get_chrome_version()
-        if chrome_major:
-            service = Service(ChromeDriverManager(driver_version=f"{chrome_major}").install())
-        else:
-            service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
-        driver.set_page_load_timeout(60)
-        driver.set_script_timeout(30)
-        return driver
-    except Exception as e:
-        logging.error(f"Failed to initialize WebDriver: {e}")
-        raise e
-
-def scrape_item_detail(driver, url: str):
-    """
-    Yahoo!ショッピングの商品ページから詳細情報を取得する
-    """
-    try:
-        driver.get(url)
-    except Exception as e:
-        print(f"Error accessing {url}: {e}")
-        return {
-            "url": url, "title": "", "price": None, "status": "error", 
-            "description": "", "image_urls": [], "variants": []
-        }
-
-    wait = WebDriverWait(driver, 10)
-    try:
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        time.sleep(2) # Wait for dynamic loading
-    except Exception:
-        pass
-
-    # ---- NEXT_DATA JSON Parsing (Variant Support) ----
-    next_data_variants = []
-    next_data_info = {}
-    image_urls = [] # Init here to capture JSON images
-    try:
-        # Try to find the __NEXT_DATA__ script block
-        script_el = driver.find_elements(By.ID, "__NEXT_DATA__")
-        if script_el:
-            json_str = script_el[0].get_attribute("innerHTML")
-            data = json.loads(json_str)
-            item = data.get("props", {}).get("pageProps", {}).get("item", {})
-            
-            # --- Extract Basic Info from JSON (More reliable) ---
-            if item.get("name"):
-                next_data_info["title"] = item.get("name")
-            
-            # Price extraction from JSON
-            # priceTable seems to contain prices, or use applicablePrice
-            if item.get("applicablePrice"): # often exists
-                 next_data_info["price"] = int(item.get("applicablePrice"))
-            elif item.get("price"):
-                 next_data_info["price"] = int(item.get("price"))
-                 
-            # Images
-            # Structure: item['images'] = { "list": [{"src": "..."}, ...], "count": ... }
-            if item.get("images"):
-                json_images_data = item.get("images")
-                image_list = []
-                
-                if isinstance(json_images_data, dict):
-                    # Aggregate from all possible lists
-                    if "list" in json_images_data:
-                         image_list.extend(json_images_data.get("list", []))
-                    if "itemImageList" in json_images_data:
-                         image_list.extend(json_images_data.get("itemImageList", []))
-                    if "detailImageList" in json_images_data:
-                         image_list.extend(json_images_data.get("detailImageList", []))
-                    # Also mainImage if it's a dict
-                    if "mainImage" in json_images_data:
-                        image_list.append(json_images_data.get("mainImage"))
-
-                elif isinstance(json_images_data, list):
-                    image_list = json_images_data
-                
-                for img in image_list:
-                    img_url = ""
-                    if isinstance(img, dict):
-                        img_url = img.get("src") or img.get("url") or img.get("path")
-                        if not img_url and img.get("id"):
-                            # Fallback: Construct URL from ID
-                            # Pattern: https://item-shopping.c.yimg.jp/i/n/{id}
-                            # Validation: ID usually contains shop name and item code
-                            img_url = f"https://item-shopping.c.yimg.jp/i/n/{img.get('id')}"
-                            
-                    elif isinstance(img, str):
-                        img_url = img
-                    
-                    if img_url:
-                        if img_url.startswith("http"):
-                             if img_url not in image_urls:
-                                 image_urls.append(img_url)
-
-            # --- Extract Variants ---
-            # stockTableTwoAxis: Nested Dictionary Structure
-            # stockTableOneAxis: Nested Dictionary Structure
-            
-            spec_list = item.get("specList", []) # Defines the axis names e.g. [{"label": "サイズ"}, {"label": "カラー"}]
-            
-            # Helper to check if "No Stock"
-            def is_in_stock(stock_obj):
-                q = stock_obj.get("quantity", 0)
-                if q > 0: return True
-                return False
-
-            base_price = next_data_info.get("price", None)
-
-            # Case 1: Two Axis
-            # Structure: { "firstOption": { "choiceList": [ { "choiceName": "Red", "secondOption": { "choiceList": [...] } } ] } }
-            if isinstance(item.get("stockTableTwoAxis"), dict):
-                two_axis = item.get("stockTableTwoAxis")
-                first_opt = two_axis.get("firstOption", {})
-                
-                # Try to get axis names from Spec List matching "id" if possible, or just use generic labels
-                # Or use first_opt['name'] if available?
-                # The JSON often has "name" inside firstOption and secondOption!
-                axis1_label = first_opt.get("name") or (spec_list[1].get("name") if len(spec_list) > 1 else "Option 1")
-                
-                for opt1 in first_opt.get("choiceList", []):
-                    v_name1 = opt1.get("choiceName")
-                    
-                    sec_opt = opt1.get("secondOption", {})
-                    axis2_label = sec_opt.get("name") or (spec_list[0].get("name") if len(spec_list) > 0 else "Option 2")
-                    
-                    for opt2 in sec_opt.get("choiceList", []):
-                        v_name2 = opt2.get("choiceName")
-                        
-                        stock_info = opt2.get("stock", {})
-                        qty = stock_info.get("quantity", 0)
-                        
-                        v_price = opt2.get("price") or base_price
-                        
-                        if v_name1 and v_name2:
-                            next_data_variants.append({
-                                "option1_name": axis1_label, # Usually Color
-                                "option1_value": v_name1,
-                                "option2_name": axis2_label, # Usually Size
-                                "option2_value": v_name2,
-                                "price": v_price,
-                                "inventory_qty": qty
-                            })
-
-            # Case 2: One Axis
-            # Structure: { "firstOption": { "choiceList": [ { "choiceName": "Red", "stock": {...} } ] } }
-            elif isinstance(item.get("stockTableOneAxis"), dict):
-                one_axis = item.get("stockTableOneAxis")
-                first_opt = one_axis.get("firstOption", {})
-                axis1_label = first_opt.get("name") or (spec_list[0].get("name") if len(spec_list) > 0 else "Option 1")
-                
-                for opt1 in first_opt.get("choiceList", []):
-                    v_name1 = opt1.get("choiceName")
-                    
-                    stock_info = opt1.get("stock", {})
-                    qty = stock_info.get("quantity", 0)
-                    
-                    v_price = opt1.get("price") or base_price
-                    
-                    if v_name1:
-                        next_data_variants.append({
-                            "option1_name": axis1_label,
-                            "option1_value": v_name1,
-                            "price": v_price,
-                            "inventory_qty": qty
-                        })
-            
-            # --- Fallback to List Logic (if API changes back or acts differently) ---
-            # (Keeping old logic briefly just in case, but usually unnecessary if Dict check passes)
-            elif isinstance(item.get("stockTableTwoAxis"), list):
-                 # ... (Old list implementation omitted to keep code clean, assuming we found the correct one)
-                 pass
-
-    except Exception as e:
-        print(f"JSON Parse Error: {e}")
-        # Continue to HTML scraping as fallback
-        pass
+logger = logging.getLogger("yahoo")
 
 
-    # ---- Title ----
-    title = next_data_info.get("title", "")
-    if not title:
-        # Load selectors from config (with fallback to hardcoded if config not found)
-        title_selectors = get_selectors('yahoo', 'detail', 'title') or [
-            "[class*='styles_itemName']", "[class*='styles_itemTitle']",
-            ".mdItemName", ".elName", "h1.title", "h1.name", 
-            "[data-testid='item-name']", "h1"
-        ]
-        for selector in title_selectors:
-            try:
-                els = driver.find_elements(By.CSS_SELECTOR, selector)
-                if els:
-                    t = els[0].text.replace('\n', ' ').strip()
-                    if t: 
-                        title = t
-                        break
-            except:
-                continue
-                
-        # If title is still empty, try meta title
-        if not title:
-            try:
-                title = driver.title.split('-')[0].strip()
-            except:
-                pass
-
-    # ---- Price ----
-    price = next_data_info.get("price")
-    if price is None:
-        price_selectors = get_selectors('yahoo', 'detail', 'price') or [
-            "[class*='styles_price']", ".mdItemPrice", ".elPrice", 
-            ".elItemPrice", "[data-testid='item-price']", ".price"
-        ]
-        for selector in price_selectors:
-            try:
-                els = driver.find_elements(By.CSS_SELECTOR, selector)
-                if els:
-                    txt = els[0].text
-                    m = re.search(r"([\d,]+)", txt)
-                    if m:
-                        price = int(m.group(1).replace(",", ""))
-                        break
-            except:
-                continue
-                
-        # Fallback price from body if needed (risky but useful)
-        if price is None:
-            try:
-                body_text = driver.find_element(By.TAG_NAME, "body").text
-                m = re.search(r"([\d,]+)\s*円", body_text)
-                if m:
-                    price = int(m.group(1).replace(",", ""))
-            except:
-                pass
-
-    # ---- Description ----
-    description = ""
-    desc_selectors = get_selectors('yahoo', 'detail', 'description') or [
-        "[class*='styles_itemDescription']",
-        ".mdItemDescription", ".elItemInfo", "#item-info",
-        ".explanation", ".item_exp"
-    ]
-    for sel in desc_selectors:
-        try:
-            els = driver.find_elements(By.CSS_SELECTOR, sel)
-            if els:
-                description = els[0].text.strip()
-                break
-        except:
-            continue
-            
-    if not description:
-        try:
-            meta = driver.find_element(By.CSS_SELECTOR, "meta[name='description']")
-            description = meta.get_attribute("content")
-        except:
-            pass
-
-    # ---- Images ----
-    # image_urls = [] # Already initialized above
-    try:
-        # 1. Look for main image container first
-        # Yahoo often uses .mdItemImage or .elItemImage
-        # Also check for "item_image" id
-        
-        candidates = []
-        
-        # Helper to collect images from a container
-        def collect_imgs(selector):
-            try:
-                els = driver.find_elements(By.CSS_SELECTOR, selector)
-                for el in els:
-                    src = el.get_attribute("src")
-                    # Try to get high-res if available in data attributes
-                    if not src:
-                        src = el.get_attribute("data-src") or el.get_attribute("data-original")
-                    
-                    if src: candidates.append(src)
-            except:
-                pass
-
-        # Load image selectors from config
-        image_selectors = get_selectors('yahoo', 'detail', 'images') or [
-            "[class*='styles_image'] img", "[class*='styles_mainImage'] img",
-            ".mdItemImage img", ".elItemImage img", ".libItemImage img",
-            "#item-image img", "ul.elItemImage > li > img"
-        ]
-        for selector in image_selectors:
-            collect_imgs(selector)
-        
-        # If nothing specific found, get all images that look like product photos
-        if not candidates:
-            all_imgs = driver.find_elements(By.TAG_NAME, "img")
-            for img in all_imgs:
-                src = img.get_attribute("src")
-                if src and ("y-img.jp" in src or "shopping.c.yimg.jp" in src):
-                    candidates.append(src)
-        
-        for src in candidates:
-            # Filter logic
-            if not src: continue
-            if "icon" in src or "blank" in src or "logo" in src: continue
-            
-            # Clean up Yahoo image URLs if possible (remove standard resizing params?)
-            # Yahoo URL example: https://item-shopping.c.yimg.jp/i/n/shopname_itemcode
-            # Thumbnails: .../i/g/... or .../i/l/... ? /n/ is usually main.
-            
-            if src not in image_urls:
-                image_urls.append(src)
-                
-    except Exception as e:
-        print(f"Image scrape error: {e}")
-        pass
-
-    # ---- Status (Simplified) ----
-    status = "on_sale"
-    if next_data_info.get("stock") == 0: # If we found this in JSON
-        status = "sold"
-    else:
-        try:
-            body_text = driver.find_element(By.TAG_NAME, "body").text
-            if "在庫切れ" in body_text or "売り切れ" in body_text:
-                status = "sold"
-        except:
-            pass
-
+def _empty_result(url: str, status: str = "error") -> dict:
     return {
         "url": url,
-        "title": title,
-        "price": price,
+        "title": "",
+        "price": None,
         "status": status,
-        "description": description,
-        "image_urls": image_urls,
-        "variants": next_data_variants
+        "description": "",
+        "image_urls": [],
+        "variants": [],
     }
+
+
+def _resolve_detail_url(url_or_driver, maybe_url=None) -> str:
+    if isinstance(maybe_url, str) and maybe_url:
+        return maybe_url
+    if isinstance(url_or_driver, str) and url_or_driver:
+        return url_or_driver
+    raise ValueError("url is required")
+
+
+def _extract_item_from_page(page) -> dict:
+    script_el = page.find("#__NEXT_DATA__")
+    if not script_el:
+        return {}
+
+    json_str = str(script_el.text or "").strip()
+    if not json_str:
+        return {}
+
+    data = json.loads(json_str)
+    page_props = data.get("props", {}).get("pageProps", {})
+    return (
+        page_props.get("item")
+        or page_props.get("sp", {}).get("item", {})
+        or page_props.get("initialState", {}).get("item", {})
+        or {}
+    )
+
 
 def scrape_item_detail_light(url: str) -> dict:
     """
-    Light HTTP-only scrape for Yahoo Shopping using Scrapling Fetcher.
-    Extracts data from the embedded __NEXT_DATA__ JSON without launching a browser.
-    Memory: ~5 MB (vs ~400 MB for Chrome). Falls back to returning an empty dict on error.
+    HTTP-only Yahoo Shopping detail scrape.
+    Returns an empty dict when the page structure cannot be parsed.
     """
-    result = {
-        "url": url, "title": "", "price": None, "status": "on_sale",
-        "description": "", "image_urls": [], "variants": []
-    }
+    result = _empty_result(url, status="on_sale")
     try:
         from services.scraping_client import fetch_static
+
         page = fetch_static(url)
-
-        script_el = page.find("#__NEXT_DATA__")
-        if not script_el:
-            return {}
-
-        json_str = str(script_el.text or "").strip()
-        if not json_str:
-            return {}
-
-        data = json.loads(json_str)
-        item = data.get("props", {}).get("pageProps", {}).get("item", {})
+        item = _extract_item_from_page(page)
         if not item:
             return {}
 
-        # Title
         if item.get("name"):
             result["title"] = item["name"]
 
-        # Price
         if item.get("applicablePrice"):
             result["price"] = int(item["applicablePrice"])
         elif item.get("price"):
             result["price"] = int(item["price"])
 
-        # Images
         image_urls = []
         json_images = item.get("images")
         if isinstance(json_images, dict):
@@ -463,216 +94,198 @@ def scrape_item_detail_light(url: str) -> dict:
                     image_urls.append(img_url)
         result["image_urls"] = image_urls
 
-        # Variants (two-axis)
-        next_data_variants = []
+        variants = []
         spec_list = item.get("specList", [])
         base_price = result["price"]
 
         if isinstance(item.get("stockTableTwoAxis"), dict):
             two_axis = item["stockTableTwoAxis"]
             first_opt = two_axis.get("firstOption", {})
-            axis1_label = first_opt.get("name") or (spec_list[1].get("name") if len(spec_list) > 1 else "Option 1")
+            axis1_label = first_opt.get("name") or (
+                spec_list[1].get("name") if len(spec_list) > 1 else "Option 1"
+            )
             for opt1 in first_opt.get("choiceList", []):
                 v_name1 = opt1.get("choiceName")
                 sec_opt = opt1.get("secondOption", {})
-                axis2_label = sec_opt.get("name") or (spec_list[0].get("name") if len(spec_list) > 0 else "Option 2")
+                axis2_label = sec_opt.get("name") or (
+                    spec_list[0].get("name") if len(spec_list) > 0 else "Option 2"
+                )
                 for opt2 in sec_opt.get("choiceList", []):
                     v_name2 = opt2.get("choiceName")
                     stock_info = opt2.get("stock", {})
                     qty = stock_info.get("quantity", 0)
                     v_price = opt2.get("price") or base_price
                     if v_name1 and v_name2:
-                        next_data_variants.append({
-                            "option1_name": axis1_label, "option1_value": v_name1,
-                            "option2_name": axis2_label, "option2_value": v_name2,
-                            "price": v_price, "inventory_qty": qty
-                        })
+                        variants.append(
+                            {
+                                "option1_name": axis1_label,
+                                "option1_value": v_name1,
+                                "option2_name": axis2_label,
+                                "option2_value": v_name2,
+                                "price": v_price,
+                                "inventory_qty": qty,
+                            }
+                        )
         elif isinstance(item.get("stockTableOneAxis"), dict):
             one_axis = item["stockTableOneAxis"]
             first_opt = one_axis.get("firstOption", {})
-            axis1_label = first_opt.get("name") or (spec_list[0].get("name") if len(spec_list) > 0 else "Option 1")
+            axis1_label = first_opt.get("name") or (
+                spec_list[0].get("name") if len(spec_list) > 0 else "Option 1"
+            )
             for opt1 in first_opt.get("choiceList", []):
                 v_name1 = opt1.get("choiceName")
                 stock_info = opt1.get("stock", {})
                 qty = stock_info.get("quantity", 0)
                 v_price = opt1.get("price") or base_price
                 if v_name1:
-                    next_data_variants.append({
-                        "option1_name": axis1_label, "option1_value": v_name1,
-                        "price": v_price, "inventory_qty": qty
-                    })
-        result["variants"] = next_data_variants
+                    variants.append(
+                        {
+                            "option1_name": axis1_label,
+                            "option1_value": v_name1,
+                            "price": v_price,
+                            "inventory_qty": qty,
+                        }
+                    )
+        result["variants"] = variants
 
-        # Description
         description = item.get("description", "") or item.get("itemDescription", "")
         if description:
             result["description"] = description
         else:
-            # Fallback: meta[name='description']
             meta_el = page.css("meta[name='description']")
             if meta_el:
                 result["description"] = str(meta_el[0].attrib.get("content", "") or "")
 
-        # Status
         stock = item.get("stock", {})
         if isinstance(stock, dict) and (stock.get("isSoldOut") or stock.get("quantity", 1) <= 0):
             result["status"] = "sold"
 
-        print(f"DEBUG [light]: Yahoo light scrape success -> {result['title'][:40]}")
         return result
-
-    except Exception as e:
-        print(f"Yahoo Light Scrape Error: {e}")
+    except Exception as exc:
+        logger.debug("Yahoo light scrape error: %s", exc)
         return {}
 
 
+def scrape_item_detail(url_or_driver, maybe_url=None, **_kwargs):
+    """
+    Yahoo Shopping detail scrape.
+    The legacy `(driver, url)` signature is accepted for backward compatibility.
+    """
+    url = _resolve_detail_url(url_or_driver, maybe_url)
+    return scrape_item_detail_light(url) or _empty_result(url)
+
+
+def _extract_search_urls(page, base_url: str, max_items: int) -> list:
+    item_link_selectors = get_selectors("yahoo", "search", "item_links") or [
+        "a[class*='SearchResult_SearchResultItem__detailLink']",
+        "a[class*='ItemImageLink']",
+        "li.LoopList__item a",
+        ".Item__title a",
+        "[data-testid='item-name'] a",
+    ]
+    valid_domains = get_valid_domains("yahoo", "search") or [
+        "store.shopping.yahoo.co.jp",
+        "shopping-item-reach.yahoo.co.jp",
+    ]
+
+    urls = []
+    seen = set()
+    for selector in item_link_selectors:
+        for anchor in page.css(selector):
+            href = str(anchor.attrib.get("href", "") or "").strip()
+            if not href:
+                continue
+            full_url = urljoin(base_url, href)
+            if not any(domain in full_url for domain in valid_domains):
+                continue
+            if full_url in seen:
+                continue
+            seen.add(full_url)
+            urls.append(full_url)
+            if len(urls) >= max_items:
+                return urls
+    return urls
+
+
+def _find_next_page_url(page, current_url: str) -> str:
+    for anchor in page.css("a[href]"):
+        href = str(anchor.attrib.get("href", "") or "").strip()
+        if not href:
+            continue
+        text = str(anchor.text or "").strip()
+        classes = str(anchor.attrib.get("class", "") or "")
+        rel = str(anchor.attrib.get("rel", "") or "")
+        if "次へ" in text or "elNext" in classes or rel == "next":
+            return urljoin(current_url, href)
+    return ""
+
+
 def scrape_single_item(url: str, headless: bool = True):
-    """
-    One-shot scraping for Yahoo Shopping.
-    Tries HTTP-only Scrapling fetch first; falls back to Selenium on failure.
-    """
+    """One-shot Yahoo Shopping scrape returning `list[dict]`."""
     metrics = get_metrics()
-    metrics.start('yahoo', 'single')
+    metrics.start("yahoo", "single")
     try:
-        print(f"DEBUG: Starting Yahoo scrape for {url}")
-
-        # Attempt 1: HTTP-only (fast, low memory)
-        data = scrape_item_detail_light(url)
-        if data and data.get("title"):
-            log_scrape_result('yahoo', url, data)
-            print(f"DEBUG: Light scrape success -> {data['title']}")
-            print(f"DEBUG: Variants found -> {len(data.get('variants', []))}")
+        data = scrape_item_detail(url)
+        log_scrape_result("yahoo", url, data)
+        if data.get("title"):
             metrics.finish()
             return [data]
-
-        print(f"DEBUG: Light scrape failed or empty, falling back to Selenium")
-
-        # Attempt 2: Selenium fallback
-        driver = None
-        try:
-            driver = create_driver(headless=headless)
-            data = scrape_item_detail(driver, url)
-            log_scrape_result('yahoo', url, data)
-            if data["title"]:
-                print(f"DEBUG: Selenium success -> {data['title']}")
-                print(f"DEBUG: Variants found -> {len(data['variants'])}")
-            metrics.finish()
-            return [data]
-        finally:
-            if driver:
-                driver.quit()
-
-    except Exception as e:
-        print(f"Yahoo Scrape Error: {e}")
-        metrics.record_attempt(False, url, str(e))
+        metrics.record_attempt(False, url, "empty title")
         metrics.finish()
+        return []
+    except Exception as exc:
+        metrics.record_attempt(False, url, str(exc))
+        metrics.finish()
+        logger.error("Yahoo single scrape error: %s", exc)
         return []
 
 
 def scrape_search_result(
     search_url: str,
     max_items: int = 5,
-    max_scroll: int = 3, # Not used for Yahoo pagination but kept for interface consistency
+    max_scroll: int = 3,
     headless: bool = True,
 ):
-    """
-    Yahoo! Shopping 検索結果から複数商品をスクレイピングする
-    """
-    driver = None
+    """Yahoo Shopping search scrape using HTTP-only page fetches."""
     metrics = get_metrics()
-    metrics.start('yahoo', 'search')
+    metrics.start("yahoo", "search")
+    items = []
+    candidate_urls = []
+
     try:
-        print(f"DEBUG: Starting Yahoo search scrape for {search_url}")
-        driver = create_driver(headless=headless)
-        items = []
+        from services.scraping_client import fetch_static
 
-        driver.get(search_url)
-        wait = WebDriverWait(driver, 15)
-        try:
-            wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        except:
-            pass
+        current_url = search_url
+        seen_pages = set()
+        max_pages = max(1, max_scroll)
 
-        # Collect links
-        links = []
-        # Load search result selectors from config
-        item_link_selectors = get_selectors('yahoo', 'search', 'item_links') or [
-            "a[class*='SearchResult_SearchResultItem__detailLink']",
-            "a[class*='ItemImageLink']",
-            "li.LoopList__item a", ".Item__title a", "[data-testid='item-name'] a"
-        ]
-        valid_domains = get_valid_domains('yahoo', 'search') or [
-            "store.shopping.yahoo.co.jp", "shopping-item-reach.yahoo.co.jp"
-        ]
-        
-        # Try to collect enough unique item links
-        page = 1
-        while len(links) < max_items:
-            # Get links on current page using selectors from config
-            candidates = []
-            for selector in item_link_selectors:
-                candidates.extend(driver.find_elements(By.CSS_SELECTOR, selector))
-            
-             # Deduplicate on page
-            for cand in candidates:
-                href = cand.get_attribute("href")
-                if href and any(domain in href for domain in valid_domains) and href not in [l.get_attribute("href") for l in links]:
-                    links.append(cand)
-            
-            if len(links) >= max_items:
+        while current_url and current_url not in seen_pages and len(seen_pages) < max_pages:
+            seen_pages.add(current_url)
+            page = fetch_static(current_url)
+            for item_url in _extract_search_urls(page, current_url, max_items=max_items * 2):
+                if item_url not in candidate_urls:
+                    candidate_urls.append(item_url)
+                if len(candidate_urls) >= max_items:
+                    break
+            if len(candidate_urls) >= max_items:
                 break
-                
-            # Pagination Logic (Next Page)
-            try:
-                # Yahoo pagination 'Next' often has class .elNext or text '次へ' or '>'
-                next_btn = driver.find_elements(By.CSS_SELECTOR, "a.elNext")
-                if not next_btn:
-                     next_btn = driver.find_elements(By.XPATH, "//a[contains(text(), '次へ')]")
-                
-                if next_btn:
-                    print(f"DEBUG: Navigating to next page {page+1}")
-                    next_btn[0].click()
-                    time.sleep(3)
-                    page += 1
-                else:
-                    break # No more pages
-            except:
-                break
+            current_url = _find_next_page_url(page, current_url)
 
-        print(f"DEBUG: Found {len(links)} links. Scraping top {max_items}...")
-        
-        # Scrape details
-        # Note: We can't use the 'links' elements directly effectively after navigation, 
-        # so we should store URLs first.
-        target_urls = [l.get_attribute("href") for l in links][:max_items]
-        
-        for url in target_urls:
-            print(f"DEBUG: Scraping {url}")
-            try:
-                data = scrape_item_detail(driver, url)
-                log_scrape_result('yahoo', url, data)
-                if data["title"]:
-                    print(f"DEBUG: Success -> {data['title']}")
-                    items.append(data)
-                time.sleep(1)
-            except Exception as e:
-                metrics.record_attempt(False, url, str(e))
-                print(f"Error scraping {url}: {e}")
-        
-        # Check health and log final metrics
+        for item_url in candidate_urls[:max_items]:
+            data = scrape_item_detail(item_url)
+            log_scrape_result("yahoo", item_url, data)
+            if data.get("title"):
+                items.append(data)
+            else:
+                metrics.record_attempt(False, item_url, "empty title")
+
         health = check_scrape_health(items)
-        if health['action_required']:
-            logging.warning(f"Yahoo scrape health check: {health['message']}")
+        if health["action_required"]:
+            logger.warning("Yahoo scrape health check: %s", health["message"])
         metrics.finish()
-        
         return items
-
-    except Exception as e:
-        print(f"Yahoo Search Error: {e}")
-        import traceback
-        traceback.print_exc()
+    except Exception as exc:
+        metrics.record_attempt(False, search_url, str(exc))
         metrics.finish()
+        logger.error("Yahoo search scrape error: %s", exc)
         return []
-    finally:
-        if driver:
-            driver.quit()

@@ -19,7 +19,7 @@ def test_http_site_uses_http_executor():
     """HTTP サイトが http_executor を使用することを確認"""
     queue = ScrapeQueue()
     assert "yahoo" not in BROWSER_SITES
-    assert "mercari" in BROWSER_SITES
+    assert "mercari" not in BROWSER_SITES
     # Stage 1 完了: rakuma は Playwright(StealthyFetcher) に移行済み → BROWSER_SITES から削除
     assert "rakuma" not in BROWSER_SITES
     assert "surugaya" not in BROWSER_SITES
@@ -171,8 +171,8 @@ def test_queue_position():
 
 def test_browser_site_classification():
     """BROWSER_SITES の分類が正しいことを確認"""
-    assert "mercari" in BROWSER_SITES
-    # Stage 1 完了: rakuma は BROWSER_SITES から削除済み
+    # Stage 3 完了: すべての対象サイトが http_executor 側に寄っている
+    assert "mercari" not in BROWSER_SITES
     assert "rakuma" not in BROWSER_SITES
     # HTTP サイト
     for http_site in ["yahoo", "yahuoku", "surugaya", "offmall", "snkrdunk"]:

@@ -52,6 +52,8 @@ class Product(Base):
     # ユーザーによる編集内容 (Product Level)
     custom_title = Column(String)
     custom_description = Column(Text)
+    custom_title_en = Column(String)
+    custom_description_en = Column(Text)
     
     # Shopify項目 (Product Level)
     status = Column(String, default='draft') # active or draft
@@ -185,12 +187,14 @@ class PriceList(Base):
     token = Column(String, unique=True, nullable=False)  # UUID公開アクセス用
     is_active = Column(Boolean, default=True)            # 有効/無効
     currency_rate = Column(Integer, default=150)         # JPY→USD換算レート
+    layout = Column(String, default="grid")              # grid / editorial
     notes = Column(Text)                                 # 備考（顧客へのメッセージ等）
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User")
     items = relationship("PriceListItem", back_populates="price_list", cascade="all, delete-orphan")
+    page_views = relationship("CatalogPageView", back_populates="price_list", cascade="all, delete-orphan")
 
 
 class PriceListItem(Base):
@@ -206,3 +210,19 @@ class PriceListItem(Base):
 
     price_list = relationship("PriceList", back_populates="items")
     product = relationship("Product")
+
+
+class CatalogPageView(Base):
+    """公開カタログの簡易アクセスログ"""
+    __tablename__ = "catalog_page_views"
+
+    id = Column(Integer, primary_key=True)
+    pricelist_id = Column(Integer, ForeignKey("price_lists.id"), nullable=False)
+    viewed_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    ip_hash = Column(String(64))
+    user_agent_short = Column(String(32))
+    referrer_domain = Column(String(255))
+    product_id = Column(Integer, nullable=True)
+
+    price_list = relationship("PriceList", back_populates="page_views")

@@ -1,18 +1,93 @@
 """
 Main routes: index and dashboard.
 """
+from datetime import datetime
 from flask import Blueprint, render_template, request, session, redirect, url_for
 from flask_login import login_required, current_user
 from sqlalchemy.orm import subqueryload
 from sqlalchemy import func
 
 from database import SessionLocal
-from models import Shop, Product, Variant
+from models import Shop, Product, Variant, ProductSnapshot
 from services.validation_service import validate_product, get_issue_summary
 
 main_bp = Blueprint('main', __name__)
 
 PAGE_SIZE = 50
+
+
+def _manual_form_defaults(current_shop_id):
+    return {
+        "shop_id": str(current_shop_id) if current_shop_id else "",
+        "title": "",
+        "title_en": "",
+        "description": "",
+        "description_en": "",
+        "cost_price": "",
+        "selling_price": "",
+        "inventory_qty": "1",
+        "stock_state": "on_sale",
+        "publish_status": "draft",
+        "site": "manual",
+        "source_url": "",
+        "tags": "",
+        "sku": "",
+        "image_urls": "",
+    }
+
+
+def _render_manual_add(session_db, form_data=None, errors=None):
+    current_shop_id = session.get('current_shop_id')
+    all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
+    return render_template(
+        "product_manual_add.html",
+        form_data=form_data or _manual_form_defaults(current_shop_id),
+        errors=errors or [],
+        all_shops=all_shops,
+        current_shop_id=current_shop_id,
+    )
+
+
+def _parse_non_negative_int(raw_value, field_label, required=False):
+    value = (raw_value or "").strip()
+    if not value:
+        if required:
+            return None, f"{field_label}は必須です"
+        return None, None
+
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None, f"{field_label}は整数で入力してください"
+
+    if parsed < 0:
+        return None, f"{field_label}は0以上で入力してください"
+
+    return parsed, None
+
+
+def _normalize_manual_image_urls(raw_value):
+    normalized_urls = []
+    seen_urls = set()
+    candidates = (raw_value or "").replace("\r", "\n").replace("|", "\n").split("\n")
+
+    for candidate in candidates:
+        url = candidate.strip()
+        if not url:
+            continue
+        lower_url = url.lower()
+        if not (
+            lower_url.startswith("http://")
+            or lower_url.startswith("https://")
+            or url.startswith("/")
+        ):
+            continue
+        if url in seen_urls:
+            continue
+        normalized_urls.append(url)
+        seen_urls.add(url)
+
+    return normalized_urls
 
 
 @main_bp.route("/dashboard")
@@ -198,12 +273,6 @@ def index():
             "markup": request.args.get("markup", "1.2"),
             "qty": request.args.get("qty", "1"),
             "rate": request.args.get("rate", "155"),
-            "ebay_category_id": request.args.get("ebay_category_id", ""),
-            "ebay_condition_id": request.args.get("ebay_condition_id", "3000"),
-            "ebay_payment_profile": request.args.get("ebay_payment_profile", ""),
-            "ebay_return_profile": request.args.get("ebay_return_profile", ""),
-            "ebay_shipping_profile": request.args.get("ebay_shipping_profile", ""),
-            "ebay_paypal_email": request.args.get("ebay_paypal_email", ""),
         }
 
         return render_template(
@@ -229,15 +298,138 @@ def index():
             default_markup=defaults["markup"],
             default_qty=defaults["qty"],
             default_rate=defaults["rate"],
-            default_ebay_category_id=defaults["ebay_category_id"],
-            default_ebay_condition_id=defaults["ebay_condition_id"],
-            default_ebay_payment_profile=defaults["ebay_payment_profile"],
-            default_ebay_return_profile=defaults["ebay_return_profile"],
-            default_ebay_shipping_profile=defaults["ebay_shipping_profile"],
-            default_ebay_paypal_email=defaults["ebay_paypal_email"],
             all_shops=all_shops,
             current_shop_id=current_shop_id
         )
+    finally:
+        session_db.close()
+
+
+@main_bp.route("/products/manual-add", methods=["GET", "POST"])
+@login_required
+def product_manual_add():
+    session_db = SessionLocal()
+    try:
+        if request.method == "GET":
+            return _render_manual_add(session_db)
+
+        form_data = _manual_form_defaults(session.get('current_shop_id'))
+        for key in form_data.keys():
+            form_data[key] = request.form.get(key, "").strip()
+
+        errors = []
+
+        title = form_data["title"]
+        if not title:
+            errors.append("商品名は必須です")
+
+        shop_id = None
+        if form_data["shop_id"]:
+            try:
+                requested_shop_id = int(form_data["shop_id"])
+            except ValueError:
+                errors.append("ショップ指定が不正です")
+            else:
+                shop = session_db.query(Shop).filter_by(
+                    id=requested_shop_id,
+                    user_id=current_user.id,
+                ).one_or_none()
+                if not shop:
+                    errors.append("選択したショップが見つかりません")
+                else:
+                    shop_id = shop.id
+
+        cost_price, cost_error = _parse_non_negative_int(
+            form_data["cost_price"],
+            "仕入価格",
+            required=True,
+        )
+        if cost_error:
+            errors.append(cost_error)
+
+        selling_price, sell_error = _parse_non_negative_int(
+            form_data["selling_price"],
+            "販売価格",
+            required=False,
+        )
+        if sell_error:
+            errors.append(sell_error)
+
+        inventory_qty, qty_error = _parse_non_negative_int(
+            form_data["inventory_qty"],
+            "在庫数",
+            required=False,
+        )
+        if qty_error:
+            errors.append(qty_error)
+        if inventory_qty is None:
+            inventory_qty = 1
+
+        stock_state = form_data["stock_state"] if form_data["stock_state"] in {"on_sale", "sold"} else "on_sale"
+        publish_status = form_data["publish_status"] if form_data["publish_status"] in {"active", "draft"} else "draft"
+        site_name = form_data["site"] or "manual"
+        source_url = form_data["source_url"]
+
+        if source_url:
+            existing = session_db.query(Product).filter_by(
+                user_id=current_user.id,
+                source_url=source_url,
+            ).first()
+            if existing:
+                errors.append("同じ元URLの商品が既に登録されています")
+
+        if errors:
+            return _render_manual_add(session_db, form_data=form_data, errors=errors)
+
+        effective_inventory_qty = 0 if stock_state == "sold" else inventory_qty
+        effective_last_status = "sold" if stock_state == "sold" else "on_sale"
+        normalized_images = _normalize_manual_image_urls(form_data["image_urls"])
+        now = datetime.utcnow()
+
+        product = Product(
+            user_id=current_user.id,
+            shop_id=shop_id,
+            site=site_name,
+            source_url=source_url,
+            last_title=title,
+            last_price=cost_price,
+            last_status=effective_last_status,
+            custom_title=title,
+            custom_description=form_data["description"] or None,
+            custom_title_en=form_data["title_en"] or None,
+            custom_description_en=form_data["description_en"] or None,
+            status=publish_status,
+            tags=form_data["tags"] or None,
+            selling_price=selling_price,
+            created_at=now,
+            updated_at=now,
+        )
+        session_db.add(product)
+        session_db.flush()
+
+        snapshot = ProductSnapshot(
+            product_id=product.id,
+            scraped_at=now,
+            title=title,
+            price=cost_price,
+            status=effective_last_status,
+            description=form_data["description"] or None,
+            image_urls="|".join(normalized_images),
+        )
+        session_db.add(snapshot)
+
+        variant = Variant(
+            product_id=product.id,
+            option1_value="Default Title",
+            sku=form_data["sku"] or None,
+            price=selling_price if selling_price is not None else cost_price,
+            inventory_qty=effective_inventory_qty,
+            position=1,
+        )
+        session_db.add(variant)
+
+        session_db.commit()
+        return redirect(url_for('products.product_detail', product_id=product.id))
     finally:
         session_db.close()
 

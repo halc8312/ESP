@@ -1,6 +1,7 @@
 """
 Product detail routes.
 """
+import json
 from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, session
 from flask_login import login_required, current_user
@@ -9,6 +10,88 @@ from database import SessionLocal
 from models import Shop, Product, Variant, ProductSnapshot, DescriptionTemplate
 
 products_bp = Blueprint('products', __name__)
+
+
+def _latest_snapshot_for_product(session_db, product_id):
+    return (
+        session_db.query(ProductSnapshot)
+        .filter_by(product_id=product_id)
+        .order_by(ProductSnapshot.scraped_at.desc())
+        .first()
+    )
+
+
+def _split_snapshot_images(snapshot):
+    if not snapshot or not snapshot.image_urls:
+        return []
+    return [url.strip() for url in snapshot.image_urls.split("|") if url.strip()]
+
+
+def _is_allowed_image_url(url):
+    lower_url = url.lower()
+    return lower_url.startswith("http://") or lower_url.startswith("https://") or url.startswith("/")
+
+
+def _parse_image_urls_json(raw_value, fallback_urls):
+    if not raw_value:
+        return list(fallback_urls)
+
+    try:
+        payload = json.loads(raw_value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return list(fallback_urls)
+
+    if not isinstance(payload, list):
+        return list(fallback_urls)
+
+    normalized_urls = []
+    seen_urls = set()
+
+    for item in payload:
+        if not isinstance(item, str):
+            continue
+
+        candidate = item.strip()
+        if not candidate or candidate in seen_urls:
+            continue
+        if not _is_allowed_image_url(candidate):
+            continue
+
+        normalized_urls.append(candidate)
+        seen_urls.add(candidate)
+
+    return normalized_urls
+
+
+def _build_image_snapshot(product, base_snapshot, image_urls):
+    if not base_snapshot and not image_urls:
+        return None
+
+    return ProductSnapshot(
+        product_id=product.id,
+        scraped_at=datetime.utcnow(),
+        title=(
+            base_snapshot.title
+            if base_snapshot and base_snapshot.title
+            else (product.custom_title or product.last_title)
+        ),
+        price=(
+            base_snapshot.price
+            if base_snapshot and base_snapshot.price is not None
+            else product.last_price
+        ),
+        status=(
+            base_snapshot.status
+            if base_snapshot and base_snapshot.status
+            else product.last_status
+        ),
+        description=(
+            base_snapshot.description
+            if base_snapshot and base_snapshot.description
+            else (product.custom_description or "")
+        ),
+        image_urls="|".join(image_urls),
+    )
 
 
 @products_bp.route("/product/<int:product_id>", methods=["GET", "POST"])
@@ -20,6 +103,9 @@ def product_detail(product_id):
         product = session_db.query(Product).filter_by(id=product_id, user_id=current_user.id).one_or_none()
         if not product:
             return "Product not found or access denied", 404
+
+        snapshot = _latest_snapshot_for_product(session_db, product.id)
+        current_images = _split_snapshot_images(snapshot)
 
         if request.method == "POST":
             # --- 所属ショップ ---
@@ -34,6 +120,8 @@ def product_detail(product_id):
             # --- 基本情報 (Product) ---
             product.custom_title = request.form.get("title")
             product.custom_description = request.form.get("description")
+            product.custom_title_en = request.form.get("title_en")
+            product.custom_description_en = request.form.get("description_en")
             product.status = request.form.get("status")
 
             # --- オプション名 (Product) ---
@@ -49,6 +137,16 @@ def product_detail(product_id):
             product.custom_handle = request.form.get("handle")
             product.seo_title = request.form.get("seo_title")
             product.seo_description = request.form.get("seo_description")
+
+            submitted_images = _parse_image_urls_json(
+                request.form.get("image_urls_json"),
+                current_images,
+            )
+            if submitted_images != current_images:
+                next_snapshot = _build_image_snapshot(product, snapshot, submitted_images)
+                if next_snapshot is not None:
+                    session_db.add(next_snapshot)
+                    snapshot = next_snapshot
             
             # --- バリエーション削除 ---
             delete_ids_str = request.form.get("delete_v_ids", "")
@@ -134,17 +232,9 @@ def product_detail(product_id):
             session_db.commit()
             return redirect(url_for('products.product_detail', product_id=product.id))
 
-        snapshot = (
-            session_db.query(ProductSnapshot)
-            .filter_by(product_id=product.id)
-            .order_by(ProductSnapshot.scraped_at.desc())
-            .first()
-        )
         templates = session_db.query(DescriptionTemplate).order_by(DescriptionTemplate.name).all()
-        
-        images = []
-        if snapshot and snapshot.image_urls:
-            images = snapshot.image_urls.split("|")
+
+        images = _split_snapshot_images(snapshot)
             
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         current_shop_id = session.get('current_shop_id')

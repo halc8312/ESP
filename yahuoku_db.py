@@ -1,67 +1,28 @@
 """
-Yahoo Auctions scraper - Product detail scraping for auctions.yahoo.co.jp
-Uses __NEXT_DATA__ JSON when available, similar to Yahoo Shopping.
+Yahoo Auctions scraping module.
+Uses Scrapling HTTP fetches for product detail pages and search results.
 """
+import json
 import logging
 import re
-import json
-import time
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from yahoo_db import create_driver
+from urllib.parse import urljoin
 
 logger = logging.getLogger("yahuoku")
 
-# CSS Selectors
-SELECTORS = {
-    "title": "h1.ProductTitle__text, h1",
-    "price": ".Price__value",
-    "countdown": ".CountDown__time",
-    "seller": ".Seller__name a",
-    "description": "#ProductDescription",
-    "images": ".slick-slide img",
-    "next_data": "#__NEXT_DATA__",
-}
+
+SEARCH_LINK_SELECTORS = [
+    ".Product__titleLink",
+    "a[href*='/auction/']",
+    "a[href*='page.auctions.yahoo.co.jp/auction/']",
+]
 
 
-def extract_next_data(driver) -> dict:
-    """Extract auction data from __NEXT_DATA__ JSON."""
-    try:
-        script = driver.find_element(By.CSS_SELECTOR, SELECTORS["next_data"])
-        data = json.loads(script.get_attribute("innerHTML"))
-        
-        # Navigate to item data - path may vary
-        props = data.get("props", {})
-        page_props = props.get("pageProps", {})
-        
-        # Try different paths
-        initial_state = page_props.get("initialState", {})
-        item_detail = initial_state.get("item", {}).get("detail", {}).get("item", {})
-        
-        if item_detail:
-            return item_detail
-        
-        # Alternative path
-        initial_props = page_props.get("initialProps", {})
-        auction_item = initial_props.get("auctionItem", {})
-        
-        return auction_item or {}
-        
-    except Exception as e:
-        logger.debug(f"__NEXT_DATA__ extraction failed: {e}")
-        return {}
-
-
-def scrape_item_detail(driver, url: str) -> dict:
-    """
-    ヤフオクの商品ページから詳細情報を取得する
-    """
-    result = {
+def _empty_result(url: str, status: str = "error") -> dict:
+    return {
         "url": url,
         "title": "",
         "price": None,
-        "status": "active",  # Auctions are active by default
+        "status": status,
         "description": "",
         "image_urls": [],
         "variants": [],
@@ -69,266 +30,67 @@ def scrape_item_detail(driver, url: str) -> dict:
         "seller": "",
         "end_time": "",
     }
-    
-    try:
-        driver.get(url)
-        wait = WebDriverWait(driver, 10)
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        time.sleep(2)  # Yahoo Auctions needs time to load
-    except Exception as e:
-        logger.error(f"Error accessing {url}: {e}")
-        result["status"] = "error"
-        return result
-    
-    # Extract auction ID from URL
-    match = re.search(r"/auction/([a-zA-Z0-9]+)", url)
-    if match:
-        result["auction_id"] = match.group(1)
-    
-    # Try __NEXT_DATA__ first
-    next_data = extract_next_data(driver)
-    
-    if next_data:
-        result["title"] = next_data.get("title", "")
-        
-        # Price structure varies
-        price_data = next_data.get("price", {})
-        if isinstance(price_data, dict):
-            result["price"] = price_data.get("current") or price_data.get("bid")
-        elif isinstance(price_data, (int, float)):
-            result["price"] = int(price_data)
-        
-        seller_data = next_data.get("seller", {})
-        if isinstance(seller_data, dict):
-            result["seller"] = seller_data.get("name", "")
-        
-        result["auction_id"] = next_data.get("auctionID", result["auction_id"])
-    
-    # Fallback to CSS selectors
-    if not result["title"]:
-        try:
-            title_el = driver.find_element(By.CSS_SELECTOR, SELECTORS["title"])
-            result["title"] = title_el.text.strip()
-        except Exception:
-            pass
-    
-    if result["price"] is None:
-        try:
-            price_els = driver.find_elements(By.CSS_SELECTOR, SELECTORS["price"])
-            for el in price_els:
-                text = el.text.strip()
-                match = re.search(r"([\d,]+)", text)
-                if match:
-                    result["price"] = int(match.group(1).replace(",", ""))
-                    break
-        except Exception:
-            pass
-    
-    # Time remaining
-    try:
-        countdown_el = driver.find_element(By.CSS_SELECTOR, SELECTORS["countdown"])
-        result["end_time"] = countdown_el.text.strip()
-        
-        # Check if ended
-        if "終了" in result["end_time"]:
-            result["status"] = "sold"
-    except Exception:
-        pass
-    
-    # Seller
-    if not result["seller"]:
-        try:
-            seller_el = driver.find_element(By.CSS_SELECTOR, SELECTORS["seller"])
-            result["seller"] = seller_el.text.strip()
-        except Exception:
-            pass
-    
-    # Images
-    try:
-        img_els = driver.find_elements(By.CSS_SELECTOR, SELECTORS["images"])
-        for img in img_els:
-            src = img.get_attribute("src")
-            if src and src not in result["image_urls"]:
-                # Filter out placeholder images
-                if "placeholder" not in src.lower():
-                    result["image_urls"].append(src)
-    except Exception:
-        pass
-    
-    # Description - Multiple approaches
-    # Approach 1: Try #ProductDescription
-    try:
-        desc_el = driver.find_element(By.CSS_SELECTOR, SELECTORS["description"])
-        result["description"] = desc_el.text.strip()
-    except Exception:
-        pass
-    
-    # Approach 2: Find section containing "商品説明" and get sibling/child content
-    if not result["description"]:
-        try:
-            # Find h2 with "商品説明"
-            headings = driver.find_elements(By.TAG_NAME, "h2")
-            for h in headings:
-                if "商品説明" in h.text:
-                    # Get parent section and find content div
-                    section = h.find_element(By.XPATH, "./ancestor::section")
-                    # Get all text within section excluding the header
-                    all_divs = section.find_elements(By.TAG_NAME, "div")
-                    for div in all_divs:
-                        text = div.text.strip()
-                        if text and "商品説明" not in text and len(text) > 50:
-                            result["description"] = text
-                            break
-                    if result["description"]:
-                        break
-        except Exception:
-            pass
-    
-    # Approach 3: Check for iframe with description
-    if not result["description"]:
-        try:
-            iframes = driver.find_elements(By.TAG_NAME, "iframe")
-            for iframe in iframes:
-                iframe_id = iframe.get_attribute("id") or ""
-                iframe_name = iframe.get_attribute("name") or ""
-                if "desc" in iframe_id.lower() or "desc" in iframe_name.lower():
-                    driver.switch_to.frame(iframe)
-                    body = driver.find_element(By.TAG_NAME, "body")
-                    result["description"] = body.text.strip()
-                    driver.switch_to.default_content()
-                    break
-        except Exception:
-            driver.switch_to.default_content()
-    
-    # Approach 4: Search body text for description near relevant keywords
-    if not result["description"]:
-        try:
-            body_text = driver.find_element(By.TAG_NAME, "body").text
-            # Find text after "商品説明" marker
-            if "商品説明" in body_text:
-                start_idx = body_text.find("商品説明") + len("商品説明")
-                # Find end marker (next section like "発送について" or "支払い")
-                end_markers = [
-                    "発送について", "支払いについて", "注意事項", "送料", "配送方法",
-                    "発送詳細", "支払い詳細", "お支払い", "落札者の方へ", 
-                    "連絡掲示板", "出品者情報", "質問する", "ウォッチ",
-                    "入札件数", "残り時間", "出品地域", "出品者", "評価"
-                ]
-                end_idx = len(body_text)
-                for marker in end_markers:
-                    marker_idx = body_text.find(marker, start_idx)
-                    if marker_idx > 0 and marker_idx < end_idx:
-                        end_idx = marker_idx
-                desc_text = body_text[start_idx:end_idx].strip()
-                
-                # Clean up the description - remove common noise patterns
-                lines = desc_text.split('\n')
-                cleaned_lines = []
-                for line in lines:
-                    line = line.strip()
-                    # Skip empty lines and very short lines
-                    if not line or len(line) < 3:
-                        continue
-                    # Skip lines that look like metadata/table headers
-                    skip_patterns = [
-                        "全国一律", "送料無料", "匿名配送", "発送元", "発送日",
-                        "着払い", "離島", "配送", "追跡番号", "補償", "定形外",
-                        "ゆうパック", "ヤマト", "佐川", "クリックポスト", "ネコポス",
-                        "発送までの日数", "入金確認後", "円～", "～円", "円　～"
-                    ]
-                    if any(pattern in line for pattern in skip_patterns):
-                        continue
-                    cleaned_lines.append(line)
-                
-                desc_text = '\n'.join(cleaned_lines).strip()
-                if len(desc_text) > 20:
-                    result["description"] = desc_text[:2000]  # Limit to 2000 chars
-        except Exception:
-            pass
-    
-    logger.debug(f"Description length: {len(result['description'])}")
-    
-    # Default variant
-    if result["price"]:
-        result["variants"] = [{
-            "option1_value": "Default Title",
-            "price": result["price"],
-            "sku": result["auction_id"],
-            "inventory_qty": 1 if result["status"] == "active" else 0
-        }]
-    
-    logger.info(f"Scraped: {result['title'][:30]}... - ¥{result['price']} ({result['status']})")
-    return result
+
+
+def _resolve_detail_url(url_or_driver, maybe_url=None) -> str:
+    if isinstance(maybe_url, str) and maybe_url:
+        return maybe_url
+    if isinstance(url_or_driver, str) and url_or_driver:
+        return url_or_driver
+    raise ValueError("url is required")
+
+
+def _extract_auction_item(page) -> dict:
+    script_el = page.find("#__NEXT_DATA__")
+    if not script_el:
+        return {}
+
+    json_str = str(script_el.text or "").strip()
+    if not json_str:
+        return {}
+
+    data = json.loads(json_str)
+    props = data.get("props", {})
+    page_props = props.get("pageProps", {})
+
+    initial_state = page_props.get("initialState", {})
+    item_detail = initial_state.get("item", {}).get("detail", {}).get("item", {})
+    if item_detail:
+        return item_detail
+
+    initial_props = page_props.get("initialProps", {})
+    return initial_props.get("auctionItem", {}) or {}
 
 
 def scrape_item_detail_light(url: str) -> dict:
-    """
-    Light HTTP-only scrape for Yahoo Auctions using Scrapling Fetcher.
-    Extracts data from the embedded __NEXT_DATA__ JSON without launching a browser.
-    Memory: ~5 MB (vs ~400 MB for Chrome). Returns empty dict on failure.
-    """
+    """HTTP-only Yahoo Auctions detail scrape."""
     try:
         from services.scraping_client import fetch_static
+
         page = fetch_static(url)
-
-        script_el = page.find("#__NEXT_DATA__")
-        if not script_el:
-            return {}
-
-        json_str = str(script_el.text or "").strip()
-        if not json_str:
-            return {}
-
-        data = json.loads(json_str)
-        props = data.get("props", {})
-        page_props = props.get("pageProps", {})
-
-        # Try primary path
-        initial_state = page_props.get("initialState", {})
-        item_detail = initial_state.get("item", {}).get("detail", {}).get("item", {})
-
-        # Try alternative path
-        if not item_detail:
-            initial_props = page_props.get("initialProps", {})
-            item_detail = initial_props.get("auctionItem", {})
-
+        item_detail = _extract_auction_item(page)
         if not item_detail:
             return {}
 
-        result = {
-            "url": url,
-            "title": item_detail.get("title", ""),
-            "price": None,
-            "status": "active",
-            "description": "",
-            "image_urls": [],
-            "variants": [],
-            "auction_id": "",
-            "seller": "",
-            "end_time": "",
-        }
+        result = _empty_result(url, status="active")
+        result["title"] = item_detail.get("title", "")
 
-        # Price
         price_data = item_detail.get("price", {})
         if isinstance(price_data, dict):
             result["price"] = price_data.get("current") or price_data.get("bid")
         elif isinstance(price_data, (int, float)):
             result["price"] = int(price_data)
-        # Alternative path (auctionItem)
         if result["price"] is None:
             result["price"] = item_detail.get("currentPrice") or item_detail.get("price")
 
-        # Description
         description = item_detail.get("description", "") or item_detail.get("itemDescription", "")
         if description:
             result["description"] = description
         else:
-            # Fallback: meta[name='description']
             meta_el = page.css("meta[name='description']")
             if meta_el:
                 result["description"] = str(meta_el[0].attrib.get("content", "") or "")
 
-        # Images
         image_urls = []
         for key in ("images", "image", "imageList"):
             imgs = item_detail.get(key)
@@ -349,7 +111,6 @@ def scrape_item_detail_light(url: str) -> dict:
                 img_url = imgs.get("url") or imgs.get("src") or imgs.get("image") or imgs.get("imageUrl")
                 if img_url and img_url.startswith("http") and img_url not in image_urls:
                     image_urls.append(img_url)
-        # Fallback: og:image meta tag
         if not image_urls:
             og_el = page.css("meta[property='og:image']")
             if og_el:
@@ -358,7 +119,6 @@ def scrape_item_detail_light(url: str) -> dict:
                     image_urls.append(og_url)
         result["image_urls"] = image_urls
 
-        # Status: check JSON flags first, then page text
         status_flag = item_detail.get("status") or item_detail.get("isFinished") or item_detail.get("isClosed")
         if status_flag in (True, "closed", "finished", "ended"):
             result["status"] = "sold"
@@ -367,62 +127,81 @@ def scrape_item_detail_light(url: str) -> dict:
             if "終了" in page_text or "落札" in page_text:
                 result["status"] = "sold"
 
-        # Seller
         seller_data = item_detail.get("seller", {})
         if isinstance(seller_data, dict):
             result["seller"] = seller_data.get("name", "")
 
-        # Auction ID
         match = re.search(r"/auction/([a-zA-Z0-9]+)", url)
         if match:
             result["auction_id"] = match.group(1)
         result["auction_id"] = item_detail.get("auctionID", result["auction_id"])
 
-        # Default variant
         if result["price"]:
-            result["variants"] = [{
-                "option1_value": "Default Title",
-                "price": result["price"],
-                "sku": result["auction_id"],
-                "inventory_qty": 1 if result["status"] == "active" else 0
-            }]
+            result["variants"] = [
+                {
+                    "option1_value": "Default Title",
+                    "price": result["price"],
+                    "sku": result["auction_id"],
+                    "inventory_qty": 1 if result["status"] == "active" else 0,
+                }
+            ]
 
-        if result["title"]:
-            print(f"DEBUG [light]: Yahuoku light scrape success -> {result['title'][:40]}")
         return result
-
-    except Exception as e:
-        logger.debug(f"Yahuoku light scrape error: {e}")
+    except Exception as exc:
+        logger.debug("Yahuoku light scrape error: %s", exc)
         return {}
 
 
+def scrape_item_detail(url_or_driver, maybe_url=None, **_kwargs) -> dict:
+    """
+    Yahoo Auctions detail scrape.
+    The legacy `(driver, url)` signature is accepted for backward compatibility.
+    """
+    url = _resolve_detail_url(url_or_driver, maybe_url)
+    return scrape_item_detail_light(url) or _empty_result(url)
+
+
 def scrape_single_item(url: str, headless: bool = True) -> list:
-    """
-    指定されたヤフオク商品URLを1件だけスクレイピング。
-    Scrapling HTTP-onlyで試み、失敗時はSeleniumにフォールバック。
-    """
-    # Attempt 1: HTTP-only (fast, low memory)
-    data = scrape_item_detail_light(url)
-    if data and data.get("title"):
-        return [data]
+    """Scrape a single Yahoo Auctions item and return `list[dict]`."""
+    result = scrape_item_detail(url)
+    return [result] if result.get("title") else []
 
-    logger.debug("Yahuoku light scrape failed, falling back to Selenium")
 
-    # Attempt 2: Selenium fallback
-    driver = None
-    try:
-        driver = create_driver(headless=headless)
-        result = scrape_item_detail(driver, url)
-        return [result] if result["title"] else []
-    except Exception as e:
-        logger.error(f"Error in scrape_single_item: {e}")
-        return []
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except Exception:
-                pass
+def _extract_search_urls(page, base_url: str, max_items: int) -> list:
+    urls = []
+    seen = set()
+    for selector in SEARCH_LINK_SELECTORS:
+        for anchor in page.css(selector):
+            href = str(anchor.attrib.get("href", "") or "").strip()
+            if not href:
+                continue
+            full_url = urljoin(base_url, href)
+            if "/auction/" not in full_url:
+                continue
+            if not (
+                "auctions.yahoo.co.jp" in full_url
+                or "page.auctions.yahoo.co.jp" in full_url
+            ):
+                continue
+            if full_url in seen:
+                continue
+            seen.add(full_url)
+            urls.append(full_url)
+            if len(urls) >= max_items:
+                return urls
+    return urls
+
+
+def _find_next_page_url(page, current_url: str) -> str:
+    for anchor in page.css("a[href]"):
+        href = str(anchor.attrib.get("href", "") or "").strip()
+        if not href:
+            continue
+        text = str(anchor.text or "").strip()
+        classes = str(anchor.attrib.get("class", "") or "")
+        if "次へ" in text or "next" in classes.lower():
+            return urljoin(current_url, href)
+    return ""
 
 
 def scrape_search_result(
@@ -431,56 +210,35 @@ def scrape_search_result(
     max_scroll: int = 3,
     headless: bool = True,
 ) -> list:
-    """
-    ヤフオク検索結果から複数商品をスクレイピング
-    """
-    driver = None
+    """Scrape Yahoo Auctions search results using HTTP-only page fetches."""
     results = []
-    
+    candidate_urls = []
+
     try:
-        driver = create_driver(headless=headless)
-        driver.get(search_url)
-        time.sleep(2)
-        
-        # Find product links
-        product_urls = set()
-        product_selectors = [
-            ".Product__titleLink",
-            "a[href*='/auction/']",
-        ]
-        
-        for selector in product_selectors:
-            try:
-                elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                for el in elements:
-                    href = el.get_attribute("href")
-                    if href and "/auction/" in href:
-                        product_urls.add(href)
-                        if len(product_urls) >= max_items:
-                            break
-            except Exception:
-                continue
-            if len(product_urls) >= max_items:
+        from services.scraping_client import fetch_static
+
+        current_url = search_url
+        seen_pages = set()
+        max_pages = max(1, max_scroll)
+
+        while current_url and current_url not in seen_pages and len(seen_pages) < max_pages:
+            seen_pages.add(current_url)
+            page = fetch_static(current_url)
+            for item_url in _extract_search_urls(page, current_url, max_items=max_items * 2):
+                if item_url not in candidate_urls:
+                    candidate_urls.append(item_url)
+                if len(candidate_urls) >= max_items:
+                    break
+            if len(candidate_urls) >= max_items:
                 break
-        
-        # Scrape each product
-        for url in list(product_urls)[:max_items]:
-            try:
-                result = scrape_item_detail(driver, url)
-                if result["title"]:
-                    results.append(result)
-            except Exception as e:
-                logger.error(f"Error scraping {url}: {e}")
-                continue
-        
+            current_url = _find_next_page_url(page, current_url)
+
+        for item_url in candidate_urls[:max_items]:
+            result = scrape_item_detail(item_url)
+            if result.get("title"):
+                results.append(result)
+
         return results
-        
-    except Exception as e:
-        logger.error(f"Error in scrape_search_result: {e}")
+    except Exception as exc:
+        logger.error("Error in scrape_search_result: %s", exc)
         return results
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except Exception:
-                pass
