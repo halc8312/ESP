@@ -28,6 +28,17 @@ class RakumaPatrol(BasePatrol):
             page = StealthyFetcher.fetch(url, headless=True, network_idle=True)
             body_els = page.css("body")
             body_text = body_els[0].text if body_els else ""
+            if not body_text:
+                for attr_name in ("get_text", "get_all_text"):
+                    extractor = getattr(page, attr_name, None)
+                    if not callable(extractor):
+                        continue
+                    try:
+                        body_text = str(extractor() or "")
+                    except Exception:
+                        continue
+                    if body_text:
+                        break
 
             # --- Price extraction ---
             price = self._extract_price_from_page(page, body_text)

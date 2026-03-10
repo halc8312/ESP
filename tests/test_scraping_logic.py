@@ -1,6 +1,14 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from mercari_db import scrape_search_result, scrape_item_detail, scrape_shops_product
+from mercari_db import (
+    _extract_price_from_text,
+    _extract_mercari_shops_title_from_body,
+    _infer_mercari_shops_status,
+    _normalize_mercari_shops_title,
+    scrape_search_result,
+    scrape_item_detail,
+    scrape_shops_product,
+)
 
 # --- Test Cases for Playwright / Scrapling Implementation ---
 
@@ -114,4 +122,42 @@ def test_scrape_variants_shops_pattern():
         assert data["title"] == "Shops Item"
         assert len(data["variants"]) == 2
         assert data["variants"][0]["option1_value"] == "Size S"
+
+
+def test_mercari_shops_price_fallback_supports_yen_symbol():
+    assert _extract_price_from_text("¥\n2,980\n送料込み") == 2980
+
+
+def test_mercari_shops_title_fallback_uses_document_title():
+    assert _normalize_mercari_shops_title("テスト商品 - メルカリ") == "テスト商品"
+
+
+def test_mercari_shops_title_fallback_can_extract_from_body():
+    body_text = """
+    コンテンツにスキップ
+    メルカリShops
+    1 / 9
+    テスト商品タイトル
+    ¥2,980
+    送料込み
+    """
+    assert _extract_mercari_shops_title_from_body(body_text) == "テスト商品タイトル"
+
+
+def test_mercari_shops_status_prefers_purchase_flow_over_partial_sold_variants():
+    body_text = """
+    テスト商品
+    売り切れ
+    残り1点
+    購入手続きへ
+    """
+    assert _infer_mercari_shops_status(body_text) == "on_sale"
+
+
+def test_mercari_shops_status_detects_full_sold_out():
+    body_text = """
+    この商品は売り切れです
+    在庫なし
+    """
+    assert _infer_mercari_shops_status(body_text) == "sold"
 

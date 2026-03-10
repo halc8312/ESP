@@ -279,6 +279,51 @@ def test_snkrdunk_search_result_uses_scrapling_dynamic_fetch():
     assert results[0]["title"] == "Jordan Test"
 
 
+def test_snkrdunk_detail_static_jsonld_avoids_dynamic_fallback():
+    import snkrdunk_db
+
+    detail_page = MockPage(
+        css_map={
+            "script[type='application/ld+json']": [
+                MockElement(
+                    text=json.dumps(
+                        {
+                            "@context": "https://schema.org/",
+                            "@type": "Product",
+                            "name": "Jordan Static",
+                            "image": "https://img.example.com/snkrdunk-static.jpg",
+                            "description": "static description",
+                            "offers": {
+                                "@type": "AggregateOffer",
+                                "lowPrice": 35200,
+                                "availability": "https://schema.org/InStock",
+                            },
+                        }
+                    )
+                )
+            ],
+            "meta[name='description']": [MockElement(attrib={"content": "meta description"})],
+            "meta[property='og:image']": [MockElement(attrib={"content": "https://img.example.com/fallback.jpg"})],
+            "meta[property='og:title']": [MockElement(attrib={"content": "Jordan Staticの新品/中古フリマ(通販)｜スニダン"})],
+            "title": [MockElement(text="Jordan Staticの新品/中古フリマ(通販)｜スニダン")],
+        },
+        text="Jordan Static",
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=detail_page) as mock_static, patch(
+        "services.scraping_client.fetch_dynamic"
+    ) as mock_dynamic:
+        result = snkrdunk_db.scrape_item_detail_light("https://snkrdunk.com/products/CT8013-170")
+
+    mock_static.assert_called_once()
+    mock_dynamic.assert_not_called()
+    assert result["title"] == "Jordan Static"
+    assert result["price"] == 35200
+    assert result["description"] == "static description"
+    assert result["image_urls"] == ["https://img.example.com/snkrdunk-static.jpg"]
+    assert result["status"] == "on_sale"
+
+
 def test_surugaya_scrape_single_item_works_without_browser_fallback():
     import surugaya_db
 

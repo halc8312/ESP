@@ -30,6 +30,9 @@ except ImportError:
     def log_scrape_result(*a): return True
     def check_scrape_health(*a): return {"action_required": False}
 
+
+logger = logging.getLogger("mercari")
+
 def _get_or_create_event_loop():
     """
     現在のスレッドのイベントループを取得、または新規作成する。
@@ -45,6 +48,91 @@ def _get_or_create_event_loop():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         return loop
+
+
+def _extract_price_from_text(text: str):
+    if not text:
+        return None
+
+    for pattern in (r"[¥￥]\s*([\d,]+)", r"([\d,]+)\s*円"):
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        try:
+            return int(match.group(1).replace(",", ""))
+        except ValueError:
+            continue
+
+    return None
+
+
+def _normalize_mercari_shops_title(text: str) -> str:
+    if not text:
+        return ""
+
+    normalized = text.strip()
+    normalized = re.sub(r"\s*[-|｜]\s*メルカリ(?:\s*Shops)?\s*$", "", normalized).strip()
+    normalized = re.sub(r"\s*[-|｜]\s*Mercari(?:\s*Shops)?\s*$", "", normalized).strip()
+
+    if normalized in {"メルカリ", "Mercari"}:
+        return ""
+    return normalized
+
+
+def _extract_mercari_shops_title_from_body(body_text: str) -> str:
+    if not body_text:
+        return ""
+
+    lines = [line.strip() for line in body_text.splitlines() if line.strip()]
+    skip_lines = {"コンテンツにスキップ", "ログイン", "会員登録", "出品", "日本語", "メルカリShops", "質問する"}
+
+    for index, line in enumerate(lines):
+        if line in skip_lines:
+            continue
+        if re.fullmatch(r"\d+\s*/\s*\d+", line):
+            continue
+        if _extract_price_from_text(line) is not None or line == "¥":
+            continue
+
+        nearby_lines = lines[index + 1:index + 4]
+        if any(candidate == "¥" or _extract_price_from_text(candidate) is not None for candidate in nearby_lines):
+            return line
+
+    return ""
+
+
+def _infer_mercari_shops_status(body_text: str) -> str:
+    if not body_text:
+        return "on_sale"
+
+    purchase_markers = ("購入手続きへ", "カートに入れる", "今すぐ購入")
+    sold_markers = ("この商品は売り切れです", "在庫なし", "現在在庫がありません")
+
+    if any(marker in body_text for marker in purchase_markers):
+        return "on_sale"
+    if any(marker in body_text for marker in sold_markers):
+        return "sold"
+    if "売り切れ" in body_text and "残り" not in body_text:
+        return "sold"
+    return "on_sale"
+
+
+async def _extract_first_non_empty_text_async(page, selectors: list) -> str:
+    for selector in selectors:
+        try:
+            elements = await page.query_selector_all(selector)
+        except Exception:
+            continue
+
+        for element in elements:
+            try:
+                candidate = (await element.inner_text()).strip()
+            except Exception:
+                continue
+            if candidate:
+                return candidate
+
+    return ""
 
 
 
@@ -127,45 +215,46 @@ async def _scrape_shops_product_async(url: str) -> dict:
         
         try:
             await page.goto(url, wait_until="domcontentloaded")
+            try:
+                await page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
+            try:
+                await page.wait_for_selector("h1, [data-testid='product-price']", timeout=5000)
+            except Exception:
+                pass
             await page.wait_for_timeout(3000)  # Shopsはロードが遅いことがあるため待機
+            body_text = await page.evaluate("document.body.innerText")
             
             # ---- タイトル ----
-            title = ""
             title_selectors = get_selectors('mercari', 'shops', 'title') or ["[data-testid='product-name']", "h1"]
-            for selector in title_selectors:
-                elements = await page.query_selector_all(selector)
-                if elements:
-                    title = (await elements[0].inner_text()).strip()
-                    break
+            title = await _extract_first_non_empty_text_async(page, title_selectors)
+            if not title:
+                title = _normalize_mercari_shops_title(await page.title())
+            if not title:
+                title = _extract_mercari_shops_title_from_body(body_text)
 
             # ---- 価格 ----
             price = None
             price_selectors = get_selectors('mercari', 'shops', 'price') or ["[data-testid='product-price']"]
             for selector in price_selectors:
-                elements = await page.query_selector_all(selector)
+                try:
+                    elements = await page.query_selector_all(selector)
+                except Exception:
+                    continue
                 if elements:
                     price_text = await elements[0].inner_text()
-                    m = re.search(r"([\d,]+)", price_text)
-                    if m:
-                        price = int(m.group(1).replace(",", ""))
+                    price = _extract_price_from_text(price_text)
+                    if price is not None:
                         break
                         
             # 予備の価格取得ロジック
             if price is None:
-                body_text = await page.evaluate("document.body.innerText")
-                m = re.search(r"([\d,]+)\s*円", body_text)
-                if m:
-                    price = int(m.group(1).replace(",", ""))
+                price = _extract_price_from_text(body_text)
 
             # ---- 説明文 ----
-            description = ""
             desc_selectors = get_selectors('mercari', 'shops', 'description') or ["[data-testid='product-description']"]
-            for selector in desc_selectors:
-                elements = await page.query_selector_all(selector)
-                if elements:
-                    description = (await elements[0].inner_text()).strip()
-                    if description:
-                        break
+            description = await _extract_first_non_empty_text_async(page, desc_selectors)
 
             # 説明文フォールバック: meta description
             if not description:
@@ -189,7 +278,10 @@ async def _scrape_shops_product_async(url: str) -> dict:
             image_urls = []
             image_selectors = get_selectors('mercari', 'shops', 'images') or ["img[src*='mercari'][src*='static']"]
             for selector in image_selectors:
-                imgs = await page.query_selector_all(selector)
+                try:
+                    imgs = await page.query_selector_all(selector)
+                except Exception:
+                    continue
                 for img in imgs:
                     src = await img.get_attribute("src")
                     if src and src not in image_urls:
@@ -201,9 +293,7 @@ async def _scrape_shops_product_async(url: str) -> dict:
             
             colors = await _extract_shops_variants_async(page, ['カラー', 'Color'])
             types = await _extract_shops_variants_async(page, ['種類', 'サイズ', 'Size'])
-            
-            print(f"DEBUG Colors found: {colors}")
-            print(f"DEBUG Types found: {types}")
+            logger.debug("Mercari Shops variants: colors=%s types=%s", colors, types)
 
             # 色と種類を組み合わせてバリエーションを作成
             if colors and types:
@@ -244,10 +334,7 @@ async def _scrape_shops_product_async(url: str) -> dict:
                 item_data_update = {"option1_name": option1_name}
 
             # ---- ステータス ----
-            status = "on_sale"
-            body_text = await page.evaluate("document.body.innerText")
-            if "売り切れ" in body_text or "在庫なし" in body_text:
-                status = "sold"
+            status = _infer_mercari_shops_status(body_text)
 
             # Update item_data with found option names
             item_data = {
@@ -549,15 +636,15 @@ def scrape_single_item(url: str, headless: bool = True):
     metrics = get_metrics()
     metrics.start('mercari', 'single')
     try:
-        print(f"DEBUG: Starting scrape_single_item for {url}")
+        logger.debug("Starting scrape_single_item for %s", url)
         
         data = scrape_item_detail(url)
         log_scrape_result('mercari', url, data)
         
         if data.get("title"):
-            print(f"DEBUG: Success -> {data['title']}")
+            logger.debug("Mercari scrape success: %s", data["title"])
         else:
-            print("DEBUG: Failed to get title")
+            logger.debug("Mercari scrape failed to get title for %s", url)
 
         metrics.finish()
         return [data]
