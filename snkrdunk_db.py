@@ -415,6 +415,32 @@ def _extract_search_urls(page, base_url: str, max_items: int) -> list:
     return urls
 
 
+def _find_next_page_url(page, current_url: str) -> str:
+    for anchor in page.css("a[href]"):
+        href = str(anchor.attrib.get("href", "") or "").strip()
+        if not href:
+            continue
+
+        full_url = urljoin(current_url, href)
+        if full_url == current_url or "snkrdunk.com" not in full_url:
+            continue
+
+        text = str(anchor.text or "").strip().lower()
+        classes = str(anchor.attrib.get("class", "") or "").lower()
+        rel = str(anchor.attrib.get("rel", "") or "").lower()
+        aria_label = str(anchor.attrib.get("aria-label", "") or "").lower()
+
+        if (
+            "次へ" in text
+            or "next" in text
+            or "next" in classes
+            or "next" in rel
+            or "next" in aria_label
+        ):
+            return full_url
+    return ""
+
+
 def scrape_search_result(
     search_url: str,
     max_items: int = 5,
@@ -425,18 +451,36 @@ def scrape_search_result(
     metrics = get_metrics()
     metrics.start("snkrdunk", "search")
     items = []
+    candidate_urls = []
+    candidate_target = max(max_items, max_items * 2)
 
     try:
         from services.scraping_client import fetch_dynamic, fetch_static
 
-        try:
-            page = fetch_dynamic(search_url, headless=headless, network_idle=True)
-        except Exception as exc:
-            logger.debug("SNKRDUNK dynamic search fetch failed, retrying static fetch: %s", exc)
-            page = fetch_static(search_url)
+        current_url = search_url
+        seen_pages = set()
+        max_pages = max(1, max_scroll)
 
-        candidate_urls = _extract_search_urls(page, search_url, max_items=max_items * 2)
-        for item_url in candidate_urls[:max_items]:
+        while current_url and current_url not in seen_pages and len(seen_pages) < max_pages:
+            seen_pages.add(current_url)
+            try:
+                page = fetch_dynamic(current_url, headless=headless, network_idle=True)
+            except Exception as exc:
+                logger.debug("SNKRDUNK dynamic search fetch failed, retrying static fetch: %s", exc)
+                page = fetch_static(current_url)
+
+            for item_url in _extract_search_urls(page, current_url, max_items=candidate_target):
+                if item_url not in candidate_urls:
+                    candidate_urls.append(item_url)
+                if len(candidate_urls) >= candidate_target:
+                    break
+            if len(candidate_urls) >= candidate_target:
+                break
+            current_url = _find_next_page_url(page, current_url)
+
+        for item_url in candidate_urls:
+            if len(items) >= max_items:
+                break
             data = scrape_item_detail(item_url)
             log_scrape_result("snkrdunk", item_url, data)
             if data.get("title"):

@@ -864,6 +864,7 @@ def scrape_search_result(
     駿河屋検索結果から複数商品をスクレイピング (curl_cffi版)
     """
     results = []
+    candidate_target = max(max_items, max_items * 2)
 
     try:
         print(f"[SURUGAYA] Search: Initializing curl_cffi session...")
@@ -895,7 +896,7 @@ def scrape_search_result(
                 logger.error("Surugaya search fetch error: unable to fetch page")
             if _should_use_yahoo_search_fallback():
                 print("[SURUGAYA] Search: INFO: Trying Yahoo search fallback after blocked search page...")
-                product_urls = _search_product_urls_via_yahoo(keyword, max_items=max_items)
+                product_urls = _search_product_urls_via_yahoo(keyword, max_items=candidate_target)
         else:
             print(f"[SURUGAYA] Search: Page title: {soup.title.string if soup.title else 'No Title'}")
 
@@ -903,12 +904,12 @@ def scrape_search_result(
                 logger.warning("Surugaya search page appears to be a challenge page.")
                 if _should_use_yahoo_search_fallback():
                     print("[SURUGAYA] Search: INFO: Trying Yahoo search fallback for product URLs...")
-                    product_urls = _search_product_urls_via_yahoo(keyword, max_items=max_items)
+                    product_urls = _search_product_urls_via_yahoo(keyword, max_items=candidate_target)
 
             page_urls = _build_search_page_urls(base_search_url, soup, max_scroll=max_scroll)
 
             for index, page_url in enumerate(page_urls):
-                if len(product_urls) >= max_items:
+                if len(product_urls) >= candidate_target:
                     break
 
                 if index == 0:
@@ -934,21 +935,23 @@ def scrape_search_result(
                     if product_url in product_urls:
                         continue
                     product_urls.append(product_url)
-                    if len(product_urls) >= max_items:
+                    if len(product_urls) >= candidate_target:
                         break
 
-                if len(product_urls) >= max_items:
+                if len(product_urls) >= candidate_target:
                     break
 
             if not product_urls and _should_use_yahoo_search_fallback():
                 print("[SURUGAYA] Search: INFO: Trying Yahoo search fallback (no product links found)...")
-                product_urls = _search_product_urls_via_yahoo(keyword, max_items=max_items)
+                product_urls = _search_product_urls_via_yahoo(keyword, max_items=candidate_target)
 
         if not product_urls:
             return results
 
         # Scrape each product detail
-        for url in product_urls[:max_items]:
+        for url in product_urls:
+            if len(results) >= max_items:
+                break
             try:
                 result = scrape_item_detail(session, url, headless=headless)
                 if result["title"]:

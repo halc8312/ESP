@@ -1,6 +1,7 @@
 """
 Scraping routes.
 """
+import math
 import traceback
 from urllib.parse import urlencode
 from flask import Blueprint, jsonify, render_template, request, session, redirect, url_for
@@ -43,6 +44,38 @@ def _detect_site_from_url(url: str) -> str:
     return "mercari"
 
 
+_SEARCH_DEPTH_RULES = {
+    "mercari": {"window": 16, "base": 2, "min": 3, "max": 10},
+    "rakuma": {"window": 18, "base": 2, "min": 3, "max": 10},
+    "yahoo": {"window": 24, "base": 2, "min": 3, "max": 8},
+    "surugaya": {"window": 18, "base": 2, "min": 3, "max": 7},
+    "offmall": {"window": 24, "base": 2, "min": 3, "max": 8},
+    "yahuoku": {"window": 24, "base": 2, "min": 3, "max": 8},
+    "snkrdunk": {"window": 20, "base": 2, "min": 3, "max": 8},
+}
+
+
+def _get_internal_search_limit(limit: int) -> int:
+    """
+    実際の表示件数とは別に、失敗や除外を吸収するための内部探索件数を返す。
+    10件指定時の既存体感は維持しつつ、50/100件で探索量を増やす。
+    """
+    requested = max(1, int(limit or 10))
+    if requested <= 10:
+        return requested
+    return min(150, max(requested + 10, int(math.ceil(requested * 1.4))))
+
+
+def _get_search_depth(site: str, limit: int) -> int:
+    """
+    サイトごとに、要求件数に見合った探索深さ（ページ数/スクロール量）を返す。
+    """
+    requested = max(1, int(limit or 10))
+    rule = _SEARCH_DEPTH_RULES.get(site, {"window": 20, "base": 2, "min": 3, "max": 8})
+    depth = int(math.ceil(requested / rule["window"])) + rule["base"]
+    return max(rule["min"], min(depth, rule["max"]))
+
+
 def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, category, limit, user_id, persist_to_db=True):
     """
     スクレイピングタスク関数を構築して返す。
@@ -59,7 +92,8 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
 
         def finalize(scraped_items, target_site):
             nonlocal items, excluded_count, new_count, updated_count
-            items, excluded_count = filter_excluded_items(scraped_items, user_id)
+            filtered_items, excluded_count = filter_excluded_items(scraped_items, user_id)
+            items = filtered_items[:limit]
             if persist_to_db:
                 new_count, updated_count = save_scraped_items_to_db(items, site=target_site, user_id=user_id)
 
@@ -79,6 +113,8 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                 finalize(scraper_fn(target_url, headless=True), _site)
 
             else:
+                search_limit = _get_internal_search_limit(limit)
+                search_depth = _get_search_depth(site, search_limit)
                 params = {}
                 if keyword:
                     params["keyword"] = keyword
@@ -97,8 +133,8 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                     search_url = base + urlencode(y_params)
                     items = yahoo_db.scrape_search_result(
                         search_url=search_url,
-                        max_items=limit,
-                        max_scroll=3,
+                        max_items=search_limit,
+                        max_scroll=search_depth,
                         headless=True,
                     )
                     finalize(items, "yahoo")
@@ -109,8 +145,8 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                     search_url = base + urlencode(r_params)
                     items = rakuma_db.scrape_search_result(
                         search_url=search_url,
-                        max_items=limit,
-                        max_scroll=3,
+                        max_items=search_limit,
+                        max_scroll=search_depth,
                         headless=True,
                     )
                     finalize(items, "rakuma")
@@ -123,8 +159,8 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                     search_url = base + urlencode(s_params)
                     items = surugaya_db.scrape_search_result(
                         search_url=search_url,
-                        max_items=limit,
-                        max_scroll=3,
+                        max_items=search_limit,
+                        max_scroll=search_depth,
                         headless=True,
                     )
                     finalize(items, "surugaya")
@@ -135,8 +171,8 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                     search_url = base + urlencode(o_params)
                     items = offmall_db.scrape_search_result(
                         search_url=search_url,
-                        max_items=limit,
-                        max_scroll=3,
+                        max_items=search_limit,
+                        max_scroll=search_depth,
                         headless=True,
                     )
                     finalize(items, "offmall")
@@ -147,8 +183,8 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                     search_url = base + urlencode(y_params)
                     items = yahuoku_db.scrape_search_result(
                         search_url=search_url,
-                        max_items=limit,
-                        max_scroll=3,
+                        max_items=search_limit,
+                        max_scroll=search_depth,
                         headless=True,
                     )
                     finalize(items, "yahuoku")
@@ -159,8 +195,8 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                     search_url = base + urlencode(s_params)
                     items = snkrdunk_db.scrape_search_result(
                         search_url=search_url,
-                        max_items=limit,
-                        max_scroll=3,
+                        max_items=search_limit,
+                        max_scroll=search_depth,
                         headless=True,
                     )
                     finalize(items, "snkrdunk")
@@ -171,8 +207,8 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                     search_url = base + urlencode(params)
                     items = scrape_search_result(
                         search_url=search_url,
-                        max_items=limit,
-                        max_scroll=3,
+                        max_items=search_limit,
+                        max_scroll=search_depth,
                         headless=True,
                     )
                     finalize(items, "mercari")
@@ -314,6 +350,7 @@ def scrape_result(job_id):
                 items=[],
                 new_count=0,
                 updated_count=0,
+                excluded_count=0,
                 error_msg="ジョブが見つかりません（期限切れの可能性があります）",
                 all_shops=all_shops,
                 current_shop_id=current_shop_id,
@@ -332,6 +369,7 @@ def scrape_result(job_id):
                 items=[],
                 new_count=0,
                 updated_count=0,
+                excluded_count=0,
                 error_msg=status.get("error") or "商品抽出中にエラーが発生しました",
                 all_shops=all_shops,
                 current_shop_id=current_shop_id,
@@ -354,6 +392,7 @@ def scrape_result(job_id):
             items=result.get("items", []),
             new_count=result.get("new_count", 0),
             updated_count=result.get("updated_count", 0),
+            excluded_count=result.get("excluded_count", 0),
             error_msg=result.get("error_msg", ""),
             all_shops=all_shops,
             current_shop_id=current_shop_id,

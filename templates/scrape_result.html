@@ -24,7 +24,7 @@
                 <li>価格範囲: {{ price_min }} 〜 {{ price_max }}</li>
                 <li>ソート: {{ sort }}</li>
                 <li>カテゴリ: {{ category }}</li>
-                <li>取得件数: {{ limit }}</li>
+                <li>要求件数: {{ limit }}</li>
             </ul>
         </div>
     </details>
@@ -42,7 +42,7 @@
                 <li>価格範囲: {{ price_min }} 〜 {{ price_max }}</li>
                 <li>ソート: {{ sort }}</li>
                 <li>カテゴリ: {{ category }}</li>
-                <li>取得件数(max_items): {{ limit }}</li>
+                <li>要求件数: {{ limit }}</li>
             </ul>
         </div>
     </div>
@@ -69,6 +69,9 @@
             <div class="value" style="color: var(--primary-color);">{{ updated_count }}</div>
         </div>
     </div>
+    <p class="text-muted" style="margin: 12px 0 0;">
+        要求 {{ limit }}件 / 表示 {{ items|length }}件{% if excluded_count %} / 除外 {{ excluded_count }}件{% endif %}
+    </p>
 
     {% if items %}
     <div class="content-card">

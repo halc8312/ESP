@@ -216,6 +216,7 @@ def scrape_search_result(
     """Scrape Yahoo Auctions search results using HTTP-only page fetches."""
     results = []
     candidate_urls = []
+    candidate_target = max(max_items, max_items * 2)
 
     try:
         from services.scraping_client import fetch_static
@@ -227,16 +228,18 @@ def scrape_search_result(
         while current_url and current_url not in seen_pages and len(seen_pages) < max_pages:
             seen_pages.add(current_url)
             page = fetch_static(current_url)
-            for item_url in _extract_search_urls(page, current_url, max_items=max_items * 2):
+            for item_url in _extract_search_urls(page, current_url, max_items=candidate_target):
                 if item_url not in candidate_urls:
                     candidate_urls.append(item_url)
-                if len(candidate_urls) >= max_items:
+                if len(candidate_urls) >= candidate_target:
                     break
-            if len(candidate_urls) >= max_items:
+            if len(candidate_urls) >= candidate_target:
                 break
             current_url = _find_next_page_url(page, current_url)
 
-        for item_url in candidate_urls[:max_items]:
+        for item_url in candidate_urls:
+            if len(results) >= max_items:
+                break
             result = scrape_item_detail(item_url)
             if result.get("title"):
                 results.append(result)

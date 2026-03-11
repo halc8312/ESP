@@ -1,6 +1,6 @@
 {
     "_comment": "Scraping selectors configuration. Update these when site structure changes.",
-    "_updated": "2024-12-23",
+    "_updated": "2026-03-12",
     "mercari": {
         "shops": {
             "title": [
@@ -170,6 +170,19 @@
             ],
             "valid_domains": [
                 "snkrdunk.com"
+            ]
+        }
+    },
+    "surugaya": {
+        "detail": {
+            "title": [
+                "html > body > h1"
+            ],
+            "price": [
+                "html > body > div:nth-of-type(1) > span"
+            ],
+            "description": [
+                "html > body > div:nth-of-type(1)"
             ]
         }
     }
