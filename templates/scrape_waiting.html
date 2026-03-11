@@ -6,24 +6,91 @@
 {% block content %}
 <div class="page-header">
     <h1>商品抽出</h1>
+    <p class="page-subtitle">このページは自動更新されます。別タブで作業を続けても抽出は継続します。</p>
 </div>
 
-<div class="content-card">
-    <div class="content-card-body" style="text-align: center; padding: 40px 20px;">
-        <div id="status-container">
-            <div class="loading-spinner" style="margin: 0 auto 24px;" aria-hidden="true"></div>
-            <p id="status-message" style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">
-                商品を抽出しています...
-            </p>
-            <p id="queue-position" style="color: var(--text-muted, #888); margin-bottom: 4px;"></p>
-            <p id="elapsed-time" style="color: var(--text-muted, #888); font-size: 0.9rem;"></p>
-        </div>
+<div id="status-shell" class="scrape-wait-layout">
+    <section class="content-card scrape-wait-primary">
+        <div class="content-card-body">
+            <div class="scrape-wait-hero">
+                <div class="scrape-wait-head">
+                    <span id="status-badge" class="scrape-wait-badge is-queued">準備中</span>
+                    <span class="scrape-wait-job">Job {{ job_id[:8] }}</span>
+                </div>
 
-        <div id="error-container" style="display: none; margin-top: 20px;">
-            <p id="error-message" class="error" style="margin-bottom: 16px;"></p>
-            <a href="{{ url_for('scrape.scrape_form') }}" class="btn btn-primary">
-                もう一度試す
-            </a>
+                <div class="scrape-wait-main">
+                    <div id="status-spinner" class="loading-spinner scrape-wait-spinner" aria-hidden="true"></div>
+                    <div>
+                        <p id="status-message" class="scrape-wait-title">抽出ジョブを開始しました</p>
+                        <p id="status-copy" class="scrape-wait-copy">順番が来たら自動で開始し、完了後に結果画面へ移動します。</p>
+                    </div>
+                </div>
+
+                <div class="scrape-wait-track">
+                    <div id="status-track" class="scrape-wait-track-fill is-queued"></div>
+                </div>
+
+                <div class="scrape-wait-metrics">
+                    <div class="scrape-wait-metric">
+                        <span class="scrape-wait-label">現在</span>
+                        <strong id="queue-position">実行準備中</strong>
+                    </div>
+                    <div class="scrape-wait-metric">
+                        <span class="scrape-wait-label">経過</span>
+                        <strong id="elapsed-time">0秒</strong>
+                    </div>
+                    <div class="scrape-wait-metric">
+                        <span class="scrape-wait-label">結果</span>
+                        <strong>完了後に自動表示</strong>
+                    </div>
+                </div>
+
+                <p id="phase-message" class="scrape-wait-phase">抽出条件を確認しています。</p>
+
+                <div class="scrape-wait-actions">
+                    <a href="{{ url_for('index') }}" target="_blank" rel="noopener" class="btn btn-secondary">商品一覧を別タブで開く</a>
+                    <a href="{{ url_for('scrape.scrape_form') }}" class="btn btn-muted">抽出条件へ戻る</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <aside class="content-card scrape-wait-secondary">
+        <div class="content-card-header">
+            <h3>進行の目安</h3>
+        </div>
+        <div class="content-card-body">
+            <div class="scrape-wait-steps">
+                <div id="step-queued" class="scrape-wait-step is-active">
+                    <small>Step 1</small>
+                    <strong>キュー登録</strong>
+                    <span>リクエストを受け付けて、実行順を確保します。</span>
+                </div>
+                <div id="step-running" class="scrape-wait-step">
+                    <small>Step 2</small>
+                    <strong>候補を収集</strong>
+                    <span>検索結果と商品ページを確認しながら、表示できるデータへ整えます。</span>
+                </div>
+                <div id="step-result" class="scrape-wait-step">
+                    <small>Step 3</small>
+                    <strong>結果を反映</strong>
+                    <span>抽出が完了すると、このページから自動で結果画面へ移動します。</span>
+                </div>
+            </div>
+
+            <div class="scrape-wait-note">
+                待機中に別タブで商品一覧や価格ルールを見ても問題ありません。抽出処理自体はサーバー側で継続します。
+            </div>
+        </div>
+    </aside>
+</div>
+
+<div id="error-container" class="content-card scrape-wait-error" hidden>
+    <div class="content-card-body">
+        <p id="error-message" class="error" style="margin-bottom: 16px;"></p>
+        <div class="scrape-wait-actions">
+            <a href="{{ url_for('scrape.scrape_form') }}" class="btn btn-primary">もう一度試す</a>
+            <a href="{{ url_for('index') }}" target="_blank" rel="noopener" class="btn btn-secondary">商品一覧を別タブで開く</a>
         </div>
     </div>
 </div>
@@ -38,29 +105,84 @@
     var pollInterval = 2000;
     var pollTimer = null;
 
-    function updateUI(data) {
-        var msgEl = document.getElementById("status-message");
-        var posEl = document.getElementById("queue-position");
-        var timeEl = document.getElementById("elapsed-time");
+    var statusShell = document.getElementById("status-shell");
+    var statusBadge = document.getElementById("status-badge");
+    var statusSpinner = document.getElementById("status-spinner");
+    var statusTrack = document.getElementById("status-track");
+    var statusMessage = document.getElementById("status-message");
+    var statusCopy = document.getElementById("status-copy");
+    var queuePosition = document.getElementById("queue-position");
+    var elapsedTime = document.getElementById("elapsed-time");
+    var phaseMessage = document.getElementById("phase-message");
+    var errorContainer = document.getElementById("error-container");
+    var errorMessage = document.getElementById("error-message");
+    var stepQueued = document.getElementById("step-queued");
+    var stepRunning = document.getElementById("step-running");
+    var stepResult = document.getElementById("step-result");
 
-        if (data.status === "queued") {
-            msgEl.textContent = "キュー待機中" + (data.queue_position ? "（" + data.queue_position + "番目）" : "");
-            posEl.textContent = "しばらくお待ちください...";
-        } else if (data.status === "running") {
-            msgEl.textContent = "商品を抽出しています...";
-            posEl.textContent = "";
+    function setStatusState(state) {
+        statusBadge.className = "scrape-wait-badge is-" + state;
+        statusTrack.className = "scrape-wait-track-fill is-" + state;
+        statusSpinner.hidden = state === "success" || state === "error";
+    }
+
+    function setStepState(step, state) {
+        step.classList.remove("is-active");
+        step.classList.remove("is-done");
+        if (state) {
+            step.classList.add(state);
+        }
+    }
+
+    function getRunningPhase(elapsedSeconds) {
+        if (elapsedSeconds < 8) {
+            return "検索結果ページから候補商品を集めています。";
+        }
+        if (elapsedSeconds < 18) {
+            return "商品ページを順番に確認しています。";
+        }
+        if (elapsedSeconds < 35) {
+            return "候補の整形と重複確認を進めています。";
+        }
+        return "最後の候補まで確認しています。別タブでの作業も続けられます。";
+    }
+
+    function updateUI(data) {
+        if (data.elapsed_seconds !== undefined) {
+            elapsedTime.textContent = data.elapsed_seconds + "秒";
         }
 
-        if (data.elapsed_seconds !== undefined) {
-            timeEl.textContent = "経過時間: " + data.elapsed_seconds + "秒";
+        if (data.status === "queued") {
+            setStatusState("queued");
+            setStepState(stepQueued, "is-active");
+            setStepState(stepRunning, "");
+            setStepState(stepResult, "");
+            statusMessage.textContent = "キューで順番待ちです";
+            statusCopy.textContent = "順番が来たら自動で開始します。別タブで作業を続けても問題ありません。";
+            queuePosition.textContent = data.queue_position ? data.queue_position + "番目" : "待機中";
+            phaseMessage.textContent = data.queue_position
+                ? data.queue_position + "番目で待機しています。前のジョブ完了後に抽出を開始します。"
+                : "ジョブをキューへ登録しています。";
+            return;
+        }
+
+        if (data.status === "running") {
+            setStatusState("running");
+            setStepState(stepQueued, "is-done");
+            setStepState(stepRunning, "is-active");
+            setStepState(stepResult, "");
+            statusMessage.textContent = "商品を抽出しています";
+            statusCopy.textContent = "完了後に結果画面へ自動で移動します。";
+            queuePosition.textContent = "実行中";
+            phaseMessage.textContent = getRunningPhase(Number(data.elapsed_seconds || 0));
         }
     }
 
     function showError(message) {
-        document.getElementById("status-container").style.display = "none";
-        var errContainer = document.getElementById("error-container");
-        errContainer.style.display = "block";
-        document.getElementById("error-message").textContent = "エラーが発生しました: " + message;
+        setStatusState("error");
+        statusShell.hidden = true;
+        errorContainer.hidden = false;
+        errorMessage.textContent = "エラーが発生しました: " + message;
     }
 
     function pollStatus() {

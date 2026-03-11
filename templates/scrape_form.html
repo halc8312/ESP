@@ -117,6 +117,44 @@
         <div id="scrapePreviewGrid" class="scrape-preview-grid"></div>
     </div>
 </section>
+
+<section id="scrapeProgressPanel" class="scrape-progress-panel" hidden aria-live="polite">
+    <div class="scrape-progress-card">
+        <div class="scrape-progress-shell">
+            <div class="scrape-progress-head">
+                <span id="scrapeProgressBadge" class="scrape-progress-badge is-queued">準備中</span>
+                <button type="button" id="scrapeProgressToggle" class="scrape-progress-toggle" aria-controls="scrapeProgressDetails" aria-expanded="true">
+                    最小化
+                </button>
+            </div>
+
+            <div class="scrape-progress-main">
+                <div id="scrapeProgressSpinner" class="loading-spinner scrape-progress-spinner" aria-hidden="true"></div>
+                <div class="scrape-progress-copy">
+                    <p id="scrapeProgressTitle" class="scrape-progress-title">抽出ジョブを開始しています</p>
+                    <p id="scrapeProgressSubtitle" class="scrape-progress-subtitle">このまま他の操作を続けられます。</p>
+                </div>
+            </div>
+
+            <div class="scrape-progress-track">
+                <div id="scrapeProgressTrackFill" class="scrape-progress-track-fill is-queued"></div>
+            </div>
+
+            <div id="scrapeProgressDetails" class="scrape-progress-details">
+                <div class="scrape-progress-meta">
+                    <span id="scrapeProgressSite">商品抽出</span>
+                    <span id="scrapeProgressLimit">1件</span>
+                    <span id="scrapeProgressElapsed">経過 0秒</span>
+                </div>
+                <p id="scrapeProgressPhase" class="scrape-progress-phase">リクエストを送信しています。</p>
+                <div class="scrape-progress-actions">
+                    <button type="button" id="scrapeProgressFocus" class="btn btn-secondary btn-compact" disabled>結果へ移動</button>
+                    <button type="button" id="scrapeProgressClose" class="btn btn-muted btn-compact" hidden>閉じる</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
 {% endblock %}
 
 {% block scripts %}
@@ -132,7 +170,22 @@
     var previewFlash = document.getElementById('scrapePreviewFlash');
     var selectAllCheckbox = document.getElementById('scrapePreviewSelectAll');
     var registerButton = document.getElementById('registerSelectedButton');
+    var progressPanel = document.getElementById('scrapeProgressPanel');
+    var progressBadge = document.getElementById('scrapeProgressBadge');
+    var progressToggle = document.getElementById('scrapeProgressToggle');
+    var progressSpinner = document.getElementById('scrapeProgressSpinner');
+    var progressTitle = document.getElementById('scrapeProgressTitle');
+    var progressSubtitle = document.getElementById('scrapeProgressSubtitle');
+    var progressTrackFill = document.getElementById('scrapeProgressTrackFill');
+    var progressDetails = document.getElementById('scrapeProgressDetails');
+    var progressSite = document.getElementById('scrapeProgressSite');
+    var progressLimit = document.getElementById('scrapeProgressLimit');
+    var progressElapsed = document.getElementById('scrapeProgressElapsed');
+    var progressPhase = document.getElementById('scrapeProgressPhase');
+    var progressFocus = document.getElementById('scrapeProgressFocus');
+    var progressClose = document.getElementById('scrapeProgressClose');
     var pollTimer = null;
+    var progressAutoCollapseTimer = null;
 
     function createOverlay() {
         var overlay = document.createElement('div');
@@ -161,6 +214,191 @@
         var subEl = document.getElementById('loadingSub');
         if (messageEl) messageEl.textContent = message;
         if (subEl) subEl.textContent = subMessage || '';
+    }
+
+    function clearProgressAutoCollapse() {
+        if (progressAutoCollapseTimer) {
+            clearTimeout(progressAutoCollapseTimer);
+            progressAutoCollapseTimer = null;
+        }
+    }
+
+    function isPhoneViewport() {
+        return window.matchMedia('(max-width: 767px)').matches;
+    }
+
+    function setProgressExpanded(expanded, byUser) {
+        if (!progressPanel) {
+            return;
+        }
+        progressPanel.classList.toggle('is-collapsed', !expanded);
+        progressToggle.textContent = expanded ? '最小化' : '展開';
+        progressToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        if (byUser) {
+            progressPanel.dataset.userCollapsed = expanded ? '0' : '1';
+        }
+    }
+
+    function scheduleProgressAutoCollapse() {
+        clearProgressAutoCollapse();
+        if (!progressPanel || !isPhoneViewport()) {
+            return;
+        }
+        if (progressPanel.dataset.userCollapsed === '1') {
+            return;
+        }
+        progressAutoCollapseTimer = setTimeout(function () {
+            if (!progressPanel.hidden && progressPanel.dataset.state !== 'success' && progressPanel.dataset.state !== 'error') {
+                setProgressExpanded(false, false);
+            }
+        }, 2600);
+    }
+
+    function setProgressState(state) {
+        if (!progressPanel) {
+            return;
+        }
+        progressPanel.dataset.state = state;
+        progressBadge.className = 'scrape-progress-badge is-' + state;
+        progressTrackFill.className = 'scrape-progress-track-fill is-' + state;
+        progressSpinner.hidden = state === 'success' || state === 'error';
+    }
+
+    function simplifyUrl(value) {
+        try {
+            return new URL(value).hostname;
+        } catch (error) {
+            return 'URL指定';
+        }
+    }
+
+    function getSelectedText(select) {
+        if (!select || !select.options || select.selectedIndex < 0) {
+            return '';
+        }
+        return select.options[select.selectedIndex].text;
+    }
+
+    function buildJobContext(form, formData) {
+        var targetUrl = String(formData.get('target_url') || '').trim();
+        var keyword = String(formData.get('keyword') || '').trim();
+        var limitValue = String(formData.get('limit') || '').trim();
+        var siteLabel = getSelectedText(form.querySelector('select[name="site"]')) || '商品抽出';
+
+        if (targetUrl) {
+            return {
+                siteLabel: 'URLから抽出',
+                limitLabel: '1件',
+                detailLabel: simplifyUrl(targetUrl)
+            };
+        }
+
+        return {
+            siteLabel: siteLabel,
+            limitLabel: limitValue ? limitValue + '件' : '件数未設定',
+            detailLabel: keyword ? 'キーワード: ' + keyword : '条件で抽出します'
+        };
+    }
+
+    function showProgressPanel(context) {
+        if (!progressPanel) {
+            return;
+        }
+
+        progressPanel.hidden = false;
+        progressPanel.dataset.userCollapsed = '0';
+        progressSite.textContent = context.siteLabel;
+        progressLimit.textContent = context.limitLabel;
+        progressElapsed.textContent = '経過 0秒';
+        progressTitle.textContent = '抽出ジョブを開始しました';
+        progressSubtitle.textContent = 'このまま他の操作を続けられます。完了したら下に結果を表示します。';
+        progressPhase.textContent = context.detailLabel;
+        progressFocus.disabled = true;
+        progressClose.hidden = true;
+        setProgressState('queued');
+        setProgressExpanded(true, false);
+        scheduleProgressAutoCollapse();
+    }
+
+    function hideProgressPanel() {
+        if (!progressPanel) {
+            return;
+        }
+        clearProgressAutoCollapse();
+        progressPanel.hidden = true;
+    }
+
+    function getRunningPhase(elapsedSeconds) {
+        if (elapsedSeconds < 8) {
+            return '検索結果ページから候補商品を集めています。';
+        }
+        if (elapsedSeconds < 18) {
+            return '商品ページを順番に確認しています。';
+        }
+        if (elapsedSeconds < 35) {
+            return '取得した候補を整えて、表示できる形にまとめています。';
+        }
+        return '最後の候補まで確認しています。別の操作を続けながら待てます。';
+    }
+
+    function updateProgressPanel(data) {
+        if (!progressPanel) {
+            return;
+        }
+
+        if (data.elapsed_seconds !== undefined) {
+            progressElapsed.textContent = '経過 ' + data.elapsed_seconds + '秒';
+        }
+
+        if (data.status === 'queued') {
+            setProgressState('queued');
+            progressTitle.textContent = 'キューで順番待ちです';
+            progressSubtitle.textContent = '他の作業を続けられます。順番が来たら自動で開始します。';
+            progressPhase.textContent = data.queue_position
+                ? data.queue_position + '番目で待機しています。前のジョブが終わり次第、抽出を開始します。'
+                : 'ジョブをキューへ登録しています。';
+            scheduleProgressAutoCollapse();
+            return;
+        }
+
+        if (data.status === 'running') {
+            setProgressState('running');
+            progressTitle.textContent = '商品を抽出しています';
+            progressSubtitle.textContent = 'このままフォーム確認や他の操作を続けても問題ありません。';
+            progressPhase.textContent = getRunningPhase(Number(data.elapsed_seconds || 0));
+            scheduleProgressAutoCollapse();
+        }
+    }
+
+    function markProgressCompleted(result) {
+        if (!progressPanel) {
+            return;
+        }
+
+        clearProgressAutoCollapse();
+        setProgressState('success');
+        setProgressExpanded(true, false);
+        progressTitle.textContent = '抽出が完了しました';
+        progressSubtitle.textContent = '結果カードを更新しました。必要な商品だけ選んで登録できます。';
+        progressPhase.textContent = '抽出 ' + ((result.items || []).length) + '件'
+            + ' / 除外 ' + (result.excluded_count || 0) + '件';
+        progressFocus.disabled = false;
+        progressClose.hidden = false;
+    }
+
+    function markProgressFailed(message) {
+        if (!progressPanel) {
+            return;
+        }
+
+        clearProgressAutoCollapse();
+        setProgressState('error');
+        setProgressExpanded(true, false);
+        progressTitle.textContent = '抽出に失敗しました';
+        progressSubtitle.textContent = '条件を見直して再実行してください。';
+        progressPhase.textContent = message || '不明なエラー';
+        progressFocus.disabled = true;
+        progressClose.hidden = false;
     }
 
     function showFlash(message, type) {
@@ -199,9 +437,11 @@
 
     function renderPreview(result) {
         var items = result.items || [];
+        var currentJobId = activePreviewJob && activePreviewJob.jobId ? activePreviewJob.jobId : null;
+        var currentRegisterUrl = activePreviewJob && activePreviewJob.registerUrl ? activePreviewJob.registerUrl : null;
         activePreviewJob = {
-            jobId: result.job_id || activePreviewJob.jobId,
-            registerUrl: activePreviewJob.registerUrl,
+            jobId: result.job_id || currentJobId,
+            registerUrl: currentRegisterUrl,
             items: items
         };
 
@@ -311,34 +551,31 @@
             })
             .then(function (data) {
                 if (data.status === 'queued') {
-                    updateOverlay(
-                        'キュー待機中です',
-                        data.queue_position ? data.queue_position + '番目で待機しています...' : 'しばらくお待ちください...'
-                    );
+                    updateProgressPanel(data);
                     pollTimer = setTimeout(function () { pollPreviewStatus(statusUrl); }, 2000);
                     return;
                 }
 
                 if (data.status === 'running') {
-                    updateOverlay('商品を抽出中です...', '経過時間: ' + data.elapsed_seconds + '秒');
+                    updateProgressPanel(data);
                     pollTimer = setTimeout(function () { pollPreviewStatus(statusUrl); }, 2000);
                     return;
                 }
 
                 if (data.status === 'failed') {
-                    removeOverlay();
+                    markProgressFailed(data.error || '不明なエラー');
                     showFlash('商品抽出に失敗しました: ' + (data.error || '不明なエラー'), 'error');
                     previewSection.hidden = false;
                     return;
                 }
 
-                removeOverlay();
                 var result = data.result || {};
                 result.job_id = data.job_id;
                 renderPreview(result);
+                markProgressCompleted(result);
             })
             .catch(function (error) {
-                removeOverlay();
+                markProgressFailed(error.message || '通信エラーが発生しました');
                 showFlash(error.message || '通信エラーが発生しました', 'error');
                 previewSection.hidden = false;
             });
@@ -351,11 +588,16 @@
             pollTimer = null;
         }
 
-        createOverlay();
-        updateOverlay('商品を抽出中です...', 'しばらくお待ちください...');
-
         var formData = new FormData(form);
+        var context = buildJobContext(form, formData);
         formData.append('response_mode', 'preview');
+        showProgressPanel(context);
+        activePreviewJob = {
+            jobId: null,
+            registerUrl: null,
+            items: [],
+            context: context
+        };
 
         fetch(form.action, {
             method: 'POST',
@@ -371,12 +613,13 @@
                 activePreviewJob = {
                     jobId: data.job_id,
                     registerUrl: data.register_url,
-                    items: []
+                    items: [],
+                    context: context
                 };
                 pollPreviewStatus(data.status_url);
             })
             .catch(function (error) {
-                removeOverlay();
+                markProgressFailed(error.message || '送信に失敗しました');
                 showFlash(error.message || '送信に失敗しました', 'error');
                 previewSection.hidden = false;
             });
@@ -438,6 +681,27 @@
         });
         updateRegisterButtonState();
     });
+
+    if (progressToggle) {
+        progressToggle.addEventListener('click', function () {
+            var expanded = progressPanel.classList.contains('is-collapsed');
+            setProgressExpanded(expanded, true);
+        });
+    }
+
+    if (progressFocus) {
+        progressFocus.addEventListener('click', function () {
+            if (!previewSection.hidden) {
+                previewSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        });
+    }
+
+    if (progressClose) {
+        progressClose.addEventListener('click', function () {
+            hideProgressPanel();
+        });
+    }
 
     document.querySelectorAll('.scrape-form-compact').forEach(function (form) {
         form.addEventListener('submit', function (event) {
