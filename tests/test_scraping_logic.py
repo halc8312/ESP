@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from mercari_db import (
     _extract_price_from_text,
+    _extract_plain_number_from_text,
     _extract_mercari_shops_title_from_body,
     _infer_mercari_shops_status,
     _normalize_mercari_shops_title,
@@ -126,6 +127,55 @@ def test_scrape_variants_shops_pattern():
 
 def test_mercari_shops_price_fallback_supports_yen_symbol():
     assert _extract_price_from_text("¥\n2,980\n送料込み") == 2980
+
+
+def test_extract_price_from_text_ignores_comma_only_capture():
+    assert _extract_price_from_text(",,,") is None
+
+
+def test_extract_plain_number_from_text_supports_comma_separated_digits():
+    assert _extract_plain_number_from_text("8,980") == 8980
+
+
+def test_extract_plain_number_from_text_ignores_comma_only_text():
+    assert _extract_plain_number_from_text(",,,") is None
+
+
+def test_scrape_item_detail_tolerates_invalid_price_text():
+    url = "http://m/item/invalid-price"
+
+    with patch('mercari_db.StealthyFetcher.fetch') as mock_fetch, \
+         patch('mercari_db.get_healer', return_value=None):
+        mock_page = MagicMock()
+        mock_fetch.return_value = mock_page
+
+        mock_title = MagicMock()
+        mock_title.text = "Valid Item"
+
+        mock_price = MagicMock()
+        mock_price.text = ",,,"
+
+        mock_body_node = MagicMock()
+        mock_body_node.text = "購入手続きへ"
+
+        def mock_css(selector):
+            if selector == "h1":
+                return [mock_title]
+            if selector == "[data-testid='price']":
+                return [mock_price]
+            if selector == "body *":
+                return [mock_body_node]
+            if selector == "button":
+                return []
+            return []
+
+        mock_page.css.side_effect = mock_css
+
+        data = scrape_item_detail(url)
+
+        assert data["title"] == "Valid Item"
+        assert data["price"] is None
+        assert data["status"] == "on_sale"
 
 
 def test_mercari_shops_title_fallback_uses_document_title():

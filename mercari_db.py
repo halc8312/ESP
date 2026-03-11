@@ -65,11 +65,36 @@ def _extract_price_from_text(text: str):
         if not match:
             continue
         try:
-            return int(match.group(1).replace(",", ""))
+            digits = re.sub(r"\D", "", match.group(1) or "")
+            if not digits:
+                continue
+            return int(digits)
         except ValueError:
             continue
 
     return None
+
+
+def _extract_plain_number_from_text(text: str):
+    """
+    価格セレクタから currency 記号なしで返ってくる数値を安全に抽出する。
+    カンマだけを拾った場合は None を返す。
+    """
+    if not text:
+        return None
+
+    match = re.search(r"\d[\d,]*", text)
+    if not match:
+        return None
+
+    digits = re.sub(r"\D", "", match.group(0) or "")
+    if not digits:
+        return None
+
+    try:
+        return int(digits)
+    except ValueError:
+        return None
 
 
 def _normalize_mercari_shops_title(text: str) -> str:
@@ -403,9 +428,9 @@ def scrape_item_detail(url: str, driver=None):
     if healer:
         price_val, _ = healer.extract_with_healing(page, 'mercari', 'general', 'price', parser='scrapling')
         if price_val:
-            m = re.search(r"[¥￥]\s*([\d,]+)", price_val) or re.search(r"([\d,]+)", price_val)
-            if m:
-                price = int(m.group(1).replace(",", ""))
+            price = _extract_price_from_text(price_val)
+            if price is None:
+                price = _extract_plain_number_from_text(price_val)
     else:
         price_selectors = get_selectors('mercari', 'general', 'price') or ["[data-testid='price']"]
         try:
@@ -413,22 +438,16 @@ def scrape_item_detail(url: str, driver=None):
                 price_nodes = page.css(selector)
                 if price_nodes:
                     price_text = price_nodes[0].text or ""
-                    m = re.search(r"[¥￥]\s*([\d,]+)", price_text) or re.search(r"([\d,]+)", price_text)
-                    if m:
-                        price = int(m.group(1).replace(",", ""))
+                    price = _extract_price_from_text(price_text)
+                    if price is None:
+                        price = _extract_plain_number_from_text(price_text)
+                    if price is not None:
                         break
         except Exception:
             pass
 
     if price is None and body_text:
-        m = re.search(r"[¥￥]\s*([\d,]+)", body_text)
-        if not m:
-            m = re.search(r"([\d,]+)\s*円", body_text)
-        if m:
-            try:
-                price = int(m.group(1).replace(",", ""))
-            except ValueError:
-                price = None
+        price = _extract_price_from_text(body_text)
 
     # ---- ステータス ----
     status = "unknown"
