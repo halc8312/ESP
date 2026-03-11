@@ -444,6 +444,9 @@ class SelectorHealer:
     def __init__(self):
         self._fingerprints = _load_fingerprints()
         self._write_lock = threading.Lock()
+        # In-memory cache: healed selectors survive even if file write fails
+        # Key: (site, page_type, field) → new_selector string
+        self._healed_selectors: Dict[tuple, str] = {}
 
     def reload(self) -> None:
         """Force-reload fingerprint data."""
@@ -486,7 +489,12 @@ class SelectorHealer:
         selectors = get_selectors(site, page_type, field) or []
 
         # --- Phase 1: Normal selector path ---
-        for selector in selectors:
+        # Check in-memory healed selectors first (survives even when file write fails)
+        cache_key = (site, page_type, field)
+        healed_sel = self._healed_selectors.get(cache_key)
+        check_selectors = [healed_sel] + selectors if healed_sel else selectors
+
+        for selector in check_selectors:
             elements = adapter.query_all(page, selector)
             if not elements:
                 continue
@@ -533,6 +541,8 @@ class SelectorHealer:
         new_selector = adapter.generate_selector(element)
         if new_selector:
             old_first = selectors[0] if selectors else "(none)"
+            # Always cache in memory (even if file write fails)
+            self._healed_selectors[(site, page_type, field)] = new_selector
             self._save_healed_selector(site, page_type, field, new_selector)
             _log_heal_event(site, page_type, field, old_first, new_selector, score)
             logger.info(
@@ -606,6 +616,7 @@ class SelectorHealer:
             new_selector = adapter.generate_selector(healed_el)
             if new_selector:
                 old_first = selectors[0] if selectors else "(none)"
+                self._healed_selectors[(site, page_type, "images")] = new_selector
                 self._save_healed_selector(site, page_type, "images", new_selector)
                 _log_heal_event(site, page_type, "images", old_first, new_selector, 100)
                 logger.info("[%s/%s/images] HEALED: new selector '%s' → saved",
@@ -624,26 +635,43 @@ class SelectorHealer:
 
     def _save_healed_selector(self, site: str, page_type: str, field: str,
                                new_selector: str) -> None:
-        """Insert the new selector at the top of the selector list in JSON."""
-        with self._write_lock:
-            data = _load_selectors()
-            if site not in data:
-                data[site] = {}
-            if page_type not in data[site]:
-                data[site][page_type] = {}
-            if field not in data[site][page_type]:
-                data[site][page_type][field] = []
+        """Insert the new selector at the top of the selector list in JSON.
+        
+        File write is best-effort — failures are logged but do NOT propagate.
+        The in-memory cache (_healed_selectors) always has the healed selector
+        regardless of whether the file write succeeds.
+        """
+        try:
+            with self._write_lock:
+                data = _load_selectors()
+                if site not in data:
+                    data[site] = {}
+                if page_type not in data[site]:
+                    data[site][page_type] = {}
+                if field not in data[site][page_type]:
+                    data[site][page_type][field] = []
 
-            current = data[site][page_type][field]
-            if new_selector in current:
-                # Move to front
-                current.remove(new_selector)
-            current.insert(0, new_selector)
+                current = data[site][page_type][field]
+                if new_selector in current:
+                    # Move to front
+                    current.remove(new_selector)
+                current.insert(0, new_selector)
 
-            # Update timestamp
-            data["_updated"] = datetime.now().strftime("%Y-%m-%d")
+                # Update timestamp
+                data["_updated"] = datetime.now().strftime("%Y-%m-%d")
 
-            _save_selectors(data)
+                _save_selectors(data)
+        except PermissionError:
+            logger.warning(
+                "[%s/%s/%s] Cannot write healed selector to JSON (permission denied). "
+                "Healed selector '%s' is cached in memory only.",
+                site, page_type, field, new_selector,
+            )
+        except Exception as e:
+            logger.warning(
+                "[%s/%s/%s] Failed to persist healed selector: %s",
+                site, page_type, field, e,
+            )
 
 
 # ---------------------------------------------------------------------------

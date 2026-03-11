@@ -44,14 +44,22 @@ class YahooPatrol(BasePatrol):
 
             price = None
             if item.get("applicablePrice"):
-                price = int(item["applicablePrice"])
-            elif item.get("price"):
-                price = int(item["price"])
+                try:
+                    price = int(item["applicablePrice"])
+                except (ValueError, TypeError):
+                    pass
+            if price is None and item.get("price"):
+                try:
+                    price = int(item["price"])
+                except (ValueError, TypeError):
+                    pass
 
             status = "active"
-            stock = item.get("stock", {})
-            if isinstance(stock, dict) and (stock.get("isSoldOut") or stock.get("quantity", 1) <= 0):
-                status = "sold"
+            stock = item.get("stock")
+            if isinstance(stock, dict):
+                quantity = stock.get("quantity")
+                if stock.get("isSoldOut") or (quantity is not None and quantity <= 0):
+                    status = "sold"
 
             variants = self._extract_variants_from_json(item, price)
             return PatrolResult(price=price, status=status, variants=variants)
