@@ -1,0 +1,271 @@
+{
+    "_comment": "Element fingerprints for self-healing scraper. Each field defines validation rules and text patterns used to rediscover elements when CSS selectors break.",
+    "_updated": "2026-03-11",
+    "mercari": {
+        "shops": {
+            "title": {
+                "validators": {
+                    "min_length": 3,
+                    "max_length": 500,
+                    "must_not_contain": ["<!DOCTYPE", "<html", "<script"]
+                },
+                "fingerprint": {
+                    "tag_names": ["h1", "h2", "span"],
+                    "text_pattern": ".{3,200}",
+                    "hint_attributes": {"data-testid": "product-name"}
+                }
+            },
+            "price": {
+                "validators": {
+                    "must_match": "[¥￥\\d,円]+",
+                    "numeric_range": [1, 99999999]
+                },
+                "fingerprint": {
+                    "tag_names": ["span", "p", "div"],
+                    "text_pattern": "[¥￥]\\s*[\\d,]+|[\\d,]+\\s*円",
+                    "hint_attributes": {"data-testid": "product-price"}
+                }
+            },
+            "description": {
+                "validators": {
+                    "min_length": 10
+                },
+                "fingerprint": {
+                    "tag_names": ["div", "p", "section"],
+                    "text_pattern": ".{10,}",
+                    "hint_attributes": {"data-testid": "product-description"}
+                }
+            },
+            "images": {
+                "validators": {
+                    "url_pattern": "^https?://"
+                },
+                "fingerprint": {
+                    "tag_names": ["img"],
+                    "src_pattern": "static\\.mercdn\\.net|mercari",
+                    "hint_attributes": {}
+                }
+            }
+        },
+        "general": {
+            "title": {
+                "validators": {
+                    "min_length": 3,
+                    "max_length": 500
+                },
+                "fingerprint": {
+                    "tag_names": ["h1"],
+                    "text_pattern": ".{3,200}"
+                }
+            },
+            "price": {
+                "validators": {
+                    "must_match": "[¥￥\\d,円]+",
+                    "numeric_range": [1, 99999999]
+                },
+                "fingerprint": {
+                    "tag_names": ["span", "p", "div"],
+                    "text_pattern": "[¥￥]\\s*[\\d,]+|[\\d,]+\\s*円",
+                    "hint_attributes": {"data-testid": "price"}
+                }
+            },
+            "images": {
+                "validators": {
+                    "url_pattern": "^https?://"
+                },
+                "fingerprint": {
+                    "tag_names": ["img"],
+                    "src_pattern": "static\\.mercdn\\.net.*/(item|photos)/",
+                    "hint_attributes": {}
+                }
+            }
+        }
+    },
+    "yahoo": {
+        "detail": {
+            "title": {
+                "validators": {
+                    "min_length": 3,
+                    "max_length": 500,
+                    "must_not_contain": ["<!DOCTYPE", "<html"]
+                },
+                "fingerprint": {
+                    "tag_names": ["h1", "h2", "span", "p"],
+                    "text_pattern": ".{3,200}",
+                    "hint_attributes": {"data-testid": "item-name"},
+                    "class_hints": ["styles_name", "styles_itemName", "styles_itemTitle", "itemName", "elName"]
+                }
+            },
+            "price": {
+                "validators": {
+                    "must_match": "[¥￥\\d,円税込]+",
+                    "numeric_range": [1, 99999999]
+                },
+                "fingerprint": {
+                    "tag_names": ["span", "p", "div"],
+                    "text_pattern": "[¥￥]\\s*[\\d,]+|[\\d,]+\\s*円",
+                    "hint_attributes": {"data-testid": "item-price"},
+                    "class_hints": ["styles_price", "itemPrice", "elPrice"]
+                }
+            },
+            "description": {
+                "validators": {
+                    "min_length": 10
+                },
+                "fingerprint": {
+                    "tag_names": ["div", "p", "section"],
+                    "text_pattern": ".{10,}",
+                    "class_hints": ["styles_content", "styles_itemDescription", "itemDescription", "elItemInfo"]
+                }
+            },
+            "images": {
+                "validators": {
+                    "url_pattern": "^https?://"
+                },
+                "fingerprint": {
+                    "tag_names": ["img"],
+                    "src_pattern": "item-shopping\\.c\\.yimg\\.jp|shopping\\.c\\.yimg\\.jp",
+                    "class_hints": ["styles_image", "styles_mainImage", "itemImage"]
+                }
+            }
+        }
+    },
+    "snkrdunk": {
+        "detail": {
+            "title": {
+                "validators": {
+                    "min_length": 3,
+                    "max_length": 500
+                },
+                "fingerprint": {
+                    "tag_names": ["h1", "p"],
+                    "text_pattern": ".{3,200}",
+                    "class_hints": ["product-name", "productName"]
+                }
+            },
+            "price": {
+                "validators": {
+                    "must_match": "[¥￥\\d,円]+",
+                    "numeric_range": [1, 99999999]
+                },
+                "fingerprint": {
+                    "tag_names": ["span", "p", "div"],
+                    "text_pattern": "[¥￥]\\s*[\\d,]+|[\\d,]+\\s*円",
+                    "class_hints": ["product-lowest-price", "buy-button", "price"]
+                }
+            },
+            "description": {
+                "validators": {
+                    "min_length": 10
+                },
+                "fingerprint": {
+                    "tag_names": ["div", "p", "section"],
+                    "text_pattern": ".{10,}",
+                    "class_hints": ["product-acd-content", "product-content", "article-text"]
+                }
+            },
+            "images": {
+                "validators": {
+                    "url_pattern": "^https?://"
+                },
+                "fingerprint": {
+                    "tag_names": ["img"],
+                    "src_pattern": "snkrdunk",
+                    "class_hints": ["product-img"]
+                }
+            }
+        }
+    },
+    "rakuma": {
+        "detail": {
+            "title": {
+                "validators": {
+                    "min_length": 3,
+                    "max_length": 500
+                },
+                "fingerprint": {
+                    "tag_names": ["h1"],
+                    "text_pattern": ".{3,200}",
+                    "class_hints": ["item__name", "item-box--title", "name"]
+                }
+            },
+            "price": {
+                "validators": {
+                    "must_match": "[¥￥\\d,円]+",
+                    "numeric_range": [1, 99999999]
+                },
+                "fingerprint": {
+                    "tag_names": ["span", "strong", "p"],
+                    "text_pattern": "[¥￥]\\s*[\\d,]+|[\\d,]+\\s*円",
+                    "class_hints": ["item__price", "item-box--price", "item-price", "price"]
+                }
+            },
+            "description": {
+                "validators": {
+                    "min_length": 10
+                },
+                "fingerprint": {
+                    "tag_names": ["div", "p"],
+                    "text_pattern": ".{10,}",
+                    "class_hints": ["item__description", "item-box--description", "item-description"]
+                }
+            },
+            "images": {
+                "validators": {
+                    "url_pattern": "^https?://"
+                },
+                "fingerprint": {
+                    "tag_names": ["img"],
+                    "src_pattern": "img\\.fril\\.jp|fril",
+                    "class_hints": ["sp-image", "item-image", "item-box--image"]
+                }
+            }
+        }
+    },
+    "surugaya": {
+        "detail": {
+            "title": {
+                "validators": {
+                    "min_length": 3,
+                    "max_length": 500
+                },
+                "fingerprint": {
+                    "tag_names": ["h1"],
+                    "text_pattern": ".{3,200}",
+                    "class_hints": ["product_title", "title_product"]
+                }
+            },
+            "price": {
+                "validators": {
+                    "must_match": "[¥￥\\d,円税込]+",
+                    "numeric_range": [1, 99999999]
+                },
+                "fingerprint": {
+                    "tag_names": ["span", "label", "p"],
+                    "text_pattern": "[¥￥]?\\s*[\\d,]+\\s*円|[\\d,]+",
+                    "class_hints": ["text-price-detail", "price_group"]
+                }
+            },
+            "description": {
+                "validators": {
+                    "min_length": 10
+                },
+                "fingerprint": {
+                    "tag_names": ["div", "table", "section"],
+                    "text_pattern": ".{10,}",
+                    "class_hints": ["tbl_product_info", "product_detail"]
+                }
+            },
+            "images": {
+                "validators": {
+                    "url_pattern": "^https?://"
+                },
+                "fingerprint": {
+                    "tag_names": ["img"],
+                    "src_pattern": "cdn\\.suruga-ya\\.(jp|com)",
+                    "class_hints": ["is-main-image", "main-pro-img", "item-image"]
+                }
+            }
+        }
+    }
+}

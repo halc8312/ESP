@@ -15,6 +15,12 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger("surugaya")
 
+# Import self-healing engine
+try:
+    from services.selector_healer import get_healer as _get_healer
+except ImportError:
+    _get_healer = None
+
 BASE_URL = "https://www.suruga-ya.jp"
 BLOCK_MARKERS = (
     "just a moment",
@@ -750,26 +756,39 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
 
     ld_product = _extract_json_ld_product(soup)
 
+    # Try self-healing first if available
+    _healer = _get_healer() if _get_healer else None
+
     # ---- Title ----
-    for selector in SELECTORS["title"]:
-        title_el = soup.select_one(selector)
-        if title_el:
-            text = title_el.get_text(" ", strip=True)
-            if text:
-                result["title"] = text
-                break
+    if _healer:
+        title_val, _ = _healer.extract_with_healing(soup, 'surugaya', 'detail', 'title', parser='bs4')
+        if title_val:
+            result["title"] = title_val
+    if not result["title"]:
+        for selector in SELECTORS["title"]:
+            title_el = soup.select_one(selector)
+            if title_el:
+                text = title_el.get_text(" ", strip=True)
+                if text:
+                    result["title"] = text
+                    break
     if not result["title"] and ld_product.get("name"):
         result["title"] = ld_product["name"]
 
     # ---- Price ----
-    for selector in SELECTORS["price"]:
-        for el in soup.select(selector):
-            price = _extract_price(el.get_text(" ", strip=True))
-            if price is not None:
-                result["price"] = price
+    if _healer:
+        price_val, _ = _healer.extract_with_healing(soup, 'surugaya', 'detail', 'price', parser='bs4')
+        if price_val:
+            result["price"] = _extract_price(price_val)
+    if result["price"] is None:
+        for selector in SELECTORS["price"]:
+            for el in soup.select(selector):
+                price = _extract_price(el.get_text(" ", strip=True))
+                if price is not None:
+                    result["price"] = price
+                    break
+            if result["price"] is not None:
                 break
-        if result["price"] is not None:
-            break
 
     if result["price"] is None and ld_product.get("price") is not None:
         result["price"] = ld_product["price"]
@@ -784,17 +803,27 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
     result["condition"] = _extract_condition(soup)
 
     # ---- Images ----
-    result["image_urls"] = _extract_image_urls(soup, page_url, ld_product)
+    if _healer:
+        healed_imgs, _ = _healer.extract_images_with_healing(soup, 'surugaya', 'detail', parser='bs4')
+        if healed_imgs:
+            result["image_urls"] = healed_imgs
+    if not result["image_urls"]:
+        result["image_urls"] = _extract_image_urls(soup, page_url, ld_product)
 
     # ---- Description ----
-    for selector in SELECTORS["description"]:
-        detail_el = soup.select_one(selector)
-        if not detail_el:
-            continue
-        text = detail_el.get_text(separator="\n", strip=True)
-        if text:
-            result["description"] = text
-            break
+    if _healer:
+        desc_val, _ = _healer.extract_with_healing(soup, 'surugaya', 'detail', 'description', parser='bs4')
+        if desc_val:
+            result["description"] = desc_val
+    if not result["description"]:
+        for selector in SELECTORS["description"]:
+            detail_el = soup.select_one(selector)
+            if not detail_el:
+                continue
+            text = detail_el.get_text(separator="\n", strip=True)
+            if text:
+                result["description"] = text
+                break
 
     # ---- Category ----
     result["category"] = _extract_category(soup)

@@ -16,6 +16,12 @@ except ImportError:
     def get_selectors(site, page_type, field):
         return []
 
+# Import self-healing engine
+try:
+    from services.selector_healer import get_healer
+except ImportError:
+    get_healer = None
+
 # Import metrics logging
 try:
     from scrape_metrics import get_metrics, log_scrape_result, check_scrape_health
@@ -392,19 +398,27 @@ def scrape_item_detail(url: str, driver=None):
 
     # ---- 価格 ----
     price = None
-    price_selectors = get_selectors('mercari', 'general', 'price') or ["[data-testid='price']"]
-    try:
-        # メルカリのクラス名は頻繁に変わるため、data-testidがあれば優先
-        for selector in price_selectors:
-            price_nodes = page.css(selector)
-            if price_nodes:
-                price_text = price_nodes[0].text or ""
-                m = re.search(r"[¥￥]\s*([\d,]+)", price_text) or re.search(r"([\d,]+)", price_text)
-                if m:
-                    price = int(m.group(1).replace(",", ""))
-                    break
-    except Exception:
-        pass
+    healer = get_healer() if get_healer else None
+
+    if healer:
+        price_val, _ = healer.extract_with_healing(page, 'mercari', 'general', 'price', parser='scrapling')
+        if price_val:
+            m = re.search(r"[¥￥]\s*([\d,]+)", price_val) or re.search(r"([\d,]+)", price_val)
+            if m:
+                price = int(m.group(1).replace(",", ""))
+    else:
+        price_selectors = get_selectors('mercari', 'general', 'price') or ["[data-testid='price']"]
+        try:
+            for selector in price_selectors:
+                price_nodes = page.css(selector)
+                if price_nodes:
+                    price_text = price_nodes[0].text or ""
+                    m = re.search(r"[¥￥]\s*([\d,]+)", price_text) or re.search(r"([\d,]+)", price_text)
+                    if m:
+                        price = int(m.group(1).replace(",", ""))
+                        break
+        except Exception:
+            pass
 
     if price is None and body_text:
         m = re.search(r"[¥￥]\s*([\d,]+)", body_text)
@@ -420,14 +434,13 @@ def scrape_item_detail(url: str, driver=None):
     status = "unknown"
     try:
         if "売り切れ" in body_text or "Sold" in body_text:
-             # ボタンチェックも念のため
              try:
                  for btn in page.css("button"):
                      if "売り切れ" in (btn.text or ""):
                          status = "sold"
                          break
              except Exception:
-                 status = "sold"  # Fallback
+                 status = "sold"
         
         if status == "unknown" and ("購入手続きへ" in body_text or "Buy this item" in body_text):
              status = "on_sale"
@@ -451,18 +464,21 @@ def scrape_item_detail(url: str, driver=None):
 
     # ---- 商品画像 ----
     image_urls = []
-    image_selectors = get_selectors('mercari', 'general', 'images') or [
-        "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']"
-    ]
-    try:
-        for selector in image_selectors:
-            img_elements = page.css(selector)
-            for img in img_elements:
-                src = img.attrib.get("src")
-                if src and src not in image_urls:
-                    image_urls.append(src)
-    except Exception:
-        pass
+    if healer:
+        image_urls, _ = healer.extract_images_with_healing(page, 'mercari', 'general', parser='scrapling')
+    else:
+        image_selectors = get_selectors('mercari', 'general', 'images') or [
+            "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']"
+        ]
+        try:
+            for selector in image_selectors:
+                img_elements = page.css(selector)
+                for img in img_elements:
+                    src = img.attrib.get("src")
+                    if src and src not in image_urls:
+                        image_urls.append(src)
+        except Exception:
+            pass
 
     # ---- バリエーション（一般出品） ----
     variants = []

@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 
 from selector_config import get_selectors, get_valid_domains
 from scrape_metrics import check_scrape_health, get_metrics, log_scrape_result
+from services.selector_healer import get_healer
 
 logger = logging.getLogger("snkrdunk")
 
@@ -216,10 +217,13 @@ def _parse_detail_page(page, url: str) -> dict:
     script_el = page.find("#__NEXT_DATA__")
 
     if not script_el:
-        logger.debug("No JSON item data found, falling back to CSS selectors")
+        logger.debug("No JSON item data found, falling back to CSS selectors with self-healing")
+        healer = get_healer()
 
-        title_selectors = get_selectors("snkrdunk", "detail", "title") or ["h1.product-name-en", "p.product-name-jp", "h1"]
-        result["title"] = _get_first_text(page, title_selectors)
+        # Title (with healing)
+        title_val, title_healed = healer.extract_with_healing(page, 'snkrdunk', 'detail', 'title', parser='scrapling')
+        if title_val:
+            result["title"] = title_val
         if not result["title"]:
             result["title"] = _normalize_snkrdunk_title(
                 _get_first_meta_content(page, ["meta[property='og:title']", "meta[name='twitter:title']"])
@@ -229,32 +233,22 @@ def _parse_detail_page(page, url: str) -> dict:
         if not result.get("title"):
             return {}
 
-        price_selectors = get_selectors("snkrdunk", "detail", "price") or ["span.product-lowest-price"]
-        for sel in price_selectors:
-            els = page.css(sel)
-            if els and els[0].text:
-                result["price"] = _extract_price_value(str(els[0].text).strip())
-                if result["price"] is not None:
-                    break
-
+        # Price (with healing)
+        price_val, _ = healer.extract_with_healing(page, 'snkrdunk', 'detail', 'price', parser='scrapling')
+        if price_val:
+            result["price"] = _extract_price_value(price_val)
         if result["price"] is None:
             result["price"] = _extract_price_value(page.get_all_text() or "")
 
-        desc_selectors = get_selectors("snkrdunk", "detail", "description") or ["div.product-acd-content.product-content-info-detail"]
-        result["description"] = _get_first_text(page, desc_selectors)
+        # Description (with healing)
+        desc_val, _ = healer.extract_with_healing(page, 'snkrdunk', 'detail', 'description', parser='scrapling')
+        if desc_val:
+            result["description"] = desc_val
         if not result["description"]:
             result["description"] = _get_first_meta_content(page, ["meta[name='description']", "meta[property='og:description']"])
 
-        image_selectors = get_selectors("snkrdunk", "detail", "images") or [".product-img img"]
-        image_urls = []
-        for sel in image_selectors:
-            els = page.css(sel)
-            for el in els:
-                src = el.attrib.get("src") or el.attrib.get("data-src")
-                if src and src.startswith("http") and src not in image_urls:
-                    image_urls.append(str(src))
-            if image_urls:
-                break
+        # Images (with healing)
+        image_urls, _ = healer.extract_images_with_healing(page, 'snkrdunk', 'detail', parser='scrapling')
         if not image_urls:
             image_urls = _collect_image_urls(_get_first_meta_content(page, ["meta[property='og:image']"]))
         result["image_urls"] = image_urls

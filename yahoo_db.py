@@ -8,6 +8,7 @@ from urllib.parse import urljoin
 
 from selector_config import get_selectors, get_valid_domains
 from scrape_metrics import check_scrape_health, get_metrics, log_scrape_result
+from services.selector_healer import get_healer
 
 logger = logging.getLogger("yahoo")
 
@@ -63,44 +64,50 @@ def scrape_item_detail_light(url: str) -> dict:
         page = fetch_static(url)
         item = _extract_item_from_page(page)
         if not item:
-            logger.debug("No JSON item data found, falling back to CSS selectors")
-            title_selectors = get_selectors("yahoo", "detail", "title") or ["[class*='styles_name__']", "h1"]
-            for sel in title_selectors:
-                els = page.css(sel)
-                if els and els[0].text:
-                    result["title"] = str(els[0].text).strip()
-                    break
+            logger.debug("No JSON item data found, falling back to CSS selectors with self-healing")
+            healer = get_healer()
+
+            # Title (with healing)
+            title_val, title_healed = healer.extract_with_healing(page, 'yahoo', 'detail', 'title', parser='scrapling')
+            if title_val:
+                result["title"] = title_val
+                if title_healed:
+                    logger.info("Yahoo title selector was healed")
             
             if not result.get("title"):
                 return {}
-                
-            price_selectors = get_selectors("yahoo", "detail", "price") or ["[class*='styles_price__']", ".price"]
-            for sel in price_selectors:
-                els = page.css(sel)
-                if els and els[0].text:
-                    price_str = str(els[0].text).strip()
-                    digits = ''.join(c for c in price_str if c.isdigit())
-                    if digits:
-                        result["price"] = int(digits)
+
+            # Price (with healing)
+            price_val, price_healed = healer.extract_with_healing(page, 'yahoo', 'detail', 'price', parser='scrapling')
+            if price_val:
+                digits = ''.join(c for c in price_val if c.isdigit())
+                if digits:
+                    result["price"] = int(digits)
+                if price_healed:
+                    logger.info("Yahoo price selector was healed")
+
+            # Description (with healing)
+            desc_val, desc_healed = healer.extract_with_healing(page, 'yahoo', 'detail', 'description', parser='scrapling')
+            if desc_val:
+                result["description"] = desc_val
+                if desc_healed:
+                    logger.info("Yahoo description selector was healed")
+
+            # Images (with healing)
+            image_urls, img_healed = healer.extract_images_with_healing(page, 'yahoo', 'detail', parser='scrapling')
+            if not image_urls:
+                # Fallback: any img with http src
+                image_selectors = get_selectors("yahoo", "detail", "images") or ["img"]
+                for sel in image_selectors:
+                    els = page.css(sel)
+                    for el in els:
+                        src = el.attrib.get("src") or el.attrib.get("data-src")
+                        if src and src.startswith("http") and src not in image_urls:
+                            image_urls.append(str(src))
+                    if image_urls:
                         break
-
-            desc_selectors = get_selectors("yahoo", "detail", "description") or ["[class*='styles_content__']", ".description"]
-            for sel in desc_selectors:
-                els = page.css(sel)
-                if els and els[0].text:
-                    result["description"] = str(els[0].text).strip()
-                    break
-
-            image_selectors = get_selectors("yahoo", "detail", "images") or ["img"]
-            image_urls = []
-            for sel in image_selectors:
-                els = page.css(sel)
-                for el in els:
-                    src = el.attrib.get("src") or el.attrib.get("data-src")
-                    if src and src.startswith("http") and src not in image_urls:
-                        image_urls.append(str(src))
-                if image_urls:
-                    break
+            if img_healed:
+                logger.info("Yahoo image selectors were healed")
             result["image_urls"] = image_urls
             
             return result
