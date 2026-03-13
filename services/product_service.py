@@ -3,14 +3,15 @@ Product service for database operations related to scraped items.
 """
 import hashlib
 from datetime import datetime
-from flask import session, has_request_context
+from flask import has_request_context, session
 
 from database import SessionLocal
-from models import Product, Variant, ProductSnapshot
+from models import Product, ProductSnapshot, Variant
+from services.pricing_service import update_product_selling_price
 from utils import normalize_url
 
 
-def save_scraped_items_to_db(items, user_id: int, site: str = "mercari"):
+def save_scraped_items_to_db(items, user_id: int, site: str = "mercari", shop_id=None):
     """
     mercari_db.scrape_search_result() が返した items(list[dict]) を
     Product / ProductSnapshot に保存する。
@@ -22,10 +23,11 @@ def save_scraped_items_to_db(items, user_id: int, site: str = "mercari"):
     new_count = 0
     updated_count = 0
     now = datetime.utcnow()
+    repricing_product_ids = set()
 
-    # contextからcurrent_shop_idを取得（Flask-Loginが必要）など
-    # ここでは session から取る形にする
-    current_shop_id = session.get('current_shop_id') if has_request_context() else None
+    resolved_shop_id = shop_id
+    if resolved_shop_id is None and has_request_context():
+        resolved_shop_id = session.get('current_shop_id')
 
     try:
         for item in items:
@@ -59,19 +61,16 @@ def save_scraped_items_to_db(items, user_id: int, site: str = "mercari"):
                 if numeric_price <= 0:
                     continue
 
-            # 既存の Product を検索 (User + URL)
             product = session_db.query(Product).filter_by(source_url=url, user_id=user_id).one_or_none()
 
             if product is None:
-                # SKU自動生成 (MER- + URLのMD5ハッシュ先頭10文字)
                 sku_hash = hashlib.md5(url.encode('utf-8')).hexdigest()[:10].upper()
                 generated_sku = f"MER-{sku_hash}"
 
-                # 新規作成
                 product = Product(
-                    user_id=user_id, # 所有者
+                    user_id=user_id,
                     site=site,
-                    shop_id=current_shop_id, # 現在のショップIDを紐付け
+                    shop_id=resolved_shop_id,
                     source_url=url,
                     last_title=title,
                     last_price=price,
@@ -80,33 +79,29 @@ def save_scraped_items_to_db(items, user_id: int, site: str = "mercari"):
                     updated_at=now,
                 )
                 session_db.add(product)
-                session_db.flush()  # ID 発行
+                session_db.flush()
                 new_count += 1
-                
-                # バリエーション作成
+
                 scraped_variants = item.get("variants")
                 if scraped_variants:
-                    # メルカリShopsなどでバリエーションが取得できた場合
-                    # オプション名を設定
                     product.option1_name = item.get("option1_name", "Variation")
-                    product.option2_name = item.get("option2_name") 
+                    product.option2_name = item.get("option2_name")
                     product.option3_name = item.get("option3_name")
 
                     for i, v_data in enumerate(scraped_variants, 1):
                         new_variant = Variant(
                             product_id=product.id,
                             option1_value=v_data.get("option1_value", f"Option {i}"),
-                            option2_value=v_data.get("option2_value"), # 追加
-                            option3_value=v_data.get("option3_value"), # 追加
-                            sku=f"{generated_sku}-{i}", # SKUをユニーク化
+                            option2_value=v_data.get("option2_value"),
+                            option3_value=v_data.get("option3_value"),
+                            sku=f"{generated_sku}-{i}",
                             price=v_data.get("price", price),
                             taxable=False,
                             inventory_qty=v_data.get("inventory_qty", 1),
-                            position=i
+                            position=i,
                         )
                         session_db.add(new_variant)
                 else:
-                    # 通常商品（単一バリエーション）
                     default_variant = Variant(
                         product_id=product.id,
                         option1_value="Default Title",
@@ -114,24 +109,35 @@ def save_scraped_items_to_db(items, user_id: int, site: str = "mercari"):
                         price=price,
                         taxable=False,
                         inventory_qty=1 if status != 'sold' else 0,
-                        position=1
+                        position=1,
                     )
                     session_db.add(default_variant)
 
             else:
-                # 更新
+                price_changed = product.last_price != price
+                scrape_fields_changed = (
+                    product.last_title != title
+                    or price_changed
+                    or product.last_status != status
+                )
+
+                if product.shop_id is None and resolved_shop_id is not None:
+                    product.shop_id = resolved_shop_id
+
                 product.last_title = title
                 product.last_price = price
                 product.last_status = status
                 product.updated_at = now
-                updated_count += 1
-                
-                # Default Titleバリエーションがあれば価格と在庫を同期
+                if scrape_fields_changed:
+                    updated_count += 1
+                if price_changed and product.pricing_rule_id:
+                    repricing_product_ids.add(product.id)
+
                 default_variant = session_db.query(Variant).filter_by(
-                    product_id=product.id, 
-                    option1_value="Default Title"
+                    product_id=product.id,
+                    option1_value="Default Title",
                 ).first()
-                
+
                 if default_variant:
                     if price is not None:
                         default_variant.price = price
@@ -149,6 +155,10 @@ def save_scraped_items_to_db(items, user_id: int, site: str = "mercari"):
             session_db.add(snapshot)
 
         session_db.commit()
+
+        for product_id in repricing_product_ids:
+            update_product_selling_price(product_id)
+
         return new_count, updated_count
     except Exception as e:
         session_db.rollback()

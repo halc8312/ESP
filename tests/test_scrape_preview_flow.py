@@ -1,6 +1,6 @@
 import pytest
 
-from models import Product, User
+from models import Product, Shop, User
 
 
 class FakeQueue:
@@ -85,6 +85,37 @@ def test_scrape_run_preview_returns_json_without_saving(client, db_session, monk
     assert db_session.query(Product).filter_by(user_id=user.id).count() == 0
 
 
+def test_scrape_run_passes_current_shop_id_to_task(client, db_session, monkeypatch):
+    user = login_user(client, db_session, 'preview_shop_user')
+    shop = Shop(name='Preview Shop', user_id=user.id)
+    db_session.add(shop)
+    db_session.commit()
+
+    with client.session_transaction() as flask_session:
+        flask_session['current_shop_id'] = shop.id
+
+    fake_queue = FakeQueue()
+    build_calls = {}
+
+    def fake_build_scrape_task(**kwargs):
+        build_calls['persist_to_db'] = kwargs['persist_to_db']
+        build_calls['shop_id'] = kwargs['shop_id']
+        return lambda: {'items': [], 'site': 'mercari', 'persist_to_db': True, 'shop_id': kwargs['shop_id']}
+
+    monkeypatch.setattr('routes.scrape.get_queue', lambda: fake_queue)
+    monkeypatch.setattr('routes.scrape._build_scrape_task', fake_build_scrape_task)
+
+    response = client.post('/scrape/run', data={
+        'site': 'mercari',
+        'keyword': 'shop-aware'
+    })
+
+    assert response.status_code == 302
+    assert build_calls['persist_to_db'] is True
+    assert build_calls['shop_id'] == shop.id
+
+
+
 def test_scrape_run_standard_mode_redirects_and_keeps_persist_flow(client, db_session, monkeypatch):
     login_user(client, db_session, 'preview_redirect_user')
     fake_queue = FakeQueue()
@@ -151,9 +182,57 @@ def test_register_selected_saves_only_selected_items(client, db_session, monkeyp
     assert response.json['ok'] is True
     assert response.json['registered_count'] == 1
 
+    db_session.expire_all()
     products = db_session.query(Product).filter_by(user_id=user.id).all()
     assert len(products) == 1
     assert products[0].last_title == 'Preview Item 2'
+
+
+def test_register_selected_uses_job_shop_id_over_current_session_shop(client, db_session, monkeypatch):
+    user = login_user(client, db_session, 'register_selected_shop_user')
+    source_shop = Shop(name='Job Shop', user_id=user.id)
+    current_shop = Shop(name='Session Shop', user_id=user.id)
+    db_session.add_all([source_shop, current_shop])
+    db_session.commit()
+
+    with client.session_transaction() as flask_session:
+        flask_session['current_shop_id'] = current_shop.id
+
+    fake_queue = FakeQueue()
+    fake_queue.jobs['job-1'] = {
+        'job_id': 'job-1',
+        'status': 'completed',
+        'result': {
+            'items': [
+                {
+                    'url': 'https://jp.mercari.com/item/m-preview-shop',
+                    'title': 'Preview Shop Item',
+                    'price': 3300,
+                    'status': 'on_sale',
+                    'description': 'preview shop',
+                    'image_urls': ['https://img.example.com/shop.jpg'],
+                },
+            ],
+            'site': 'mercari',
+            'shop_id': source_shop.id,
+        },
+        'error': None,
+        'elapsed_seconds': 0.1,
+        'queue_position': None,
+        'user_id': user.id,
+    }
+
+    monkeypatch.setattr('routes.scrape.get_queue', lambda: fake_queue)
+
+    response = client.post('/scrape/register-selected', json={
+        'job_id': 'job-1',
+        'selected_indices': [0]
+    })
+
+    assert response.status_code == 200
+    db_session.expire_all()
+    product = db_session.query(Product).filter_by(user_id=user.id).one()
+    assert product.shop_id == source_shop.id
 
 
 def test_scrape_status_hides_other_users_job(client, db_session, monkeypatch):

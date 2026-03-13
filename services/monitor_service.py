@@ -64,7 +64,8 @@ class MonitorService:
             # Exclude archived products - include all supported sites
             products = session_db.query(Product).filter(
                 Product.site.in_(list(MonitorService._patrols.keys())),
-                Product.archived != True
+                Product.archived != True,
+                Product.deleted_at == None,
             ).order_by(asc(Product.updated_at)).limit(limit).all()
 
             if not products:
@@ -168,3 +169,4 @@ class MonitorService:
                         break
         
         return changes
+

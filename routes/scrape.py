@@ -76,7 +76,7 @@ def _get_search_depth(site: str, limit: int) -> int:
     return max(rule["min"], min(depth, rule["max"]))
 
 
-def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, category, limit, user_id, persist_to_db=True):
+def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, category, limit, user_id, persist_to_db=True, shop_id=None):
     """
     スクレイピングタスク関数を構築して返す。
     バックグラウンドスレッドで実行される。
@@ -95,7 +95,12 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
             filtered_items, excluded_count = filter_excluded_items(scraped_items, user_id)
             items = filtered_items[:limit]
             if persist_to_db:
-                new_count, updated_count = save_scraped_items_to_db(items, site=target_site, user_id=user_id)
+                new_count, updated_count = save_scraped_items_to_db(
+                    items,
+                    site=target_site,
+                    user_id=user_id,
+                    shop_id=shop_id,
+                )
 
         try:
             if target_url:
@@ -234,6 +239,7 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
             "limit": limit,
             "site": site,
             "persist_to_db": persist_to_db,
+            "shop_id": shop_id,
         }
 
     return task
@@ -268,6 +274,7 @@ def scrape_run():
     limit = int(limit_str) if limit_str.isdigit() else 10
     response_mode = request.form.get("response_mode", "").strip().lower()
     preview_mode = response_mode == "preview"
+    current_shop_id = session.get('current_shop_id')
 
     # URL から site を推定する（キュー振り分けに使用）
     if target_url:
@@ -286,6 +293,7 @@ def scrape_run():
         limit=limit,
         user_id=current_user.id,
         persist_to_db=not preview_mode,
+        shop_id=current_shop_id,
     )
 
     queue = get_queue()
@@ -446,6 +454,7 @@ def register_selected():
         selected_items,
         user_id=current_user.id,
         site=result.get("site", "mercari"),
+        shop_id=result.get("shop_id"),
     )
 
     return jsonify(
@@ -456,3 +465,5 @@ def register_selected():
             "updated_count": updated_count,
         }
     )
+
+
