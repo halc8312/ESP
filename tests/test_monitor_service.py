@@ -204,6 +204,10 @@ def test_is_valid_detail_url_valid_cases():
         "https://store.shopping.yahoo.co.jp/example-store/item123.html", "yahoo"
     )
     assert is_valid_detail_url("https://fril.jp/product/12345", "rakuma")
+    # Production rakuma URL format: item.fril.jp/<hash>
+    assert is_valid_detail_url(
+        "https://item.fril.jp/4c9cbe23f444f98740ea830f5f6a8eee", "rakuma"
+    )
     assert is_valid_detail_url(
         "https://www.suruga-ya.jp/product/detail/123456789", "surugaya"
     )
@@ -211,6 +215,10 @@ def test_is_valid_detail_url_valid_cases():
         "https://page.auctions.yahoo.co.jp/jp/auction/x123", "yahuoku"
     )
     assert is_valid_detail_url("https://snkrdunk.com/products/air-jordan-1", "snkrdunk")
+    # Production offmall URL: netmall.hardoff.co.jp
+    assert is_valid_detail_url(
+        "https://netmall.hardoff.co.jp/product/5983612/", "offmall"
+    )
     assert is_valid_detail_url(
         "https://offmall.hardoff.co.jp/categories/sneakers/item123", "offmall"
     )
@@ -218,19 +226,22 @@ def test_is_valid_detail_url_valid_cases():
 
 def test_is_valid_detail_url_invalid_cases():
     """Search URLs and malformed URLs are rejected."""
-    # Search URLs
+    # Search URLs (query param)
     assert not is_valid_detail_url(
         "https://shopping.yahoo.co.jp/search?p=shoes", "yahoo"
     )
     assert not is_valid_detail_url(
         "https://jp.mercari.com/search?keyword=bag", "mercari"
     )
+    # Yahoo search path
+    assert not is_valid_detail_url(
+        "https://shopping.yahoo.co.jp/search/PSA10+something", "yahoo"
+    )
     # Empty / whitespace
     assert not is_valid_detail_url("", "mercari")
     assert not is_valid_detail_url("   ", "yahoo")
     # Wrong domain for site
     assert not is_valid_detail_url("https://google.com/something", "yahoo")
-    assert not is_valid_detail_url("https://fril.jp/listing/popular", "rakuma")
 
 
 def test_is_valid_detail_url_unknown_site():

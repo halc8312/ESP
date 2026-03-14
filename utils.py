@@ -23,16 +23,23 @@ def normalize_url(raw_url: str) -> str:
 _DETAIL_URL_PATTERNS: dict[str, re.Pattern] = {
     # mercari: https://jp.mercari.com/item/m12345
     "mercari": re.compile(r"jp\.mercari\.com/item/m[\w-]+", re.I),
-    # yahoo shopping: https://store.shopping.yahoo.co.jp/STORENAME/ITEMID.html
+    # yahoo shopping:
+    #   https://store.shopping.yahoo.co.jp/STORENAME/ITEMID.html
+    #   https://shopping.yahoo.co.jp/products/ITEMID  (product page)
+    # Reject: https://shopping.yahoo.co.jp/search/...
     "yahoo": re.compile(
-        r"store\.shopping\.yahoo\.co\.jp/[^/]+/[^/]+", re.I
+        r"shopping\.yahoo\.co\.jp/(?!search[/?])", re.I
     ),
-    # rakuma (fril): https://fril.jp/product/<id>
-    "rakuma": re.compile(r"fril\.jp/product/\d+", re.I),
+    # rakuma (fril):
+    #   https://item.fril.jp/<hash>
+    #   https://fril.jp/product/<id>
+    "rakuma": re.compile(r"fril\.jp/(product/)?\w+", re.I),
     # surugaya: https://www.suruga-ya.jp/product/detail/<code>
     "surugaya": re.compile(r"suruga-ya\.jp/product/detail/", re.I),
-    # offmall: https://offmall.hardoff.co.jp/.../<id>
-    "offmall": re.compile(r"offmall\.hardoff\.co\.jp/.+/.+", re.I),
+    # offmall:
+    #   https://netmall.hardoff.co.jp/product/<id>/
+    #   https://offmall.hardoff.co.jp/.../<id>
+    "offmall": re.compile(r"(netmall|offmall)\.hardoff\.co\.jp/.+/.+", re.I),
     # yahuoku: https://page.auctions.yahoo.co.jp/jp/auction/<id>
     "yahuoku": re.compile(
         r"(page\.auctions\.yahoo\.co\.jp|auctions\.yahoo\.co\.jp/jp/auction)", re.I
@@ -69,3 +76,4 @@ def is_valid_detail_url(url: str, site: str) -> bool:
         return True
 
     return bool(pattern.search(url))
+
