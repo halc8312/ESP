@@ -47,6 +47,8 @@ def run_migrations():
         ("price_lists", "layout", "ALTER TABLE price_lists ADD COLUMN layout VARCHAR DEFAULT 'grid'"),
         # Shop logo
         ("shops", "logo_url", "ALTER TABLE shops ADD COLUMN logo_url VARCHAR"),
+        # Patrol failure tracking (backoff)
+        ("products", "patrol_fail_count", "ALTER TABLE products ADD COLUMN patrol_fail_count INTEGER DEFAULT 0"),
     ]
     
     with engine.connect() as conn:
