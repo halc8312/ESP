@@ -4,11 +4,12 @@ Uses efficient patrol scrapers that only fetch price and stock data.
 Non-Mercari sites use HTTP-only fetching (Scrapling) to avoid launching Chrome.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import asc
 from database import SessionLocal
 from models import Product, Variant
 from services.pricing_service import update_product_selling_price
+from utils import is_valid_detail_url
 
 # Import lightweight patrol scrapers
 from services.patrol.mercari_patrol import MercariPatrol
@@ -25,6 +26,9 @@ logger = logging.getLogger("patrol")
 
 # Sites that require a browser (Selenium/Chrome)
 _BROWSER_SITES = frozenset()
+
+# Maximum backoff in minutes for consecutive patrol failures
+_MAX_BACKOFF_MINUTES = 180
 
 
 class MonitorService:
@@ -45,6 +49,14 @@ class MonitorService:
         'snkrdunk': SnkrdunkPatrol(),
     }
     
+    @staticmethod
+    def _apply_backoff(product, session_db):
+        """Increment fail count and push updated_at into the future."""
+        product.patrol_fail_count = (product.patrol_fail_count or 0) + 1
+        backoff_minutes = min(product.patrol_fail_count * 15, _MAX_BACKOFF_MINUTES)
+        product.updated_at = datetime.utcnow() + timedelta(minutes=backoff_minutes)
+        session_db.commit()
+
     @staticmethod
     def check_stale_products(limit=15):
         """
@@ -79,6 +91,16 @@ class MonitorService:
                 try:
                     logger.info(f"Patrol: {product.source_url[:50]}...")
                     
+                    # ---- URL validation gate ----
+                    if not is_valid_detail_url(product.source_url, product.site):
+                        logger.warning(
+                            f"Invalid detail URL (site={product.site}), "
+                            f"skipping: {product.source_url[:80]}"
+                        )
+                        MonitorService._apply_backoff(product, session_db)
+                        error_count += 1
+                        continue
+                    
                     # Choose patrol scraper
                     patrol = MonitorService._patrols.get(product.site)
                     if not patrol:
@@ -90,9 +112,13 @@ class MonitorService:
                     
                     if not result.success:
                         logger.warning(f"Patrol failed: {result.error}")
+                        MonitorService._apply_backoff(product, session_db)
                         error_count += 1
                         continue
                     
+                    # ---- Success: reset fail counter ----
+                    product.patrol_fail_count = 0
+
                     # Update product with new data
                     changes = MonitorService._apply_patrol_result(
                         session_db, product, result
@@ -112,6 +138,10 @@ class MonitorService:
                     
                 except Exception as e:
                     logger.error(f"Error checking product {product.id}: {e}")
+                    try:
+                        MonitorService._apply_backoff(product, session_db)
+                    except Exception:
+                        pass
                     error_count += 1
                     continue
             

@@ -79,6 +79,9 @@ class Product(Base):
     # Trash (Soft Delete)
     deleted_at = Column(DateTime, nullable=True)  # NULL = not deleted
 
+    # Patrol failure tracking (exponential backoff)
+    patrol_fail_count = Column(Integer, default=0)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
