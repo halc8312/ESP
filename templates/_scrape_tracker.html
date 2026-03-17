@@ -6,6 +6,56 @@
     hidden
     aria-live="polite"
 >
-    <div id="globalScrapeTrackerList" class="global-scrape-tracker-list"></div>
-    <div id="globalScrapeTrackerOverflow" class="global-scrape-tracker-overflow" hidden></div>
+    <button
+        type="button"
+        id="globalScrapeTrackerPill"
+        class="global-scrape-tracker-pill"
+        aria-controls="globalScrapeTrackerSheet"
+        aria-expanded="false"
+    >
+        <span id="globalScrapeTrackerPillBadge" class="scrape-progress-badge global-scrape-tracker-pill-badge is-queued">待機中</span>
+        <span class="global-scrape-tracker-pill-copy">
+            <span id="globalScrapeTrackerPillTitle" class="global-scrape-tracker-pill-title">商品抽出</span>
+        </span>
+        <span id="globalScrapeTrackerPillCount" class="global-scrape-tracker-pill-count">1件</span>
+    </button>
+
+    <div id="globalScrapeTrackerDesktop" class="global-scrape-tracker-desktop">
+        <div id="globalScrapeTrackerList" class="global-scrape-tracker-list"></div>
+        <div id="globalScrapeTrackerOverflow" class="global-scrape-tracker-overflow" hidden></div>
+    </div>
+
+    <div id="globalScrapeTrackerBackdrop" class="global-scrape-tracker-backdrop" aria-hidden="true"></div>
+
+    <section
+        id="globalScrapeTrackerSheet"
+        class="global-scrape-tracker-sheet"
+        aria-modal="false"
+        aria-hidden="true"
+    >
+        <div
+            id="globalScrapeTrackerSheetHeader"
+            class="global-scrape-tracker-sheet-header"
+            role="button"
+            tabindex="0"
+            aria-label="抽出トラッカーを閉じる"
+        >
+            <div class="global-scrape-tracker-sheet-handle"></div>
+            <div class="global-scrape-tracker-sheet-title-row">
+                <div>
+                    <p class="global-scrape-tracker-sheet-title">抽出ジョブ</p>
+                    <p id="globalScrapeTrackerSheetCount" class="global-scrape-tracker-sheet-count">0件</p>
+                </div>
+                <button
+                    type="button"
+                    id="globalScrapeTrackerSheetClose"
+                    class="global-scrape-tracker-sheet-close"
+                    aria-label="抽出トラッカーを閉じる"
+                >
+                    閉じる
+                </button>
+            </div>
+        </div>
+        <div id="globalScrapeTrackerMobileList" class="global-scrape-tracker-sheet-list"></div>
+    </section>
 </section>

@@ -2746,6 +2746,10 @@ button:active {
     width: min(400px, calc(100vw - 24px));
 }
 
+.global-scrape-tracker-desktop {
+    display: block;
+}
+
 .global-scrape-tracker-list {
     display: grid;
     gap: 10px;
@@ -2764,6 +2768,142 @@ button:active {
 
 .scrape-tracker-card + .scrape-tracker-card {
     margin-top: 10px;
+}
+
+.global-scrape-tracker-pill,
+.global-scrape-tracker-backdrop,
+.global-scrape-tracker-sheet {
+    display: none;
+}
+
+.global-scrape-tracker-pill {
+    width: 100%;
+    min-height: 48px;
+    padding: 8px 12px;
+    border: 1px solid rgba(13, 27, 42, 0.12);
+    border-radius: 999px;
+    background:
+        linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(244, 247, 251, 0.98)),
+        #fff;
+    box-shadow: 0 16px 32px rgba(15, 23, 42, 0.16);
+    backdrop-filter: blur(16px);
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+}
+
+.global-scrape-tracker-pill-badge {
+    flex: 0 0 auto;
+}
+
+.global-scrape-tracker-pill-copy {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.global-scrape-tracker-pill-title {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: #0f172a;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.global-scrape-tracker-pill-count {
+    flex: 0 0 auto;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.global-scrape-tracker-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.26);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease;
+}
+
+.global-scrape-tracker-sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1201;
+    max-height: min(60dvh, 520px);
+    background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.98));
+    border-top-left-radius: 22px;
+    border-top-right-radius: 22px;
+    box-shadow: 0 -18px 48px rgba(15, 23, 42, 0.24);
+    transform: translateY(calc(100% + 20px));
+    transition: transform 0.24s ease;
+    pointer-events: none;
+    padding-bottom: env(safe-area-inset-bottom);
+}
+
+.global-scrape-tracker-sheet-header {
+    padding: 10px 14px 8px;
+    cursor: pointer;
+}
+
+.global-scrape-tracker-sheet-handle {
+    width: 46px;
+    height: 5px;
+    margin: 0 auto 10px;
+    border-radius: 999px;
+    background: rgba(100, 116, 139, 0.32);
+}
+
+.global-scrape-tracker-sheet-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.global-scrape-tracker-sheet-title {
+    margin: 0 0 2px;
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.global-scrape-tracker-sheet-count {
+    margin: 0;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.global-scrape-tracker-sheet-close {
+    border: 0;
+    background: transparent;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 0;
+}
+
+.global-scrape-tracker-sheet-list {
+    display: grid;
+    gap: 8px;
+    max-height: calc(min(60dvh, 520px) - 72px);
+    padding: 0 12px 12px;
+    overflow-y: auto;
+}
+
+.global-scrape-tracker.is-mobile-open .global-scrape-tracker-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.global-scrape-tracker.is-mobile-open .global-scrape-tracker-sheet {
+    transform: translateY(0);
+    pointer-events: auto;
 }
 
 .scrape-progress-card {
@@ -3271,10 +3411,117 @@ button:active {
         left: 10px;
         right: 10px;
         width: auto;
+        bottom: calc(var(--bottom-nav-height) + 8px + env(safe-area-inset-bottom));
     }
 
     .scrape-progress-shell {
         padding: 14px;
+    }
+
+    .global-scrape-tracker-desktop,
+    .global-scrape-tracker-overflow {
+        display: none !important;
+    }
+
+    .global-scrape-tracker-pill,
+    .global-scrape-tracker-backdrop,
+    .global-scrape-tracker-sheet {
+        display: block;
+    }
+
+    .global-scrape-tracker-pill {
+        display: flex;
+        min-height: 46px;
+        padding: 7px 10px;
+        gap: 8px;
+    }
+
+    .global-scrape-tracker-pill-badge {
+        padding: 5px 8px;
+        font-size: 11px;
+    }
+
+    .global-scrape-tracker-pill-title {
+        font-size: 12px;
+    }
+
+    .global-scrape-tracker-pill-count {
+        font-size: 11px;
+    }
+
+    .global-scrape-tracker-sheet .scrape-progress-card {
+        border-radius: 16px;
+        box-shadow: 0 12px 26px rgba(15, 23, 42, 0.12);
+    }
+
+    .global-scrape-tracker-sheet .scrape-progress-shell {
+        padding: 12px;
+    }
+
+    .global-scrape-tracker-sheet .scrape-progress-head {
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+
+    .global-scrape-tracker-sheet .scrape-progress-main {
+        grid-template-columns: 32px minmax(0, 1fr);
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+
+    .global-scrape-tracker-sheet .scrape-progress-spinner {
+        width: 28px;
+        height: 28px;
+        border-width: 2px;
+    }
+
+    .global-scrape-tracker-sheet .scrape-progress-title {
+        font-size: 14px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .global-scrape-tracker-sheet .scrape-progress-subtitle {
+        font-size: 12px;
+        display: -webkit-box;
+        -webkit-line-clamp: 1;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    .global-scrape-tracker-sheet .scrape-progress-track {
+        height: 6px;
+        margin-bottom: 10px;
+    }
+
+    .global-scrape-tracker-sheet .scrape-progress-details {
+        gap: 8px;
+    }
+
+    .global-scrape-tracker-sheet .scrape-progress-meta {
+        gap: 6px;
+    }
+
+    .global-scrape-tracker-sheet .scrape-progress-meta span {
+        min-height: 24px;
+        padding: 4px 8px;
+        font-size: 11px;
+    }
+
+    .global-scrape-tracker-sheet .scrape-progress-phase {
+        padding: 8px 10px;
+        font-size: 12px;
+        line-height: 1.45;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    .global-scrape-tracker-sheet .scrape-tracker-link,
+    .global-scrape-tracker-sheet .scrape-tracker-dismiss {
+        font-size: 11px;
     }
 
     .scrape-progress-main {
@@ -3312,6 +3559,10 @@ button:active {
     .scrape-wait-actions {
         display: grid;
     }
+}
+
+body.scrape-tracker-sheet-open {
+    overflow: hidden;
 }
 
 /* ── Phase 1: Compact scrape form ── */

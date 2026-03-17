@@ -369,3 +369,6 @@ def test_scrape_form_renders_tracker_config(client, db_session):
     assert response.status_code == 200
     assert b'scrapePageConfig' in response.data
     assert b'globalScrapeTracker' in response.data
+    assert b'globalScrapeTrackerPill' in response.data
+    assert b'globalScrapeTrackerSheet' in response.data
+    assert b'globalScrapeTrackerMobileList' in response.data

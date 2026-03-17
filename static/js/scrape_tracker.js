@@ -6,19 +6,35 @@
         return;
     }
 
+    var desktopContainer = document.getElementById("globalScrapeTrackerDesktop");
     var listEl = document.getElementById("globalScrapeTrackerList");
     var overflowEl = document.getElementById("globalScrapeTrackerOverflow");
+    var pillEl = document.getElementById("globalScrapeTrackerPill");
+    var pillBadgeEl = document.getElementById("globalScrapeTrackerPillBadge");
+    var pillTitleEl = document.getElementById("globalScrapeTrackerPillTitle");
+    var pillCountEl = document.getElementById("globalScrapeTrackerPillCount");
+    var backdropEl = document.getElementById("globalScrapeTrackerBackdrop");
+    var sheetEl = document.getElementById("globalScrapeTrackerSheet");
+    var sheetHeaderEl = document.getElementById("globalScrapeTrackerSheetHeader");
+    var sheetCloseEl = document.getElementById("globalScrapeTrackerSheetClose");
+    var sheetCountEl = document.getElementById("globalScrapeTrackerSheetCount");
+    var mobileListEl = document.getElementById("globalScrapeTrackerMobileList");
     var jobsUrl = root.dataset.jobsUrl;
     var userId = root.dataset.userId || "anonymous";
     var storageKey = "esp_scrape_tracker_dismissed_" + userId;
     var maxVisibleJobs = 3;
     var pollIntervalMs = 2000;
     var dismissTtlMs = 60 * 60 * 1000;
+    var mobileMedia = window.matchMedia("(max-width: 767px)");
+
     var state = {
         jobs: new Map(),
         dismissed: loadDismissed(),
         inFlight: false,
-        pollTimer: null
+        pollTimer: null,
+        isMobileViewport: mobileMedia.matches,
+        mobileSheetOpen: false,
+        visibleJobs: []
     };
 
     function nowMs() {
@@ -182,6 +198,21 @@
         return job.error || "不明なエラー";
     }
 
+    function getMobilePhase(job) {
+        if (job.status === "queued") {
+            return job.queue_position
+                ? job.queue_position + "番目で待機中です。"
+                : "ジョブをキューに登録しています。";
+        }
+        if (job.status === "running") {
+            return "抽出処理を進めています。";
+        }
+        if (job.status === "completed") {
+            return getCompletedSummary(job);
+        }
+        return job.error || "不明なエラー";
+    }
+
     function removeDismissal(jobId) {
         if (!state.dismissed[jobId]) {
             return;
@@ -209,9 +240,39 @@
         });
     }
 
-    function buildCard(job) {
+    function getPriorityJob(jobs) {
+        var activeJobs = jobs.filter(isActive);
+        if (activeJobs.length) {
+            return activeJobs[0];
+        }
+        return jobs[0] || null;
+    }
+
+    function updateMobileSheetState(isOpen) {
+        state.mobileSheetOpen = Boolean(isOpen && state.isMobileViewport && state.visibleJobs.length);
+        root.classList.toggle("is-mobile-open", state.mobileSheetOpen);
+        pillEl.setAttribute("aria-expanded", state.mobileSheetOpen ? "true" : "false");
+        sheetEl.setAttribute("aria-hidden", state.mobileSheetOpen ? "false" : "true");
+        sheetEl.setAttribute("aria-modal", state.mobileSheetOpen ? "true" : "false");
+        backdropEl.setAttribute("aria-hidden", state.mobileSheetOpen ? "false" : "true");
+        document.body.classList.toggle("scrape-tracker-sheet-open", state.mobileSheetOpen);
+    }
+
+    function openMobileSheet() {
+        updateMobileSheetState(true);
+    }
+
+    function closeMobileSheet() {
+        updateMobileSheetState(false);
+    }
+
+    function buildCard(job, variant) {
         var trackState = getTrackState(job.status);
-        var article = createElement("article", "scrape-progress-card scrape-tracker-card");
+        var articleClass = "scrape-progress-card scrape-tracker-card";
+        if (variant === "mobile") {
+            articleClass += " is-mobile-sheet";
+        }
+        var article = createElement("article", articleClass);
         var shell = createElement("div", "scrape-progress-shell");
         var head = createElement("div", "scrape-progress-head");
         var badge = createElement("span", "scrape-progress-badge is-" + trackState, getBadgeText(job.status));
@@ -260,7 +321,8 @@
         meta.appendChild(createElement("span", "", job.context.limit_label || "件数未設定"));
         meta.appendChild(createElement("span", "", "経過 " + job.elapsed_seconds + "秒"));
 
-        var phase = createElement("p", "scrape-progress-phase", getPhase(job));
+        var phaseText = variant === "mobile" ? getMobilePhase(job) : getPhase(job);
+        var phase = createElement("p", "scrape-progress-phase", phaseText);
 
         details.appendChild(meta);
         details.appendChild(phase);
@@ -273,26 +335,11 @@
         return article;
     }
 
-    function render() {
-        purgeDismissed();
+    function renderDesktop(visibleJobs) {
         listEl.innerHTML = "";
 
-        var visibleJobs = sortJobs(
-            Array.from(state.jobs.values()).filter(function (job) {
-                return !(isTerminal(job) && isDismissed(job.job_id));
-            })
-        );
-
-        if (!visibleJobs.length) {
-            overflowEl.hidden = true;
-            overflowEl.textContent = "";
-            root.hidden = true;
-            return;
-        }
-
-        root.hidden = false;
         visibleJobs.slice(0, maxVisibleJobs).forEach(function (job) {
-            listEl.appendChild(buildCard(job));
+            listEl.appendChild(buildCard(job, "desktop"));
         });
 
         var overflowCount = visibleJobs.length - maxVisibleJobs;
@@ -302,6 +349,61 @@
         } else {
             overflowEl.hidden = true;
             overflowEl.textContent = "";
+        }
+    }
+
+    function renderMobilePill(visibleJobs) {
+        var priorityJob = getPriorityJob(visibleJobs);
+        var trackState = getTrackState(priorityJob.status);
+        pillBadgeEl.className = "scrape-progress-badge global-scrape-tracker-pill-badge is-" + trackState;
+        pillBadgeEl.textContent = getBadgeText(priorityJob.status);
+        pillTitleEl.textContent = getSubtitle(priorityJob);
+        pillCountEl.textContent = visibleJobs.length === 1 ? "1件" : "全" + visibleJobs.length + "件";
+    }
+
+    function renderMobileSheet(visibleJobs) {
+        mobileListEl.innerHTML = "";
+        visibleJobs.forEach(function (job) {
+            mobileListEl.appendChild(buildCard(job, "mobile"));
+        });
+        sheetCountEl.textContent = visibleJobs.length === 1 ? "1件" : visibleJobs.length + "件";
+    }
+
+    function render() {
+        purgeDismissed();
+
+        var visibleJobs = sortJobs(
+            Array.from(state.jobs.values()).filter(function (job) {
+                return !(isTerminal(job) && isDismissed(job.job_id));
+            })
+        );
+
+        state.visibleJobs = visibleJobs;
+
+        if (!visibleJobs.length) {
+            listEl.innerHTML = "";
+            mobileListEl.innerHTML = "";
+            overflowEl.hidden = true;
+            overflowEl.textContent = "";
+            closeMobileSheet();
+            root.hidden = true;
+            return;
+        }
+
+        root.hidden = false;
+        state.isMobileViewport = mobileMedia.matches;
+
+        renderDesktop(visibleJobs);
+        renderMobilePill(visibleJobs);
+        renderMobileSheet(visibleJobs);
+
+        desktopContainer.hidden = state.isMobileViewport;
+        pillEl.hidden = !state.isMobileViewport;
+
+        if (!state.isMobileViewport) {
+            closeMobileSheet();
+        } else {
+            updateMobileSheetState(state.mobileSheetOpen);
         }
     }
 
@@ -351,6 +453,45 @@
         render();
         schedulePolling();
         refreshNow();
+    }
+
+    function handleViewportChange(event) {
+        state.isMobileViewport = event.matches;
+        if (!state.isMobileViewport) {
+            closeMobileSheet();
+        }
+        render();
+    }
+
+    pillEl.addEventListener("click", function () {
+        if (!state.visibleJobs.length || !state.isMobileViewport) {
+            return;
+        }
+        openMobileSheet();
+    });
+
+    backdropEl.addEventListener("click", closeMobileSheet);
+    sheetCloseEl.addEventListener("click", function (event) {
+        event.stopPropagation();
+        closeMobileSheet();
+    });
+    sheetHeaderEl.addEventListener("click", closeMobileSheet);
+    sheetHeaderEl.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            closeMobileSheet();
+        }
+    });
+    document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && state.mobileSheetOpen) {
+            closeMobileSheet();
+        }
+    });
+
+    if (typeof mobileMedia.addEventListener === "function") {
+        mobileMedia.addEventListener("change", handleViewportChange);
+    } else if (typeof mobileMedia.addListener === "function") {
+        mobileMedia.addListener(handleViewportChange);
     }
 
     window.ESPScrapeTracker = {
