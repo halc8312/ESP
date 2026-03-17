@@ -23,6 +23,28 @@ SELECTORS = {
 }
 
 
+def _node_text(node) -> str:
+    if node is None:
+        return ""
+
+    text = getattr(node, "text", "")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+
+    for attr_name in ("get_text", "get_all_text"):
+        extractor = getattr(node, attr_name, None)
+        if not callable(extractor):
+            continue
+        try:
+            text = extractor() or ""
+        except Exception:
+            continue
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+
+    return ""
+
+
 def _empty_result(url: str, status: str = "error") -> dict:
     return {
         "url": url,
@@ -120,10 +142,47 @@ def _infer_offmall_status(page_text: str, offers=None) -> str:
 
     if "対象の商品はございません" in page_text or "ページが見つかりません" in page_text:
         return "sold"
+    if "SOLDOUT" in page_text or "売り切れ" in page_text:
+        return "sold"
     if "カートに入れる" in page_text or "購入手続き" in page_text:
         return "active"
 
     return "unknown"
+
+
+def _extract_detail_description(page) -> str:
+    desc_parts = []
+
+    for point_el in page.css("div.product-detail-point__box"):
+        text = _node_text(point_el)
+        if text:
+            desc_parts.append(text)
+
+    for th_el in page.css("#panel1 th, .product-detail-spec th"):
+        th_text = _node_text(th_el)
+        if not any(marker in th_text for marker in ("特徴", "備考", "商品説明")):
+            continue
+
+        parent = getattr(th_el, "parent", None)
+        if not parent:
+            continue
+
+        for td_el in parent.css("td"):
+            td_text = _node_text(td_el)
+            if td_text:
+                desc_parts.append(td_text)
+                break
+
+    deduped_parts = []
+    seen = set()
+    for part in desc_parts:
+        normalized = re.sub(r"\s+", " ", part).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped_parts.append(normalized)
+
+    return "\n".join(deduped_parts)
 
 
 def scrape_item_detail_light(url: str) -> dict:
@@ -158,27 +217,9 @@ def scrape_item_detail_light(url: str) -> dict:
 
         # JSON-LD description is often just the URL on Offmall; fall back to HTML
         if not result["description"] or result["description"].startswith("http"):
-            desc_parts = []
-            # Staff recommendation section
-            point_els = page.css("div.product-detail-point__box")
-            if point_els:
-                text = str(point_els[0].text or "").strip()
-                if text:
-                    desc_parts.append(text)
-            # Features/notes table in #panel1
-            for th_el in page.css("#panel1 th, .product-detail-spec th"):
-                th_text = str(th_el.text or "")
-                if "特徴" in th_text or "備考" in th_text or "商品説明" in th_text:
-                    # Navigate to sibling td
-                    parent = th_el.parent
-                    if parent:
-                        td_els = parent.css("td")
-                        if td_els:
-                            td_text = str(td_els[0].text or "").strip()
-                            if td_text:
-                                desc_parts.append(td_text)
-            if desc_parts:
-                result["description"] = "\n".join(desc_parts)
+            html_description = _extract_detail_description(page)
+            if html_description:
+                result["description"] = html_description
 
         offers = json_ld.get("offers", {})
         result["price"] = _extract_visible_price(page, page_text)

@@ -22,9 +22,21 @@ MODULES_WITHOUT_SELENIUM = [
 
 
 class MockElement:
-    def __init__(self, text="", attrib=None):
+    def __init__(self, text="", attrib=None, *, all_text=None, css_map=None, parent=None):
         self.text = text
         self.attrib = attrib or {}
+        self.parent = parent
+        self._all_text = all_text
+        self._css_map = css_map or {}
+
+    def css(self, selector):
+        return list(self._css_map.get(selector, []))
+
+    def get_text(self):
+        return self._all_text if self._all_text is not None else self.text
+
+    def get_all_text(self):
+        return self._all_text if self._all_text is not None else self.text
 
 
 class MockPage:
@@ -220,6 +232,47 @@ def test_offmall_detail_prefers_visible_tax_included_price():
 
     assert result["price"] == 2200
     assert result["status"] == "active"
+
+
+def test_offmall_detail_extracts_description_from_detail_rows():
+    import offmall_db
+
+    detail_td = MockElement(
+        text="",
+        all_text="ソーラーパネル 折り畳み 500Wポータブル蓄電池専用 持ち運びに便利",
+    )
+    detail_row = MockElement(css_map={"td": [detail_td]})
+    detail_th = MockElement(text="特徴・備考", parent=detail_row)
+
+    detail_page = MockPage(
+        css_map={
+            "script[type='application/ld+json']": [
+                MockElement(
+                    text=json.dumps(
+                        {
+                            "@type": "Product",
+                            "name": "Offmall Solar Panel",
+                            "description": "https://netmall.hardoff.co.jp/product/2549323/",
+                            "offers": {"price": "15000"},
+                        }
+                    )
+                )
+            ],
+            "span.product-detail-price__main": [MockElement(text="16,500")],
+            "div.product-detail-point__box": [],
+            "#panel1 th, .product-detail-spec th": [detail_th],
+            "meta[property='og:image']": [],
+            "img[src*='hardoff']": [],
+            ".item-condition, .condition, [class*='rank'], [class*='condition']": [],
+        },
+        text="SOLDOUT 16,500 (税込)",
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=detail_page):
+        result = offmall_db.scrape_item_detail_light("https://netmall.hardoff.co.jp/product/2549323/")
+
+    assert result["description"] == "ソーラーパネル 折り畳み 500Wポータブル蓄電池専用 持ち運びに便利"
+    assert result["status"] == "sold"
 
 
 def test_offmall_patrol_prefers_visible_tax_included_price():
