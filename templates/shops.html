@@ -8,18 +8,29 @@
     <h1>ショップ管理</h1>
 </div>
 
+{% if error %}
+<div class="content-card" style="border-color: var(--danger-color); margin-bottom: 16px;">
+    <div class="content-card-body">
+        <p class="error" style="margin: 0;">{{ error }}</p>
+    </div>
+</div>
+{% endif %}
+
 <!-- 新規追加フォーム -->
 <div class="content-card">
     <div class="content-card-header">
         <h3>新規ショップ追加</h3>
     </div>
     <div class="content-card-body">
-        <form method="POST" class="shop-add-form" style="display:flex; gap:10px; flex-wrap: wrap;">
+        <form method="POST" enctype="multipart/form-data" class="shop-add-form"
+            style="display:flex; gap:10px; flex-wrap: wrap;">
             <input type="text" name="name" placeholder="ショップ名 (例: 文具店A)" required autocomplete="organization"
                 style="flex: 1; min-width: 200px;">
-            <input type="url" name="logo_url" placeholder="ロゴ画像URL (任意)" style="flex: 2; min-width: 250px;">
+            <input type="url" name="logo_url" placeholder="外部ロゴURL (任意)" style="flex: 2; min-width: 250px;">
+            <input type="file" name="logo_file" accept="image/*" style="flex: 1; min-width: 220px;">
             <button type="submit" class="add-btn">追加</button>
         </form>
+        <p class="text-small text-muted mt-1 mb-0">画像を選択した場合はアップロード画像を優先して登録します。</p>
     </div>
 </div>
 
@@ -33,6 +44,7 @@
             <table>
                 <tr>
                     <th>ID</th>
+                    <th>ロゴ</th>
                     <th>ショップ名</th>
                     <th>商品数</th>
                     <th>操作</th>
@@ -40,6 +52,14 @@
                 {% for s in shops %}
                 <tr>
                     <td>{{ s.id }}</td>
+                    <td style="width: 80px;">
+                        {% if s.logo_url %}
+                        <img src="{{ s.logo_url }}" alt="{{ s.name }} logo"
+                            style="width: 48px; height: 48px; object-fit: contain; border: 1px solid var(--border-color); border-radius: 8px; background: #fff; padding: 4px;">
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
                     <td>{{ s.name }}</td>
                     <td>{{ s.product_count }}</td>
                     <td>
@@ -55,16 +75,22 @@
                     </td>
                 </tr>
                 <!-- 編集用フォーム（デフォルト非表示） -->
-                <tr id="edit-form-{{ s.id }}" style="display: none; background-color: var(--bg-secondary);">
-                    <td colspan="4">
-                        <form method="POST" action="{{ url_for('shops.edit_shop', shop_id=s.id) }}"
-                            style="display:flex; gap:10px; padding: 10px;">
+                <tr id="edit-form-{{ s.id }}"
+                    style="display: {% if edit_error_shop_id == s.id %}table-row{% else %}none{% endif %}; background-color: var(--bg-secondary);">
+                    <td colspan="5">
+                        <form method="POST" enctype="multipart/form-data"
+                            action="{{ url_for('shops.edit_shop', shop_id=s.id) }}"
+                            style="display:flex; gap:10px; padding: 10px; flex-wrap: wrap;">
                             <input type="text" name="name" value="{{ s.name }}" required style="flex: 1;">
                             <input type="url" name="logo_url" value="{{ s.logo_url or '' }}" placeholder="ロゴURL"
                                 style="flex: 2;">
+                            <input type="file" name="logo_file" accept="image/*" style="flex: 1; min-width: 220px;">
                             <button type="submit" class="btn-primary">保存</button>
                             <button type="button" class="btn-secondary"
                                 onclick="document.getElementById('edit-form-{{ s.id }}').style.display='none';">キャンセル</button>
+                            <div style="width: 100%; font-size: 12px; color: var(--secondary-color);">
+                                画像を選択した場合はアップロード画像を優先します。URL欄を空にして保存するとロゴを解除できます。
+                            </div>
                         </form>
                     </td>
                 </tr>
