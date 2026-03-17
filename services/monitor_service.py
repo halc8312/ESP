@@ -9,6 +9,7 @@ from sqlalchemy import asc
 from database import SessionLocal
 from models import Product, Variant
 from services.pricing_service import update_product_selling_price
+from services.scrape_result_policy import normalize_status_for_persistence
 from utils import is_valid_detail_url
 
 # Import lightweight patrol scrapers
@@ -110,8 +111,16 @@ class MonitorService:
                     # All sites now use driver-less scraping or manage drivers internally
                     result = patrol.fetch(product.source_url)
                     
-                    if not result.success:
-                        logger.warning(f"Patrol failed: {result.error}")
+                    normalized_status = normalize_status_for_persistence(result.status)
+                    active_missing_price = (
+                        normalized_status == "on_sale"
+                        and result.price is None
+                        and str(result.confidence or "").lower() == "low"
+                    )
+
+                    if not result.success or active_missing_price:
+                        failure_reason = result.error or result.reason or "low-confidence active result"
+                        logger.warning(f"Patrol failed: {failure_reason}")
                         MonitorService._apply_backoff(product, session_db)
                         error_count += 1
                         continue
@@ -160,23 +169,39 @@ class MonitorService:
         Returns number of changes made.
         """
         changes = 0
+        normalized_status = normalize_status_for_persistence(result.status)
         
         # Update price if changed
-        if result.price is not None and result.price != product.last_price:
+        if (
+            result.price is not None
+            and str(result.confidence or "").lower() == "high"
+            and result.price != product.last_price
+        ):
             product.last_price = result.price
             changes += 1
         
         # Update status if changed
-        if result.status and result.status != product.last_status:
-            product.last_status = result.status
+        if normalized_status and normalized_status != "unknown" and normalized_status != product.last_status:
+            product.last_status = normalized_status
             changes += 1
         
+        existing_variants = session_db.query(Variant).filter_by(
+            product_id=product.id
+        ).all()
+
+        if normalized_status in {"sold", "deleted"}:
+            for existing in existing_variants:
+                if existing.inventory_qty != 0:
+                    existing.inventory_qty = 0
+                    changes += 1
+        elif normalized_status == "on_sale" and not result.variants:
+            for existing in existing_variants:
+                if existing.option1_value == "Default Title" and (existing.inventory_qty or 0) == 0:
+                    existing.inventory_qty = 1
+                    changes += 1
+
         # Update variant stock if available
         if result.variants:
-            existing_variants = session_db.query(Variant).filter_by(
-                product_id=product.id
-            ).all()
-            
             # Match variants by name/option and update stock
             for patrol_var in result.variants:
                 var_name = patrol_var.get("name", "")
@@ -193,7 +218,11 @@ class MonitorService:
                         if existing.inventory_qty != var_stock:
                             existing.inventory_qty = var_stock
                             changes += 1
-                        if var_price and existing.price != var_price:
+                        if (
+                            var_price
+                            and str(result.confidence or "").lower() == "high"
+                            and existing.price != var_price
+                        ):
                             existing.price = var_price
                             changes += 1
                         break

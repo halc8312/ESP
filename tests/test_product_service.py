@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from models import PricingRule, Product, Shop, User, Variant
+from models import PricingRule, Product, ProductSnapshot, Shop, User, Variant
 from services.product_service import save_scraped_items_to_db
 
 
@@ -114,4 +114,99 @@ def test_save_scraped_items_recalculates_selling_price_when_cost_changes(client,
     assert refreshed_product.last_price == 2000
     assert refreshed_product.selling_price == 3000
     assert refreshed_variant.price == 2000
+
+
+def test_save_scraped_items_rejects_new_deleted_item(client, db_session):
+    user = _create_user(db_session, 'product_service_deleted_new_user')
+
+    items = [
+        {
+            'url': 'https://jp.mercari.com/item/m-deleted-new',
+            'title': '',
+            'price': None,
+            'status': 'deleted',
+            'description': '',
+            'image_urls': [],
+            '_scrape_meta': {'confidence': 'high', 'reasons': ['missing-marker']},
+        }
+    ]
+
+    new_count, updated_count = save_scraped_items_to_db(
+        items,
+        user_id=user.id,
+        site='mercari',
+    )
+
+    assert new_count == 0
+    assert updated_count == 0
+    assert db_session.query(Product).filter_by(user_id=user.id).count() == 0
+
+
+def test_save_scraped_items_allows_status_only_deleted_update(client, db_session):
+    user = _create_user(db_session, 'product_service_deleted_existing_user')
+    product = Product(
+        user_id=user.id,
+        site='mercari',
+        source_url='https://jp.mercari.com/item/m-deleted-existing',
+        last_title='Original Title',
+        last_price=3500,
+        last_status='on_sale',
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(product)
+    db_session.commit()
+
+    variant = Variant(
+        product_id=product.id,
+        option1_value='Default Title',
+        sku='MER-DEL',
+        price=3500,
+        inventory_qty=1,
+        position=1,
+    )
+    db_session.add(variant)
+    db_session.add(
+        ProductSnapshot(
+            product_id=product.id,
+            title='Original Title',
+            price=3500,
+            status='on_sale',
+            description='desc',
+            image_urls='https://img.example.com/original.jpg',
+        )
+    )
+    db_session.commit()
+
+    items = [
+        {
+            'url': 'https://jp.mercari.com/item/m-deleted-existing',
+            'title': '',
+            'price': None,
+            'status': 'deleted',
+            'description': '',
+            'image_urls': [],
+            '_scrape_meta': {'confidence': 'high', 'reasons': ['missing-marker']},
+        }
+    ]
+
+    new_count, updated_count = save_scraped_items_to_db(
+        items,
+        user_id=user.id,
+        site='mercari',
+    )
+
+    assert new_count == 0
+    assert updated_count == 1
+
+    db_session.expire_all()
+    refreshed_product = db_session.query(Product).filter_by(id=product.id).one()
+    refreshed_variant = db_session.query(Variant).filter_by(product_id=product.id).one()
+    snapshots = db_session.query(ProductSnapshot).filter_by(product_id=product.id).all()
+
+    assert refreshed_product.last_title == 'Original Title'
+    assert refreshed_product.last_price == 3500
+    assert refreshed_product.last_status == 'deleted'
+    assert refreshed_variant.inventory_qty == 0
+    assert len(snapshots) == 1
 

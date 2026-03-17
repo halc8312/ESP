@@ -250,7 +250,9 @@
                     </div>
                 </td>
                 <td>
-                    {% if p.last_status in ['出品中', 'active', 'on_sale', 'selling', '在庫あり', '販売中', '在庫○'] %}
+                    {% if p.last_status == 'deleted' %}
+                    <span class="stock-badge stock-out">在庫なし</span>
+                    {% elif p.last_status in ['出品中', 'active', 'on_sale', 'selling', '在庫あり', '販売中', '在庫○'] %}
                     <span class="stock-badge stock-in">在庫あり</span>
                     {% else %}
                     <span class="stock-badge stock-out">在庫なし</span>
@@ -314,7 +316,9 @@
                     <div class="inline-edit-feedback" aria-live="polite"></div>
                 </div>
                 <div class="product-card-meta">
-                    {% if p.last_status in ['出品中', 'active', 'on_sale', 'selling', '在庫あり', '販売中', '在庫○'] %}
+                    {% if p.last_status == 'deleted' %}
+                    <span class="product-card-status draft stock-badge stock-out">在庫なし</span>
+                    {% elif p.last_status in ['出品中', 'active', 'on_sale', 'selling', '在庫あり', '販売中', '在庫○'] %}
                     <span class="product-card-status active stock-badge stock-in">在庫あり</span>
                     {% else %}
                     <span class="product-card-status draft stock-badge stock-out">在庫なし</span>

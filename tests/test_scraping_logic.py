@@ -60,7 +60,7 @@ def test_scrape_variants_pattern_detection():
     """
     url = "http://m/item/variant"
     
-    with patch('mercari_db.StealthyFetcher.fetch') as mock_fetch:
+    with patch('mercari_db.fetch_dynamic') as mock_fetch:
         mock_page = MagicMock()
         mock_fetch.return_value = mock_page
         
@@ -144,8 +144,7 @@ def test_extract_plain_number_from_text_ignores_comma_only_text():
 def test_scrape_item_detail_tolerates_invalid_price_text():
     url = "http://m/item/invalid-price"
 
-    with patch('mercari_db.StealthyFetcher.fetch') as mock_fetch, \
-         patch('mercari_db.get_healer', return_value=None):
+    with patch('mercari_db.fetch_dynamic') as mock_fetch:
         mock_page = MagicMock()
         mock_fetch.return_value = mock_page
 
@@ -175,6 +174,72 @@ def test_scrape_item_detail_tolerates_invalid_price_text():
 
         assert data["title"] == "Valid Item"
         assert data["price"] is None
+        assert data["status"] == "on_sale"
+
+
+def test_scrape_item_detail_ignores_deleted_page_shell_price():
+    url = "http://m/item/deleted"
+
+    with patch('mercari_db.fetch_dynamic') as mock_fetch:
+        mock_page = MagicMock()
+        mock_fetch.return_value = mock_page
+
+        missing_node = MagicMock()
+        missing_node.text = "該当する商品は削除されています"
+        shell_price_node = MagicMock()
+        shell_price_node.text = "開始価格：¥300"
+        title_node = MagicMock()
+        title_node.text = "メルカリ - 日本最大のフリマサービス"
+
+        def mock_css(selector):
+            if selector == "body *":
+                return [missing_node, shell_price_node]
+            if selector == "title":
+                return [title_node]
+            return []
+
+        mock_page.css.side_effect = mock_css
+
+        data = scrape_item_detail(url)
+
+        assert data["price"] is None
+        assert data["status"] == "deleted"
+
+
+def test_scrape_item_detail_prefers_meta_price_when_dom_text_is_empty():
+    url = "http://m/item/meta-price"
+
+    with patch('mercari_db.fetch_dynamic') as mock_fetch:
+        mock_page = MagicMock()
+        mock_fetch.return_value = mock_page
+
+        meta_node = MagicMock()
+        meta_node.text = ""
+        meta_node.attrib = {"content": "2500"}
+
+        title_node = MagicMock()
+        title_node.text = "Valid Item"
+
+        purchase_button = MagicMock()
+        purchase_button.text = "購入手続きへ"
+        purchase_button.attrib = {"aria-disabled": "false"}
+
+        def mock_css(selector):
+            if selector == "meta[name='product:price:amount']":
+                return [meta_node]
+            if selector == "h1":
+                return [title_node]
+            if selector == "button":
+                return [purchase_button]
+            if selector in {"body *", "[data-testid='price']", "script[type='application/ld+json']", "title"}:
+                return []
+            return []
+
+        mock_page.css.side_effect = mock_css
+
+        data = scrape_item_detail(url)
+
+        assert data["price"] == 2500
         assert data["status"] == "on_sale"
 
 

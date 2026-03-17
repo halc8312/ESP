@@ -1,0 +1,502 @@
+"""
+Shared Mercari item-detail parsing helpers.
+
+The parser classifies a page before extracting price so generic shell content
+cannot be mistaken for product price data.
+"""
+import json
+import logging
+import re
+from typing import Optional
+
+from selector_config import get_selectors
+
+logger = logging.getLogger("mercari.parser")
+
+_MISSING_PAGE_MARKERS = (
+    "該当する商品は削除されています",
+    "この商品は削除されています",
+    "お探しの商品は見つかりません",
+    "商品は存在しません",
+)
+_HOME_TITLES = {
+    "メルカリ - 日本最大のフリマサービス",
+    "Mercari: Your Marketplace",
+}
+_ACTIVE_BUTTON_MARKERS = ("購入手続きへ", "購入する", "Buy this item")
+_SOLD_MARKERS = ("売り切れ", "売り切れました", "SOLD")
+_PRODUCT_IMAGE_FALLBACK = [
+    "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']",
+]
+
+
+def _empty_item(url: str, status: str = "unknown") -> dict:
+    return {
+        "url": url,
+        "title": "",
+        "price": None,
+        "status": status,
+        "description": "",
+        "image_urls": [],
+        "variants": [],
+    }
+
+
+def _safe_css(page, selector: str) -> list:
+    try:
+        return list(page.css(selector))
+    except Exception:
+        return []
+
+
+def _node_text(node) -> str:
+    text = getattr(node, "text", "")
+    return text.strip() if isinstance(text, str) else ""
+
+
+def _node_attr(node, attr: str) -> str:
+    attrib = getattr(node, "attrib", {}) or {}
+    value = attrib.get(attr, "")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _extract_page_title(page) -> str:
+    title_nodes = _safe_css(page, "title")
+    if title_nodes:
+        return _node_text(title_nodes[0])
+    return ""
+
+
+def _extract_body_text(page) -> str:
+    body_parts = []
+    for node in _safe_css(page, "body *"):
+        text = _node_text(node)
+        if text:
+            body_parts.append(text)
+    if body_parts:
+        return " ".join(body_parts)
+
+    for attr_name in ("get_all_text", "get_text"):
+        extractor = getattr(page, attr_name, None)
+        if not callable(extractor):
+            continue
+        try:
+            text = extractor() or ""
+        except Exception:
+            continue
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+
+    body_nodes = _safe_css(page, "body")
+    if body_nodes:
+        return _node_text(body_nodes[0])
+
+    return ""
+
+
+def _extract_price_from_text(text: str) -> Optional[int]:
+    if not text:
+        return None
+
+    for pattern in (r"[¥￥]\s*([\d,]+)", r"([\d,]+)\s*円"):
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        digits = re.sub(r"\D", "", match.group(1) or "")
+        if not digits:
+            continue
+        try:
+            return int(digits)
+        except ValueError:
+            continue
+    return None
+
+
+def _extract_plain_number(text: str) -> Optional[int]:
+    if not text:
+        return None
+
+    match = re.search(r"\d[\d,]*", text)
+    if not match:
+        return None
+
+    digits = re.sub(r"\D", "", match.group(0) or "")
+    if not digits:
+        return None
+
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def _extract_meta_price(page) -> Optional[int]:
+    meta_nodes = _safe_css(page, "meta[name='product:price:amount']")
+    if not meta_nodes:
+        return None
+
+    raw = _node_attr(meta_nodes[0], "content")
+    if not raw:
+        return None
+
+    try:
+        return int(float(raw.replace(",", "")))
+    except ValueError:
+        return _extract_price_from_text(raw)
+
+
+def _find_product_jsonld(node):
+    if isinstance(node, list):
+        for item in node:
+            found = _find_product_jsonld(item)
+            if found:
+                return found
+        return None
+
+    if isinstance(node, dict):
+        node_type = node.get("@type")
+        if isinstance(node_type, list):
+            types = [str(value).lower() for value in node_type]
+        else:
+            types = [str(node_type).lower()] if node_type else []
+        if "product" in types:
+            return node
+
+        for key in ("@graph", "mainEntity", "itemListElement"):
+            found = _find_product_jsonld(node.get(key))
+            if found:
+                return found
+
+    return None
+
+
+def _extract_product_jsonld(page) -> Optional[dict]:
+    for script in _safe_css(page, "script[type='application/ld+json']"):
+        raw = _node_text(script)
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        product = _find_product_jsonld(payload)
+        if product:
+            return product
+    return None
+
+
+def _extract_jsonld_price(product: Optional[dict]) -> Optional[int]:
+    if not isinstance(product, dict):
+        return None
+
+    offers = product.get("offers")
+    if isinstance(offers, dict):
+        for key in ("price", "lowPrice", "highPrice"):
+            price = offers.get(key)
+            if price is None:
+                continue
+            parsed = _extract_plain_number(str(price))
+            if parsed is not None:
+                return parsed
+        nested = offers.get("offers")
+        if nested:
+            return _extract_jsonld_price({"offers": nested})
+    elif isinstance(offers, list):
+        for offer in offers:
+            parsed = _extract_jsonld_price({"offers": offer})
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def _extract_jsonld_availability(product: Optional[dict]) -> str:
+    if not isinstance(product, dict):
+        return ""
+
+    offers = product.get("offers")
+    if isinstance(offers, dict):
+        availability = offers.get("availability")
+        if isinstance(availability, str) and availability:
+            return availability.lower()
+        nested = offers.get("offers")
+        if nested:
+            return _extract_jsonld_availability({"offers": nested})
+    elif isinstance(offers, list):
+        for offer in offers:
+            availability = _extract_jsonld_availability({"offers": offer})
+            if availability:
+                return availability
+    return ""
+
+
+def _extract_title(page, product_jsonld: Optional[dict]) -> str:
+    title_nodes = _safe_css(page, "h1")
+    if title_nodes:
+        title = _node_text(title_nodes[0])
+        if title:
+            return title
+
+    if isinstance(product_jsonld, dict):
+        raw_name = product_jsonld.get("name")
+        if isinstance(raw_name, str) and raw_name.strip():
+            return raw_name.strip()
+
+    meta_nodes = _safe_css(page, "meta[property='og:title']")
+    if meta_nodes:
+        return _node_attr(meta_nodes[0], "content")
+
+    return ""
+
+
+def _extract_description(body_text: str) -> str:
+    if not body_text or "商品の説明" not in body_text:
+        return ""
+
+    after = body_text.split("商品の説明", 1)[1]
+    end_pos = len(after)
+    for marker in ("商品の情報", "商品情報", "出品者", "コメント"):
+        idx = after.find(marker)
+        if idx != -1 and idx < end_pos:
+            end_pos = idx
+    return after[:end_pos].strip()
+
+
+def _extract_image_urls(page) -> list:
+    selectors = get_selectors("mercari", "general", "images") or _PRODUCT_IMAGE_FALLBACK
+    image_urls = []
+    for selector in selectors:
+        for img in _safe_css(page, selector):
+            src = _node_attr(img, "src")
+            if src and src not in image_urls:
+                image_urls.append(src)
+    return image_urls
+
+
+def _extract_variants(page, price: Optional[int]) -> list:
+    variants = []
+    selectors = [
+        "mer-item-thumbnail ~ div button",
+        "button[aria-haspopup='listbox']",
+        "div[role='radiogroup'] div[role='radio']",
+        "div[data-testid='product-variant-selector'] button",
+    ]
+
+    found_elements = []
+    for selector in selectors:
+        found_elements = _safe_css(page, selector)
+        if len(found_elements) > 1:
+            break
+
+    seen_values = set()
+    for element in found_elements:
+        value = _node_text(element)
+        if not value or value in seen_values:
+            continue
+        seen_values.add(value)
+        variants.append(
+            {
+                "option1_value": value,
+                "price": price,
+                "inventory_qty": 1,
+            }
+        )
+    return variants
+
+
+def _extract_dom_price(page) -> Optional[int]:
+    selectors = get_selectors("mercari", "general", "price") or ["[data-testid='price']"]
+    for selector in selectors:
+        nodes = _safe_css(page, selector)
+        if not nodes:
+            continue
+        text = _node_text(nodes[0])
+        price = _extract_price_from_text(text)
+        if price is None:
+            price = _extract_plain_number(text)
+        if price is not None:
+            return price
+    return None
+
+
+def _extract_scoped_text_price(page) -> Optional[int]:
+    region_selectors = (
+        "[data-testid='price'] *",
+        "main span",
+        "main div",
+        "main p",
+        "article span",
+        "article div",
+        "article p",
+        "section span",
+        "section div",
+        "section p",
+    )
+    unique_prices = set()
+    for selector in region_selectors:
+        for node in _safe_css(page, selector):
+            text = _node_text(node)
+            if not text or len(text) > 80:
+                continue
+            if "¥" not in text and "￥" not in text and "円" not in text:
+                continue
+            price = _extract_price_from_text(text)
+            if price is not None:
+                unique_prices.add(price)
+        if len(unique_prices) > 1:
+            return None
+    return next(iter(unique_prices)) if len(unique_prices) == 1 else None
+
+
+def _extract_status(page, body_text: str, availability: str, deleted: bool) -> tuple[str, list[str]]:
+    reasons = []
+    if deleted:
+        reasons.append("deleted-marker")
+        return "deleted", reasons
+
+    if "outofstock" in availability or "soldout" in availability:
+        reasons.append("jsonld-out-of-stock")
+        return "sold", reasons
+    if "instock" in availability:
+        reasons.append("jsonld-in-stock")
+        return "on_sale", reasons
+
+    for button in _safe_css(page, "button"):
+        button_text = _node_text(button)
+        if not button_text:
+            continue
+        if any(marker in button_text for marker in _ACTIVE_BUTTON_MARKERS):
+            disabled = _node_attr(button, "disabled")
+            aria_disabled = _node_attr(button, "aria-disabled").lower()
+            if not disabled and aria_disabled != "true":
+                reasons.append("purchase-button-enabled")
+                return "on_sale", reasons
+            reasons.append("purchase-button-disabled")
+            return "sold", reasons
+        if "売り切れ" in button_text:
+            reasons.append("sold-button")
+            return "sold", reasons
+
+    if any(marker in body_text for marker in _SOLD_MARKERS):
+        reasons.append("sold-marker")
+        return "sold", reasons
+    if any(marker in body_text for marker in _ACTIVE_BUTTON_MARKERS):
+        reasons.append("purchase-marker")
+        return "on_sale", reasons
+
+    return "unknown", reasons
+
+
+def _classify_page(
+    title: str,
+    page_title: str,
+    body_text: str,
+    product_jsonld: Optional[dict],
+    meta_price: Optional[int],
+    dom_price: Optional[int],
+    status: str,
+) -> tuple[str, list[str]]:
+    reasons = []
+    missing_marker = next((marker for marker in _MISSING_PAGE_MARKERS if marker in body_text), "")
+    if missing_marker:
+        reasons.append(f"missing-marker:{missing_marker}")
+        return "deleted_detail", reasons
+
+    has_structured_product = isinstance(product_jsonld, dict)
+    has_product_signal = bool(title or meta_price is not None or dom_price is not None or has_structured_product)
+
+    if not has_product_signal and page_title in _HOME_TITLES:
+        reasons.append("home-title-without-product-signals")
+        return "deleted_detail", reasons
+
+    if status == "sold":
+        reasons.append("classified-sold")
+        return "sold_detail", reasons
+    if status == "on_sale":
+        reasons.append("classified-active")
+        return "active_detail", reasons
+    if has_product_signal:
+        reasons.append("product-signals-without-status")
+        return "unknown_detail", reasons
+
+    reasons.append("no-product-signals")
+    return "unknown_page", reasons
+
+
+def parse_mercari_item_page(page, url: str) -> tuple[dict, dict]:
+    item = _empty_item(url)
+    body_text = _extract_body_text(page)
+    page_title = _extract_page_title(page)
+    product_jsonld = _extract_product_jsonld(page)
+
+    meta_price = _extract_meta_price(page)
+    jsonld_price = _extract_jsonld_price(product_jsonld)
+    dom_price = _extract_dom_price(page)
+    title = _extract_title(page, product_jsonld)
+    availability = _extract_jsonld_availability(product_jsonld)
+    deleted = any(marker in body_text for marker in _MISSING_PAGE_MARKERS)
+
+    status, status_reasons = _extract_status(page, body_text, availability, deleted=deleted)
+    page_type, page_reasons = _classify_page(
+        title=title,
+        page_title=page_title,
+        body_text=body_text,
+        product_jsonld=product_jsonld,
+        meta_price=meta_price,
+        dom_price=dom_price,
+        status=status,
+    )
+
+    price = None
+    price_source = "none"
+    if meta_price is not None:
+        price = meta_price
+        price_source = "meta"
+    elif jsonld_price is not None:
+        price = jsonld_price
+        price_source = "jsonld"
+    elif dom_price is not None:
+        price = dom_price
+        price_source = "dom"
+    elif page_type in {"active_detail", "sold_detail"}:
+        scoped_price = _extract_scoped_text_price(page)
+        if scoped_price is not None:
+            price = scoped_price
+            price_source = "scoped_text"
+
+    confidence = "low"
+    if price_source in {"meta", "jsonld"}:
+        confidence = "high"
+    elif price_source in {"dom", "scoped_text"}:
+        confidence = "medium"
+    elif status in {"sold", "deleted"} and page_type in {"sold_detail", "deleted_detail"}:
+        confidence = "high"
+    elif page_type in {"active_detail", "sold_detail"}:
+        confidence = "medium"
+
+    if status == "on_sale" and price is None:
+        confidence = "low"
+
+    if page_type in {"deleted_detail", "unknown_page"}:
+        price = None
+        if status != "deleted":
+            status = "deleted" if page_type == "deleted_detail" else "unknown"
+        price_source = "none"
+
+    item.update(
+        {
+            "title": title,
+            "price": price,
+            "status": status,
+            "description": _extract_description(body_text),
+            "image_urls": _extract_image_urls(page),
+            "variants": _extract_variants(page, price),
+        }
+    )
+
+    meta = {
+        "page_type": page_type,
+        "price_source": price_source,
+        "confidence": confidence,
+        "reasons": status_reasons + page_reasons,
+    }
+    return item, meta

@@ -88,6 +88,17 @@ def parse_rakuma_item_page(page, url: str, body_text: str | None = None) -> dict
     if body_text:
         logger.debug("Rakuma page text preview: %s", body_text[:500])
 
+    if is_rakuma_missing_item_page(body_text):
+        return {
+            "url": url,
+            "title": "",
+            "price": None,
+            "status": "deleted",
+            "description": "",
+            "image_urls": [],
+            "variants": [],
+        }
+
     page_title = _node_text(first_node(page, "title"))
     if page_title:
         logger.debug("Rakuma <title>: %s", page_title)
@@ -200,4 +211,3 @@ def parse_rakuma_item_page(page, url: str, body_text: str | None = None) -> dict
         "image_urls": image_urls,
         "variants": [],
     }
-

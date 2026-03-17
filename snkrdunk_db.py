@@ -71,6 +71,26 @@ def _extract_price_value(raw_value):
     return None
 
 
+def _extract_unique_price_from_page_text(page_text: str):
+    if not page_text:
+        return None
+
+    matches = re.findall(r"[¥￥]\s*([\d,]+)|([\d,]+)\s*円", page_text)
+    unique_prices = set()
+    for yen_match, yen_suffix_match in matches:
+        digits = (yen_match or yen_suffix_match or "").replace(",", "")
+        if not digits:
+            continue
+        try:
+            unique_prices.add(int(digits))
+        except ValueError:
+            continue
+
+    if len(unique_prices) == 1:
+        return next(iter(unique_prices))
+    return None
+
+
 def _collect_image_urls(raw_value) -> list:
     image_urls = []
 
@@ -237,8 +257,8 @@ def _parse_detail_page(page, url: str) -> dict:
         price_val, _ = healer.extract_with_healing(page, 'snkrdunk', 'detail', 'price', parser='scrapling')
         if price_val:
             result["price"] = _extract_price_value(price_val)
-        if result["price"] is None:
-            result["price"] = _extract_price_value(page.get_all_text() or "")
+        if result["price"] is None and result.get("title"):
+            result["price"] = _extract_unique_price_from_page_text(page.get_all_text() or "")
 
         # Description (with healing)
         desc_val, _ = healer.extract_with_healing(page, 'snkrdunk', 'detail', 'description', parser='scrapling')

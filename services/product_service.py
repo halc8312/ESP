@@ -8,6 +8,10 @@ from flask import has_request_context, session
 from database import SessionLocal
 from models import Product, ProductSnapshot, Variant
 from services.pricing_service import update_product_selling_price
+from services.scrape_result_policy import (
+    evaluate_persistence,
+    normalize_item_for_persistence,
+)
 from utils import normalize_url
 
 
@@ -36,34 +40,25 @@ def save_scraped_items_to_db(items, user_id: int, site: str = "mercari", shop_id
                 continue
 
             url = normalize_url(raw_url)
+            normalized_item = normalize_item_for_persistence(item)
+            scrape_meta = item.get("_scrape_meta") or {}
 
-            title = item.get("title") or ""
-            price = item.get("price")
-            status = item.get("status") or ""
-            description = item.get("description") or ""
-            image_urls = item.get("image_urls") or []
+            title = normalized_item.get("title") or ""
+            price = normalized_item.get("price")
+            status = normalized_item.get("status") or ""
+            description = normalized_item.get("description") or ""
+            image_urls = normalized_item.get("image_urls") or []
             image_urls_str = "|".join(image_urls)
 
-            # Surugaya-specific guard:
-            # Skip blocked/error responses and clearly invalid price/title data
-            # to avoid overwriting good snapshots with anti-bot or placeholder results.
-            if site == "surugaya":
-                if status in {"blocked", "error"}:
-                    continue
-                if not title.strip():
-                    continue
-                if price is None:
-                    continue
-                try:
-                    numeric_price = float(price)
-                except (TypeError, ValueError):
-                    continue
-                if numeric_price <= 0:
-                    continue
-
             product = session_db.query(Product).filter_by(source_url=url, user_id=user_id).one_or_none()
+            persistence_action = evaluate_persistence(site, normalized_item, scrape_meta, product)
+            if persistence_action == "reject":
+                continue
 
             if product is None:
+                if persistence_action != "allow_full":
+                    continue
+
                 sku_hash = hashlib.md5(url.encode('utf-8')).hexdigest()[:10].upper()
                 generated_sku = f"MER-{sku_hash}"
 
@@ -82,13 +77,16 @@ def save_scraped_items_to_db(items, user_id: int, site: str = "mercari", shop_id
                 session_db.flush()
                 new_count += 1
 
-                scraped_variants = item.get("variants")
+                scraped_variants = normalized_item.get("variants")
                 if scraped_variants:
-                    product.option1_name = item.get("option1_name", "Variation")
-                    product.option2_name = item.get("option2_name")
-                    product.option3_name = item.get("option3_name")
+                    product.option1_name = normalized_item.get("option1_name", "Variation")
+                    product.option2_name = normalized_item.get("option2_name")
+                    product.option3_name = normalized_item.get("option3_name")
 
                     for i, v_data in enumerate(scraped_variants, 1):
+                        inventory_qty = v_data.get("inventory_qty", 1)
+                        if status in {"sold", "deleted"}:
+                            inventory_qty = 0
                         new_variant = Variant(
                             product_id=product.id,
                             option1_value=v_data.get("option1_value", f"Option {i}"),
@@ -97,7 +95,7 @@ def save_scraped_items_to_db(items, user_id: int, site: str = "mercari", shop_id
                             sku=f"{generated_sku}-{i}",
                             price=v_data.get("price", price),
                             taxable=False,
-                            inventory_qty=v_data.get("inventory_qty", 1),
+                            inventory_qty=inventory_qty,
                             position=i,
                         )
                         session_db.add(new_variant)
@@ -108,40 +106,52 @@ def save_scraped_items_to_db(items, user_id: int, site: str = "mercari", shop_id
                         sku=generated_sku,
                         price=price,
                         taxable=False,
-                        inventory_qty=1 if status != 'sold' else 0,
+                        inventory_qty=0 if status in {"sold", "deleted"} else 1,
                         position=1,
                     )
                     session_db.add(default_variant)
 
             else:
-                price_changed = product.last_price != price
-                scrape_fields_changed = (
-                    product.last_title != title
-                    or price_changed
-                    or product.last_status != status
-                )
-
                 if product.shop_id is None and resolved_shop_id is not None:
                     product.shop_id = resolved_shop_id
 
-                product.last_title = title
-                product.last_price = price
-                product.last_status = status
+                if persistence_action == "allow_status_only":
+                    status_changed = bool(status) and product.last_status != status
+                    product.last_status = status or product.last_status
+                    product.updated_at = now
+                    existing_variants = session_db.query(Variant).filter_by(product_id=product.id).all()
+                    if status in {"sold", "deleted"}:
+                        for existing_variant in existing_variants:
+                            existing_variant.inventory_qty = 0
+                    if status_changed:
+                        updated_count += 1
+                    continue
+
+                title_changed = bool(title.strip()) and product.last_title != title
+                price_changed = price is not None and product.last_price != price
+                status_changed = bool(status) and product.last_status != status
+
+                if title.strip():
+                    product.last_title = title
+                if price is not None:
+                    product.last_price = price
+                if status:
+                    product.last_status = status
                 product.updated_at = now
-                if scrape_fields_changed:
+
+                if title_changed or price_changed or status_changed:
                     updated_count += 1
                 if price_changed and product.pricing_rule_id:
                     repricing_product_ids.add(product.id)
 
-                default_variant = session_db.query(Variant).filter_by(
-                    product_id=product.id,
-                    option1_value="Default Title",
-                ).first()
-
-                if default_variant:
-                    if price is not None:
-                        default_variant.price = price
-                    default_variant.inventory_qty = 0 if status == 'sold' else (default_variant.inventory_qty or 1)
+                existing_variants = session_db.query(Variant).filter_by(product_id=product.id).all()
+                for existing_variant in existing_variants:
+                    if price is not None and (existing_variant.option1_value == "Default Title" or len(existing_variants) == 1):
+                        existing_variant.price = price
+                    if status in {"sold", "deleted"}:
+                        existing_variant.inventory_qty = 0
+                    elif existing_variant.option1_value == "Default Title":
+                        existing_variant.inventory_qty = existing_variant.inventory_qty or 1
 
             snapshot = ProductSnapshot(
                 product_id=product.id,

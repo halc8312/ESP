@@ -1,7 +1,6 @@
 import logging
 import asyncio
 from playwright.async_api import async_playwright
-from scrapling import StealthyFetcher
 import time
 import re
 import os
@@ -21,6 +20,9 @@ try:
     from services.selector_healer import get_healer
 except ImportError:
     get_healer = None
+
+from services.mercari_item_parser import parse_mercari_item_page
+from services.scraping_client import fetch_dynamic
 
 # Import metrics logging
 try:
@@ -399,146 +401,16 @@ def scrape_item_detail(url: str, driver=None):
         return scrape_shops_product(url)
 
     try:
-        page = StealthyFetcher.fetch(url, headless=True, network_idle=False)
+        page = fetch_dynamic(url, headless=True, network_idle=False)
     except Exception as e:
         print(f"Error accessing {url}: {e}")
         return {
             "url": url, "title": "", "price": None, "status": "error", 
             "description": "", "image_urls": [], "variants": []
         }
-
-    # ---- タイトル ----
-    try:
-        title_nodes = page.css("h1")
-        title_el = title_nodes[0] if title_nodes else None
-        title = title_el.text.strip() if title_el else ""
-    except Exception:
-        title = ""
-
-    # ---- ページ全体のテキスト ----
-    try:
-        body_text = " ".join([el.text for el in page.css("body *") if el.text])
-    except Exception:
-        body_text = ""
-
-    # ---- 価格 ----
-    price = None
-    healer = get_healer() if get_healer else None
-
-    if healer:
-        price_val, _ = healer.extract_with_healing(page, 'mercari', 'general', 'price', parser='scrapling')
-        if price_val:
-            price = _extract_price_from_text(price_val)
-            if price is None:
-                price = _extract_plain_number_from_text(price_val)
-    else:
-        price_selectors = get_selectors('mercari', 'general', 'price') or ["[data-testid='price']"]
-        try:
-            for selector in price_selectors:
-                price_nodes = page.css(selector)
-                if price_nodes:
-                    price_text = price_nodes[0].text or ""
-                    price = _extract_price_from_text(price_text)
-                    if price is None:
-                        price = _extract_plain_number_from_text(price_text)
-                    if price is not None:
-                        break
-        except Exception:
-            pass
-
-    if price is None and body_text:
-        price = _extract_price_from_text(body_text)
-
-    # ---- ステータス ----
-    status = "unknown"
-    try:
-        if "売り切れ" in body_text or "Sold" in body_text:
-             try:
-                 for btn in page.css("button"):
-                     if "売り切れ" in (btn.text or ""):
-                         status = "sold"
-                         break
-             except Exception:
-                 status = "sold"
-        
-        if status == "unknown" and ("購入手続きへ" in body_text or "Buy this item" in body_text):
-             status = "on_sale"
-    except Exception:
-        pass
-
-    # ---- 商品説明 ----
-    description = ""
-    try:
-        if "商品の説明" in body_text:
-            after = body_text.split("商品の説明", 1)[1]
-            end_pos = len(after)
-            for marker in ["商品の情報", "商品情報", "出品者", "コメント"]:
-                idx = after.find(marker)
-                if idx != -1 and idx < end_pos:
-                    end_pos = idx
-            description = after[:end_pos].strip()
-    except Exception as e:
-        logging.debug("Failed to extract description: %s", e)
-        description = body_text[:200]
-
-    # ---- 商品画像 ----
-    image_urls = []
-    if healer:
-        image_urls, _ = healer.extract_images_with_healing(page, 'mercari', 'general', parser='scrapling')
-    else:
-        image_selectors = get_selectors('mercari', 'general', 'images') or [
-            "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']"
-        ]
-        try:
-            for selector in image_selectors:
-                img_elements = page.css(selector)
-                for img in img_elements:
-                    src = img.attrib.get("src")
-                    if src and src not in image_urls:
-                        image_urls.append(src)
-        except Exception:
-            pass
-
-    # ---- バリエーション（一般出品） ----
-    variants = []
-    try:
-        # 一般出品は「商品の情報」欄などにサイズや色が書かれているが、
-        # 選択式のUI（ボタン）がある場合はそれを優先
-        selectors = [
-             "mer-item-thumbnail ~ div button", # 新UI
-             "button[aria-haspopup='listbox']",
-             "div[role='radiogroup'] div[role='radio']",
-             "div[data-testid='product-variant-selector'] button"
-        ]
-        
-        found_elements = []
-        for sel in selectors:
-            found_elements = page.css(sel)
-            if found_elements and len(found_elements) > 1:
-                break
-                
-        seen_opts = set()
-        for el in found_elements:
-            text_val = el.text.strip() if el.text else ""
-            if text_val and text_val not in seen_opts:
-                seen_opts.add(text_val)
-                variants.append({
-                    "option1_value": text_val,
-                    "price": price, 
-                    "inventory_qty": 1
-                })
-    except Exception:
-        pass
-
-    return {
-        "url": url,
-        "title": title,
-        "price": price,
-        "status": status,
-        "description": description,
-        "image_urls": image_urls,
-        "variants": variants
-    }
+    item, meta = parse_mercari_item_page(page, url)
+    item["_scrape_meta"] = meta
+    return item
 
 
 async def _scrape_search_async(

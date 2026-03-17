@@ -172,6 +172,15 @@ def _extract_price_from_body(text: str):
     return None
 
 
+def _is_valid_product_page(result: dict, ld_product: dict) -> bool:
+    title = str(result.get("title") or "").strip()
+    if title:
+        return True
+    if ld_product.get("name"):
+        return True
+    return False
+
+
 def _fetch_with_retry(session, url: str, timeout: int = 30, max_attempts: int = 3):
     last_response = None
     last_error = None
@@ -793,7 +802,7 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
     if result["price"] is None and ld_product.get("price") is not None:
         result["price"] = ld_product["price"]
 
-    if result["price"] is None:
+    if result["price"] is None and _is_valid_product_page(result, ld_product):
         result["price"] = _extract_price_from_body(soup.get_text(" ", strip=True))
 
     # ---- Stock ----

@@ -125,7 +125,7 @@ def export_shopify():
                 row["Variant Grams"] = variant.grams or ""
                 row["Variant Inventory Tracker"] = "shopify"
                 
-                if product.last_status == 'sold':
+                if product.last_status in {'sold', 'deleted'}:
                     final_qty = 0
                 else:
                     final_qty = variant.inventory_qty if variant.inventory_qty is not None else default_qty
@@ -277,7 +277,7 @@ def export_stock_update():
             variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
             
             for variant in variants:
-                if product.last_status == 'sold':
+                if product.last_status in {'sold', 'deleted'}:
                     final_qty = 0
                 else:
                     final_qty = variant.inventory_qty if variant.inventory_qty is not None else default_qty
@@ -394,4 +394,3 @@ def export_images():
         return response
     finally:
         session_db.close()
-

@@ -17,16 +17,26 @@ class PatrolResult:
         price: Optional[int] = None,
         status: str = "unknown",
         variants: Optional[List[Dict]] = None,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        confidence: str = "high",
+        reason: Optional[str] = None,
+        price_source: Optional[str] = None,
     ):
         self.price = price
         self.status = status  # "active", "sold", "deleted", "unknown"
         self.variants = variants or []
         self.error = error
+        self.confidence = confidence
+        self.reason = reason
+        self.price_source = price_source
         self.success = error is None
     
     def __repr__(self):
-        return f"PatrolResult(price={self.price}, status={self.status}, variants={len(self.variants)})"
+        return (
+            "PatrolResult("
+            f"price={self.price}, status={self.status}, "
+            f"confidence={self.confidence}, variants={len(self.variants)})"
+        )
 
 
 class BasePatrol(ABC):

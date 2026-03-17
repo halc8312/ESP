@@ -204,6 +204,21 @@ def test_scrape_item_detail_error_handling(_patch_scrapling):
     assert result["price"] is None
 
 
+def test_scrape_item_detail_missing_item_returns_deleted(_patch_scrapling):
+    mock_page = MagicMock()
+    mock_page.get_text.return_value = "お探しの商品は見つかりません"
+    mock_page.css_first.return_value = None
+    mock_page.css.return_value = []
+
+    _patch_scrapling.Fetcher.get.return_value = mock_page
+
+    from rakuma_db import scrape_item_detail
+    result = scrape_item_detail("https://item.fril.jp/missing")
+
+    assert result["status"] == "deleted"
+    assert result["price"] is None
+
+
 def test_scrape_item_detail_driver_arg_ignored(_patch_scrapling):
     """scrape_item_detail が driver 引数を無視することを確認（後方互換性）"""
     mock_page = MagicMock()
