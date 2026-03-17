@@ -241,8 +241,8 @@ def test_offmall_detail_extracts_description_from_detail_rows():
         text="",
         all_text="ソーラーパネル 折り畳み 500Wポータブル蓄電池専用 持ち運びに便利",
     )
-    detail_row = MockElement(css_map={"td": [detail_td]})
-    detail_th = MockElement(text="特徴・備考", parent=detail_row)
+    detail_th = MockElement(text="特徴・備考")
+    detail_row = MockElement(css_map={"th": [detail_th], "td": [detail_td]})
 
     detail_page = MockPage(
         css_map={
@@ -260,7 +260,7 @@ def test_offmall_detail_extracts_description_from_detail_rows():
             ],
             "span.product-detail-price__main": [MockElement(text="16,500")],
             "div.product-detail-point__box": [],
-            "#panel1 th, .product-detail-spec th": [detail_th],
+            "#panel1 tr, .product-detail-spec tr": [detail_row],
             "meta[property='og:image']": [],
             "img[src*='hardoff']": [],
             ".item-condition, .condition, [class*='rank'], [class*='condition']": [],
@@ -273,6 +273,64 @@ def test_offmall_detail_extracts_description_from_detail_rows():
 
     assert result["description"] == "ソーラーパネル 折り畳み 500Wポータブル蓄電池専用 持ち運びに便利"
     assert result["status"] == "sold"
+
+
+def test_offmall_detail_falls_back_to_attribute_rows_when_no_freeform_description():
+    import offmall_db
+
+    color_row = MockElement(
+        css_map={
+            "th": [MockElement(text="色")],
+            "td": [MockElement(text="", all_text="ブラック")],
+        }
+    )
+    size_row = MockElement(
+        css_map={
+            "th": [MockElement(text="表記サイズ")],
+            "td": [MockElement(text="", all_text="26.5cm")],
+        }
+    )
+    heel_row = MockElement(
+        css_map={
+            "th": [MockElement(text="ヒール")],
+            "td": [MockElement(text="", all_text="4cm")],
+        }
+    )
+    shipping_row = MockElement(
+        css_map={
+            "th": [MockElement(text="発送目安")],
+            "td": [MockElement(text="", all_text="1-2日後")],
+        }
+    )
+
+    detail_page = MockPage(
+        css_map={
+            "script[type='application/ld+json']": [
+                MockElement(
+                    text=json.dumps(
+                        {
+                            "@type": "Product",
+                            "name": "Nike Vapor Street",
+                            "description": "https://netmall.hardoff.co.jp/product/6004342/",
+                            "offers": {"price": "5500", "availability": "https://schema.org/InStock"},
+                        }
+                    )
+                )
+            ],
+            "span.product-detail-price__main": [MockElement(text="5,500")],
+            "div.product-detail-point__box": [],
+            "#panel1 tr, .product-detail-spec tr": [shipping_row, color_row, size_row, heel_row],
+            "meta[property='og:image']": [],
+            "img[src*='hardoff']": [],
+            ".item-condition, .condition, [class*='rank'], [class*='condition']": [],
+        },
+        text="カートに入れる 5,500 (税込)",
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=detail_page):
+        result = offmall_db.scrape_item_detail_light("https://netmall.hardoff.co.jp/product/6004342/")
+
+    assert result["description"] == "色: ブラック\n表記サイズ: 26.5cm\nヒール: 4cm"
 
 
 def test_offmall_patrol_prefers_visible_tax_included_price():

@@ -22,6 +22,15 @@ SELECTORS = {
     ],
 }
 
+_DESCRIPTION_LABEL_MARKERS = ("特徴", "備考", "商品説明")
+_DESCRIPTION_SKIP_LABELS = {
+    "保証期間",
+    "発送目安",
+    "登録日",
+    "WEB No.",
+    "WEB NO.",
+}
+
 
 def _node_text(node) -> str:
     if node is None:
@@ -151,31 +160,35 @@ def _infer_offmall_status(page_text: str, offers=None) -> str:
 
 
 def _extract_detail_description(page) -> str:
-    desc_parts = []
+    priority_parts = []
+    attribute_parts = []
 
     for point_el in page.css("div.product-detail-point__box"):
         text = _node_text(point_el)
         if text:
-            desc_parts.append(text)
+            priority_parts.append(text)
 
-    for th_el in page.css("#panel1 th, .product-detail-spec th"):
-        th_text = _node_text(th_el)
-        if not any(marker in th_text for marker in ("特徴", "備考", "商品説明")):
+    for row in page.css("#panel1 tr, .product-detail-spec tr"):
+        headers = row.css("th")
+        cells = row.css("td")
+        if not headers or not cells:
             continue
 
-        parent = getattr(th_el, "parent", None)
-        if not parent:
+        label = _node_text(headers[0])
+        value = _node_text(cells[0])
+        if not label or not value:
             continue
 
-        for td_el in parent.css("td"):
-            td_text = _node_text(td_el)
-            if td_text:
-                desc_parts.append(td_text)
-                break
+        if any(marker in label for marker in _DESCRIPTION_LABEL_MARKERS):
+            priority_parts.append(value)
+            continue
+
+        if label not in _DESCRIPTION_SKIP_LABELS:
+            attribute_parts.append(f"{label}: {value}")
 
     deduped_parts = []
     seen = set()
-    for part in desc_parts:
+    for part in priority_parts or attribute_parts:
         normalized = re.sub(r"\s+", " ", part).strip()
         if not normalized or normalized in seen:
             continue
