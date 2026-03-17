@@ -2,7 +2,7 @@
 Unit tests for Rakuma scraping module (rakuma_db.py) and patrol (rakuma_patrol.py).
 Tests verify that:
   - rakuma_db.py uses Fetcher/AsyncFetcher (HTTP) for item detail pages (SSR)
-  - rakuma_patrol.py uses StealthyFetcher (Playwright)
+  - rakuma_patrol.py uses HTTP fetches for patrol checks
 """
 import sys
 import types
@@ -262,31 +262,41 @@ def test_scrape_single_item_no_selenium(_patch_scrapling):
 # RakumaPatrol
 # ---------------------------------------------------------------------------
 
-def test_rakuma_patrol_uses_playwright(_patch_scrapling):
-    """RakumaPatrol が Selenium ではなく Playwright(StealthyFetcher) を使用することを確認"""
+def test_rakuma_patrol_uses_http_fetcher(_patch_scrapling):
+    """RakumaPatrol が Playwright ではなく HTTP Fetcher を使用することを確認"""
+    mock_title_el = MagicMock()
+    mock_title_el.text = "テスト商品"
+
     mock_page = MagicMock()
     mock_page.get_text.return_value = "¥1,000 テスト商品"
-    mock_page.css.return_value = []
+    mock_page.css.side_effect = lambda selector: [mock_title_el] if selector == "h1" else []
+    mock_page.css_first.return_value = None
 
-    _patch_scrapling.StealthyFetcher.fetch.return_value = mock_page
+    _patch_scrapling.Fetcher.get.return_value = mock_page
 
     from services.patrol.rakuma_patrol import RakumaPatrol
     patrol = RakumaPatrol()
     result = patrol.fetch("https://item.fril.jp/test")
 
     assert result.success
+    _patch_scrapling.Fetcher.get.assert_called_once()
+    _patch_scrapling.StealthyFetcher.fetch.assert_not_called()
 
 
 def test_rakuma_patrol_price_extraction(_patch_scrapling):
     """RakumaPatrol が価格を正しく抽出することを確認"""
-    mock_el = MagicMock()
-    mock_el.text = "1,500"
+    mock_title_el = MagicMock()
+    mock_title_el.text = "テスト商品"
+
+    mock_price_el = MagicMock()
+    mock_price_el.text = "¥1,500"
 
     mock_page = MagicMock()
     mock_page.get_text.return_value = "¥1,500 テスト商品"
-    mock_page.css.return_value = [mock_el]
+    mock_page.css.side_effect = lambda selector: [mock_title_el] if selector == "h1" else [mock_price_el] if "price" in selector else []
+    mock_page.css_first.return_value = None
 
-    _patch_scrapling.StealthyFetcher.fetch.return_value = mock_page
+    _patch_scrapling.Fetcher.get.return_value = mock_page
 
     from services.patrol.rakuma_patrol import RakumaPatrol
     patrol = RakumaPatrol()
@@ -300,8 +310,9 @@ def test_rakuma_patrol_sold_status(_patch_scrapling):
     mock_page = MagicMock()
     mock_page.get_text.return_value = "SOLD OUT 売り切れ"
     mock_page.css.return_value = []
+    mock_page.css_first.return_value = None
 
-    _patch_scrapling.StealthyFetcher.fetch.return_value = mock_page
+    _patch_scrapling.Fetcher.get.return_value = mock_page
 
     from services.patrol.rakuma_patrol import RakumaPatrol
     patrol = RakumaPatrol()
@@ -312,7 +323,7 @@ def test_rakuma_patrol_sold_status(_patch_scrapling):
 
 def test_rakuma_patrol_error_handling(_patch_scrapling):
     """RakumaPatrol がエラーを正しく処理することを確認"""
-    _patch_scrapling.StealthyFetcher.fetch.side_effect = Exception("Network error")
+    _patch_scrapling.Fetcher.get.side_effect = Exception("Network error")
 
     from services.patrol.rakuma_patrol import RakumaPatrol
     patrol = RakumaPatrol()
@@ -324,33 +335,93 @@ def test_rakuma_patrol_error_handling(_patch_scrapling):
 
 def test_rakuma_patrol_driver_arg_ignored(_patch_scrapling):
     """RakumaPatrol が driver 引数を無視することを確認（後方互換性）"""
-    mock_page = MagicMock()
-    mock_page.get_text.return_value = "テスト"
-    mock_page.css.return_value = []
+    mock_title_el = MagicMock()
+    mock_title_el.text = "テスト商品"
 
-    _patch_scrapling.StealthyFetcher.fetch.return_value = mock_page
+    mock_page = MagicMock()
+    mock_page.get_text.return_value = "¥1,000 テスト商品"
+    mock_page.css.side_effect = lambda selector: [mock_title_el] if selector == "h1" else []
+    mock_page.css_first.return_value = None
+
+    _patch_scrapling.Fetcher.get.return_value = mock_page
 
     from services.patrol.rakuma_patrol import RakumaPatrol
     patrol = RakumaPatrol()
     result = patrol.fetch("https://item.fril.jp/test", driver="fake_driver")
 
-    # StealthyFetcher.fetch が呼ばれたことを確認
-    _patch_scrapling.StealthyFetcher.fetch.assert_called_once()
+    # HTTP Fetcher.get が呼ばれたことを確認
+    _patch_scrapling.Fetcher.get.assert_called_once()
     assert result.success
 
 
 def test_fetch_rakuma_convenience_function(_patch_scrapling):
     """fetch_rakuma ヘルパー関数が正しく動作することを確認"""
+    mock_title_el = MagicMock()
+    mock_title_el.text = "テスト商品"
+
     mock_page = MagicMock()
     mock_page.get_text.return_value = "テスト ¥500"
-    mock_page.css.return_value = []
+    mock_page.css.side_effect = lambda selector: [mock_title_el] if selector == "h1" else []
+    mock_page.css_first.return_value = None
 
-    _patch_scrapling.StealthyFetcher.fetch.return_value = mock_page
+    _patch_scrapling.Fetcher.get.return_value = mock_page
 
     from services.patrol.rakuma_patrol import fetch_rakuma
     result = fetch_rakuma("https://item.fril.jp/test")
 
     assert result.success
+
+
+def test_rakuma_patrol_maps_on_sale_to_active(_patch_scrapling):
+    """RakumaPatrol が共有パーサの on_sale を patrol 用 active に変換することを確認"""
+    mock_title_el = MagicMock()
+    mock_title_el.text = "テスト商品"
+
+    mock_page = MagicMock()
+    mock_page.get_text.return_value = "¥2,000 テスト商品"
+    mock_page.css.side_effect = lambda selector: [mock_title_el] if selector == "h1" else []
+    mock_page.css_first.return_value = None
+
+    _patch_scrapling.Fetcher.get.return_value = mock_page
+
+    from services.patrol.rakuma_patrol import RakumaPatrol
+    patrol = RakumaPatrol()
+    result = patrol.fetch("https://item.fril.jp/test")
+
+    assert result.status == "active"
+
+
+def test_rakuma_patrol_returns_error_on_404(_patch_scrapling):
+    """RakumaPatrol が HTTP 404 を unavailable エラーとして扱うことを確認"""
+    mock_page = MagicMock()
+    mock_page.status = 404
+    mock_page.get_text.return_value = "ページが見つかりません"
+    mock_page.css.return_value = []
+
+    _patch_scrapling.Fetcher.get.return_value = mock_page
+
+    from services.patrol.rakuma_patrol import RakumaPatrol
+    patrol = RakumaPatrol()
+    result = patrol.fetch("https://item.fril.jp/missing")
+
+    assert not result.success
+    assert result.error == "Rakuma item unavailable (404)"
+
+
+def test_rakuma_patrol_returns_error_on_missing_item_marker(_patch_scrapling):
+    """RakumaPatrol が not-found 文言を unavailable エラーとして扱うことを確認"""
+    mock_page = MagicMock()
+    mock_page.get_text.return_value = "お探しの商品は見つかりません"
+    mock_page.css.return_value = []
+
+    _patch_scrapling.Fetcher.get.return_value = mock_page
+
+    from services.patrol.rakuma_patrol import RakumaPatrol
+    patrol = RakumaPatrol()
+    result = patrol.fetch("https://item.fril.jp/missing")
+
+    assert not result.success
+    assert result.error == "Rakuma item unavailable"
 
 
 # ---------------------------------------------------------------------------

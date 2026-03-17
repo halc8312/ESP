@@ -11,186 +11,10 @@ item.fril.jp は SSR（サーバーサイドレンダリング）で提供され
 """
 import asyncio
 import logging
-import re
 import time
 from selector_config import get_selectors, get_valid_domains
 from scrape_metrics import get_metrics, log_scrape_result, check_scrape_health
-
-
-def _first_node(page, selector: str):
-    """Support both `page.css()` and older mocks exposing only `css_first()`."""
-    try:
-        nodes = page.css(selector)
-        if nodes:
-            return nodes[0]
-    except Exception:
-        pass
-
-    try:
-        return page.css_first(selector)
-    except Exception:
-        return None
-
-
-def _parse_item_page(page, url: str) -> dict:
-    """
-    Scrapling の page オブジェクトから商品情報を抽出する共通ロジック。
-    sync / async 両方の fetch 結果に対して使える。
-    """
-    # ---- デバッグ: ページ内容を確認 ----
-    body_text = ""
-    try:
-        body_text = page.get_text() or ""
-        logging.debug(f"Page text preview (first 500 chars): {body_text[:500]}")
-    except Exception as e:
-        logging.debug(f"Error getting page text: {e}")
-
-    # <title> タグからタイトル候補を取得
-    page_title = ""
-    try:
-        title_nodes = page.css("title")
-        title_el = title_nodes[0] if title_nodes else None
-        if title_el:
-            page_title = (title_el.text or "").strip()
-            logging.debug(f"<title> tag content: {page_title}")
-    except Exception:
-        pass
-
-    # ---- デバッグ: 見出しタグ確認 ----
-    try:
-        for tag in ["h1", "h2", "h3", "h4"]:
-            elements = page.css(tag)
-            for el in elements:
-                logging.debug(f"Found <{tag}>: {(el.text or '').strip()[:100]}")
-    except Exception:
-        pass
-
-    # ---- タイトル ----
-    title = ""
-    title_selectors = get_selectors('rakuma', 'detail', 'title') or ["h1.item__name", "h1"]
-    try:
-        for selector in title_selectors:
-            el = _first_node(page, selector)
-            if el:
-                title = (el.text or "").strip()
-                if title:
-                    break
-    except Exception as e:
-        logging.debug(f"Error extracting title: {e}")
-
-    # セレクタで取れない場合は <title> タグから抽出
-    if not title and page_title:
-        title = page_title
-        for suffix in [" | ラクマ", "の商品写真", " - ラクマ", " - フリマアプリ ラクマ"]:
-            if suffix in title:
-                title = title.split(suffix)[0].strip()
-        # "ブランド名)の実際のタイトル" パターン
-        if ")の" in title:
-            title = title.split(")の", 1)[-1].strip()
-        logging.debug(f"Title from <title> tag: {title}")
-
-    # ---- 価格 ----
-    price = None
-    price_selectors = get_selectors('rakuma', 'detail', 'price') or ["span.item__price", ".item__price"]
-    try:
-        for selector in price_selectors:
-            el = _first_node(page, selector)
-            if el:
-                price_text = el.text or ""
-                m = re.search(r"[¥￥]\s*([\d,]+)", price_text) or re.search(r"([\d,]+)", price_text)
-                if m:
-                    price = int(m.group(1).replace(",", ""))
-                    break
-    except Exception as e:
-        logging.debug(f"Error extracting price: {e}")
-
-    # 予備の価格取得（body全体から）
-    if price is None:
-        try:
-            m = re.search(r"[¥￥]\s*([\d,]+)", body_text)
-            if not m:
-                m = re.search(r"([\d,]+)\s*円", body_text)
-            if m:
-                price = int(m.group(1).replace(",", ""))
-        except Exception:
-            pass
-
-    # ---- 説明文 ----
-    description = ""
-    desc_selectors = get_selectors('rakuma', 'detail', 'description') or ["div.item__description", ".item-description"]
-    try:
-        for selector in desc_selectors:
-            el = _first_node(page, selector)
-            if el:
-                description = (el.text or "").strip()
-                if description:
-                    break
-    except Exception as e:
-        logging.debug(f"Error extracting description: {e}")
-
-    # セレクタで取れない場合は body テキストから抽出
-    if not description and body_text:
-        try:
-            idx = body_text.find("商品説明")
-            if idx >= 0:
-                end_idx = body_text.find("商品情報", idx)
-                if end_idx < 0:
-                    end_idx = idx + 500
-                description = body_text[idx + len("商品説明"):end_idx].strip()
-        except Exception:
-            pass
-
-    # ---- 画像 ----
-    image_urls = []
-    image_selectors = get_selectors('rakuma', 'detail', 'images') or [".sp-image"]
-    try:
-        for selector in image_selectors:
-            imgs = page.css(selector)
-            for img in imgs:
-                src = img.attrib.get("src", "")
-                if not src or "placeholder" in src.lower() or "blank" in src.lower():
-                    src = img.attrib.get("data-lazy") or img.attrib.get("data-src") or ""
-                
-                # Handling div background-images for sold-out items
-                if not src:
-                    style = img.attrib.get("style", "")
-                    m = re.search(r'background-image:\s*url\(([^)]+)\)', style)
-                    if m:
-                        src = m.group(1).strip("'\"")
-
-                if src and src not in image_urls and src.startswith("http"):
-                    image_urls.append(src)
-    except Exception as e:
-        logging.debug(f"Error extracting images: {e}")
-
-    # ---- ステータス（売り切れ判定） ----
-    status = "on_sale"
-    try:
-        if "SOLDOUT" in body_text or "SOLD OUT" in body_text or "売り切れ" in body_text:
-            status = "sold"
-
-        sold_selectors = ["span.soldout", ".soldout-section", ".label-soldout", ".item-sell-out-badge"]
-        for sel in sold_selectors:
-            nodes = page.css(sel)
-            sold_el = nodes[0] if nodes else None
-            if sold_el:
-                status = "sold"
-                break
-    except Exception as e:
-        logging.debug(f"Error checking status: {e}")
-
-    # ---- バリエーション（ラクマは基本的に単品販売） ----
-    variants = []
-
-    return {
-        "url": url,
-        "title": title,
-        "price": price,
-        "status": status,
-        "description": description,
-        "image_urls": image_urls,
-        "variants": variants
-    }
+from services.rakuma_item_parser import parse_rakuma_item_page
 
 
 def scrape_item_detail(url: str, driver=None):
@@ -217,7 +41,7 @@ def scrape_item_detail(url: str, driver=None):
             "description": "", "image_urls": [], "variants": []
         }
 
-    return _parse_item_page(page, url)
+    return parse_rakuma_item_page(page, url)
 
 
 async def _scrape_item_detail_async(url: str) -> dict:
@@ -239,7 +63,7 @@ async def _scrape_item_detail_async(url: str) -> dict:
             "description": "", "image_urls": [], "variants": []
         }
 
-    return _parse_item_page(page, url)
+    return parse_rakuma_item_page(page, url)
 
 
 def scrape_single_item(url: str, headless: bool = True):
