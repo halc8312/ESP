@@ -213,3 +213,98 @@ def test_status_transitions():
 
     # 少なくとも completed に到達していること
     assert "completed" in seen_statuses
+
+
+def test_same_user_jobs_run_serially():
+    """同一ユーザーのジョブは常に1件ずつ実行されることを確認"""
+    queue = ScrapeQueue()
+    release_first = threading.Event()
+    second_started = threading.Event()
+
+    def first_task():
+        release_first.wait(timeout=2)
+        return [{"title": "first"}]
+
+    def second_task():
+        second_started.set()
+        return [{"title": "second"}]
+
+    job1 = queue.enqueue("yahoo", first_task, user_id=101)
+    job2 = queue.enqueue("yahoo", second_task, user_id=101)
+
+    time.sleep(0.2)
+    status1 = queue.get_status(job1)
+    status2 = queue.get_status(job2)
+    assert status1["status"] == "running"
+    assert status2["status"] == "queued"
+    assert second_started.is_set() is False
+
+    release_first.set()
+
+    for _ in range(40):
+        if second_started.is_set():
+            break
+        time.sleep(0.05)
+
+    assert second_started.is_set() is True
+
+
+def test_different_users_can_run_in_parallel():
+    """別ユーザーのジョブは並列に running へ進めることを確認"""
+    queue = ScrapeQueue()
+    release = threading.Event()
+
+    def blocking_task():
+        release.wait(timeout=2)
+        return []
+
+    job1 = queue.enqueue("yahoo", blocking_task, user_id=201)
+    job2 = queue.enqueue("yahoo", blocking_task, user_id=202)
+
+    for _ in range(20):
+        status1 = queue.get_status(job1)
+        status2 = queue.get_status(job2)
+        if status1["status"] == "running" and status2["status"] == "running":
+            break
+        time.sleep(0.05)
+
+    status1 = queue.get_status(job1)
+    status2 = queue.get_status(job2)
+    release.set()
+
+    assert status1["status"] == "running"
+    assert status2["status"] == "running"
+
+
+def test_get_jobs_for_user_returns_newest_first():
+    """ユーザー別ジョブ一覧が新しい順で返ることを確認"""
+    queue = ScrapeQueue()
+    queue.enqueue("yahoo", lambda: [], user_id=301)
+    time.sleep(0.01)
+    second_job = queue.enqueue("yahoo", lambda: [], user_id=301)
+    queue.enqueue("yahoo", lambda: [], user_id=302)
+
+    jobs = queue.get_jobs_for_user(301, limit=5, include_terminal=True)
+
+    assert len(jobs) == 2
+    assert jobs[0]["job_id"] == second_job
+
+
+def test_get_status_includes_context():
+    """get_status() に UI 復元用 context が含まれることを確認"""
+    queue = ScrapeQueue()
+    job_id = queue.enqueue(
+        "yahoo",
+        lambda: [],
+        user_id=401,
+        context={
+            "site_label": "Yahoo!ショッピング",
+            "detail_label": "キーワード: context",
+            "limit_label": "10件",
+            "persist_to_db": False,
+        },
+    )
+
+    status = queue.get_status(job_id, user_id=401)
+    assert status["context"]["site_label"] == "Yahoo!ショッピング"
+    assert status["context"]["persist_to_db"] is False

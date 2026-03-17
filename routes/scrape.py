@@ -3,7 +3,7 @@ Scraping routes.
 """
 import math
 import traceback
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from flask import Blueprint, jsonify, render_template, request, session, redirect, url_for
 from flask_login import login_required, current_user
 
@@ -34,6 +34,16 @@ _DOMAIN_SITE_MAP = [
     ("auctions.yahoo.co.jp", "yahuoku"),
     ("snkrdunk.com", "snkrdunk"),
 ]
+
+_SITE_LABELS = {
+    "mercari": "メルカリ",
+    "yahoo": "Yahoo!ショッピング",
+    "rakuma": "ラクマ",
+    "surugaya": "駿河屋",
+    "offmall": "オフモール",
+    "yahuoku": "ヤフオク",
+    "snkrdunk": "SNKRDUNK",
+}
 
 
 def _detect_site_from_url(url: str) -> str:
@@ -74,6 +84,40 @@ def _get_search_depth(site: str, limit: int) -> int:
     rule = _SEARCH_DEPTH_RULES.get(site, {"window": 20, "base": 2, "min": 3, "max": 8})
     depth = int(math.ceil(requested / rule["window"])) + rule["base"]
     return max(rule["min"], min(depth, rule["max"]))
+
+
+def _simplify_target_label(target_url: str) -> str:
+    if not target_url:
+        return "URL指定"
+    try:
+        parsed = urlparse(target_url)
+        return parsed.hostname or "URL指定"
+    except ValueError:
+        return "URL指定"
+
+
+def _build_scrape_job_context(site, target_url, keyword, limit, persist_to_db):
+    if target_url:
+        return {
+            "site_label": "URLから抽出",
+            "detail_label": _simplify_target_label(target_url),
+            "limit": 1,
+            "limit_label": "1件",
+            "persist_to_db": persist_to_db,
+            "target_url": target_url,
+            "keyword": keyword or "",
+        }
+
+    requested_limit = max(1, int(limit or 10))
+    return {
+        "site_label": _SITE_LABELS.get(site, "商品抽出"),
+        "detail_label": f"キーワード: {keyword}" if keyword else "条件で抽出します",
+        "limit": requested_limit,
+        "limit_label": f"{requested_limit}件",
+        "persist_to_db": persist_to_db,
+        "target_url": "",
+        "keyword": keyword or "",
+    }
 
 
 def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, category, limit, user_id, persist_to_db=True, shop_id=None):
@@ -295,20 +339,33 @@ def scrape_run():
         persist_to_db=not preview_mode,
         shop_id=current_shop_id,
     )
+    job_context = _build_scrape_job_context(
+        site=site,
+        target_url=target_url,
+        keyword=keyword,
+        limit=limit,
+        persist_to_db=not preview_mode,
+    )
 
     queue = get_queue()
     job_id = queue.enqueue(
         site=site,
         task_fn=task_fn,
         user_id=current_user.id,
+        context=job_context,
     )
 
     if preview_mode:
         return jsonify(
             {
                 "job_id": job_id,
+                "status": "queued",
+                "context": job_context,
                 "status_url": url_for('api.get_scrape_status', job_id=job_id),
                 "register_url": url_for('scrape.register_selected'),
+                "result_url": url_for('scrape.scrape_form', job_id=job_id),
+                "elapsed_seconds": 0,
+                "queue_position": None,
             }
         ), 202
 

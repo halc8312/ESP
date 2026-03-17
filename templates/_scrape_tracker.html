@@ -1,0 +1,11 @@
+<section
+    id="globalScrapeTracker"
+    class="global-scrape-tracker"
+    data-jobs-url="{{ url_for('api.get_scrape_jobs') }}"
+    data-user-id="{{ current_user.id }}"
+    hidden
+    aria-live="polite"
+>
+    <div id="globalScrapeTrackerList" class="global-scrape-tracker-list"></div>
+    <div id="globalScrapeTrackerOverflow" class="global-scrape-tracker-overflow" hidden></div>
+</section>

@@ -2738,6 +2738,34 @@ button:active {
     width: min(400px, calc(100vw - 24px));
 }
 
+.global-scrape-tracker {
+    position: fixed;
+    right: 16px;
+    bottom: calc(var(--bottom-nav-height) + 14px + env(safe-area-inset-bottom));
+    z-index: 1200;
+    width: min(400px, calc(100vw - 24px));
+}
+
+.global-scrape-tracker-list {
+    display: grid;
+    gap: 10px;
+}
+
+.global-scrape-tracker-overflow {
+    margin-top: 10px;
+    padding: 10px 14px;
+    border-radius: 14px;
+    background: rgba(15, 23, 42, 0.92);
+    color: #f8fafc;
+    font-size: 12px;
+    line-height: 1.5;
+    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.18);
+}
+
+.scrape-tracker-card + .scrape-tracker-card {
+    margin-top: 10px;
+}
+
 .scrape-progress-card {
     pointer-events: auto;
     border: 1px solid rgba(13, 27, 42, 0.12);
@@ -2913,6 +2941,38 @@ button:active {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
+}
+
+.scrape-tracker-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.scrape-tracker-link {
+    color: #1d4ed8;
+    font-size: 12px;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.scrape-tracker-link:hover {
+    text-decoration: underline;
+}
+
+.scrape-tracker-dismiss {
+    border: 0;
+    background: transparent;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 0;
+}
+
+.scrape-tracker-dismiss:hover {
+    color: #0f172a;
 }
 
 .scrape-progress-panel.is-collapsed .scrape-progress-shell {
@@ -3176,10 +3236,20 @@ button:active {
         right: 24px;
         width: min(480px, calc(100vw - 48px));
     }
+
+    .global-scrape-tracker {
+        right: 24px;
+        width: min(480px, calc(100vw - 48px));
+    }
 }
 
 @media (min-width: 1024px) {
     .scrape-progress-panel {
+        right: 24px;
+        bottom: 24px;
+    }
+
+    .global-scrape-tracker {
         right: 24px;
         bottom: 24px;
     }
@@ -3192,6 +3262,12 @@ button:active {
 
 @media (max-width: 767px) {
     .scrape-progress-panel {
+        left: 10px;
+        right: 10px;
+        width: auto;
+    }
+
+    .global-scrape-tracker {
         left: 10px;
         right: 10px;
         width: auto;

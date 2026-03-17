@@ -141,6 +141,10 @@
         {% block content %}{% endblock %}
     </main>
 
+    {% if current_user.is_authenticated %}
+    {% include "_scrape_tracker.html" %}
+    {% endif %}
+
     <!-- Bottom Navigation (Mobile only) -->
     <nav class="bottom-nav">
         <a href="{{ url_for('index') }}" class="bottom-nav-item {% if request.endpoint == 'index' %}active{% endif %}"
@@ -252,6 +256,9 @@
             }
         });
     </script>
+    {% if current_user.is_authenticated %}
+    <script src="{{ url_for('static', filename='js/scrape_tracker.js') }}"></script>
+    {% endif %}
     {% block scripts %}{% endblock %}
 </body>
 

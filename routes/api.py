@@ -2,7 +2,8 @@
 API routes for scraping job status polling and lightweight product updates.
 """
 from datetime import datetime
-from flask import Blueprint, jsonify, request
+from typing import Optional
+from flask import Blueprint, jsonify, request, url_for
 from flask_login import login_required, current_user
 
 from database import SessionLocal
@@ -10,6 +11,49 @@ from models import Product
 from services.scrape_queue import get_queue
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
+
+
+def _build_job_result_url(job_payload: dict) -> str:
+    context = job_payload.get("context") or {}
+    job_id = job_payload["job_id"]
+    persist_to_db = context.get("persist_to_db")
+    if persist_to_db is None and isinstance(job_payload.get("result"), dict):
+        persist_to_db = job_payload["result"].get("persist_to_db")
+    if persist_to_db is False:
+        return url_for("scrape.scrape_form", job_id=job_id)
+    return url_for("scrape.scrape_result", job_id=job_id)
+
+
+def _build_job_result_summary(job_payload: dict) -> Optional[dict]:
+    result = job_payload.get("result")
+    if result is None:
+        return None
+
+    if isinstance(result, dict):
+        items = result.get("items") or []
+        return {
+            "items_count": len(items),
+            "excluded_count": result.get("excluded_count", 0),
+            "new_count": result.get("new_count", 0),
+            "updated_count": result.get("updated_count", 0),
+        }
+
+    if isinstance(result, list):
+        return {
+            "items_count": len(result),
+            "excluded_count": 0,
+            "new_count": 0,
+            "updated_count": 0,
+        }
+
+    return None
+
+
+def _serialize_scrape_job(job_payload: dict) -> dict:
+    serialized = dict(job_payload)
+    serialized["result_url"] = _build_job_result_url(job_payload)
+    serialized["result_summary"] = _build_job_result_summary(job_payload)
+    return serialized
 
 
 def _parse_bulk_price_payload(mode, value, extra_value):
@@ -99,7 +143,24 @@ def get_scrape_status(job_id):
     if status is None:
         return jsonify({"error": "Job not found"}), 404
 
-    return jsonify(status)
+    return jsonify(_serialize_scrape_job(status))
+
+
+@api_bp.route("/scrape/jobs")
+@login_required
+def get_scrape_jobs():
+    """ログインユーザーの最近の抽出ジョブ一覧を返す。"""
+    raw_limit = request.args.get("limit", "10")
+    limit = int(raw_limit) if raw_limit.isdigit() else 10
+    limit = max(1, min(limit, 10))
+
+    queue = get_queue()
+    jobs = queue.get_jobs_for_user(
+        user_id=current_user.id,
+        limit=limit,
+        include_terminal=True,
+    )
+    return jsonify({"jobs": [_serialize_scrape_job(job) for job in jobs]})
 
 
 @api_bp.route("/products/<int:product_id>/inline-update", methods=["PATCH"])

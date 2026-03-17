@@ -47,6 +47,8 @@ class ScrapeJob:
     started_at: Optional[float] = None
     finished_at: Optional[float] = None
     user_id: Optional[int] = None    # 認証ユーザーID
+    context: Dict[str, Any] = field(default_factory=dict)
+    dispatched: bool = False         # executor へ投入済みかどうか（queued の二重投入防止）
 
 
 # ブラウザ（Selenium/Playwright）が必要なサイト
@@ -66,12 +68,14 @@ class ScrapeQueue:
     """
 
     def __init__(self):
+        self._http_max_workers = 10
+        self._browser_max_workers = 2
         self._http_executor = ThreadPoolExecutor(
-            max_workers=10,
+            max_workers=self._http_max_workers,
             thread_name_prefix="http_scrape"
         )
         self._browser_executor = ThreadPoolExecutor(
-            max_workers=2,
+            max_workers=self._browser_max_workers,
             thread_name_prefix="browser_scrape"
         )
         self._jobs: Dict[str, ScrapeJob] = {}
@@ -93,7 +97,8 @@ class ScrapeQueue:
         task_fn: Callable,
         task_args: tuple = (),
         task_kwargs: dict = None,
-        user_id: int = None
+        user_id: int = None,
+        context: Optional[dict] = None,
     ) -> str:
         """
         スクレイピングタスクをキューに追加する。
@@ -121,20 +126,14 @@ class ScrapeQueue:
             task_args=task_args,
             task_kwargs=task_kwargs or {},
             user_id=user_id,
+            context=context or {},
         )
 
         with self._lock:
             self._jobs[job_id] = job
 
-        # 適切な executor に投入
-        executor = (
-            self._browser_executor
-            if site in BROWSER_SITES
-            else self._http_executor
-        )
-        executor.submit(self._run_job, job_id)
-
         logger.info(f"Enqueued job {job_id} for site={site}, user_id={user_id}")
+        self._dispatch_queued_jobs()
         return job_id
 
     def get_status(self, job_id: str, user_id: int = None) -> Optional[dict]:
@@ -159,22 +158,102 @@ class ScrapeQueue:
         if user_id is not None and job.user_id != user_id:
             return None
 
-        elapsed = time.time() - job.created_at
+        return self._serialize_job(job)
 
+    def get_jobs_for_user(
+        self,
+        user_id: int,
+        limit: int = 5,
+        include_terminal: bool = True,
+    ) -> list[dict]:
+        """指定ユーザーのジョブ一覧を新しい順で返す。"""
+        safe_limit = max(1, int(limit or 5))
+        with self._lock:
+            jobs = [job for job in self._jobs.values() if job.user_id == user_id]
+
+        if not include_terminal:
+            jobs = [job for job in jobs if job.status in (JobStatus.QUEUED, JobStatus.RUNNING)]
+
+        jobs.sort(key=lambda job: job.created_at, reverse=True)
+        return [self._serialize_job(job) for job in jobs[:safe_limit]]
+
+    def _serialize_job(self, job: ScrapeJob) -> dict:
+        elapsed = time.time() - job.created_at
         result = {
-            "job_id": job_id,
+            "job_id": job.job_id,
+            "site": job.site,
             "status": job.status.value,
             "result": job.result,
             "error": job.error,
             "elapsed_seconds": round(elapsed, 1),
             "queue_position": None,
+            "context": job.context or {},
+            "created_at": job.created_at,
+            "finished_at": job.finished_at,
         }
 
-        # キュー待機中のポジションを計算
         if job.status == JobStatus.QUEUED:
             result["queue_position"] = self._get_queue_position(job)
 
         return result
+
+    def _get_executor_key(self, site: str) -> str:
+        return "browser" if site in BROWSER_SITES else "http"
+
+    def _get_executor(self, site: str) -> ThreadPoolExecutor:
+        return self._browser_executor if site in BROWSER_SITES else self._http_executor
+
+    def _get_executor_limit(self, executor_key: str) -> int:
+        return self._browser_max_workers if executor_key == "browser" else self._http_max_workers
+
+    def _dispatch_queued_jobs(self):
+        """空き worker と user ごとの実行制約に合わせて queued job を投入する。"""
+        submissions: list[tuple[ThreadPoolExecutor, str]] = []
+
+        with self._lock:
+            active_counts = {"browser": 0, "http": 0}
+            active_user_ids = set()
+
+            for job in self._jobs.values():
+                if job.status == JobStatus.RUNNING or job.dispatched:
+                    executor_key = self._get_executor_key(job.site)
+                    active_counts[executor_key] += 1
+                    if job.user_id is not None:
+                        active_user_ids.add(job.user_id)
+
+            queued_jobs = sorted(
+                (
+                    job for job in self._jobs.values()
+                    if job.status == JobStatus.QUEUED and not job.dispatched
+                ),
+                key=lambda job: job.created_at,
+            )
+
+            for job in queued_jobs:
+                executor_key = self._get_executor_key(job.site)
+                if active_counts[executor_key] >= self._get_executor_limit(executor_key):
+                    continue
+                if job.user_id is not None and job.user_id in active_user_ids:
+                    continue
+
+                job.dispatched = True
+                active_counts[executor_key] += 1
+                if job.user_id is not None:
+                    active_user_ids.add(job.user_id)
+                submissions.append((self._get_executor(job.site), job.job_id))
+
+        for executor, job_id in submissions:
+            try:
+                executor.submit(self._run_job, job_id)
+            except Exception as exc:
+                with self._lock:
+                    job = self._jobs.get(job_id)
+                    if job is not None:
+                        job.dispatched = False
+                        job.status = JobStatus.FAILED
+                        job.error = str(exc)
+                        job.finished_at = time.time()
+                logger.error(f"Failed to submit job {job_id}: {exc}", exc_info=True)
 
     def _get_queue_position(self, job: ScrapeJob) -> int:
         """同じ executor で待機中のジョブ数を返す"""
@@ -198,6 +277,7 @@ class ScrapeQueue:
                 return
             job.status = JobStatus.RUNNING
             job.started_at = time.time()
+            job.dispatched = False
 
         logger.info(f"Running job {job_id}")
 
@@ -215,6 +295,8 @@ class ScrapeQueue:
                 job.status = JobStatus.FAILED
                 job.finished_at = time.time()
             logger.error(f"Failed job {job_id}: {e}", exc_info=True)
+        finally:
+            self._dispatch_queued_jobs()
 
     def _cleanup_loop(self):
         """古いジョブを定期的に削除する"""
