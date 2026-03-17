@@ -188,6 +188,68 @@ def test_offmall_search_result_uses_http_only_detail_scrape():
     assert results[0]["status"] == "active"
 
 
+def test_offmall_detail_prefers_visible_tax_included_price():
+    import offmall_db
+
+    detail_page = MockPage(
+        css_map={
+            "script[type='application/ld+json']": [
+                MockElement(
+                    text=json.dumps(
+                        {
+                            "@type": "Product",
+                            "name": "Offmall Camera",
+                            "description": "camera description",
+                            "offers": {"price": "2000", "availability": "https://schema.org/InStock"},
+                        }
+                    )
+                )
+            ],
+            "span.product-detail-price__main": [MockElement(text="2,200")],
+            "div.product-detail-point__box": [],
+            "#panel1 th, .product-detail-spec th": [],
+            "meta[property='og:image']": [],
+            "img[src*='hardoff']": [],
+            ".item-condition, .condition, [class*='rank'], [class*='condition']": [],
+        },
+        text="カートに入れる 2,200 (税込)",
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=detail_page):
+        result = offmall_db.scrape_item_detail_light("https://netmall.hardoff.co.jp/product/12345/")
+
+    assert result["price"] == 2200
+    assert result["status"] == "active"
+
+
+def test_offmall_patrol_prefers_visible_tax_included_price():
+    from services.patrol.offmall_patrol import OffmallPatrol
+
+    detail_page = MockPage(
+        css_map={
+            "script[type='application/ld+json']": [
+                MockElement(
+                    text=json.dumps(
+                        {
+                            "@type": "Product",
+                            "name": "Offmall Camera",
+                            "offers": {"price": "2000", "availability": "https://schema.org/InStock"},
+                        }
+                    )
+                )
+            ],
+            "span.product-detail-price__main": [MockElement(text="2,200")],
+        },
+        text="カートに入れる 2,200 (税込)",
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=detail_page):
+        result = OffmallPatrol().fetch("https://netmall.hardoff.co.jp/product/12345/")
+
+    assert result.price == 2200
+    assert result.status == "active"
+
+
 def test_yahuoku_search_result_uses_http_only_detail_scrape():
     import yahuoku_db
 
@@ -234,6 +296,84 @@ def test_yahuoku_search_result_uses_http_only_detail_scrape():
     assert len(results) == 1
     assert results[0]["title"] == "Auction Console"
     assert results[0]["price"] == 5555
+
+
+def test_yahuoku_detail_prefers_tax_included_price_and_keeps_open_status():
+    import yahuoku_db
+
+    detail_page = MockPage(
+        find_map={
+            "#__NEXT_DATA__": MockElement(
+                text=json.dumps(
+                    {
+                        "props": {
+                            "pageProps": {
+                                "initialState": {
+                                    "item": {
+                                        "detail": {
+                                            "item": {
+                                                "title": "Auction Console",
+                                                "price": 15000,
+                                                "taxinPrice": 16500,
+                                                "status": "open",
+                                                "seller": {"name": "seller"},
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                )
+            )
+        },
+        css_map={"meta[name='description']": [], "meta[property='og:image']": []},
+        text="価格 16,500円 （税込） 3月21日（土）14時1分 終了予定 購入手続きへ",
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=detail_page):
+        result = yahuoku_db.scrape_item_detail_light("https://auctions.yahoo.co.jp/jp/auction/f123456789")
+
+    assert result["price"] == 16500
+    assert result["status"] == "active"
+
+
+def test_yahuoku_patrol_ignores_end_scheduled_text_for_open_auction():
+    from services.patrol.yahuoku_patrol import YahuokuPatrol
+
+    detail_page = MockPage(
+        find_map={
+            "#__NEXT_DATA__": MockElement(
+                text=json.dumps(
+                    {
+                        "props": {
+                            "pageProps": {
+                                "initialState": {
+                                    "item": {
+                                        "detail": {
+                                            "item": {
+                                                "title": "Auction Console",
+                                                "price": 15000,
+                                                "taxinPrice": 16500,
+                                                "status": "open",
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                )
+            )
+        },
+        text="価格 16,500円 （税込） 3月21日（土）14時1分 終了予定",
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=detail_page):
+        result = YahuokuPatrol().fetch("https://auctions.yahoo.co.jp/jp/auction/f123456789")
+
+    assert result.price == 16500
+    assert result.status == "active"
 
 
 def test_snkrdunk_search_result_uses_scrapling_dynamic_fetch():

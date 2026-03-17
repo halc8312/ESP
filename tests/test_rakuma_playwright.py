@@ -4,6 +4,7 @@ Tests verify that:
   - rakuma_db.py uses Fetcher/AsyncFetcher (HTTP) for item detail pages (SSR)
   - rakuma_patrol.py uses HTTP fetches for patrol checks
 """
+import json
 import sys
 import types
 import pytest
@@ -145,6 +146,56 @@ def test_scrape_item_detail_price_extraction(_patch_scrapling):
     result = scrape_item_detail("https://item.fril.jp/test")
 
     assert result["price"] == 2980
+
+
+def test_scrape_item_detail_prefers_meta_price_over_body_recommendations(_patch_scrapling):
+    """Rakuma は body-wide regex ではなく product meta price を優先する。"""
+    title_el = MagicMock()
+    title_el.text = "NIKE ナイキ エアフォース1 カーキ 26.5cm"
+
+    meta_price_el = MagicMock()
+    meta_price_el.text = ""
+    meta_price_el.attrib = {"content": "7000"}
+
+    jsonld_el = MagicMock()
+    jsonld_el.text = json.dumps(
+        {
+            "@context": "http://schema.org/",
+            "@type": "Product",
+            "name": "NIKE ナイキ エアフォース1 カーキ 26.5cm",
+            "offers": {"@type": "Offer", "price": 7000, "availability": "http://schema.org/InStock"},
+        }
+    )
+
+    mock_page = MagicMock()
+    mock_page.get_text.return_value = """
+        おすすめ商品
+        ¥48,800
+        Fragment × Union × Nike Air Jordan 1
+        ¥67,800
+        NIKE ナイキ エアフォース1 カーキ 26.5cm
+    """
+
+    def css_side_effect(selector):
+        if selector == "meta[property='product:price:amount']":
+            return [meta_price_el]
+        if selector == "script[type='application/ld+json']":
+            return [jsonld_el]
+        if selector in {"h1.item__name", "h1"}:
+            return [title_el]
+        return []
+
+    mock_page.css.side_effect = css_side_effect
+    mock_page.css_first.return_value = None
+
+    _patch_scrapling.Fetcher.get.return_value = mock_page
+
+    from rakuma_db import scrape_item_detail
+
+    result = scrape_item_detail("https://item.fril.jp/test")
+
+    assert result["price"] == 7000
+    assert result["status"] == "on_sale"
 
 
 def test_scrape_item_detail_sold_status(_patch_scrapling):

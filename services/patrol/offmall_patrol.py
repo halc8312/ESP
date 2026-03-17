@@ -2,10 +2,9 @@
 Offmall patrol scraper.
 Uses Scrapling HTTP fetches only.
 """
-import json
 import logging
-import re
 
+from offmall_db import _extract_json_ld_product, _extract_visible_price, _get_page_text, _infer_offmall_status
 from services.patrol.base_patrol import BasePatrol, PatrolResult
 
 logger = logging.getLogger("patrol.offmall")
@@ -23,45 +22,20 @@ class OffmallPatrol(BasePatrol):
             from services.scraping_client import fetch_static
 
             page = fetch_static(url)
-            price = None
-            status = "unknown"
+            page_text = _get_page_text(page)
+            json_ld = _extract_json_ld_product(page)
+            offers = json_ld.get("offers", {}) if isinstance(json_ld, dict) else {}
 
-            scripts = page.css("script[type='application/ld+json']")
-            for script_el in scripts:
-                try:
-                    raw = str(script_el.text or "").strip()
-                    if not raw:
-                        continue
-                    data = json.loads(raw)
-                    if isinstance(data, dict) and data.get("@type") == "Product":
-                        offers = data.get("offers", {})
-                        if isinstance(offers, dict):
-                            price_str = str(offers.get("price", ""))
-                            if price_str:
-                                price = int(float(price_str))
-                            availability = offers.get("availability", "")
-                            if "InStock" in availability:
-                                status = "active"
-                            elif "OutOfStock" in availability:
-                                status = "sold"
-                        break
-                except (json.JSONDecodeError, Exception):
-                    continue
-
-            page_text = str(page.get_all_text())
-            if price is None:
-                match = re.search(r"([\d,]+)\s*円", page_text)
-                if match:
+            price = _extract_visible_price(page, page_text)
+            if price is None and isinstance(offers, dict):
+                raw_price = offers.get("price")
+                if raw_price is not None:
                     try:
-                        price = int(match.group(1).replace(",", ""))
+                        price = int(float(str(raw_price)))
                     except ValueError:
-                        pass
+                        price = None
 
-            if status == "unknown":
-                if "カートに入れる" in page_text or "購入手続き" in page_text:
-                    status = "active"
-                elif "対象の商品はございません" in page_text or "ページが見つかりません" in page_text:
-                    status = "sold"
+            status = _infer_offmall_status(page_text, offers)
 
             variants = []
             if price is not None:

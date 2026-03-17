@@ -16,6 +16,21 @@ SEARCH_LINK_SELECTORS = [
     "a[href*='page.auctions.yahoo.co.jp/auction/']",
 ]
 
+_CLOSED_STATUS_VALUES = {
+    "closed",
+    "finished",
+    "ended",
+    "closedbysystem",
+    "closedbyseller",
+    "sold",
+}
+_CLOSED_PAGE_MARKERS = (
+    "このオークションは終了しています",
+    "オークションは終了しました",
+    "落札されました",
+    "落札価格",
+)
+
 
 def _empty_result(url: str, status: str = "error") -> dict:
     return {
@@ -62,6 +77,104 @@ def _extract_auction_item(page) -> dict:
     return initial_props.get("auctionItem", {}) or {}
 
 
+def _get_page_text(page) -> str:
+    for attr_name in ("get_all_text", "get_text"):
+        extractor = getattr(page, attr_name, None)
+        if not callable(extractor):
+            continue
+        try:
+            text = extractor() or ""
+        except Exception:
+            continue
+        if isinstance(text, str) and text.strip():
+            return text
+    return ""
+
+
+def _extract_price_value(raw_value):
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, (int, float)):
+        return int(raw_value)
+
+    digits = "".join(ch for ch in str(raw_value) if ch.isdigit())
+    if not digits:
+        return None
+
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def _extract_tax_inclusive_price(item_detail: dict, page_text: str = ""):
+    for key in ("taxinPrice", "taxinBidorbuy", "taxinStartPrice"):
+        price = _extract_price_value(item_detail.get(key))
+        if price is not None and price > 0:
+            return price
+
+    price_data = item_detail.get("price", {})
+    if isinstance(price_data, dict):
+        for key in ("taxInCurrent", "taxInBid", "taxinCurrent", "taxinBid"):
+            price = _extract_price_value(price_data.get(key))
+            if price is not None and price > 0:
+                return price
+
+    if page_text:
+        for pattern in (
+            r"価格\s*([\d,]+)円\s*（税込）",
+            r"即決\s*([\d,]+)円\s*（税込）",
+        ):
+            match = re.search(pattern, page_text)
+            if not match:
+                continue
+            try:
+                return int(match.group(1).replace(",", ""))
+            except ValueError:
+                continue
+
+    if isinstance(price_data, dict):
+        for key in ("current", "bid"):
+            price = _extract_price_value(price_data.get(key))
+            if price is not None:
+                return price
+    elif isinstance(price_data, (int, float)):
+        return int(price_data)
+
+    for key in ("currentPrice", "price", "initPrice"):
+        price = _extract_price_value(item_detail.get(key))
+        if price is not None:
+            return price
+
+    return None
+
+
+def _infer_auction_status(item_detail: dict, page_text: str = "") -> str:
+    status_flag = item_detail.get("status")
+    close_status = item_detail.get("closeStatus")
+
+    for raw_value in (status_flag, close_status):
+        if raw_value in (True, False):
+            if raw_value is True:
+                return "sold"
+            continue
+        normalized = str(raw_value or "").strip().lower()
+        if not normalized:
+            continue
+        if normalized in _CLOSED_STATUS_VALUES:
+            return "sold"
+        if normalized in {"open", "active", "selling"}:
+            return "active"
+
+    if item_detail.get("isFinished") is True or item_detail.get("isClosed") is True:
+        return "sold"
+
+    if any(marker in page_text for marker in _CLOSED_PAGE_MARKERS):
+        return "sold"
+
+    return "active"
+
+
 def scrape_item_detail_light(url: str) -> dict:
     """HTTP-only Yahoo Auctions detail scrape."""
     try:
@@ -74,14 +187,9 @@ def scrape_item_detail_light(url: str) -> dict:
 
         result = _empty_result(url, status="active")
         result["title"] = item_detail.get("title", "")
+        page_text = _get_page_text(page)
 
-        price_data = item_detail.get("price", {})
-        if isinstance(price_data, dict):
-            result["price"] = price_data.get("current") or price_data.get("bid")
-        elif isinstance(price_data, (int, float)):
-            result["price"] = int(price_data)
-        if result["price"] is None:
-            result["price"] = item_detail.get("currentPrice") or item_detail.get("price")
+        result["price"] = _extract_tax_inclusive_price(item_detail, page_text)
 
         description = item_detail.get("description", "") or item_detail.get("itemDescription", "")
         if description:
@@ -122,13 +230,7 @@ def scrape_item_detail_light(url: str) -> dict:
                     image_urls.append(og_url)
         result["image_urls"] = image_urls
 
-        status_flag = item_detail.get("status") or item_detail.get("isFinished") or item_detail.get("isClosed") or item_detail.get("closeStatus")
-        if status_flag in (True, "closed", "finished", "ended", "closedBySystem", "closedBySeller"):
-            result["status"] = "sold"
-        else:
-            page_text = str(page.get_all_text())
-            if "終了" in page_text or "落札" in page_text:
-                result["status"] = "sold"
+        result["status"] = _infer_auction_status(item_detail, page_text)
 
         seller_data = item_detail.get("seller", {})
         if isinstance(seller_data, dict):

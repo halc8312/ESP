@@ -16,6 +16,10 @@ SELECTORS = {
         "a.product-card__link",
         "a[class*='product']",
     ],
+    "price": [
+        "span.product-detail-price__main",
+        ".product-detail-price__main",
+    ],
 }
 
 
@@ -41,13 +45,94 @@ def _resolve_detail_url(url_or_driver, maybe_url=None) -> str:
     raise ValueError("url is required")
 
 
+def _get_page_text(page) -> str:
+    for attr_name in ("get_all_text", "get_text"):
+        extractor = getattr(page, attr_name, None)
+        if not callable(extractor):
+            continue
+        try:
+            text = extractor() or ""
+        except Exception:
+            continue
+        if isinstance(text, str) and text.strip():
+            return text
+    return ""
+
+
+def _extract_price_digits(text: str):
+    if not text:
+        return None
+    match = re.search(r"([0-9][0-9,]{1,})", text.replace("，", ","))
+    if not match:
+        return None
+    try:
+        return int(match.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _extract_json_ld_product(page) -> dict:
+    scripts = page.css("script[type='application/ld+json']")
+    for script_el in scripts:
+        try:
+            raw = str(script_el.text or "").strip()
+            if not raw:
+                continue
+            data = json.loads(raw)
+            if isinstance(data, dict) and data.get("@type") == "Product":
+                return data
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and item.get("@type") == "Product":
+                        return item
+        except (json.JSONDecodeError, Exception):
+            continue
+    return {}
+
+
+def _extract_visible_price(page, page_text: str = ""):
+    for selector in SELECTORS["price"]:
+        for el in page.css(selector):
+            price = _extract_price_digits(str(el.text or "").strip())
+            if price is not None:
+                return price
+
+    if page_text:
+        match = re.search(r"([0-9][0-9,]{1,})\s*(?:円)?\s*\(税込\)", page_text)
+        if match:
+            try:
+                return int(match.group(1).replace(",", ""))
+            except ValueError:
+                return None
+
+    return None
+
+
+def _infer_offmall_status(page_text: str, offers=None) -> str:
+    availability = ""
+    if isinstance(offers, dict):
+        availability = str(offers.get("availability", "") or "")
+
+    if "InStock" in availability:
+        return "active"
+    if "OutOfStock" in availability:
+        return "sold"
+
+    if "対象の商品はございません" in page_text or "ページが見つかりません" in page_text:
+        return "sold"
+    if "カートに入れる" in page_text or "購入手続き" in page_text:
+        return "active"
+
+    return "unknown"
+
+
 def scrape_item_detail_light(url: str) -> dict:
     """HTTP-only Offmall detail scrape via JSON-LD parsing."""
     try:
         from services.scraping_client import fetch_static
 
         page = fetch_static(url)
-        page_text = str(page.get_all_text())
+        page_text = _get_page_text(page)
         if "対象の商品はございません" in page_text or "ページが見つかりません" in page_text:
             return {
                 "url": url,
@@ -62,27 +147,7 @@ def scrape_item_detail_light(url: str) -> dict:
             }
 
         result = _empty_result(url, status="unknown")
-        scripts = page.css("script[type='application/ld+json']")
-        json_ld = {}
-        for script_el in scripts:
-            try:
-                raw = str(script_el.text or "").strip()
-                if not raw:
-                    continue
-                data = json.loads(raw)
-                if isinstance(data, dict) and data.get("@type") == "Product":
-                    json_ld = data
-                    break
-                if isinstance(data, list):
-                    for item in data:
-                        if isinstance(item, dict) and item.get("@type") == "Product":
-                            json_ld = item
-                            break
-                if json_ld:
-                    break
-            except (json.JSONDecodeError, Exception):
-                continue
-
+        json_ld = _extract_json_ld_product(page)
         if not json_ld:
             return {}
 
@@ -116,18 +181,15 @@ def scrape_item_detail_light(url: str) -> dict:
                 result["description"] = "\n".join(desc_parts)
 
         offers = json_ld.get("offers", {})
-        if isinstance(offers, dict):
+        result["price"] = _extract_visible_price(page, page_text)
+        if result["price"] is None and isinstance(offers, dict):
             price_str = str(offers.get("price", ""))
             if price_str:
                 try:
                     result["price"] = int(float(price_str))
                 except (ValueError, TypeError):
                     pass
-            availability = offers.get("availability", "")
-            if "InStock" in availability:
-                result["status"] = "active"
-            elif "OutOfStock" in availability:
-                result["status"] = "sold"
+        result["status"] = _infer_offmall_status(page_text, offers)
 
         images = json_ld.get("image", [])
         if isinstance(images, str):
