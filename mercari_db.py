@@ -1,7 +1,6 @@
 import logging
 import asyncio
 from playwright.async_api import async_playwright
-import time
 import re
 import os
 import shutil
@@ -22,7 +21,9 @@ except ImportError:
     get_healer = None
 
 from services.mercari_item_parser import parse_mercari_item_page
-from services.scraping_client import fetch_dynamic
+from services.mercari_item_parser import parse_mercari_network_payload
+from services.extraction_policy import attach_extraction_trace, pick_first_valid
+from services.scraping_client import fetch_dynamic, gather_with_concurrency, get_async_fetch_settings, run_coro_sync
 
 # Import metrics logging
 try:
@@ -41,21 +42,243 @@ except ImportError:
 
 logger = logging.getLogger("mercari")
 
-def _get_or_create_event_loop():
-    """
-    現在のスレッドのイベントループを取得、または新規作成する。
-    Flask + Gunicorn gthread 環境での asyncio 使用に対応。
-    """
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        return loop
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop
+
+def _env_flag(name: str) -> bool:
+    raw = str(os.environ.get(name, "") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _should_capture_mercari_network_payload() -> bool:
+    return _env_flag("MERCARI_CAPTURE_NETWORK_PAYLOAD") or _should_use_mercari_network_payload()
+
+
+def _should_use_mercari_network_payload() -> bool:
+    return _env_flag("MERCARI_USE_NETWORK_PAYLOAD")
+
+
+def _is_nonempty_text(value) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _is_positive_price(value) -> bool:
+    return isinstance(value, int) and value > 0
+
+
+def _is_nonempty_list(value) -> bool:
+    return isinstance(value, list) and len(value) > 0
+
+
+def _is_useful_status(value) -> bool:
+    return value in {"on_sale", "sold", "deleted"}
+
+
+def _normalize_shadow_value(field: str, value):
+    if field == "description" and isinstance(value, str):
+        return " ".join(value.split())
+    if field == "image_urls" and isinstance(value, list):
+        return list(value)
+    return value
+
+
+def _build_shadow_compare(payload_item: dict, dom_item: dict) -> dict:
+    compared_fields = []
+    mismatch_fields = []
+    for field, validator in (
+        ("title", _is_nonempty_text),
+        ("price", _is_positive_price),
+        ("description", _is_nonempty_text),
+        ("image_urls", _is_nonempty_list),
+        ("status", _is_useful_status),
+    ):
+        payload_value = payload_item.get(field)
+        dom_value = dom_item.get(field)
+        if not validator(payload_value) or not validator(dom_value):
+            continue
+        compared_fields.append(field)
+        if _normalize_shadow_value(field, payload_value) != _normalize_shadow_value(field, dom_value):
+            mismatch_fields.append(field)
+    return {
+        "payload_available": any(
+            (
+                _is_nonempty_text(payload_item.get("title")),
+                _is_positive_price(payload_item.get("price")),
+                _is_nonempty_text(payload_item.get("description")),
+                _is_nonempty_list(payload_item.get("image_urls")),
+            )
+        ),
+        "compared_fields": compared_fields,
+        "mismatch_fields": mismatch_fields,
+    }
+
+
+def _has_usable_payload_item(payload_item: dict) -> bool:
+    return any(
+        (
+            _is_nonempty_text(payload_item.get("title")),
+            _is_positive_price(payload_item.get("price")),
+            _is_nonempty_text(payload_item.get("description")),
+            _is_nonempty_list(payload_item.get("image_urls")),
+            _is_useful_status(payload_item.get("status")),
+        )
+    )
+
+
+def _build_mercari_dom_meta(item: dict, meta: dict) -> dict:
+    merged_meta = dict(meta or {})
+    merged_meta.setdefault("strategy", meta.get("strategy", "dom") if isinstance(meta, dict) else "dom")
+    merged_meta.setdefault("field_sources", {})
+    merged_meta["field_sources"] = dict(merged_meta.get("field_sources") or {})
+    if item.get("title"):
+        merged_meta["field_sources"].setdefault("title", "dom")
+    if item.get("description"):
+        merged_meta["field_sources"].setdefault("description", "dom")
+    if item.get("image_urls"):
+        merged_meta["field_sources"].setdefault("image_urls", "dom")
+    if item.get("variants"):
+        merged_meta["field_sources"].setdefault("variants", "dom")
+    if item.get("status"):
+        merged_meta["field_sources"].setdefault("status", merged_meta["field_sources"].get("status") or "dom")
+    return merged_meta
+
+
+def _merge_mercari_results(payload_item: dict, payload_meta: dict, dom_item: dict, dom_meta: dict) -> tuple[dict, dict]:
+    dom_meta = _build_mercari_dom_meta(dom_item, dom_meta)
+    payload_meta = dict(payload_meta or {})
+    payload_sources = dict(payload_meta.get("field_sources") or {})
+    dom_sources = dict(dom_meta.get("field_sources") or {})
+
+    merged = {
+        "url": dom_item.get("url") or payload_item.get("url"),
+        "title": "",
+        "price": None,
+        "status": dom_item.get("status") or payload_item.get("status") or "unknown",
+        "description": "",
+        "image_urls": [],
+        "variants": [],
+    }
+    merged_sources = {}
+
+    for field, validator in (
+        ("title", _is_nonempty_text),
+        ("price", _is_positive_price),
+        ("description", _is_nonempty_text),
+        ("image_urls", _is_nonempty_list),
+        ("variants", _is_nonempty_list),
+        ("status", _is_useful_status),
+    ):
+        value, source = pick_first_valid(
+            ("payload", payload_item.get(field)),
+            ("dom", dom_item.get(field)),
+            validator=validator,
+            default=dom_item.get(field),
+        )
+        merged[field] = value
+        if source == "payload":
+            merged_sources[field] = payload_sources.get(field, "payload")
+        elif source == "dom":
+            merged_sources[field] = dom_sources.get(field, "dom")
+
+    merged_meta = dict(dom_meta)
+    merged_meta["strategy"] = "payload" if any(source == "payload" for source in merged_sources.values()) else dom_meta.get("strategy", "dom")
+    merged_meta["field_sources"] = merged_sources
+    merged_meta["payload_merge"] = True
+    attach_extraction_trace(merged, strategy=merged_meta["strategy"], field_sources=merged_sources)
+    return merged, merged_meta
+
+
+def _select_best_mercari_payload(captured_payloads: list[dict], item_url: str) -> dict:
+    best = {
+        "item": {},
+        "meta": {"strategy": "payload", "field_sources": {}, "reasons": ["payload-candidate-missing"]},
+        "response_url": "",
+        "responses_seen": len(captured_payloads),
+        "raw_payload": None,
+    }
+    best_score = -1
+
+    for response_payload in captured_payloads:
+        item, meta = parse_mercari_network_payload(response_payload.get("payload") or {}, item_url)
+        score = sum(
+            (
+                4 if _is_nonempty_text(item.get("title")) else 0,
+                3 if _is_positive_price(item.get("price")) else 0,
+                2 if _is_nonempty_list(item.get("image_urls")) else 0,
+                1 if _is_nonempty_text(item.get("description")) else 0,
+            )
+        )
+        if score > best_score:
+            best_score = score
+            best = {
+                "item": item,
+                "meta": meta,
+                "response_url": response_payload.get("url", ""),
+                "responses_seen": len(captured_payloads),
+                "raw_payload": response_payload.get("payload"),
+            }
+
+    return best
+
+
+async def _capture_mercari_network_payload_async(url: str) -> dict:
+    captured_payloads = []
+    response_tasks = []
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-extensions",
+                "--disable-background-networking",
+            ],
+        )
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            extra_http_headers={"Accept-Language": "ja,en-US;q=0.9,en;q=0.8"},
+        )
+        page = await context.new_page()
+
+        async def _capture_response(response):
+            try:
+                headers = await response.all_headers()
+                content_type = str(headers.get("content-type", "") or "").lower()
+                if "json" not in content_type and not response.url.lower().endswith(".json"):
+                    return
+                if "mercari" not in response.url.lower():
+                    return
+                payload = await response.json()
+                captured_payloads.append({"url": response.url, "payload": payload})
+            except Exception:
+                return
+
+        page.on("response", lambda response: response_tasks.append(asyncio.create_task(_capture_response(response))))
+
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
+            try:
+                await page.wait_for_selector("h1, [data-testid='price']", timeout=5000)
+            except Exception:
+                pass
+            if response_tasks:
+                await asyncio.gather(*response_tasks, return_exceptions=True)
+        finally:
+            await browser.close()
+
+    return _select_best_mercari_payload(captured_payloads, url)
+
+
+def _capture_mercari_network_payload(url: str) -> dict:
+    return run_coro_sync(_capture_mercari_network_payload_async(url))
 
 
 def _extract_price_from_text(text: str):
@@ -388,27 +611,87 @@ async def _scrape_shops_product_async(url: str) -> dict:
 
 def scrape_shops_product(url: str, driver=None) -> dict:
     """メルカリShops商品ページ用スクレイピング（同期ラッパー）"""
-    loop = _get_or_create_event_loop()
-    return loop.run_until_complete(_scrape_shops_product_async(url))
+    return run_coro_sync(_scrape_shops_product_async(url))
 
 
 
 def scrape_item_detail(url: str, driver=None):
     """1つの商品ページから詳細情報を取得して dict で返す"""
-    
+
     # Shops URL判定
     if "/shops/product/" in url:
         return scrape_shops_product(url)
 
+    capture_enabled = _should_capture_mercari_network_payload()
+    use_payload = _should_use_mercari_network_payload()
+    payload_result = {}
+    payload_item = {}
+    payload_meta = {}
+    network_capture = {
+        "enabled": capture_enabled,
+        "captured": False,
+        "responses_seen": 0,
+        "response_url": "",
+        "used_payload": False,
+    }
+
+    if capture_enabled:
+        try:
+            payload_result = _capture_mercari_network_payload(url) or {}
+            payload_item = dict(payload_result.get("item") or {})
+            payload_meta = dict(payload_result.get("meta") or {})
+            network_capture["responses_seen"] = int(payload_result.get("responses_seen") or 0)
+            network_capture["response_url"] = str(payload_result.get("response_url") or "")
+            network_capture["captured"] = _has_usable_payload_item(payload_item)
+        except Exception as exc:
+            network_capture["capture_error"] = str(exc)
+            logger.warning("Mercari payload capture failed for %s: %s", url, exc)
+
     try:
         page = fetch_dynamic(url, headless=True, network_idle=False)
     except Exception as e:
+        if use_payload and _has_usable_payload_item(payload_item):
+            payload_item = dict(payload_item)
+            payload_meta = dict(payload_meta)
+            payload_item.setdefault("url", url)
+            payload_meta.setdefault("strategy", "payload")
+            payload_meta.setdefault("field_sources", dict(payload_meta.get("field_sources") or {}))
+            payload_meta["network_capture"] = network_capture
+            payload_meta["fallback_mode"] = "payload_without_dom"
+            attach_extraction_trace(
+                payload_item,
+                strategy=payload_meta.get("strategy", "payload"),
+                field_sources=payload_meta.get("field_sources") or {},
+            )
+            payload_item["_scrape_meta"] = payload_meta
+            network_capture["used_payload"] = True
+            logger.warning("Mercari DOM fetch failed for %s; returning captured payload result", url)
+            return payload_item
         print(f"Error accessing {url}: {e}")
         return {
-            "url": url, "title": "", "price": None, "status": "error", 
+            "url": url, "title": "", "price": None, "status": "error",
             "description": "", "image_urls": [], "variants": []
         }
-    item, meta = parse_mercari_item_page(page, url)
+    dom_item, dom_meta = parse_mercari_item_page(page, url)
+    shadow_compare = _build_shadow_compare(payload_item, dom_item) if capture_enabled else {}
+    if shadow_compare.get("mismatch_fields"):
+        logger.info(
+            "Mercari payload/dom mismatch for %s: %s",
+            url,
+            ",".join(shadow_compare["mismatch_fields"]),
+        )
+
+    if use_payload and _has_usable_payload_item(payload_item):
+        item, meta = _merge_mercari_results(payload_item, payload_meta, dom_item, dom_meta)
+        network_capture["used_payload"] = True
+    else:
+        item, meta = dom_item, dict(dom_meta or {})
+
+    meta = dict(meta or {})
+    meta["network_capture"] = network_capture
+    if capture_enabled:
+        meta["shadow_compare"] = shadow_compare
+
     item["_scrape_meta"] = meta
     return item
 
@@ -455,7 +738,8 @@ async def _scrape_search_async(
             await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
             await page.wait_for_timeout(2000) # 初期ロード待機
             
-            item_urls = set()
+            item_urls = []
+            seen_urls = set()
             
             for scroll_count in range(max_scroll * 2):
                 # 現在表示されているリンクを収集（/item/ あるいはテストデータ等）
@@ -469,7 +753,9 @@ async def _scrape_search_async(
                         # 絶対URLに変換
                         if href.startswith("/"):
                             href = f"https://jp.mercari.com{href}"
-                        item_urls.add(href)
+                        if href not in seen_urls:
+                            seen_urls.add(href)
+                            item_urls.append(href)
                 
                 if len(item_urls) >= max_items * 2:
                     break
@@ -488,10 +774,41 @@ async def _scrape_search_async(
                     break
             
             print(f"DEBUG: Found {len(item_urls)} valid item URLs.")
-            return list(item_urls)[:max_items * 2]  # 最大 max_items * 2 件
+            return item_urls[:max_items * 2]  # 最大 max_items * 2 件
             
         finally:
             await browser.close()
+
+
+async def _scrape_item_detail_async(url: str) -> dict:
+    return await asyncio.to_thread(scrape_item_detail, url)
+
+
+async def _collect_search_items_async(item_urls: list[str], max_items: int) -> list[dict]:
+    settings = get_async_fetch_settings("mercari")
+    candidate_urls = item_urls[: max_items * 2]
+    detail_results = await gather_with_concurrency(
+        candidate_urls,
+        _scrape_item_detail_async,
+        concurrency=settings.concurrency,
+    )
+
+    filtered_items = []
+    for url, data in zip(candidate_urls, detail_results):
+        if len(filtered_items) >= max_items:
+            break
+
+        print(f"DEBUG: Scraping item {url}")
+        if isinstance(data, Exception):
+            print(f"DEBUG: Error scraping {url}: {data}")
+            continue
+        if data and data.get("title") and data.get("status") != "error":
+            print(f"DEBUG: Success -> {data['title']}")
+            filtered_items.append(data)
+        else:
+            print("DEBUG: Failed to get valid data (empty title or error)")
+
+    return filtered_items
 
 
 def scrape_search_result(
@@ -504,35 +821,15 @@ def scrape_search_result(
     メルカリ検索URLから複数商品をスクレイピングして list[dict] を返す。
     Playwright を直接使用してページスクロール取得を実現。
     """
-    loop = _get_or_create_event_loop()
-    
     try:
-        item_urls = loop.run_until_complete(
+        item_urls = run_coro_sync(
             _scrape_search_async(search_url, max_items, max_scroll)
         )
     except Exception as e:
         logging.error(f"Search scrape failed: {e}")
         return []
     
-    filtered_items = []
-    for url in item_urls:
-        if len(filtered_items) >= max_items:
-            break
-            
-        print(f"DEBUG: Scraping item {url}")
-        try:
-            data = scrape_item_detail(url)
-            if data and data.get("title") and data.get("status") != "error":
-                 print(f"DEBUG: Success -> {data['title']}")
-                 filtered_items.append(data)
-            else:
-                 print("DEBUG: Failed to get valid data (empty title or error)")
-        except Exception as e:
-            print(f"DEBUG: Error scraping {url}: {e}")
-            
-        time.sleep(1) 
-    
-    return filtered_items
+    return run_coro_sync(_collect_search_items_async(item_urls, max_items))
 
 
 def scrape_single_item(url: str, headless: bool = True):

@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 from unittest.mock import MagicMock, patch
 from mercari_db import (
     _extract_price_from_text,
@@ -9,7 +10,9 @@ from mercari_db import (
     scrape_search_result,
     scrape_item_detail,
     scrape_shops_product,
+    _collect_search_items_async,
 )
+from services.scraping_client import run_coro_sync
 
 # --- Test Cases for Playwright / Scrapling Implementation ---
 
@@ -54,6 +57,34 @@ def test_scrape_search_result_count_guarantee():
             assert results[2]["title"] == "Item 4" # Item 3 skipped
 
 
+@pytest.mark.asyncio
+async def test_collect_search_items_async_preserves_order_with_partial_failures():
+    urls = [
+        "http://m/item/1",
+        "http://m/item/2",
+        "http://m/item/3",
+        "http://m/item/4",
+    ]
+
+    async def fake_scrape(url):
+        if url.endswith("/1"):
+            await asyncio.sleep(0.03)
+            return {"title": "Item 1", "status": "on_sale", "url": url}
+        if url.endswith("/2"):
+            await asyncio.sleep(0.01)
+            raise RuntimeError("detail failed")
+        if url.endswith("/3"):
+            await asyncio.sleep(0.02)
+            return {"title": "Item 3", "status": "on_sale", "url": url}
+        return {"title": "", "status": "error", "url": url}
+
+    with patch("mercari_db._scrape_item_detail_async", side_effect=fake_scrape):
+        results = await _collect_search_items_async(urls, max_items=3)
+
+    assert [item["url"] for item in results] == [urls[0], urls[2]]
+    assert [item["title"] for item in results] == ["Item 1", "Item 3"]
+
+
 def test_scrape_variants_pattern_detection():
     """
     Test that scrape_item_detail detects variants using Scrapling Response mock.
@@ -93,6 +124,17 @@ def test_scrape_variants_pattern_detection():
         assert len(data["variants"]) == 2
         assert data["variants"][0]["option1_value"] == "Red"
         assert data["variants"][1]["option1_value"] == "Blue"
+
+
+@pytest.mark.asyncio
+async def test_run_coro_sync_is_safe_under_running_event_loop():
+    async def sample():
+        await asyncio.sleep(0)
+        return "ok"
+
+    result = run_coro_sync(sample())
+
+    assert result == "ok"
 
 
 def test_scrape_variants_shops_pattern():

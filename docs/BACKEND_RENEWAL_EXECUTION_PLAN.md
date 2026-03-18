@@ -197,6 +197,27 @@ Initial `scrape_jobs` contract:
 - `finished_at`
 - `created_at`
 
+API read composition rule:
+
+- terminal state (`completed`, `failed`) is read from PostgreSQL as the source of truth
+- in-flight state (`queued`, `running`) is read from PostgreSQL as the base record and overlaid with Redis live progress / heartbeat data
+- if Redis heartbeat expires while PostgreSQL still shows a non-terminal state, the job is treated as `stalled` internally and mapped to a safe frontend-compatible failure or unknown state until recovered
+
+Retry and job identity policy:
+
+- physical retry attempts use a new `job_id`
+- retries are linked by `logical_job_id` or `parent_job_id`
+- tracker and jobs-list compatibility mapping must be defined before retry UI is changed
+- if the current UI cannot safely expose attempt chains yet, the API may initially collapse retry lineage into the latest visible attempt while retaining durable linkage in storage
+
+Preview payload policy:
+
+- preview payload storage must have an explicit size ceiling
+- small payloads may be stored inline in PostgreSQL
+- larger payloads must be stored by pointer/reference rather than unbounded inline growth
+- retention window and cleanup policy must be defined before preview payload persistence goes live
+- payload storage failure must not corrupt terminal job bookkeeping
+
 ### 5.4 Persistence idempotency and concurrency semantics
 
 Before distributed execution is enabled, the following rules must be defined and implemented:
@@ -406,6 +427,7 @@ Target files:
 Concrete changes:
 
 - Define status enum, progress semantics, result-summary shape, error payload shape, and retention policy.
+- Keep this Move focused on the logical contract and API mapping first; physical schema introduction happens through the Alembic work in `Move B3`.
 - Add durable `scrape_jobs` storage needed by tracker UI, polling APIs, and preview flows.
 - Decide whether preview payload is stored directly in PostgreSQL or referenced indirectly, but keep completed-job API reads durable.
 - Keep Redis usage limited to queueing and transient execution state rather than long-term UI history.
@@ -429,6 +451,7 @@ Concrete changes:
 
 - Create a baseline migration from the actual live schema, not only from ORM assumptions.
 - Capture schema diff before generating the baseline.
+- Add the physical schema for durable job state through migrations rather than startup mutation.
 - Remove startup schema drift logic from `app.py`.
 - Ensure SQLite and PostgreSQL both work under the migration system during the transition period.
 - Add migration execution to CI and staging verification.
@@ -496,6 +519,17 @@ Finish the distributed worker architecture and remove repeated browser startup o
 - Web no longer launches browsers for scrape execution.
 - Scheduler responsibilities are no longer tied to the Web process.
 - Worker execution mode, browser lifecycle, and memory ceiling are documented and verified together.
+- The selected worker mode passes the browser-runtime decision gate below.
+
+### 10.2.1 Browser Runtime Decision Gate
+
+Before `Move C2` is accepted, the chosen worker execution model must demonstrate all of the following:
+
+- browser ownership is truly reusable across jobs within the selected worker model
+- fresh context/page isolation is preserved per job
+- the expected context concurrency fits within the memory ceiling of the Render target environment
+- browser crash recovery is automatic or operationally simple enough to be production-safe
+- the queue/state API contract introduced in `Arc 2` does not need to be redesigned to support the runtime
 
 ### 10.3 Moves
 

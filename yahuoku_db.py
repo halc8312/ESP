@@ -7,6 +7,8 @@ import logging
 import re
 from urllib.parse import urljoin
 
+from services.extraction_policy import attach_extraction_trace, pick_first
+
 logger = logging.getLogger("yahuoku")
 
 
@@ -186,21 +188,38 @@ def scrape_item_detail_light(url: str) -> dict:
             return {}
 
         result = _empty_result(url, status="active")
-        result["title"] = item_detail.get("title", "")
+        field_sources = {}
+        meta_title = next(
+            (str(el.attrib.get("content", "") or "") for el in page.css("meta[property='og:title']")),
+            "",
+        )
+        title, title_source = pick_first(
+            ("next_data", item_detail.get("title", "")),
+            ("meta", meta_title),
+        )
+        result["title"] = title
+        if title_source:
+            field_sources["title"] = title_source
         page_text = _get_page_text(page)
 
         result["price"] = _extract_tax_inclusive_price(item_detail, page_text)
+        if result["price"] is not None:
+            field_sources["price"] = "next_data"
 
-        description = item_detail.get("description", "") or item_detail.get("itemDescription", "")
+        raw_description = item_detail.get("description", "") or item_detail.get("itemDescription", "")
+        if isinstance(raw_description, list):
+            raw_description = "\n".join(str(d) for d in raw_description)
+        meta_description = ""
+        meta_el = page.css("meta[name='description']")
+        if meta_el:
+            meta_description = str(meta_el[0].attrib.get("content", "") or "")
+        description, description_source = pick_first(
+            ("next_data", str(raw_description or "")),
+            ("meta", meta_description),
+        )
         if description:
-            if isinstance(description, list):
-                result["description"] = "\n".join(str(d) for d in description)
-            else:
-                result["description"] = str(description)
-        else:
-            meta_el = page.css("meta[name='description']")
-            if meta_el:
-                result["description"] = str(meta_el[0].attrib.get("content", "") or "")
+            result["description"] = description
+            field_sources["description"] = description_source
 
         image_urls = []
         for key in ("img", "images", "image", "imageList"):
@@ -228,9 +247,13 @@ def scrape_item_detail_light(url: str) -> dict:
                 og_url = str(og_el[0].attrib.get("content", "") or "")
                 if og_url.startswith("http"):
                     image_urls.append(og_url)
+                    field_sources["images"] = "meta"
+        elif image_urls:
+            field_sources["images"] = "next_data"
         result["image_urls"] = image_urls
 
         result["status"] = _infer_auction_status(item_detail, page_text)
+        field_sources["status"] = "next_data" if item_detail else "css"
 
         seller_data = item_detail.get("seller", {})
         if isinstance(seller_data, dict):
@@ -250,8 +273,9 @@ def scrape_item_detail_light(url: str) -> dict:
                     "inventory_qty": 1 if result["status"] == "active" else 0,
                 }
             ]
+            field_sources["variants"] = "next_data"
 
-        return result
+        return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
     except Exception as exc:
         logger.debug("Yahuoku light scrape error: %s", exc)
         return {}

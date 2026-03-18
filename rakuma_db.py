@@ -11,10 +11,16 @@ item.fril.jp は SSR（サーバーサイドレンダリング）で提供され
 """
 import asyncio
 import logging
-import time
 from selector_config import get_selectors, get_valid_domains
 from scrape_metrics import get_metrics, log_scrape_result, check_scrape_health
 from services.rakuma_item_parser import parse_rakuma_item_page
+from services.scraping_client import (
+    fetch_static,
+    fetch_static_async,
+    gather_with_concurrency,
+    get_async_fetch_settings,
+    run_coro_sync,
+)
 
 
 def scrape_item_detail(url: str, driver=None):
@@ -26,12 +32,9 @@ def scrape_item_detail(url: str, driver=None):
     driver 引数は後方互換のために保持するが、使用しない。
     トップレベル（asyncioループ外）からの呼び出し用。
     """
-    from scrapling import Fetcher
-
     try:
-        page = Fetcher.get(
+        page = fetch_static(
             url,
-            stealthy_headers=True,
             follow_redirects=True,
         )
     except Exception as e:
@@ -52,10 +55,16 @@ async def _scrape_item_detail_async(url: str) -> dict:
     item.fril.jp は SSR のためブラウザ不要。
     _scrape_search_async 内（asyncioループ内）からの呼び出し用。
     """
-    from scrapling.fetchers import AsyncFetcher
+    settings = get_async_fetch_settings("rakuma")
 
     try:
-        page = await AsyncFetcher.get(url, stealthy_headers=True, follow_redirects=True)
+        page = await fetch_static_async(
+            url,
+            timeout=settings.timeout,
+            retries=settings.retries,
+            backoff_seconds=settings.backoff_seconds,
+            follow_redirects=True,
+        )
     except Exception as e:
         logging.error(f"Error accessing {url}: {e}")
         return {
@@ -96,20 +105,6 @@ def scrape_single_item(url: str, headless: bool = True):
         return []
 
 
-def _get_or_create_event_loop():
-    """スレッドセーフなイベントループ取得"""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        return loop
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop
-
-
 async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int):
     """Playwright async API を使用してラクマ検索結果をスクレイピングする。"""
     from playwright.async_api import async_playwright
@@ -140,7 +135,8 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
         print(f"DEBUG: Page Title = {await pw_page.title()}")
 
         # 商品リンクを収集
-        hrefs = set()
+        hrefs = []
+        seen_hrefs = set()
         scroll_attempts = 0
         link_selectors = get_selectors('rakuma', 'search', 'item_links') or [
             "a.link_search_image",
@@ -163,7 +159,9 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
             for nl in new_links:
                 h = await nl.get_attribute("href")
                 if h:
-                    hrefs.add(h)
+                    if h not in seen_hrefs:
+                        seen_hrefs.add(h)
+                        hrefs.append(h)
 
             if len(hrefs) >= max_items * 1.5:
                 break
@@ -183,22 +181,27 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
 
     # 各商品を AsyncFetcher (HTTP) でスクレイピング
     filtered_items = []
-    for item_url in item_urls:
+    candidate_urls = item_urls[: max_items * 2]
+    settings = get_async_fetch_settings("rakuma")
+    detail_results = await gather_with_concurrency(
+        candidate_urls,
+        _scrape_item_detail_async,
+        concurrency=settings.concurrency,
+    )
+
+    for item_url, data in zip(candidate_urls, detail_results):
         if len(filtered_items) >= max_items:
             break
 
         print(f"DEBUG: Scraping Rakuma item {item_url}")
-        try:
-            data = await _scrape_item_detail_async(item_url)
-            if data["title"] and data["status"] != "error":
-                print(f"DEBUG: Success -> {data['title']}")
-                filtered_items.append(data)
-            else:
-                print("DEBUG: Failed to get valid data (empty title or error)")
-        except Exception as e:
-            print(f"DEBUG: Error scraping {item_url}: {e}")
-
-        await asyncio.sleep(1)
+        if isinstance(data, Exception):
+            print(f"DEBUG: Error scraping {item_url}: {data}")
+            continue
+        if data["title"] and data["status"] != "error":
+            print(f"DEBUG: Success -> {data['title']}")
+            filtered_items.append(data)
+        else:
+            print("DEBUG: Failed to get valid data (empty title or error)")
 
     return filtered_items
 
@@ -217,8 +220,7 @@ def scrape_search_result(
     """
     try:
         print(f"DEBUG: Starting Rakuma scrape_search_result")
-        loop = _get_or_create_event_loop()
-        return loop.run_until_complete(
+        return run_coro_sync(
             _scrape_search_async(search_url, max_items, max_scroll)
         )
     except Exception as e:

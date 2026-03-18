@@ -1,6 +1,7 @@
 import ast
 import inspect
 import json
+from unittest.mock import AsyncMock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -521,7 +522,7 @@ def test_snkrdunk_search_result_uses_scrapling_dynamic_fetch():
     )
 
     with patch("services.scraping_client.fetch_dynamic", return_value=search_page) as mock_dynamic, patch(
-        "services.scraping_client.fetch_static", return_value=detail_page
+        "services.scraping_client.fetch_static_async", new=AsyncMock(return_value=detail_page)
     ):
         results = snkrdunk_db.scrape_search_result("https://snkrdunk.com/search?keywords=jordan", max_items=1)
 

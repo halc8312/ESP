@@ -2,14 +2,17 @@
 SNKRDUNK scraping module.
 Uses Scrapling HTTP fetches for detail pages and Scrapling dynamic fetches for search pages.
 """
+import asyncio
 import json
 import logging
 import re
 from urllib.parse import urljoin
 
 from selector_config import get_selectors, get_valid_domains
+from services.extraction_policy import attach_extraction_trace, pick_first
 from scrape_metrics import check_scrape_health, get_metrics, log_scrape_result
 from services.selector_healer import get_healer
+from services.scraping_client import run_coro_sync
 
 logger = logging.getLogger("snkrdunk")
 
@@ -198,30 +201,128 @@ def _normalize_snkrdunk_title(text: str) -> str:
 
 def _parse_detail_page(page, url: str) -> dict:
     result = _empty_result(url, status="on_sale")
-    product_jsonld = _extract_product_jsonld(page)
+    field_sources = {}
+    script_el = page.find("#__NEXT_DATA__")
 
-    if product_jsonld:
-        result["title"] = (
-            str(product_jsonld.get("name") or "").strip()
-            or _normalize_snkrdunk_title(
-                _get_first_meta_content(page, ["meta[property='og:title']", "meta[name='twitter:title']"])
-                or _get_first_text(page, ["title"])
+    if script_el:
+        json_str = str(script_el.text or "").strip()
+        if json_str:
+            data = json.loads(json_str)
+            props = data.get("props", {})
+            page_props = props.get("pageProps", {})
+            item = (
+                page_props.get("item")
+                or page_props.get("product")
+                or page_props.get("initialState", {}).get("item", {})
+                or page_props.get("initialState", {}).get("product", {})
+                or {}
             )
+            if item:
+                meta_title = _normalize_snkrdunk_title(
+                    _get_first_meta_content(page, ["meta[property='og:title']", "meta[name='twitter:title']"])
+                    or _get_first_text(page, ["title"])
+                )
+                title, title_source = pick_first(
+                    ("next_data", item.get("name") or item.get("title") or item.get("productName", "")),
+                    ("meta", meta_title),
+                )
+                if title:
+                    result["title"] = title
+                    field_sources["title"] = title_source
+
+                price_raw = item.get("price") or item.get("lowestPrice") or item.get("minPrice")
+                if price_raw is not None:
+                    try:
+                        result["price"] = int(price_raw)
+                        field_sources["price"] = "next_data"
+                    except (ValueError, TypeError):
+                        pass
+
+                meta_description = _get_first_meta_content(page, ["meta[name='description']", "meta[property='og:description']"])
+                description, description_source = pick_first(
+                    ("next_data", item.get("description") or item.get("itemDescription", "")),
+                    ("meta", meta_description),
+                )
+                if description:
+                    result["description"] = description
+                    field_sources["description"] = description_source
+
+                image_urls = []
+                for key in ("images", "image", "imageList", "thumbnails"):
+                    imgs = item.get(key)
+                    if imgs is None:
+                        continue
+                    if isinstance(imgs, str) and imgs.startswith("http"):
+                        if imgs not in image_urls:
+                            image_urls.append(imgs)
+                    elif isinstance(imgs, list):
+                        for img in imgs:
+                            if isinstance(img, str) and img.startswith("http") and img not in image_urls:
+                                image_urls.append(img)
+                            elif isinstance(img, dict):
+                                img_url = img.get("url") or img.get("src") or img.get("imageUrl")
+                                if img_url and img_url.startswith("http") and img_url not in image_urls:
+                                    image_urls.append(img_url)
+                    elif isinstance(imgs, dict):
+                        img_url = imgs.get("url") or imgs.get("src") or imgs.get("imageUrl")
+                        if img_url and img_url.startswith("http") and img_url not in image_urls:
+                            image_urls.append(img_url)
+                if not image_urls:
+                    image_urls = _collect_image_urls(_get_first_meta_content(page, ["meta[property='og:image']"]))
+                    if image_urls:
+                        field_sources["images"] = "meta"
+                else:
+                    field_sources["images"] = "next_data"
+                result["image_urls"] = image_urls
+
+                status_flag = item.get("status") or item.get("soldOut") or item.get("isSoldOut")
+                if status_flag in (True, "sold_out", "soldout", "SOLD_OUT"):
+                    result["status"] = "sold"
+                    field_sources["status"] = "next_data"
+                else:
+                    page_text = str(page.get_all_text() or "")
+                    if "SOLD OUT" in page_text or "売り切れ" in page_text or "在庫なし" in page_text:
+                        result["status"] = "sold"
+                        field_sources["status"] = "css"
+
+                if result.get("title"):
+                    return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
+
+    product_jsonld = _extract_product_jsonld(page)
+    if product_jsonld:
+        meta_title = _normalize_snkrdunk_title(
+            _get_first_meta_content(page, ["meta[property='og:title']", "meta[name='twitter:title']"])
+            or _get_first_text(page, ["title"])
         )
+        title, title_source = pick_first(
+            ("json_ld", str(product_jsonld.get("name") or "").strip()),
+            ("meta", meta_title),
+        )
+        if title:
+            result["title"] = title
+            field_sources["title"] = title_source
 
         price = _extract_jsonld_price(product_jsonld.get("offers"))
         if price is not None:
             result["price"] = price
+            field_sources["price"] = "json_ld"
 
-        description = str(product_jsonld.get("description") or "").strip()
-        if not description:
-            description = _get_first_meta_content(page, ["meta[name='description']", "meta[property='og:description']"])
-        result["description"] = description
+        description, description_source = pick_first(
+            ("json_ld", str(product_jsonld.get("description") or "").strip()),
+            ("meta", _get_first_meta_content(page, ["meta[name='description']", "meta[property='og:description']"])),
+        )
+        result["description"] = description or ""
+        if description_source:
+            field_sources["description"] = description_source
 
-        image_urls = _collect_image_urls(product_jsonld.get("image"))
-        if not image_urls:
-            image_urls = _collect_image_urls(_get_first_meta_content(page, ["meta[property='og:image']"]))
+        image_urls, image_source = pick_first(
+            ("json_ld", _collect_image_urls(product_jsonld.get("image"))),
+            ("meta", _collect_image_urls(_get_first_meta_content(page, ["meta[property='og:image']"]))),
+            default=[],
+        )
         result["image_urls"] = image_urls
+        if image_source:
+            field_sources["images"] = image_source
 
         availability = _extract_jsonld_availability(product_jsonld.get("offers"))
         if availability:
@@ -230,125 +331,67 @@ def _parse_detail_page(page, url: str) -> dict:
                 result["status"] = "sold"
             elif "instock" in availability_lower:
                 result["status"] = "on_sale"
+            field_sources["status"] = "json_ld"
 
         if result.get("title"):
-            return result
+            return attach_extraction_trace(result, strategy="json_ld", field_sources=field_sources)
 
-    script_el = page.find("#__NEXT_DATA__")
+    logger.debug("No structured product data found, falling back to meta/CSS selectors")
+    healer = get_healer()
 
-    if not script_el:
-        logger.debug("No JSON item data found, falling back to CSS selectors with self-healing")
-        healer = get_healer()
-
-        # Title (with healing)
-        title_val, title_healed = healer.extract_with_healing(page, 'snkrdunk', 'detail', 'title', parser='scrapling')
-        if title_val:
-            result["title"] = title_val
-        if not result["title"]:
-            result["title"] = _normalize_snkrdunk_title(
-                _get_first_meta_content(page, ["meta[property='og:title']", "meta[name='twitter:title']"])
-                or _get_first_text(page, ["title"])
-            )
-
-        if not result.get("title"):
-            return {}
-
-        # Price (with healing)
-        price_val, _ = healer.extract_with_healing(page, 'snkrdunk', 'detail', 'price', parser='scrapling')
-        if price_val:
-            result["price"] = _extract_price_value(price_val)
-        if result["price"] is None and result.get("title"):
-            result["price"] = _extract_unique_price_from_page_text(page.get_all_text() or "")
-
-        # Description (with healing)
-        desc_val, _ = healer.extract_with_healing(page, 'snkrdunk', 'detail', 'description', parser='scrapling')
-        if desc_val:
-            result["description"] = desc_val
-        if not result["description"]:
-            result["description"] = _get_first_meta_content(page, ["meta[name='description']", "meta[property='og:description']"])
-
-        # Images (with healing)
-        image_urls, _ = healer.extract_images_with_healing(page, 'snkrdunk', 'detail', parser='scrapling')
-        if not image_urls:
-            image_urls = _collect_image_urls(_get_first_meta_content(page, ["meta[property='og:image']"]))
-        result["image_urls"] = image_urls
-
-        page_text = str(page.get_all_text() or "")
-        if "SOLD OUT" in page_text or "売り切れ" in page_text or "在庫なし" in page_text:
-            result["status"] = "sold"
-
-        return result
-
-    json_str = str(script_el.text or "").strip()
-    if not json_str:
-        return {}
-
-    data = json.loads(json_str)
-    props = data.get("props", {})
-    page_props = props.get("pageProps", {})
-    item = (
-        page_props.get("item")
-        or page_props.get("product")
-        or page_props.get("initialState", {}).get("item", {})
-        or page_props.get("initialState", {}).get("product", {})
-        or {}
+    meta_title = _normalize_snkrdunk_title(
+        _get_first_meta_content(page, ["meta[property='og:title']", "meta[name='twitter:title']"])
+        or _get_first_text(page, ["title"])
     )
-    if not item:
+    title_val, _ = healer.extract_with_healing(page, 'snkrdunk', 'detail', 'title', parser='scrapling')
+    title, title_source = pick_first(
+        ("meta", meta_title),
+        ("css", title_val),
+    )
+    if title:
+        result["title"] = title
+        field_sources["title"] = title_source
+
+    if not result.get("title"):
         return {}
-    result["title"] = item.get("name") or item.get("title") or item.get("productName", "")
 
-    price_raw = item.get("price") or item.get("lowestPrice") or item.get("minPrice")
-    if price_raw is not None:
-        try:
-            result["price"] = int(price_raw)
-        except (ValueError, TypeError):
-            pass
+    price_val, _ = healer.extract_with_healing(page, 'snkrdunk', 'detail', 'price', parser='scrapling')
+    if price_val:
+        result["price"] = _extract_price_value(price_val)
+        if result["price"] is not None:
+            field_sources["price"] = "css"
+    if result["price"] is None:
+        result["price"] = _extract_unique_price_from_page_text(page.get_all_text() or "")
+        if result["price"] is not None:
+            field_sources["price"] = "css"
 
-    description = item.get("description") or item.get("itemDescription", "")
+    meta_description = _get_first_meta_content(page, ["meta[name='description']", "meta[property='og:description']"])
+    desc_val, _ = healer.extract_with_healing(page, 'snkrdunk', 'detail', 'description', parser='scrapling')
+    description, description_source = pick_first(
+        ("meta", meta_description),
+        ("css", desc_val),
+    )
     if description:
         result["description"] = description
-    else:
-        meta_el = page.css("meta[name='description']")
-        if meta_el:
-            result["description"] = str(meta_el[0].attrib.get("content", "") or "")
+        field_sources["description"] = description_source
 
-    image_urls = []
-    for key in ("images", "image", "imageList", "thumbnails"):
-        imgs = item.get(key)
-        if imgs is None:
-            continue
-        if isinstance(imgs, str) and imgs.startswith("http"):
-            if imgs not in image_urls:
-                image_urls.append(imgs)
-        elif isinstance(imgs, list):
-            for img in imgs:
-                if isinstance(img, str) and img.startswith("http") and img not in image_urls:
-                    image_urls.append(img)
-                elif isinstance(img, dict):
-                    img_url = img.get("url") or img.get("src") or img.get("imageUrl")
-                    if img_url and img_url.startswith("http") and img_url not in image_urls:
-                        image_urls.append(img_url)
-        elif isinstance(imgs, dict):
-            img_url = imgs.get("url") or imgs.get("src") or imgs.get("imageUrl")
-            if img_url and img_url.startswith("http") and img_url not in image_urls:
-                image_urls.append(img_url)
-    if not image_urls:
-        og_el = page.css("meta[property='og:image']")
-        if og_el:
-            og_url = str(og_el[0].attrib.get("content", "") or "")
-            if og_url.startswith("http"):
-                image_urls.append(og_url)
+    css_images, _ = healer.extract_images_with_healing(page, 'snkrdunk', 'detail', parser='scrapling')
+    image_urls, image_source = pick_first(
+        ("meta", _collect_image_urls(_get_first_meta_content(page, ["meta[property='og:image']"]))),
+        ("css", css_images),
+        default=[],
+    )
     result["image_urls"] = image_urls
+    if image_source:
+        field_sources["images"] = image_source
 
-    status_flag = item.get("status") or item.get("soldOut") or item.get("isSoldOut")
-    if status_flag in (True, "sold_out", "soldout", "SOLD_OUT"):
+    page_text = str(page.get_all_text() or "")
+    if "SOLD OUT" in page_text or "売り切れ" in page_text or "在庫なし" in page_text:
         result["status"] = "sold"
-    else:
-        page_text = str(page.get_all_text())
-        if "SOLD OUT" in page_text or "売り切れ" in page_text or "在庫なし" in page_text:
-            result["status"] = "sold"
+        field_sources["status"] = "css"
 
-    return result
+    strategy = "meta" if any(source == "meta" for source in field_sources.values()) else "css"
+    return attach_extraction_trace(result, strategy=strategy, field_sources=field_sources)
 
 
 def scrape_item_detail_light(url: str) -> dict:
@@ -374,6 +417,36 @@ def scrape_item_detail_light(url: str) -> dict:
         return _parse_detail_page(page, url)
     except Exception as exc:
         logger.debug("SNKRDUNK light scrape error: %s", exc)
+        return {}
+
+
+async def _scrape_item_detail_async(url: str) -> dict:
+    from services.scraping_client import fetch_dynamic, fetch_static_async, get_async_fetch_settings
+
+    settings = get_async_fetch_settings("snkrdunk")
+
+    try:
+        try:
+            page = await fetch_static_async(
+                url,
+                timeout=settings.timeout,
+                retries=settings.retries,
+                backoff_seconds=settings.backoff_seconds,
+            )
+        except Exception as exc:
+            logger.debug("SNKRDUNK async static detail fetch failed, retrying dynamic fetch: %s", exc)
+            page = await asyncio.to_thread(fetch_dynamic, url, headless=True, network_idle=True)
+            return _parse_detail_page(page, url)
+
+        result = _parse_detail_page(page, url)
+        if result.get("title"):
+            return result
+
+        logger.debug("SNKRDUNK async static detail parse incomplete, retrying dynamic fetch")
+        page = await asyncio.to_thread(fetch_dynamic, url, headless=True, network_idle=True)
+        return _parse_detail_page(page, url)
+    except Exception as exc:
+        logger.debug("SNKRDUNK async detail scrape error: %s", exc)
         return {}
 
 
@@ -475,7 +548,7 @@ def scrape_search_result(
     candidate_target = max(max_items, max_items * 2)
 
     try:
-        from services.scraping_client import fetch_dynamic, fetch_static
+        from services.scraping_client import fetch_dynamic, fetch_static, gather_with_concurrency, get_async_fetch_settings
 
         current_url = search_url
         seen_pages = set()
@@ -498,10 +571,21 @@ def scrape_search_result(
                 break
             current_url = _find_next_page_url(page, current_url)
 
-        for item_url in candidate_urls:
+        settings = get_async_fetch_settings("snkrdunk")
+        detail_results = run_coro_sync(
+            gather_with_concurrency(
+                candidate_urls,
+                _scrape_item_detail_async,
+                concurrency=settings.concurrency,
+            )
+        )
+
+        for item_url, data in zip(candidate_urls, detail_results):
             if len(items) >= max_items:
                 break
-            data = scrape_item_detail(item_url)
+            if isinstance(data, Exception):
+                metrics.record_attempt(False, item_url, str(data))
+                continue
             log_scrape_result("snkrdunk", item_url, data)
             if data.get("title"):
                 items.append(data)

@@ -9,6 +9,7 @@ import logging
 import re
 from typing import Optional
 
+from services.extraction_policy import attach_extraction_trace, pick_first_valid
 from selector_config import get_selectors
 
 logger = logging.getLogger("mercari.parser")
@@ -28,6 +29,14 @@ _SOLD_MARKERS = ("売り切れ", "売り切れました", "SOLD")
 _PRODUCT_IMAGE_FALLBACK = [
     "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']",
 ]
+
+
+def _is_nonempty_text(value) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _is_positive_price(value) -> bool:
+    return isinstance(value, int) and value > 0
 
 
 def _empty_item(url: str, status: str = "unknown") -> dict:
@@ -303,6 +312,174 @@ def _extract_variants(page, price: Optional[int]) -> list:
     return variants
 
 
+def _dedupe_urls(values) -> list:
+    seen = set()
+    out = []
+    for value in values or []:
+        if not isinstance(value, str):
+            continue
+        candidate = value.strip()
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        out.append(candidate)
+    return out
+
+
+def _find_network_payload_candidate(node):
+    candidates = []
+
+    def _score(candidate):
+        score = 0
+        title = candidate.get("name") or candidate.get("title")
+        if isinstance(title, str) and title.strip():
+            score += 4
+        if _extract_payload_price(candidate) is not None:
+            score += 3
+        if _extract_payload_images(candidate):
+            score += 2
+        if isinstance(candidate.get("description"), str) and candidate.get("description").strip():
+            score += 1
+        return score
+
+    def _walk(value):
+        if isinstance(value, dict):
+            candidates.append(value)
+            for nested in value.values():
+                _walk(nested)
+        elif isinstance(value, list):
+            for item in value:
+                _walk(item)
+
+    _walk(node)
+    scored = sorted(((_score(candidate), candidate) for candidate in candidates), key=lambda item: item[0], reverse=True)
+    if scored and scored[0][0] > 0:
+        return scored[0][1]
+    return {}
+
+
+def _extract_payload_price(candidate: dict) -> Optional[int]:
+    for key in ("price", "priceAmount", "amount", "itemPrice", "displayPrice", "value"):
+        value = candidate.get(key)
+        if value is None:
+            continue
+        if isinstance(value, dict):
+            nested = _extract_payload_price(value)
+            if nested is not None:
+                return nested
+        elif isinstance(value, (int, float)):
+            return int(value)
+        else:
+            parsed = _extract_plain_number(str(value))
+            if parsed is not None:
+                return parsed
+
+    for key in ("salePrice", "priceInfo"):
+        value = candidate.get(key)
+        if isinstance(value, dict):
+            nested = _extract_payload_price(value)
+            if nested is not None:
+                return nested
+    return None
+
+
+def _extract_payload_images(candidate: dict) -> list:
+    image_urls = []
+    for key in ("photos", "images", "image", "thumbnails"):
+        raw = candidate.get(key)
+        if isinstance(raw, str):
+            image_urls.append(raw)
+        elif isinstance(raw, dict):
+            for nested_key in ("url", "originalUrl", "src", "imageUrl"):
+                if raw.get(nested_key):
+                    image_urls.append(str(raw[nested_key]))
+                    break
+        elif isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, str):
+                    image_urls.append(item)
+                elif isinstance(item, dict):
+                    for nested_key in ("url", "originalUrl", "src", "imageUrl"):
+                        if item.get(nested_key):
+                            image_urls.append(str(item[nested_key]))
+                            break
+    return [url for url in _dedupe_urls(image_urls) if url.startswith("http")]
+
+
+def _extract_payload_status(candidate: dict) -> tuple[str, list[str]]:
+    status_value = candidate.get("status") or candidate.get("itemStatus")
+    if isinstance(status_value, str):
+        normalized = status_value.strip().lower()
+        if normalized in {"on_sale", "onsale", "active", "selling", "available"}:
+            return "on_sale", [f"payload-status:{normalized}"]
+        if normalized in {"sold_out", "soldout", "sold", "inactive"}:
+            return "sold", [f"payload-status:{normalized}"]
+
+    for key in ("soldOut", "isSoldOut"):
+        value = candidate.get(key)
+        if value is True:
+            return "sold", [f"payload-flag:{key}"]
+        if value is False:
+            return "on_sale", [f"payload-flag:{key}"]
+
+    return "unknown", []
+
+
+def parse_mercari_network_payload(payload: dict, url: str) -> tuple[dict, dict]:
+    item = _empty_item(url)
+    candidate = _find_network_payload_candidate(payload)
+    if not candidate:
+        return item, {
+            "strategy": "payload",
+            "confidence": "low",
+            "reasons": ["payload-candidate-missing"],
+            "field_sources": {},
+        }
+
+    field_sources = {}
+    title, title_source = pick_first_valid(
+        ("payload", candidate.get("name") or candidate.get("title")),
+        validator=_is_nonempty_text,
+        default="",
+    )
+    if title:
+        item["title"] = title.strip()
+        field_sources["title"] = title_source
+
+    price = _extract_payload_price(candidate)
+    if _is_positive_price(price):
+        item["price"] = price
+        field_sources["price"] = "payload"
+
+    description, description_source = pick_first_valid(
+        ("payload", candidate.get("description")),
+        validator=_is_nonempty_text,
+        default="",
+    )
+    if description:
+        item["description"] = str(description).strip()
+        field_sources["description"] = description_source
+
+    image_urls = _extract_payload_images(candidate)
+    if image_urls:
+        item["image_urls"] = image_urls
+        field_sources["image_urls"] = "payload"
+
+    status, status_reasons = _extract_payload_status(candidate)
+    item["status"] = status
+    if status != "unknown":
+        field_sources["status"] = "payload"
+
+    attach_extraction_trace(item, strategy="payload", field_sources=field_sources)
+    meta = {
+        "strategy": "payload",
+        "confidence": "high" if item["title"] and item["price"] is not None else "medium",
+        "reasons": ["payload-candidate-found"] + status_reasons,
+        "field_sources": field_sources,
+    }
+    return item, meta
+
+
 def _extract_dom_price(page) -> Optional[int]:
     selectors = get_selectors("mercari", "general", "price") or ["[data-testid='price']"]
     for selector in selectors:
@@ -482,21 +659,38 @@ def parse_mercari_item_page(page, url: str) -> tuple[dict, dict]:
             status = "deleted" if page_type == "deleted_detail" else "unknown"
         price_source = "none"
 
+    description = _extract_description(body_text)
+    image_urls = _extract_image_urls(page)
+    variants = _extract_variants(page, price)
+
     item.update(
         {
             "title": title,
             "price": price,
             "status": status,
-            "description": _extract_description(body_text),
-            "image_urls": _extract_image_urls(page),
-            "variants": _extract_variants(page, price),
+            "description": description,
+            "image_urls": image_urls,
+            "variants": variants,
         }
     )
+
+    field_sources = {
+        "title": "jsonld" if isinstance(product_jsonld, dict) and title and product_jsonld.get("name") == title else "dom" if title else "",
+        "price": price_source,
+        "status": "jsonld" if availability else "dom",
+        "description": "dom" if description else "",
+        "image_urls": "dom" if image_urls else "",
+        "variants": "dom" if variants else "",
+    }
+    strategy = "jsonld" if price_source == "jsonld" else "meta" if price_source == "meta" else "dom"
+    attach_extraction_trace(item, strategy=strategy, field_sources=field_sources)
 
     meta = {
         "page_type": page_type,
         "price_source": price_source,
         "confidence": confidence,
         "reasons": status_reasons + page_reasons,
+        "strategy": strategy,
+        "field_sources": {field: source for field, source in field_sources.items() if source},
     }
     return item, meta

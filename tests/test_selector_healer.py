@@ -362,3 +362,118 @@ class TestHealLog:
         assert entry["site"] == "testsite"
         assert entry["field"] == "price"
         assert "new_selector" in entry
+
+
+class _AlertCollector:
+    def __init__(self):
+        self.events = []
+
+    def notify_selector_issue(self, **payload):
+        self.events.append(payload)
+        return True
+
+
+class TestSelectorHealerAlerting:
+    def test_heal_failure_dispatches_silent_alert(self, healer_with_temp_config, monkeypatch):
+        healer, config_dir = healer_with_temp_config
+        alerts = _AlertCollector()
+
+        page = MockPage(
+            elements_map={
+                ".old-title-class": [],
+                "h1.legacy": [],
+                "h1": [],
+                "h2": [],
+                "*": [],
+            }
+        )
+
+        import selector_config
+        monkeypatch.setattr(
+            selector_config, "_selectors_cache",
+            json.load(open(os.path.join(config_dir, "scraping_selectors.json")))
+        )
+        monkeypatch.setattr("services.selector_healer.get_alert_dispatcher", lambda: alerts)
+
+        value, was_healed = healer.extract_with_healing(
+            page, "testsite", "detail", "title", parser="scrapling"
+        )
+
+        assert value == ""
+        assert was_healed is False
+        assert alerts.events[-1]["event_type"] == "heal_failed"
+        assert alerts.events[-1]["details"]["reason"] == "element_not_found"
+
+    def test_persist_failure_dispatches_alert_but_keeps_healed_result(self, healer_with_temp_config, monkeypatch):
+        healer, config_dir = healer_with_temp_config
+        alerts = _AlertCollector()
+
+        good_el = MockElement(
+            tag="h1",
+            text="Product Found via Healing",
+            attribs={"class": "new-product-title", "id": "healed-title"},
+        )
+        page = MockPage(
+            elements_map={
+                ".old-title-class": [],
+                "h1.legacy": [],
+                "h1": [good_el],
+                "h2": [],
+                "*": [good_el],
+            }
+        )
+
+        import selector_config
+        monkeypatch.setattr(
+            selector_config, "_selectors_cache",
+            json.load(open(os.path.join(config_dir, "scraping_selectors.json")))
+        )
+        monkeypatch.setattr("services.selector_healer.get_alert_dispatcher", lambda: alerts)
+        monkeypatch.setattr(healer, "_save_healed_selector", lambda *args, **kwargs: False)
+
+        value, was_healed = healer.extract_with_healing(
+            page, "testsite", "detail", "title", parser="scrapling"
+        )
+
+        assert value == "Product Found via Healing"
+        assert was_healed is True
+        assert any(event["event_type"] == "persist_failed" for event in alerts.events)
+
+    def test_repeated_low_confidence_healing_dispatches_alert(self, healer_with_temp_config, monkeypatch):
+        healer, config_dir = healer_with_temp_config
+        alerts = _AlertCollector()
+
+        weak_el = MockElement(
+            tag="h1",
+            text="Weak but valid title",
+            attribs={"class": "mismatch-class"},
+        )
+        page = MockPage(
+            elements_map={
+                ".old-title-class": [],
+                "h1.legacy": [],
+                "h1": [weak_el],
+                "h2": [],
+                "*": [weak_el],
+            }
+        )
+
+        import selector_config
+        monkeypatch.setattr(
+            selector_config, "_selectors_cache",
+            json.load(open(os.path.join(config_dir, "scraping_selectors.json")))
+        )
+        monkeypatch.setattr("services.selector_healer.get_alert_dispatcher", lambda: alerts)
+        monkeypatch.setattr(healer, "_save_healed_selector", lambda *args, **kwargs: True)
+        monkeypatch.setenv("SELECTOR_ALERT_LOW_CONFIDENCE_THRESHOLD", "70")
+        monkeypatch.setenv("SELECTOR_ALERT_LOW_CONFIDENCE_REPEAT", "2")
+
+        healer.extract_with_healing(page, "testsite", "detail", "title", parser="scrapling")
+        healer._healed_selectors.clear()
+        healer.extract_with_healing(page, "testsite", "detail", "title", parser="scrapling")
+
+        low_confidence_events = [
+            event for event in alerts.events if event["event_type"] == "low_confidence_repeated"
+        ]
+        assert len(low_confidence_events) == 1
+        assert low_confidence_events[0]["details"]["repeat_count"] == 2

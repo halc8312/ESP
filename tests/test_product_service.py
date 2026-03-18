@@ -210,3 +210,45 @@ def test_save_scraped_items_allows_status_only_deleted_update(client, db_session
     assert refreshed_variant.inventory_qty == 0
     assert len(snapshots) == 1
 
+
+def test_save_scraped_items_does_not_persist_scrape_meta_fields(client, db_session):
+    user = _create_user(db_session, 'product_service_meta_isolation_user')
+
+    items = [
+        {
+            'url': 'https://www.suruga-ya.jp/product/detail/1',
+            'title': 'Metadata Isolation Item',
+            'price': 1980,
+            'status': 'active',
+            'description': 'stored description',
+            'image_urls': ['https://img.example.com/surugaya-meta.jpg'],
+            '_scrape_meta': {
+                'strategy': 'json_ld',
+                'field_sources': {
+                    'title': 'json_ld',
+                    'price': 'css',
+                    'description': 'meta',
+                },
+            },
+        }
+    ]
+
+    new_count, updated_count = save_scraped_items_to_db(
+        items,
+        user_id=user.id,
+        site='surugaya',
+    )
+
+    assert new_count == 1
+    assert updated_count == 0
+
+    db_session.expire_all()
+    product = db_session.query(Product).filter_by(user_id=user.id).one()
+    snapshot = db_session.query(ProductSnapshot).filter_by(product_id=product.id).one()
+
+    assert product.last_title == 'Metadata Isolation Item'
+    assert snapshot.description == 'stored description'
+    assert snapshot.image_urls == 'https://img.example.com/surugaya-meta.jpg'
+    assert '_scrape_meta' not in product.__dict__
+    assert '_scrape_meta' not in snapshot.__dict__
+

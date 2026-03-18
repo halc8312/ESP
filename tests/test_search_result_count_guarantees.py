@@ -294,8 +294,11 @@ def test_snkrdunk_search_result_uses_extra_candidates_to_fill_requested_count(mo
         urls[4]: {"title": "SNKRDUNK 5", "status": "on_sale", "url": urls[4]},
     }
 
+    async def fake_scrape_item_detail_async(url):
+        return detail_map[url]
+
     monkeypatch.setattr("services.scraping_client.fetch_dynamic", lambda *args, **kwargs: search_page)
-    monkeypatch.setattr(snkrdunk_db, "scrape_item_detail", lambda url: detail_map[url])
+    monkeypatch.setattr(snkrdunk_db, "_scrape_item_detail_async", fake_scrape_item_detail_async)
     monkeypatch.setattr(snkrdunk_db, "log_scrape_result", lambda *args, **kwargs: True)
 
     results = snkrdunk_db.scrape_search_result("https://snkrdunk.com/search?keywords=jordan", max_items=3, max_scroll=1)

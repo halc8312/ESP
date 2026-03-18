@@ -7,6 +7,8 @@ import logging
 import re
 from urllib.parse import urljoin
 
+from services.extraction_policy import attach_extraction_trace, pick_first
+
 logger = logging.getLogger("offmall")
 
 
@@ -223,52 +225,71 @@ def scrape_item_detail_light(url: str) -> dict:
         if not json_ld:
             return {}
 
-        result["title"] = json_ld.get("name", "")
+        field_sources = {}
+        title, title_source = pick_first(("json_ld", json_ld.get("name", "")))
+        result["title"] = title
+        if title_source:
+            field_sources["title"] = title_source
         brand = json_ld.get("brand", {})
         result["brand"] = brand.get("name", "") if isinstance(brand, dict) else str(brand or "")
+        if result["brand"]:
+            field_sources["brand"] = "json_ld"
         result["description"] = json_ld.get("description", "")
+        if result["description"]:
+            field_sources["description"] = "json_ld"
 
         # JSON-LD description is often just the URL on Offmall; fall back to HTML
         if not result["description"] or result["description"].startswith("http"):
             html_description = _extract_detail_description(page)
             if html_description:
                 result["description"] = html_description
+                field_sources["description"] = "css"
 
         offers = json_ld.get("offers", {})
         result["price"] = _extract_visible_price(page, page_text)
+        if result["price"] is not None:
+            field_sources["price"] = "css"
         if result["price"] is None and isinstance(offers, dict):
             price_str = str(offers.get("price", ""))
             if price_str:
                 try:
                     result["price"] = int(float(price_str))
+                    field_sources["price"] = "json_ld"
                 except (ValueError, TypeError):
                     pass
         result["status"] = _infer_offmall_status(page_text, offers)
+        field_sources["status"] = "json_ld" if isinstance(offers, dict) and offers.get("availability") else "css"
 
         images = json_ld.get("image", [])
         if isinstance(images, str):
             result["image_urls"] = [images]
         elif isinstance(images, list):
             result["image_urls"] = [img for img in images if isinstance(img, str)]
+        if result["image_urls"]:
+            field_sources["images"] = "json_ld"
 
         og_el = page.css("meta[property='og:image']")
         if og_el:
             og_url = str(og_el[0].attrib.get("content", "") or "")
             if og_url.startswith("http") and og_url not in result["image_urls"]:
                 result["image_urls"].insert(0, og_url)
+                field_sources["images"] = "meta"
 
         for img_el in page.css("img[src*='hardoff']"):
             src = str(img_el.attrib.get("src", "") or "")
             if src.startswith("http") and src not in result["image_urls"]:
                 result["image_urls"].append(src)
+                field_sources["images"] = field_sources.get("images") or "css"
 
         condition = json_ld.get("itemCondition", "")
         if condition:
             result["condition"] = re.sub(r"https?://schema\.org/", "", condition)
+            field_sources["condition"] = "json_ld"
         else:
             cond_els = page.css(".item-condition, .condition, [class*='rank'], [class*='condition']")
             if cond_els:
                 result["condition"] = str(cond_els[0].text or "").strip()
+                field_sources["condition"] = "css"
 
         if result["price"]:
             result["variants"] = [
@@ -279,8 +300,9 @@ def scrape_item_detail_light(url: str) -> dict:
                     "inventory_qty": 1 if result["status"] == "active" else 0,
                 }
             ]
+            field_sources["variants"] = "derived"
 
-        return result
+        return attach_extraction_trace(result, strategy="json_ld", field_sources=field_sources)
     except Exception as exc:
         logger.debug("Offmall light scrape error: %s", exc)
         return {}
