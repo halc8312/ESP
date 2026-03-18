@@ -17,7 +17,7 @@ import offmall_db
 import yahuoku_db
 import snkrdunk_db
 from services.product_service import save_scraped_items_to_db
-from services.filter_service import filter_excluded_items
+from services.filter_service import filter_excluded_items, filter_items_by_price, normalize_price_bounds
 from services.scrape_queue import get_queue
 
 
@@ -120,6 +120,86 @@ def _build_scrape_job_context(site, target_url, keyword, limit, persist_to_db):
     }
 
 
+def _build_search_url(site, keyword, price_min, price_max, sort, category):
+    """
+    Build a site-aware search URL.
+
+    Native price params are added where the current site exposes a stable URL
+    contract. Unsupported sites still receive the keyword URL and rely on the
+    common post-scrape price filter for correctness.
+    """
+    min_value, max_value = normalize_price_bounds(price_min, price_max)
+    min_str = str(min_value) if min_value is not None else None
+    max_str = str(max_value) if max_value is not None else None
+
+    keyword = (keyword or "").strip()
+    sort = (sort or "").strip()
+    category = (category or "").strip()
+
+    if site == "yahoo":
+        params = {}
+        if keyword:
+            params["p"] = keyword
+        if min_str:
+            params["pf"] = min_str
+        if max_str:
+            params["pt"] = max_str
+        return "https://shopping.yahoo.co.jp/search?" + urlencode(params)
+
+    if site == "rakuma":
+        params = {}
+        if keyword:
+            params["query"] = keyword
+        if min_str:
+            params["min"] = min_str
+        if max_str:
+            params["max"] = max_str
+        return "https://fril.jp/s?" + urlencode(params)
+
+    if site == "surugaya":
+        params = {}
+        if keyword:
+            params["search_word"] = keyword
+            params["is_stock"] = "1"
+        return "https://www.suruga-ya.jp/search?" + urlencode(params)
+
+    if site == "offmall":
+        params = {}
+        if keyword:
+            params["q"] = keyword
+        return "https://netmall.hardoff.co.jp/search?" + urlencode(params)
+
+    if site == "yahuoku":
+        params = {}
+        if keyword:
+            params["p"] = keyword
+            params["va"] = keyword
+        if min_str:
+            params["aucminprice"] = min_str
+        if max_str:
+            params["aucmaxprice"] = max_str
+        return "https://auctions.yahoo.co.jp/search/search?" + urlencode(params)
+
+    if site == "snkrdunk":
+        params = {}
+        if keyword:
+            params["keywords"] = keyword
+        return "https://snkrdunk.com/search?" + urlencode(params)
+
+    params = {}
+    if keyword:
+        params["keyword"] = keyword
+    if min_str:
+        params["price_min"] = min_str
+    if max_str:
+        params["price_max"] = max_str
+    if sort:
+        params["sort"] = sort
+    if category:
+        params["category_id"] = category
+    return "https://jp.mercari.com/search?" + urlencode(params)
+
+
 def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, category, limit, user_id, persist_to_db=True, shop_id=None):
     """
     スクレイピングタスク関数を構築して返す。
@@ -133,10 +213,17 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
         excluded_count = 0
         error_msg = ""
         search_url = ""
+        normalized_price_min, normalized_price_max = normalize_price_bounds(price_min, price_max)
 
         def finalize(scraped_items, target_site):
             nonlocal items, excluded_count, new_count, updated_count
             filtered_items, excluded_count = filter_excluded_items(scraped_items, user_id)
+            filtered_items, price_excluded_count = filter_items_by_price(
+                filtered_items,
+                price_min=normalized_price_min,
+                price_max=normalized_price_max,
+            )
+            excluded_count += price_excluded_count
             items = filtered_items[:limit]
             if persist_to_db:
                 new_count, updated_count = save_scraped_items_to_db(
@@ -164,22 +251,16 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
             else:
                 search_limit = _get_internal_search_limit(limit)
                 search_depth = _get_search_depth(site, search_limit)
-                params = {}
-                if keyword:
-                    params["keyword"] = keyword
-                if price_min:
-                    params["price_min"] = price_min
-                if price_max:
-                    params["price_max"] = price_max
-                if sort:
-                    params["sort"] = sort
-                if category:
-                    params["category_id"] = category
+                search_url = _build_search_url(
+                    site=site,
+                    keyword=keyword,
+                    price_min=normalized_price_min,
+                    price_max=normalized_price_max,
+                    sort=sort,
+                    category=category,
+                )
 
                 if site == "yahoo":
-                    base = "https://shopping.yahoo.co.jp/search?"
-                    y_params = {"p": keyword} if keyword else {}
-                    search_url = base + urlencode(y_params)
                     items = yahoo_db.scrape_search_result(
                         search_url=search_url,
                         max_items=search_limit,
@@ -189,9 +270,6 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                     finalize(items, "yahoo")
 
                 elif site == "rakuma":
-                    base = "https://fril.jp/s?"
-                    r_params = {"query": keyword} if keyword else {}
-                    search_url = base + urlencode(r_params)
                     items = rakuma_db.scrape_search_result(
                         search_url=search_url,
                         max_items=search_limit,
@@ -201,11 +279,6 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                     finalize(items, "rakuma")
 
                 elif site == "surugaya":
-                    base = "https://www.suruga-ya.jp/search?"
-                    s_params = {"search_word": keyword} if keyword else {}
-                    if keyword:
-                        s_params["is_stock"] = "1"
-                    search_url = base + urlencode(s_params)
                     items = surugaya_db.scrape_search_result(
                         search_url=search_url,
                         max_items=search_limit,
@@ -215,9 +288,6 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                     finalize(items, "surugaya")
 
                 elif site == "offmall":
-                    base = "https://netmall.hardoff.co.jp/search?"
-                    o_params = {"q": keyword} if keyword else {}
-                    search_url = base + urlencode(o_params)
                     items = offmall_db.scrape_search_result(
                         search_url=search_url,
                         max_items=search_limit,
@@ -227,9 +297,6 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                     finalize(items, "offmall")
 
                 elif site == "yahuoku":
-                    base = "https://auctions.yahoo.co.jp/search/search?"
-                    y_params = {"p": keyword} if keyword else {}
-                    search_url = base + urlencode(y_params)
                     items = yahuoku_db.scrape_search_result(
                         search_url=search_url,
                         max_items=search_limit,
@@ -239,9 +306,6 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
                     finalize(items, "yahuoku")
 
                 elif site == "snkrdunk":
-                    base = "https://snkrdunk.com/search?"
-                    s_params = {"keywords": keyword} if keyword else {}
-                    search_url = base + urlencode(s_params)
                     items = snkrdunk_db.scrape_search_result(
                         search_url=search_url,
                         max_items=search_limit,
@@ -252,8 +316,6 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
 
                 else:
                     # Mercari (default)
-                    base = "https://jp.mercari.com/search?"
-                    search_url = base + urlencode(params)
                     items = scrape_search_result(
                         search_url=search_url,
                         max_items=search_limit,
@@ -276,8 +338,8 @@ def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, ca
             "error_msg": error_msg,
             "search_url": search_url,
             "keyword": keyword or "",
-            "price_min": price_min,
-            "price_max": price_max,
+            "price_min": normalized_price_min,
+            "price_max": normalized_price_max,
             "sort": sort or "",
             "category": category,
             "limit": limit,
