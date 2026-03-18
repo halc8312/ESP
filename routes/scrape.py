@@ -124,9 +124,8 @@ def _build_search_url(site, keyword, price_min, price_max, sort, category):
     """
     Build a site-aware search URL.
 
-    Native price params are added where the current site exposes a stable URL
-    contract. Unsupported sites still receive the keyword URL and rely on the
-    common post-scrape price filter for correctness.
+    Native price params are added where the current site exposes a verified URL
+    contract. The common post-scrape price filter remains as defense-in-depth.
     """
     min_value, max_value = normalize_price_bounds(price_min, price_max)
     min_str = str(min_value) if min_value is not None else None
@@ -161,13 +160,19 @@ def _build_search_url(site, keyword, price_min, price_max, sort, category):
         if keyword:
             params["search_word"] = keyword
             params["is_stock"] = "1"
+        if min_str or max_str:
+            params["price"] = f"[{min_str or 0},{max_str or '*'}]"
         return "https://www.suruga-ya.jp/search?" + urlencode(params)
 
     if site == "offmall":
         params = {}
         if keyword:
             params["q"] = keyword
-        return "https://netmall.hardoff.co.jp/search?" + urlencode(params)
+        if min_str:
+            params["min"] = min_str
+        if max_str:
+            params["max"] = max_str
+        return "https://netmall.hardoff.co.jp/search/?" + urlencode(params)
 
     if site == "yahuoku":
         params = {}
@@ -184,6 +189,10 @@ def _build_search_url(site, keyword, price_min, price_max, sort, category):
         params = {}
         if keyword:
             params["keywords"] = keyword
+        if min_str:
+            params["minPrice"] = min_str
+        if max_str:
+            params["maxPrice"] = max_str
         return "https://snkrdunk.com/search?" + urlencode(params)
 
     params = {}

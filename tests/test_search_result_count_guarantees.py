@@ -94,7 +94,10 @@ def test_build_scrape_task_buffers_large_requests_without_changing_visible_limit
     [
         ("yahoo", "yahoo_db", ("p=camera", "pf=1000", "pt=5000")),
         ("rakuma", "rakuma_db", ("query=camera", "min=1000", "max=5000")),
+        ("surugaya", "surugaya_db", ("search_word=camera", "price=%5B1000%2C5000%5D")),
+        ("offmall", "offmall_db", ("q=camera", "min=1000", "max=5000")),
         ("yahuoku", "yahuoku_db", ("p=camera", "va=camera", "aucminprice=1000", "aucmaxprice=5000")),
+        ("snkrdunk", "snkrdunk_db", ("keywords=camera", "minPrice=1000", "maxPrice=5000")),
     ],
 )
 def test_build_scrape_task_includes_native_price_params_for_supported_sites(
@@ -131,7 +134,7 @@ def test_build_scrape_task_includes_native_price_params_for_supported_sites(
         assert fragment in captured["search_url"]
 
 
-def test_build_scrape_task_applies_post_scrape_price_filter_for_sites_without_native_url_support(monkeypatch):
+def test_build_scrape_task_applies_post_scrape_price_filter_even_with_native_price_url_support(monkeypatch):
     captured = {}
     scraped_items = [
         {
@@ -194,7 +197,7 @@ def test_build_scrape_task_applies_post_scrape_price_filter_for_sites_without_na
 
     result = task()
 
-    assert captured["search_url"] == "https://netmall.hardoff.co.jp/search?q=camera"
+    assert captured["search_url"] == "https://netmall.hardoff.co.jp/search/?q=camera&min=1000&max=5000"
     assert [item["title"] for item in result["items"]] == ["within range"]
     assert result["excluded_count"] == 3
     assert result["price_min"] == 1000
