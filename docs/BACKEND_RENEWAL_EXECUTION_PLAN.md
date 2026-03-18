@@ -126,13 +126,19 @@ Implication:
 
 ### 5.1 Queue technology choice
 
-Selected: `RQ`
+Selected for `Arc 2`: `RQ`, with an explicit execution-model decision gate before `Arc 3`.
 
 Reason:
 
 - Lower integration surface than Celery for this codebase.
 - Easier mapping from current `job_id` polling model.
 - Simpler Render deployment path for a Flask app with explicit worker separation.
+
+Required clarification before `Arc 3`:
+
+- Validate whether the chosen RQ worker mode can safely support long-lived browser ownership.
+- If the default RQ execution model is incompatible with browser reuse, keep RQ for queue/state and execute scraping inside a worker-local executor, `SimpleWorker`, or equivalent custom runtime.
+- Treat browser-runtime ownership as a separate decision from queue technology so that job APIs and queue durability are not tied to one worker implementation assumption.
 
 Not selected: `Celery`
 
@@ -154,7 +160,88 @@ Reason:
 
 - This is the only path that removes the repeated startup penalty while preserving site compatibility.
 
-## 6. Execution Order
+### 5.3 Durable job state split
+
+Durable state is intentionally split across Redis and PostgreSQL.
+
+Redis responsibilities:
+
+- queue dispatch
+- short-lived live progress / heartbeat
+- worker lease / transient execution metadata
+- retry and timeout coordination
+
+PostgreSQL responsibilities:
+
+- durable `scrape_jobs` record
+- optional `scrape_job_events` audit trail
+- tracker-visible history
+- result summary
+- error payload
+- preview payload or payload pointer
+- completed / failed job source of truth for API responses
+
+Initial `scrape_jobs` contract:
+
+- `job_id`
+- `status`
+- `site`
+- `mode`
+- `requested_by`
+- `request_payload`
+- `progress_current`
+- `progress_total`
+- `result_summary`
+- `error_message`
+- `started_at`
+- `finished_at`
+- `created_at`
+
+### 5.4 Persistence idempotency and concurrency semantics
+
+Before distributed execution is enabled, the following rules must be defined and implemented:
+
+- natural key and uniqueness strategy for scraped source items
+- explicit idempotency rule for `save_scraped_items_to_db()`
+- `Product` upsert policy for repeated scrape / retry / patrol overlap
+- `ProductSnapshot` append rule, including duplicate snapshot suppression
+- retry behavior after partial persistence
+- transaction boundary and locking / conflict policy for concurrent writers
+
+Target direction:
+
+- `Product` identity remains stable by normalized source item identity per user
+- retries are safe to replay
+- snapshot growth is meaningful rather than duplicate noise
+
+### 5.5 Observability and KPI policy
+
+No Arc is considered complete without measurable improvement or parity.
+
+Required baseline and ongoing metrics:
+
+- site-level items/min
+- job duration p50 / p95
+- queue wait time
+- browser launch count per job
+- worker/browser restart count
+- memory usage
+- timeout / failure rate
+- selector heal success / failure count
+
+## 6. Pre-Arc Checklist
+
+Before `Arc 1` starts, capture the following artifacts:
+
+- current API JSON snapshots for `/api/scrape/status/<job_id>` and `/api/scrape/jobs`
+- contract tests around `save_scraped_items_to_db()`
+- golden outputs for Shopify and eBay export paths
+- throughput baseline for major scrape paths
+- current schema dump and schema diff against `models.py`
+
+These artifacts become the regression and success baseline for the rest of the plan.
+
+## 7. Execution Order
 
 The work is intentionally sequential:
 
@@ -165,20 +252,21 @@ The work is intentionally sequential:
 `Arc 2` does not begin until `Arc 1` is verified.
 `Arc 3` does not begin until `Arc 2` is verified.
 
-## 7. Arc 1: Async Core
+## 8. Arc 1: Async Core
 
-### 7.1 Goal
+### 8.1 Goal
 
 Increase throughput on the current infrastructure without changing the external deployment model yet.
 
-### 7.2 Exit Criteria
+### 8.2 Exit Criteria
 
 - Static/detail fetches that can be async are converted to true async fan-out.
 - DOM-first extraction is reduced in favor of structured payloads.
 - Selector healing failures emit silent external alerts.
 - Existing scrape pages, result pages, and exports still work.
+- KPI targets are evaluated against the `Pre-Arc Checklist` baseline.
 
-### 7.3 Moves
+### 8.3 Moves
 
 #### Move A1: Async fetch foundation
 
@@ -192,9 +280,11 @@ Target files:
 Concrete changes:
 
 - Introduce async HTTP fetch helpers using a reusable async client/session model.
-- Replace sequential item-detail loops with `asyncio.gather()` plus semaphore-based concurrency control.
+- Replace sequential item-detail loops with `asyncio.gather(..., return_exceptions=True)` plus semaphore-based concurrency control.
 - Keep synchronous wrapper functions for compatibility with current route and CLI call sites.
-- Remove avoidable fixed sleeps where async wait strategies are sufficient.
+- Preserve item ordering while allowing partial success.
+- Add site-level concurrency, timeout, retry, and backoff configuration.
+- Replace avoidable fixed sleeps with event-based waits or jittered pacing where anti-bot stability requires timing.
 
 Expected effect:
 
@@ -244,6 +334,7 @@ Concrete changes:
   - healing succeeds in-memory but selector persistence fails
   - repeated low-confidence extraction is detected
 - Use environment-driven configuration such as `SELECTOR_ALERT_WEBHOOK_URL`.
+- Add alert dedupe, rate limit, cooldown, and severity handling so one site outage does not create alert storms.
 
 Expected effect:
 
@@ -266,20 +357,21 @@ Concrete changes:
 - Confirm preview flow, persisted flow, and result polling remain unchanged externally.
 - Confirm exports still work against unchanged persistence models.
 
-## 8. Arc 2: State Split
+## 9. Arc 2: State Split
 
-### 8.1 Goal
+### 9.1 Goal
 
 Remove the architectural blockers that prevent Render Web and Worker separation.
 
-### 8.2 Exit Criteria
+### 9.2 Exit Criteria
 
 - Database schema is migration-driven.
 - Queue execution no longer depends on in-process memory.
 - Status APIs return durable job state.
 - The app can run with PostgreSQL by `DATABASE_URL`.
+- Redis and PostgreSQL responsibilities for job state are explicitly separated.
 
-### 8.3 Moves
+### 9.3 Moves
 
 #### Move B1: App bootstrap separation
 
@@ -301,7 +393,29 @@ Expected effect:
 - Cleaner separation of concerns.
 - Safe initialization for multiple process types.
 
-#### Move B2: Alembic introduction
+#### Move B2: Durable job state contract
+
+Target files:
+
+- `models.py`
+- `routes/api.py`
+- `routes/scrape.py`
+- `services/queue_backend.py` (new)
+- optional `scrape_job_events` model / table
+
+Concrete changes:
+
+- Define status enum, progress semantics, result-summary shape, error payload shape, and retention policy.
+- Add durable `scrape_jobs` storage needed by tracker UI, polling APIs, and preview flows.
+- Decide whether preview payload is stored directly in PostgreSQL or referenced indirectly, but keep completed-job API reads durable.
+- Keep Redis usage limited to queueing and transient execution state rather than long-term UI history.
+
+Expected effect:
+
+- Frontend compatibility has a durable backing model before queue cutover.
+- Job APIs no longer depend on ephemeral worker memory semantics.
+
+#### Move B3: Alembic introduction
 
 Target files:
 
@@ -313,16 +427,18 @@ Target files:
 
 Concrete changes:
 
-- Create a baseline migration matching the current live schema.
+- Create a baseline migration from the actual live schema, not only from ORM assumptions.
+- Capture schema diff before generating the baseline.
 - Remove startup schema drift logic from `app.py`.
 - Ensure SQLite and PostgreSQL both work under the migration system during the transition period.
+- Add migration execution to CI and staging verification.
 
 Expected effect:
 
 - Safe schema evolution.
 - Reliable PostgreSQL readiness.
 
-#### Move B3: External job backend with RQ
+#### Move B4: External job backend with RQ
 
 Target files:
 
@@ -337,15 +453,17 @@ Concrete changes:
 
 - Introduce Redis-backed enqueue/dequeue via RQ.
 - Move scrape execution into worker-callable task functions.
+- Select and document the worker execution model needed for future browser reuse.
 - Persist enough job metadata and result summary to support current UI polling and tracker behavior.
 - Preserve current route contracts and JSON shape as much as possible.
+- Keep the queue/state layer independent from browser-runtime ownership so `Arc 3` can evolve without redoing the API contract.
 
 Expected effect:
 
 - Web requests stop owning job execution.
 - Multi-process and multi-container operation becomes possible.
 
-#### Move B4: Compatibility bridge and controlled cutover
+#### Move B5: Compatibility bridge and controlled cutover
 
 Target files:
 
@@ -365,20 +483,21 @@ Expected effect:
 - Lower-risk rollout.
 - Easier rollback during cutover.
 
-## 9. Arc 3: Worker Fabric
+## 10. Arc 3: Worker Fabric
 
-### 9.1 Goal
+### 10.1 Goal
 
 Finish the distributed worker architecture and remove repeated browser startup overhead.
 
-### 9.2 Exit Criteria
+### 10.2 Exit Criteria
 
 - Dedicated worker process exists.
 - Browser runtime is long-lived inside worker.
 - Web no longer launches browsers for scrape execution.
 - Scheduler responsibilities are no longer tied to the Web process.
+- Worker execution mode, browser lifecycle, and memory ceiling are documented and verified together.
 
-### 9.3 Moves
+### 10.3 Moves
 
 #### Move C1: Dedicated worker entrypoint
 
@@ -414,6 +533,8 @@ Concrete changes:
 - Reuse that browser across jobs.
 - Create/dispose contexts or pages per job rather than relaunching the browser.
 - Make scraper functions accept runtime/browser injection where needed.
+- Define max contexts/pages per worker, browser restart policy, crash recovery, and cleanup guarantees.
+- Instrument browser pool health and restart counts.
 
 Expected effect:
 
@@ -461,11 +582,11 @@ Expected effect:
   - Redis
   - PostgreSQL
 
-## 10. Verification Matrix
+## 11. Verification Matrix
 
 The following must be re-verified after each Arc:
 
-### 10.1 Scrape flow
+### 11.1 Scrape flow
 
 - `/scrape`
 - `/scrape/run`
@@ -475,28 +596,37 @@ The following must be re-verified after each Arc:
 - `/api/scrape/jobs`
 - preview registration flow
 
-### 10.2 Data integrity
+### 11.2 Data integrity
 
 - `save_scraped_items_to_db()`
 - `Product` latest values
 - `Variant` inventory and price updates
 - `ProductSnapshot` append-only behavior
+- retry safety and duplicate suppression
 
-### 10.3 Admin/UI
+### 11.3 Admin/UI
 
 - product detail editing
 - manual add flow
 - dashboard and index listing
 - scrape tracker UI
 
-### 10.4 Exports
+### 11.4 Exports
 
 - Shopify product CSV
 - Shopify stock update CSV
 - Shopify price update CSV
 - eBay export CSV
 
-## 11. Risks and Controls
+### 11.5 Observability
+
+- `job_id`-correlated logs
+- queue wait time
+- site-level scrape duration
+- browser restart count
+- selector heal success / failure metrics
+
+## 12. Risks and Controls
 
 ### Risk 1: Export breakage due to persistence drift
 
@@ -526,7 +656,14 @@ Control:
 - Always create fresh contexts/pages per job.
 - Clear cookies/storage per context lifecycle.
 
-## 12. First Implementation Step After Approval
+### Risk 5: Alert storm from scraper instability
+
+Control:
+
+- Add dedupe key, cooldown window, severity level, and rate limiting to alert dispatch.
+- Ensure notifier failure never fails the main scrape flow.
+
+## 13. First Implementation Step After Approval
 
 If this plan is approved, implementation starts at:
 
