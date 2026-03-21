@@ -1,6 +1,6 @@
 {
     "_comment": "Scraping selectors configuration. Update these when site structure changes.",
-    "_updated": "2026-03-17",
+    "_updated": "2026-03-22",
     "mercari": {
         "shops": {
             "title": [
@@ -142,6 +142,7 @@
         "detail": {
             "title": [
                 "h1.product-name-en",
+                "h2.product-name-ja",
                 "p.product-name-jp",
                 "h1[class*='product-name']",
                 "h1"
@@ -180,8 +181,10 @@
                 "html > body > h1"
             ],
             "price": [
-                "#0001-1 > label > span:nth-of-type(1)",
-                "html > body > div:nth-of-type(1) > span"
+                ".price_group .text-price-detail",
+                ".price_group label",
+                "span.text-price-detail",
+                "[itemprop='price']"
             ],
             "description": [
                 "html > body > div:nth-of-type(1)"

@@ -158,12 +158,24 @@ def _extract_price_from_body(text: str):
     if not text:
         return None
 
+    # Split the text at buyback section markers to only search the sales section
+    buyback_markers = ("買取", "買い取り", "お売りください", "査定")
+    search_text = text
+    for marker in buyback_markers:
+        idx = search_text.find(marker)
+        if idx != -1:
+            # Only search text before the first buyback marker
+            candidate = search_text[:idx]
+            if len(candidate) > 50:  # Ensure enough text to find a price
+                search_text = candidate
+                break
+
     patterns = [
         r"([0-9][0-9,]{1,})\s*円\s*\(税込\)",
         r"(?:販売価格|価格|税込)[^\d]{0,8}([0-9][0-9,]{1,})",
     ]
     for pattern in patterns:
-        match = re.search(pattern, text)
+        match = re.search(pattern, search_text)
         if not match:
             continue
         try:
@@ -845,7 +857,23 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
     if css_price is None:
         for selector in SELECTORS["price"]:
             for el in soup.select(selector):
-                price = _extract_price(el.get_text(" ", strip=True))
+                # Skip elements in buyback (買取) sections
+                parent_text = ""
+                parent = el.parent
+                while parent and parent.name not in ("body", "html", None):
+                    parent_id = parent.get("id", "").lower()
+                    parent_class = " ".join(parent.get("class", [])).lower()
+                    if "kaitori" in parent_id or "buyback" in parent_id or "kaitori" in parent_class or "buyback" in parent_class:
+                        parent_text = "買取"
+                        break
+                    parent = parent.parent
+                if "買取" in parent_text:
+                    continue
+                # Also skip if the element's own text context mentions buyback
+                el_text = el.get_text(" ", strip=True)
+                if "買取" in el_text or "買い取り" in el_text:
+                    continue
+                price = _extract_price(el_text)
                 if price is not None:
                     css_price = price
                     break

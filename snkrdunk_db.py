@@ -203,90 +203,98 @@ def _parse_detail_page(page, url: str) -> dict:
     result = _empty_result(url, status="on_sale")
     field_sources = {}
     script_el = page.find("#__NEXT_DATA__")
+    data = None
 
     if script_el:
         json_str = str(script_el.text or "").strip()
         if json_str:
-            data = json.loads(json_str)
-            props = data.get("props", {})
-            page_props = props.get("pageProps", {})
-            item = (
-                page_props.get("item")
-                or page_props.get("product")
-                or page_props.get("initialState", {}).get("item", {})
-                or page_props.get("initialState", {}).get("product", {})
-                or {}
+            try:
+                data = json.loads(json_str)
+            except json.JSONDecodeError:
+                data = None
+    else:
+        logger.debug("SNKRDUNK __NEXT_DATA__ not found (site may have migrated to App Router)")
+
+    if data is not None:
+        props = data.get("props", {})
+        page_props = props.get("pageProps", {})
+        item = (
+            page_props.get("item")
+            or page_props.get("product")
+            or page_props.get("initialState", {}).get("item", {})
+            or page_props.get("initialState", {}).get("product", {})
+            or {}
+        )
+        if item:
+            meta_title = _normalize_snkrdunk_title(
+                _get_first_meta_content(page, ["meta[property='og:title']", "meta[name='twitter:title']"])
+                or _get_first_text(page, ["title"])
             )
-            if item:
-                meta_title = _normalize_snkrdunk_title(
-                    _get_first_meta_content(page, ["meta[property='og:title']", "meta[name='twitter:title']"])
-                    or _get_first_text(page, ["title"])
-                )
-                title, title_source = pick_first(
-                    ("next_data", item.get("name") or item.get("title") or item.get("productName", "")),
-                    ("meta", meta_title),
-                )
-                if title:
-                    result["title"] = title
-                    field_sources["title"] = title_source
+            title, title_source = pick_first(
+                ("next_data", item.get("name") or item.get("title") or item.get("productName", "")),
+                ("meta", meta_title),
+            )
+            if title:
+                result["title"] = title
+                field_sources["title"] = title_source
 
-                price_raw = item.get("price") or item.get("lowestPrice") or item.get("minPrice")
-                if price_raw is not None:
-                    try:
-                        result["price"] = int(price_raw)
-                        field_sources["price"] = "next_data"
-                    except (ValueError, TypeError):
-                        pass
+            price_raw = item.get("price") or item.get("lowestPrice") or item.get("minPrice")
+            if price_raw is not None:
+                try:
+                    result["price"] = int(price_raw)
+                    field_sources["price"] = "next_data"
+                except (ValueError, TypeError):
+                    pass
 
-                meta_description = _get_first_meta_content(page, ["meta[name='description']", "meta[property='og:description']"])
-                description, description_source = pick_first(
-                    ("next_data", item.get("description") or item.get("itemDescription", "")),
-                    ("meta", meta_description),
-                )
-                if description:
-                    result["description"] = description
-                    field_sources["description"] = description_source
+            meta_description = _get_first_meta_content(page, ["meta[name='description']", "meta[property='og:description']"])
+            description, description_source = pick_first(
+                ("next_data", item.get("description") or item.get("itemDescription", "")),
+                ("meta", meta_description),
+            )
+            if description:
+                result["description"] = description
+                field_sources["description"] = description_source
 
-                image_urls = []
-                for key in ("images", "image", "imageList", "thumbnails"):
-                    imgs = item.get(key)
-                    if imgs is None:
-                        continue
-                    if isinstance(imgs, str) and imgs.startswith("http"):
-                        if imgs not in image_urls:
-                            image_urls.append(imgs)
-                    elif isinstance(imgs, list):
-                        for img in imgs:
-                            if isinstance(img, str) and img.startswith("http") and img not in image_urls:
-                                image_urls.append(img)
-                            elif isinstance(img, dict):
-                                img_url = img.get("url") or img.get("src") or img.get("imageUrl")
-                                if img_url and img_url.startswith("http") and img_url not in image_urls:
-                                    image_urls.append(img_url)
-                    elif isinstance(imgs, dict):
-                        img_url = imgs.get("url") or imgs.get("src") or imgs.get("imageUrl")
-                        if img_url and img_url.startswith("http") and img_url not in image_urls:
-                            image_urls.append(img_url)
-                if not image_urls:
-                    image_urls = _collect_image_urls(_get_first_meta_content(page, ["meta[property='og:image']"]))
-                    if image_urls:
-                        field_sources["images"] = "meta"
-                else:
-                    field_sources["images"] = "next_data"
-                result["image_urls"] = image_urls
+            image_urls = []
+            for key in ("images", "image", "imageList", "thumbnails"):
+                imgs = item.get(key)
+                if imgs is None:
+                    continue
+                if isinstance(imgs, str) and imgs.startswith("http"):
+                    if imgs not in image_urls:
+                        image_urls.append(imgs)
+                elif isinstance(imgs, list):
+                    for img in imgs:
+                        if isinstance(img, str) and img.startswith("http") and img not in image_urls:
+                            image_urls.append(img)
+                        elif isinstance(img, dict):
+                            img_url = img.get("url") or img.get("src") or img.get("imageUrl")
+                            if img_url and img_url.startswith("http") and img_url not in image_urls:
+                                image_urls.append(img_url)
+                elif isinstance(imgs, dict):
+                    img_url = imgs.get("url") or imgs.get("src") or imgs.get("imageUrl")
+                    if img_url and img_url.startswith("http") and img_url not in image_urls:
+                        image_urls.append(img_url)
+            if not image_urls:
+                image_urls = _collect_image_urls(_get_first_meta_content(page, ["meta[property='og:image']"]))
+                if image_urls:
+                    field_sources["images"] = "meta"
+            else:
+                field_sources["images"] = "next_data"
+            result["image_urls"] = image_urls
 
-                status_flag = item.get("status") or item.get("soldOut") or item.get("isSoldOut")
-                if status_flag in (True, "sold_out", "soldout", "SOLD_OUT"):
+            status_flag = item.get("status") or item.get("soldOut") or item.get("isSoldOut")
+            if status_flag in (True, "sold_out", "soldout", "SOLD_OUT"):
+                result["status"] = "sold"
+                field_sources["status"] = "next_data"
+            else:
+                page_text = str(page.get_all_text() or "")
+                if "SOLD OUT" in page_text or "売り切れ" in page_text or "在庫なし" in page_text:
                     result["status"] = "sold"
-                    field_sources["status"] = "next_data"
-                else:
-                    page_text = str(page.get_all_text() or "")
-                    if "SOLD OUT" in page_text or "売り切れ" in page_text or "在庫なし" in page_text:
-                        result["status"] = "sold"
-                        field_sources["status"] = "css"
+                    field_sources["status"] = "css"
 
-                if result.get("title"):
-                    return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
+            if result.get("title"):
+                return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
 
     product_jsonld = _extract_product_jsonld(page)
     if product_jsonld:
@@ -351,6 +359,15 @@ def _parse_detail_page(page, url: str) -> dict:
     if title:
         result["title"] = title
         field_sources["title"] = title_source
+
+    if not result.get("title"):
+        # Try JP title as well
+        jp_title_nodes = page.css("h2.product-name-ja, p.product-name-jp")
+        if jp_title_nodes:
+            jp_title = str(jp_title_nodes[0].text or "").strip()
+            if jp_title:
+                result["title"] = jp_title
+                field_sources["title"] = "css"
 
     if not result.get("title"):
         return {}

@@ -648,7 +648,7 @@ def scrape_item_detail(url: str, driver=None):
             logger.warning("Mercari payload capture failed for %s: %s", url, exc)
 
     try:
-        page = fetch_dynamic(url, headless=True, network_idle=False)
+        page = fetch_dynamic(url, headless=True, network_idle=True)
     except Exception as e:
         if use_payload and _has_usable_payload_item(payload_item):
             payload_item = dict(payload_item)
