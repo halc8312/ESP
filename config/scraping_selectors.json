@@ -19,12 +19,24 @@
         },
         "general": {
             "title": [
+                "[data-testid='name']",
                 "h1"
             ],
             "price": [
-                "[data-testid='price']"
+                "[data-testid='price']",
+                "span.merPrice"
+            ],
+            "description": [
+                "[data-testid='description']"
+            ],
+            "status_badges": [
+                "[data-testid='sold-out-badge']"
+            ],
+            "checkout_button": [
+                "[data-testid='checkout-button']"
             ],
             "images": [
+                "[data-testid^='image-'] img",
                 "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']",
                 "img[data-src*='static.mercdn.net'][data-src*='/item/'][data-src*='/photos/']",
                 "img[data-lazy*='static.mercdn.net'][data-lazy*='/item/'][data-lazy*='/photos/']",

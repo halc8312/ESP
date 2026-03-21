@@ -349,11 +349,13 @@ def _extract_meta_image(page) -> list:
 
 
 def _extract_title(page, product_jsonld: Optional[dict]) -> str:
-    title_nodes = _safe_css(page, "h1")
-    if title_nodes:
-        title = _node_text(title_nodes[0])
-        if title:
-            return title
+    selectors = get_selectors("mercari", "general", "title") or ["[data-testid='name']", "h1"]
+    for selector in selectors:
+        nodes = _safe_css(page, selector)
+        if nodes:
+            title = _node_text(nodes[0])
+            if title:
+                return title
 
     if isinstance(product_jsonld, dict):
         raw_name = product_jsonld.get("name")
@@ -367,7 +369,15 @@ def _extract_title(page, product_jsonld: Optional[dict]) -> str:
     return ""
 
 
-def _extract_description(body_text: str) -> str:
+def _extract_description(page, body_text: str) -> str:
+    selectors = get_selectors("mercari", "general", "description") or ["[data-testid='description']"]
+    for selector in selectors:
+        nodes = _safe_css(page, selector)
+        if nodes:
+            text = _node_text(nodes[0])
+            if text:
+                return text
+
     if not body_text or "商品の説明" not in body_text:
         return ""
 
@@ -662,6 +672,25 @@ def _extract_status(page, body_text: str, availability: str, deleted: bool) -> t
         reasons.append("jsonld-in-stock")
         return "on_sale", reasons
 
+    badges = get_selectors("mercari", "general", "status_badges") or ["[data-testid='sold-out-badge']"]
+    for badge in badges:
+        if _safe_css(page, badge):
+            reasons.append("sold-badge")
+            return "sold", reasons
+
+    button_selectors = get_selectors("mercari", "general", "checkout_button") or ["[data-testid='checkout-button']"]
+    for sel in button_selectors:
+        for button in _safe_css(page, sel):
+            button_text = _node_text(button)
+            disabled = _node_attr(button, "disabled")
+            aria_disabled = _node_attr(button, "aria-disabled").lower()
+            if disabled or aria_disabled == "true" or "売り切れ" in button_text:
+                reasons.append("checkout-button-disabled")
+                return "sold", reasons
+            if any(marker in button_text for marker in _ACTIVE_BUTTON_MARKERS) or "購入" in button_text:
+                reasons.append("checkout-button-enabled")
+                return "on_sale", reasons
+
     for button in _safe_css(page, "button"):
         button_text = _node_text(button)
         if not button_text:
@@ -784,7 +813,7 @@ def parse_mercari_item_page(page, url: str) -> tuple[dict, dict]:
             status = "deleted" if page_type == "deleted_detail" else "unknown"
         price_source = "none"
 
-    description = _extract_description(body_text)
+    description = _extract_description(page, body_text)
     image_urls, image_source = _extract_image_urls(page, product_jsonld)
     variants = _extract_variants(page, price)
 
