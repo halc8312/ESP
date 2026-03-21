@@ -736,14 +736,21 @@ async def _scrape_search_async(
         try:
             print(f"DEBUG: Navigating to {search_url}")
             await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(2000) # 初期ロード待機
+            try:
+                # Wait up to 10 seconds for at least one item link to render
+                await page.wait_for_selector("a[data-testid='thumbnail-link'], a[href*='/item/']", timeout=10000)
+            except Exception:
+                print("DEBUG: Timeout waiting for item links. The page might be blocked or empty.")
+            await page.wait_for_timeout(1000) # 追加待機
             
             item_urls = []
             seen_urls = set()
             
             for scroll_count in range(max_scroll * 2):
                 # 現在表示されているリンクを収集（/item/ あるいはテストデータ等）
-                links = await page.query_selector_all("a[href*='/item/']")
+                links = await page.query_selector_all("a[data-testid='thumbnail-link']")
+                if not links:
+                    links = await page.query_selector_all("a[href*='/item/']")
                 if not links:
                     links = await page.query_selector_all("li[data-testid='item-cell'] a")
                     
@@ -766,7 +773,9 @@ async def _scrape_search_async(
                 await page.wait_for_timeout(2000)  # 2秒待機（新アイテム読み込み）
                 
                 # スクロール後に新しいリンクが増えていない場合は終了
-                links_after = await page.query_selector_all("a[href*='/item/']")
+                links_after = await page.query_selector_all("a[data-testid='thumbnail-link']")
+                if not links_after:
+                    links_after = await page.query_selector_all("a[href*='/item/']")
                 if not links_after:
                      links_after = await page.query_selector_all("li[data-testid='item-cell'] a")
                 if len(links_after) <= len(links):
