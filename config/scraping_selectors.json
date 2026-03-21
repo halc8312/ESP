@@ -25,7 +25,12 @@
                 "[data-testid='price']"
             ],
             "images": [
-                "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']"
+                "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']",
+                "img[data-src*='static.mercdn.net'][data-src*='/item/'][data-src*='/photos/']",
+                "img[data-lazy*='static.mercdn.net'][data-lazy*='/item/'][data-lazy*='/photos/']",
+                "img[data-lazy-src*='static.mercdn.net'][data-lazy-src*='/item/'][data-lazy-src*='/photos/']",
+                "img[srcset*='static.mercdn.net'][srcset*='/item/'][srcset*='/photos/']",
+                "source[srcset*='static.mercdn.net'][srcset*='/item/'][srcset*='/photos/']"
             ]
         },
         "search": {

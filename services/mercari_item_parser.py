@@ -28,7 +28,13 @@ _ACTIVE_BUTTON_MARKERS = ("購入手続きへ", "購入する", "Buy this item")
 _SOLD_MARKERS = ("売り切れ", "売り切れました", "SOLD")
 _PRODUCT_IMAGE_FALLBACK = [
     "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']",
+    "img[data-src*='static.mercdn.net'][data-src*='/item/'][data-src*='/photos/']",
+    "img[data-lazy*='static.mercdn.net'][data-lazy*='/item/'][data-lazy*='/photos/']",
+    "img[data-lazy-src*='static.mercdn.net'][data-lazy-src*='/item/'][data-lazy-src*='/photos/']",
+    "img[srcset*='static.mercdn.net'][srcset*='/item/'][srcset*='/photos/']",
+    "source[srcset*='static.mercdn.net'][srcset*='/item/'][srcset*='/photos/']",
 ]
+_PLACEHOLDER_IMAGE_MARKERS = ("data:image", "placeholder", "blank", "transparent", "pixel")
 
 
 def _is_nonempty_text(value) -> bool:
@@ -67,6 +73,74 @@ def _node_attr(node, attr: str) -> str:
     attrib = getattr(node, "attrib", {}) or {}
     value = attrib.get(attr, "")
     return value.strip() if isinstance(value, str) else ""
+
+
+def _normalize_image_url(url: str) -> str:
+    normalized = url.strip().strip("'\"") if isinstance(url, str) else ""
+    if normalized.startswith("//"):
+        normalized = f"https:{normalized}"
+    return normalized
+
+
+def _is_placeholder_image_url(url: str) -> bool:
+    normalized = (url or "").lower()
+    if normalized.startswith("data:"):
+        return True
+    return any(marker in normalized for marker in _PLACEHOLDER_IMAGE_MARKERS)
+
+
+def _is_mercari_product_image_url(url: str) -> bool:
+    normalized = (url or "").lower()
+    return (
+        normalized.startswith("http")
+        and "mercdn.net" in normalized
+        and "/item/" in normalized
+        and "/photos/" in normalized
+    )
+
+
+def _append_unique_image_url(image_urls: list, url: str) -> None:
+    normalized = _normalize_image_url(url)
+    if not normalized or _is_placeholder_image_url(normalized):
+        return
+    if not _is_mercari_product_image_url(normalized):
+        return
+    if normalized not in image_urls:
+        image_urls.append(normalized)
+
+
+def _parse_srcset_urls(raw_value: str) -> list:
+    urls = []
+    if not isinstance(raw_value, str):
+        return urls
+
+    for candidate in raw_value.split(","):
+        parts = candidate.strip().split()
+        if not parts:
+            continue
+        normalized = _normalize_image_url(parts[0])
+        if normalized and normalized not in urls:
+            urls.append(normalized)
+    return urls
+
+
+def _extract_node_image_url(node) -> str:
+    for attr in ("data-src", "data-lazy", "data-lazy-src", "data-original", "data-image", "data-image-url"):
+        candidate = _normalize_image_url(_node_attr(node, attr))
+        if candidate and not _is_placeholder_image_url(candidate) and _is_mercari_product_image_url(candidate):
+            return candidate
+
+    for attr in ("srcset", "data-srcset"):
+        srcset_urls = _parse_srcset_urls(_node_attr(node, attr))
+        for candidate in reversed(srcset_urls):
+            if not _is_placeholder_image_url(candidate) and _is_mercari_product_image_url(candidate):
+                return candidate
+
+    candidate = _normalize_image_url(_node_attr(node, "src"))
+    if candidate and not _is_placeholder_image_url(candidate) and _is_mercari_product_image_url(candidate):
+        return candidate
+
+    return ""
 
 
 def _extract_page_title(page) -> str:
@@ -238,6 +312,42 @@ def _extract_jsonld_availability(product: Optional[dict]) -> str:
     return ""
 
 
+def _collect_jsonld_images(product_jsonld: Optional[dict]) -> list:
+    if not isinstance(product_jsonld, dict):
+        return []
+
+    image_urls = []
+    raw_images = product_jsonld.get("image")
+    if isinstance(raw_images, str):
+        _append_unique_image_url(image_urls, raw_images)
+    elif isinstance(raw_images, dict):
+        for key in ("url", "contentUrl", "image", "src"):
+            raw_url = raw_images.get(key)
+            if isinstance(raw_url, str):
+                _append_unique_image_url(image_urls, raw_url)
+    elif isinstance(raw_images, list):
+        for image in raw_images:
+            if isinstance(image, str):
+                _append_unique_image_url(image_urls, image)
+            elif isinstance(image, dict):
+                for key in ("url", "contentUrl", "image", "src"):
+                    raw_url = image.get(key)
+                    if isinstance(raw_url, str):
+                        _append_unique_image_url(image_urls, raw_url)
+                        break
+    return image_urls
+
+
+def _extract_meta_image(page) -> list:
+    image_urls = []
+    for selector in ("meta[property='og:image']", "meta[name='twitter:image']"):
+        for node in _safe_css(page, selector):
+            _append_unique_image_url(image_urls, _node_attr(node, "content"))
+        if image_urls:
+            return image_urls
+    return image_urls
+
+
 def _extract_title(page, product_jsonld: Optional[dict]) -> str:
     title_nodes = _safe_css(page, "h1")
     if title_nodes:
@@ -270,15 +380,30 @@ def _extract_description(body_text: str) -> str:
     return after[:end_pos].strip()
 
 
-def _extract_image_urls(page) -> list:
-    selectors = get_selectors("mercari", "general", "images") or _PRODUCT_IMAGE_FALLBACK
+def _extract_image_urls(page, product_jsonld: Optional[dict]) -> tuple[list, str]:
+    selectors = list(get_selectors("mercari", "general", "images") or [])
+    for fallback_selector in _PRODUCT_IMAGE_FALLBACK:
+        if fallback_selector not in selectors:
+            selectors.append(fallback_selector)
+
     image_urls = []
     for selector in selectors:
-        for img in _safe_css(page, selector):
-            src = _node_attr(img, "src")
-            if src and src not in image_urls:
-                image_urls.append(src)
-    return image_urls
+        for image_node in _safe_css(page, selector):
+            image_url = _extract_node_image_url(image_node)
+            if image_url and image_url not in image_urls:
+                image_urls.append(image_url)
+    if image_urls:
+        return image_urls, "dom"
+
+    jsonld_images = _collect_jsonld_images(product_jsonld)
+    if jsonld_images:
+        return jsonld_images, "jsonld"
+
+    meta_images = _extract_meta_image(page)
+    if meta_images:
+        return meta_images, "meta"
+
+    return [], ""
 
 
 def _extract_variants(page, price: Optional[int]) -> list:
@@ -660,7 +785,7 @@ def parse_mercari_item_page(page, url: str) -> tuple[dict, dict]:
         price_source = "none"
 
     description = _extract_description(body_text)
-    image_urls = _extract_image_urls(page)
+    image_urls, image_source = _extract_image_urls(page, product_jsonld)
     variants = _extract_variants(page, price)
 
     item.update(
@@ -679,7 +804,7 @@ def parse_mercari_item_page(page, url: str) -> tuple[dict, dict]:
         "price": price_source,
         "status": "jsonld" if availability else "dom",
         "description": "dom" if description else "",
-        "image_urls": "dom" if image_urls else "",
+        "image_urls": image_source if image_urls else "",
         "variants": "dom" if variants else "",
     }
     strategy = "jsonld" if price_source == "jsonld" else "meta" if price_source == "meta" else "dom"
