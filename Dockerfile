@@ -39,4 +39,4 @@ RUN useradd -m myuser
 USER myuser
 
 # ScrapeQueue はプロセス内シングルトンのため worker は 1 を維持する
-CMD gunicorn --worker-class gthread --workers 1 --threads 8 --max-requests 0 --timeout 600 --bind 0.0.0.0:${PORT:-10000} app:app
+CMD gunicorn --worker-class gthread --workers 1 --threads 8 --max-requests 0 --timeout 600 --bind 0.0.0.0:${PORT:-10000} wsgi:app

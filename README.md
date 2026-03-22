@@ -252,7 +252,7 @@ flask run --port 5000
 # 本番相当の起動（シングルワーカー必須）
 gunicorn --worker-class gthread --workers 1 --threads 8 \
          --max-requests 0 --timeout 600 \
-         --bind 0.0.0.0:5000 app:app
+         --bind 0.0.0.0:5000 wsgi:app
 ```
 
 ---

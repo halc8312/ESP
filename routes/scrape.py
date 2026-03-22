@@ -18,7 +18,11 @@ import yahuoku_db
 import snkrdunk_db
 from services.product_service import save_scraped_items_to_db
 from services.filter_service import filter_excluded_items, filter_items_by_price, normalize_price_bounds
-from services.scrape_queue import get_queue
+from services.queue_backend import get_queue_backend
+
+
+# Backward-compatible alias for tests that monkeypatch routes.scrape.get_queue.
+get_queue = get_queue_backend
 
 
 scrape_bp = Blueprint('scrape', __name__)

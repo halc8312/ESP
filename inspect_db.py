@@ -1,5 +1,5 @@
-
-from app import SessionLocal, Product, Variant
+from database import SessionLocal
+from models import Product, Variant
 session_db = SessionLocal()
 try:
     print("--- ADIDAS ---")

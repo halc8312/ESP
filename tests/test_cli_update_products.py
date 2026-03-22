@@ -1,6 +1,5 @@
 from datetime import datetime
 
-from app import app
 from models import Product, User
 
 
@@ -12,7 +11,7 @@ def _create_user(db_session, username):
     return user
 
 
-def test_update_products_dry_run_uses_site_specific_scraper(client, db_session, monkeypatch):
+def test_update_products_dry_run_uses_site_specific_scraper(app, client, db_session, monkeypatch):
     user = _create_user(db_session, 'cli_update_products_user')
     product = Product(
         user_id=user.id,

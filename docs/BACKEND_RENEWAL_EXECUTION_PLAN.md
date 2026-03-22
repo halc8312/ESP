@@ -250,6 +250,149 @@ Required baseline and ongoing metrics:
 - timeout / failure rate
 - selector heal success / failure count
 
+### 5.6 Deployment budget guardrail
+
+Budget constraint for paid Render infrastructure:
+
+- recurring Render cost should stay at or below `$80/month` unless explicitly re-approved
+- pricing references in this section are based on Render public pricing checked on `2026-03-23` and must be re-verified before actual purchase/deploy
+
+Default first paid Render topology:
+
+- `Web Service`: `Starter` (`$7/month`)
+- `Background Worker`: `Standard` (`$25/month`)
+- `Render Postgres`: `Basic-1gb` (`$19/month`)
+- `Render Key Value`: `Starter` (`$10/month`)
+
+Default recurring total before optional disk and workspace-seat charges:
+
+- `$61/month`
+
+Budget rules:
+
+- keep `Background Worker` at `Standard` as the default minimum paid worker tier because browser-backed scraping is expected to need the extra memory headroom
+- keep `Web Service` on `Starter` for the initial paid deployment unless measured KPI or memory evidence proves that `Standard` is required
+- do not introduce a dedicated paid `Cron Job` by default; prefer worker-side scheduling first if it can be made operationally safe
+- if filesystem-backed image/logo storage still exists at deployment time, allow only a small `Persistent Disk` attached to `Web` and keep the resulting monthly total within the `$80` budget ceiling
+- any change that would move recurring cost above `$80/month` requires explicit approval before implementation or provisioning
+
+Reason:
+
+- this preserves a production-capable split architecture while keeping paid Render usage constrained until real load data proves a higher tier is justified
+
+### 5.7 Local-first validation policy
+
+Selected:
+
+- complete `Arc 2` and `Arc 3` functional verification locally before provisioning paid Render services by default
+- use local `Flask Web + Worker + PostgreSQL + Redis/Valkey` as the standard integration environment for queue/state changes
+- treat Render as the final environment-verification target rather than the primary development loop
+
+This policy means:
+
+- `Arc 1` work is completed and verified locally first
+- `Arc 2 / Move B1-B5` should be implemented and tested locally with migration and queue integration tests
+- `Arc 3 / Move C1-C3` should be validated locally for worker entrypoint, browser lifecycle, scheduler ownership, and API compatibility before `Move C4`
+
+What must be locally testable before paid Render rollout:
+
+- application factory/bootstrap separation
+- Alembic migrations on SQLite and PostgreSQL
+- durable `scrape_jobs` API behavior
+- queue backend adapter behavior for `inmemory` and `rq`
+- worker entrypoint boot and scrape-task execution
+- browser pool lifecycle and crash-recovery behavior
+- scheduler relocation behavior
+- export/admin compatibility regressions
+
+What still requires final Render verification:
+
+- exact service start commands and deploy hooks
+- Render health checks and restart behavior
+- actual memory fit of the chosen paid instance sizes
+- private-networking and environment wiring
+- persistent-disk semantics if a disk is still required
+
+### 5.8 Cost activation stages
+
+Planned cost timing:
+
+- `Arc 1`: local-only execution target, incremental Render cost = `$0`
+- `Arc 2`: local-only execution target by default, incremental Render cost = `$0`
+- `Arc 3 / Move C1-C3`: local-first execution target by default, incremental Render cost = `$0`
+- `Arc 3 / Move C4`: first paid Render activation point
+
+Default first paid activation at `Move C4`:
+
+- `Web Service Starter`: `$7/month`
+- `Background Worker Standard`: `$25/month`
+- `Render Postgres Basic-1gb`: `$19/month`
+- `Render Key Value Starter`: `$10/month`
+- optional small `Persistent Disk` on `Web` only if filesystem-backed media is still present
+
+Approval gates before increasing cost:
+
+- adding a dedicated paid `Cron Job`
+- upgrading `Web` from `Starter` to `Standard`
+- increasing `Key Value` beyond `Starter`
+- adding a large persistent disk
+- choosing a paid Render workspace tier if a free workspace is otherwise sufficient
+
+### 5.9 Mixed-change redeploy safety policy
+
+This plan assumes that day-to-day site-structure fixes may need to ship in the same deploy as Arc work.
+
+Allowed target state:
+
+- scraper/site fixes and backend-renewal changes may be released together without user-visible breakage
+- repeated redeploys during Arc execution should not require freezing normal site-maintenance work
+
+Required compatibility rules for mixed deploys:
+
+- keep `Product`, `Variant`, and `ProductSnapshot` persistence contracts stable across all Arcs
+- keep `/api/scrape/status/<job_id>` and `/api/scrape/jobs` response shapes backward compatible while internal queue/state implementation changes
+- keep preview flow and export output contracts backward compatible unless a later explicit plan revision approves contract changes
+- ensure site-specific scraper fixes normalize into the existing persistence contract rather than changing downstream storage shape directly
+
+Schema-change rules:
+
+- use additive `expand` changes first: new tables, nullable columns, indexes, and compatibility readers
+- do not combine destructive schema changes with the same deploy that flips runtime behavior
+- reserve `contract` cleanup steps such as dropping old columns, removing compatibility code, or hard renames for a later deploy after verification
+- every migration used during Arc execution must support old-code/new-code overlap for at least one deploy window
+
+Runtime cutover rules:
+
+- new queue/state backends must be introduced behind feature flags or adapters
+- if both old and new paths can coexist safely, prefer dual-read or compatibility-read behavior before switching writes
+- scheduler ownership changes must not be coupled to unrelated scraper fixes unless the scheduler path has its own verification evidence
+- browser-runtime ownership changes must not require API contract changes
+
+Redeploy-safety milestone:
+
+- before `Arc 2 / Move B2-B5` is complete, mixed deploys are operationally riskier because in-memory job state can still be lost on restart
+- after durable job state, Alembic-driven schema management, and compatibility bridge cutover are in place, mixed deploys become the default supported workflow
+
+Recommended mixed deploy sequence:
+
+1. ship additive migration or compatibility storage changes
+2. ship code that can operate against both old and new state shapes
+3. enable the new backend or behavior via feature flag or runtime selection
+4. observe compatibility, queue health, and exports
+5. remove old code only in a later cleanup deploy
+
+Minimum verification before any mixed deploy:
+
+- pre-arc compatibility snapshots
+- scrape preview-flow tests
+- export golden tests
+- tests covering the specific site scraper that changed
+- queue/status compatibility checks for the active backend mode
+
+Rollback rule:
+
+- every mixed deploy must preserve a path to return to the previous queue/runtime mode without requiring emergency destructive schema rollback
+
 ## 6. Pre-Arc Checklist
 
 Before `Arc 1` starts, capture the following artifacts:
@@ -587,6 +730,7 @@ Concrete changes:
 
 - Remove scheduler ownership from the Web runtime.
 - Move patrol and trash-purge execution to worker-side scheduling or dedicated cron execution.
+- Prefer worker-side scheduling for the initial paid deployment path to avoid adding a dedicated paid `Cron Job` unless reliability evidence shows a separate cron service is necessary.
 - Prevent duplicate scheduling across Render services.
 
 Expected effect:
@@ -607,6 +751,9 @@ Concrete changes:
 - Split Web and Worker start commands.
 - Keep browser/runtime dependencies only where needed.
 - Configure Redis and PostgreSQL environment wiring for Render.
+- Target the initial paid Render shape defined in `5.6 Deployment budget guardrail`.
+- Keep the first paid deployment at or below the `$80/month` recurring budget ceiling.
+- If filesystem-backed image/logo storage still exists, attach only a small `Persistent Disk` to `Web` and treat disk removal or storage redesign as follow-up optimization work rather than a blocker to `Move C4`.
 
 Expected effect:
 
@@ -696,6 +843,15 @@ Control:
 
 - Add dedupe key, cooldown window, severity level, and rate limiting to alert dispatch.
 - Ensure notifier failure never fails the main scrape flow.
+
+### Risk 6: Mixed deploy regression during active Arc work
+
+Control:
+
+- use additive migrations, compatibility adapters, and feature flags for all queue/runtime cutovers
+- keep scraper fixes normalized to the existing persistence contract
+- avoid destructive schema cleanup in the same deploy as scraper or runtime behavior changes
+- require the mixed-deploy verification set before rollout
 
 ## 13. First Implementation Step After Approval
 

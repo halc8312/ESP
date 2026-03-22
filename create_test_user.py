@@ -1,8 +1,9 @@
-from app import app
+from app import create_cli_app
 from database import SessionLocal
 from models import User
 
 def create_admin():
+    app = create_cli_app()
     with app.app_context():
         session = SessionLocal()
         try:
