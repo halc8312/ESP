@@ -230,3 +230,45 @@ class CatalogPageView(Base):
     product_id = Column(Integer, nullable=True)
 
     price_list = relationship("PriceList", back_populates="page_views")
+
+
+class ScrapeJob(Base):
+    __tablename__ = "scrape_jobs"
+
+    job_id = Column(String(64), primary_key=True)
+    logical_job_id = Column(String(64), index=True)
+    parent_job_id = Column(String(64), ForeignKey("scrape_jobs.job_id"), nullable=True)
+
+    status = Column(String(32), nullable=False, index=True)
+    site = Column(String(32), nullable=False, index=True)
+    mode = Column(String(32), nullable=False)
+    requested_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
+    request_payload = Column(Text)
+    progress_current = Column(Integer)
+    progress_total = Column(Integer)
+    result_summary = Column(Text)
+    error_message = Column(Text)
+    error_payload = Column(Text)
+    preview_payload = Column(Text)
+
+    started_at = Column(DateTime)
+    finished_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    user = relationship("User")
+    parent = relationship("ScrapeJob", remote_side=[job_id], backref="attempts")
+    events = relationship("ScrapeJobEvent", back_populates="job", cascade="all, delete-orphan")
+
+
+class ScrapeJobEvent(Base):
+    __tablename__ = "scrape_job_events"
+
+    id = Column(Integer, primary_key=True)
+    job_id = Column(String(64), ForeignKey("scrape_jobs.job_id"), nullable=False, index=True)
+    event_type = Column(String(64), nullable=False)
+    payload = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    job = relationship("ScrapeJob", back_populates="events")

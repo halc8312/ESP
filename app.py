@@ -10,7 +10,7 @@ from flask_apscheduler import APScheduler
 from flask_login import LoginManager
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from database import SessionLocal, init_db
+from database import SessionLocal, bootstrap_schema
 from models import User
 from services.image_service import IMAGE_STORAGE_PATH
 
@@ -29,28 +29,33 @@ class SchedulerConfig:
 
 RUNTIME_DEFAULTS: dict[str, dict[str, Any]] = {
     "base": {
-        "RUN_LEGACY_STARTUP_MIGRATIONS": False,
-        "INIT_DB_ON_STARTUP": False,
+        "RUN_SCHEMA_BOOTSTRAP_ON_STARTUP": False,
+        "SCHEMA_BOOTSTRAP_MODE": "disabled",
+        "ENABLE_LEGACY_SCHEMA_PATCHSET": False,
         "ENABLE_SCHEDULER": False,
     },
     "web": {
-        "RUN_LEGACY_STARTUP_MIGRATIONS": True,
-        "INIT_DB_ON_STARTUP": True,
+        "RUN_SCHEMA_BOOTSTRAP_ON_STARTUP": True,
+        "SCHEMA_BOOTSTRAP_MODE": os.environ.get("SCHEMA_BOOTSTRAP_MODE", "auto"),
+        "ENABLE_LEGACY_SCHEMA_PATCHSET": True,
         "ENABLE_SCHEDULER": True,
     },
     "cli": {
-        "RUN_LEGACY_STARTUP_MIGRATIONS": True,
-        "INIT_DB_ON_STARTUP": True,
+        "RUN_SCHEMA_BOOTSTRAP_ON_STARTUP": True,
+        "SCHEMA_BOOTSTRAP_MODE": os.environ.get("SCHEMA_BOOTSTRAP_MODE", "auto"),
+        "ENABLE_LEGACY_SCHEMA_PATCHSET": True,
         "ENABLE_SCHEDULER": False,
     },
     "worker": {
-        "RUN_LEGACY_STARTUP_MIGRATIONS": False,
-        "INIT_DB_ON_STARTUP": False,
+        "RUN_SCHEMA_BOOTSTRAP_ON_STARTUP": False,
+        "SCHEMA_BOOTSTRAP_MODE": "disabled",
+        "ENABLE_LEGACY_SCHEMA_PATCHSET": False,
         "ENABLE_SCHEDULER": False,
     },
     "test": {
-        "RUN_LEGACY_STARTUP_MIGRATIONS": False,
-        "INIT_DB_ON_STARTUP": False,
+        "RUN_SCHEMA_BOOTSTRAP_ON_STARTUP": False,
+        "SCHEMA_BOOTSTRAP_MODE": "disabled",
+        "ENABLE_LEGACY_SCHEMA_PATCHSET": False,
         "ENABLE_SCHEDULER": False,
     },
 }
@@ -302,12 +307,12 @@ def initialize_app_runtime(app: Flask) -> Flask:
     if app.extensions.get("esp_runtime_initialized"):
         return app
 
-    if app.config.get("RUN_LEGACY_STARTUP_MIGRATIONS"):
-        run_legacy_startup_migrations()
-
-    if app.config.get("INIT_DB_ON_STARTUP"):
+    if app.config.get("RUN_SCHEMA_BOOTSTRAP_ON_STARTUP"):
         with app.app_context():
-            init_db()
+            applied_schema_mode = bootstrap_schema(app.config.get("SCHEMA_BOOTSTRAP_MODE", "auto"))
+            app.extensions["esp_schema_bootstrap_mode"] = applied_schema_mode
+            if applied_schema_mode == "legacy" and app.config.get("ENABLE_LEGACY_SCHEMA_PATCHSET"):
+                run_legacy_startup_migrations()
 
     if app.config.get("ENABLE_SCHEDULER"):
         start_scheduler(app)

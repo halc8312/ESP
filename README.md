@@ -246,7 +246,10 @@ patchright install chromium
 # 3. 管理者ユーザーの作成
 flask add-user
 
-# 4. 開発サーバー起動
+# 4. DB マイグレーション適用
+py -3 -m alembic upgrade head
+
+# 5. 開発サーバー起動
 flask run --port 5000
 
 # 本番相当の起動（シングルワーカー必須）
@@ -263,6 +266,7 @@ gunicorn --worker-class gthread --workers 1 --threads 8 \
 |--------|----------|------|
 | `SECRET_KEY` | なし（必須） | Flask セッション署名キー |
 | `DATABASE_URL` | `sqlite:///mercari.db` | DB 接続文字列 |
+| `SCHEMA_BOOTSTRAP_MODE` | `auto` (`web`/`cli`) | `alembic` 優先で schema を適用。Alembic 未導入時は `legacy` にフォールバック |
 | `PORT` | `10000` | Gunicorn バインドポート |
 | `IMAGE_STORAGE_PATH` | `static/images` | ダウンロード画像の保存先 |
 | `MERCARI_USE_NETWORK_PAYLOAD` | `false` | メルカリ API インターセプト有効化 |
