@@ -1,6 +1,6 @@
 # Pre-Arc Checklist Status
 
-- Updated: 2026-03-18
+- Updated: 2026-03-24
 - Scope: local, no-additional-cost checklist hardening before `Arc 1 / Move A1`
 
 ## Automated now
@@ -84,8 +84,8 @@ Relevant tests:
 
 ## Known local warnings
 
-- `services/product_service.py` still emits `datetime.utcnow()` deprecation warnings during some test runs
-- this is tracked as non-blocking debt for `Arc 1`, but should be cleaned up before or during `Arc 2`
+- `datetime.utcnow()` deprecation call sites in runtime code and app tests were cleaned up on 2026-03-24 via `time_utils.utc_now()`
+- current remaining local warnings are outside that scope, such as third-party parser warnings during some test runs
 
 ## Intentionally deferred
 

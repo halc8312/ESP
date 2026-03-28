@@ -1,13 +1,13 @@
 """
 API routes for scraping job status polling and lightweight product updates.
 """
-from datetime import datetime
 from flask import Blueprint, jsonify, request, url_for
 from flask_login import login_required, current_user
 
 from database import SessionLocal
 from models import Product
 from services.queue_backend import get_queue_backend, serialize_scrape_job_for_api
+from time_utils import utc_now
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
 
@@ -231,7 +231,7 @@ def bulk_price_update():
                 continue
 
             product.selling_price = new_price
-            product.updated_at = datetime.utcnow()
+            product.updated_at = utc_now()
             updated_products.append({"id": product.id, "selling_price": new_price})
 
         session_db.commit()

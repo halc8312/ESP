@@ -5,6 +5,7 @@ Tests all routes after the app.py split to ensure functionality is preserved.
 import pytest
 from datetime import datetime
 from models import User, Shop, Product, Variant, ProductSnapshot, DescriptionTemplate, PriceList, PriceListItem, CatalogPageView
+from time_utils import utc_now
 
 
 class TestAuthenticationRoutes:
@@ -440,8 +441,8 @@ class TestPriceListRoutes:
             last_price=3200,
             last_status='on_sale',
             status='active',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product)
         db_session.commit()
@@ -462,7 +463,7 @@ class TestPriceListRoutes:
             status='on_sale',
             description='Catalog description',
             image_urls='https://img.example.com/catalog-layout.jpg|https://img.example.com/catalog-layout-2.jpg',
-            scraped_at=datetime.utcnow()
+            scraped_at=utc_now()
         )
         db_session.add(snapshot)
 
@@ -733,8 +734,8 @@ class TestProductRoutes:
             last_title='Test Product',
             last_price=1000,
             last_status='on_sale',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product)
         db_session.commit()
@@ -769,8 +770,8 @@ class TestProductRoutes:
             site='mercari',
             source_url='https://jp.mercari.com/item/m99999',
             last_title='Test',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product)
         db_session.commit()
@@ -798,8 +799,8 @@ class TestProductRoutes:
             site='mercari',
             source_url='https://jp.mercari.com/item/m11111',
             last_title='User1 Product',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product)
         db_session.commit()
@@ -991,8 +992,8 @@ class TestProductRoutes:
             site='mercari',
             source_url='https://jp.mercari.com/item/inline-owner',
             last_title='Owner Product',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product)
         db_session.commit()
@@ -1139,8 +1140,8 @@ class TestExportRoutes:
             last_price=2000,
             last_status='on_sale',
             status='active',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product)
         db_session.commit()
@@ -1162,7 +1163,7 @@ class TestExportRoutes:
             price=2000,
             status='on_sale',
             description='Test description',
-            scraped_at=datetime.utcnow()
+            scraped_at=utc_now()
         )
         db_session.add(snapshot)
         db_session.commit()
@@ -1317,8 +1318,8 @@ class TestSessionIsolation:
             site='mercari',
             source_url='https://jp.mercari.com/item/isolation1',
             last_title='User1 Product',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product1)
         db_session.commit()
@@ -1334,8 +1335,8 @@ class TestSessionIsolation:
             site='mercari',
             source_url='https://jp.mercari.com/item/isolation2',
             last_title='User2 Product',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product2)
         db_session.commit()

@@ -6,6 +6,10 @@ does not drift.
 """
 import logging
 
+from services.mercari_browser_fetch import (
+    fetch_mercari_page_via_browser_pool_sync,
+    should_use_mercari_browser_pool_patrol,
+)
 from services.mercari_item_parser import parse_mercari_item_page
 from services.patrol.base_patrol import BasePatrol, PatrolResult
 from services.scraping_client import fetch_dynamic
@@ -18,11 +22,14 @@ class MercariPatrol(BasePatrol):
 
     def fetch(self, url: str, driver=None) -> PatrolResult:
         try:
-            page = fetch_dynamic(
-                url,
-                headless=True,
-                network_idle=False,
-            )
+            if should_use_mercari_browser_pool_patrol():
+                page = fetch_mercari_page_via_browser_pool_sync(url, network_idle=False)
+            else:
+                page = fetch_dynamic(
+                    url,
+                    headless=True,
+                    network_idle=False,
+                )
             item, meta = parse_mercari_item_page(page, url)
             status = self._normalize_status(item.get("status"))
             reason = "; ".join(str(value) for value in meta.get("reasons", []) if value)

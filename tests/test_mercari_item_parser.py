@@ -1,5 +1,7 @@
 import json
+from pathlib import Path
 
+from services.html_page_adapter import HtmlPageAdapter
 from services.mercari_item_parser import parse_mercari_item_page
 
 
@@ -103,3 +105,16 @@ def test_parse_mercari_item_page_falls_back_to_meta_image():
 
     assert item["image_urls"] == [image_url]
     assert meta["field_sources"]["image_urls"] == "meta"
+
+
+def test_parse_mercari_item_page_deleted_fixture_omits_broken_description():
+    fixture_path = Path(__file__).resolve().parents[1] / "mercari_page_dump.html"
+    page_url = "https://jp.mercari.com/item/m71383569733"
+    html = fixture_path.read_text(encoding="utf-8")
+    page = HtmlPageAdapter(html, url=page_url)
+
+    item, meta = parse_mercari_item_page(page, page_url)
+
+    assert meta["page_type"] == "deleted_detail"
+    assert item["status"] == "deleted"
+    assert item["description"] == ""

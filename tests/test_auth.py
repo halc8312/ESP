@@ -2,6 +2,7 @@ import pytest
 from flask import url_for
 from models import User
 from werkzeug.security import generate_password_hash
+import uuid
 
 def test_login_page_loads(client):
     response = client.get('/login')
@@ -17,13 +18,14 @@ def test_index_requires_login(client):
 def test_login_flow(client, db_session):
     # Setup user
     password = "password123"
-    user = User(username="testadmin")
+    username = f"testadmin_{uuid.uuid4().hex[:8]}"
+    user = User(username=username)
     user.set_password(password)
     db_session.add(user)
     db_session.commit()
     
     # Login
-    response = client.post('/login', data={'username': 'testadmin', 'password': password}, follow_redirects=True)
+    response = client.post('/login', data={'username': username, 'password': password}, follow_redirects=True)
     assert response.status_code == 200
     assert response.request.path == "/" # Should be at index
     

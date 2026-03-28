@@ -3,6 +3,7 @@ Flask application assembly and runtime bootstrap helpers.
 """
 import os
 import tempfile
+import threading
 from typing import Any
 
 from flask import Flask, send_from_directory
@@ -33,30 +34,51 @@ RUNTIME_DEFAULTS: dict[str, dict[str, Any]] = {
         "SCHEMA_BOOTSTRAP_MODE": "disabled",
         "ENABLE_LEGACY_SCHEMA_PATCHSET": False,
         "ENABLE_SCHEDULER": False,
+        "REGISTER_BLUEPRINTS": True,
+        "REGISTER_BACKWARD_COMPAT_ALIASES": True,
+        "REGISTER_MEDIA_ROUTE": True,
+        "REGISTER_CLI_COMMANDS": True,
     },
     "web": {
         "RUN_SCHEMA_BOOTSTRAP_ON_STARTUP": True,
         "SCHEMA_BOOTSTRAP_MODE": os.environ.get("SCHEMA_BOOTSTRAP_MODE", "auto"),
         "ENABLE_LEGACY_SCHEMA_PATCHSET": True,
-        "ENABLE_SCHEDULER": True,
+        "ENABLE_SCHEDULER": False,
+        "WEB_SCHEDULER_MODE": os.environ.get("WEB_SCHEDULER_MODE", "auto"),
+        "REGISTER_BLUEPRINTS": True,
+        "REGISTER_BACKWARD_COMPAT_ALIASES": True,
+        "REGISTER_MEDIA_ROUTE": True,
+        "REGISTER_CLI_COMMANDS": True,
     },
     "cli": {
         "RUN_SCHEMA_BOOTSTRAP_ON_STARTUP": True,
         "SCHEMA_BOOTSTRAP_MODE": os.environ.get("SCHEMA_BOOTSTRAP_MODE", "auto"),
         "ENABLE_LEGACY_SCHEMA_PATCHSET": True,
         "ENABLE_SCHEDULER": False,
+        "REGISTER_BLUEPRINTS": True,
+        "REGISTER_BACKWARD_COMPAT_ALIASES": True,
+        "REGISTER_MEDIA_ROUTE": True,
+        "REGISTER_CLI_COMMANDS": True,
     },
     "worker": {
         "RUN_SCHEMA_BOOTSTRAP_ON_STARTUP": False,
         "SCHEMA_BOOTSTRAP_MODE": "disabled",
         "ENABLE_LEGACY_SCHEMA_PATCHSET": False,
         "ENABLE_SCHEDULER": False,
+        "REGISTER_BLUEPRINTS": False,
+        "REGISTER_BACKWARD_COMPAT_ALIASES": False,
+        "REGISTER_MEDIA_ROUTE": False,
+        "REGISTER_CLI_COMMANDS": False,
     },
     "test": {
         "RUN_SCHEMA_BOOTSTRAP_ON_STARTUP": False,
         "SCHEMA_BOOTSTRAP_MODE": "disabled",
         "ENABLE_LEGACY_SCHEMA_PATCHSET": False,
         "ENABLE_SCHEDULER": False,
+        "REGISTER_BLUEPRINTS": True,
+        "REGISTER_BACKWARD_COMPAT_ALIASES": True,
+        "REGISTER_MEDIA_ROUTE": True,
+        "REGISTER_CLI_COMMANDS": True,
     },
 }
 
@@ -159,6 +181,17 @@ def _register_media_route(app: Flask) -> None:
         return send_from_directory(IMAGE_STORAGE_PATH, filename)
 
 
+def _register_health_route(app: Flask) -> None:
+    @app.route("/healthz")
+    def healthz():
+        return {
+            "status": "ok",
+            "runtime_role": app.config.get("ESP_RUNTIME_ROLE", "base"),
+            "queue_backend": str(app.config.get("SCRAPE_QUEUE_BACKEND", "inmemory") or "inmemory").strip().lower(),
+            "scheduler_enabled": bool(app.config.get("ENABLE_SCHEDULER", False)),
+        }
+
+
 def _register_cli_commands(app: Flask) -> None:
     from cli import register_cli_commands as register_app_cli_commands
     from routes.auth import register_cli_commands as register_auth_cli_commands
@@ -173,6 +206,19 @@ def _create_scheduler(app: Flask) -> None:
     app.extensions["esp_scheduler"] = scheduler
 
 
+def _resolve_web_scheduler_enabled(app: Flask) -> bool:
+    mode = str(app.config.get("WEB_SCHEDULER_MODE", "auto") or "auto").strip().lower()
+    if mode == "enabled":
+        return True
+    if mode == "disabled":
+        return False
+    if mode != "auto":
+        raise ValueError(f"Unsupported WEB_SCHEDULER_MODE: {mode}")
+
+    queue_backend = str(app.config.get("SCRAPE_QUEUE_BACKEND", "inmemory") or "inmemory").strip().lower()
+    return queue_backend == "inmemory"
+
+
 def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | None = None) -> Flask:
     app = Flask(__name__)
     app.config.from_object(SchedulerConfig())
@@ -182,10 +228,23 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
             "ESP_RUNTIME_ROLE": runtime_role,
             "SECRET_KEY": os.environ.get("SECRET_KEY", "dev-secret-key-change-this"),
             "SCRAPE_QUEUE_BACKEND": os.environ.get("SCRAPE_QUEUE_BACKEND", "inmemory"),
+            "REDIS_URL": os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
+            "SCRAPE_QUEUE_NAME": os.environ.get("SCRAPE_QUEUE_NAME", "scrape"),
+            "RQ_BURST": os.environ.get("RQ_BURST", ""),
+            "RQ_WITH_SCHEDULER": os.environ.get("RQ_WITH_SCHEDULER", ""),
+            "SCRAPE_JOB_HEARTBEAT_SECONDS": os.environ.get("SCRAPE_JOB_HEARTBEAT_SECONDS", "30"),
+            "SCRAPE_JOB_STALL_TIMEOUT_SECONDS": os.environ.get("SCRAPE_JOB_STALL_TIMEOUT_SECONDS", "900"),
+            "WORKER_ENABLE_SCHEDULER": os.environ.get("WORKER_ENABLE_SCHEDULER", ""),
+            "SCHEDULER_LOCK_BACKEND": os.environ.get("SCHEDULER_LOCK_BACKEND", "auto"),
+            "SCHEDULER_LOCK_KEY": os.environ.get("SCHEDULER_LOCK_KEY", "esp:scheduler:lock"),
+            "SCHEDULER_LOCK_TTL_SECONDS": os.environ.get("SCHEDULER_LOCK_TTL_SECONDS", "120"),
+            "WARM_BROWSER_POOL": os.environ.get("WARM_BROWSER_POOL", ""),
         }
     )
     if config_overrides:
         app.config.update(config_overrides)
+    if runtime_role == "web" and not (config_overrides and "ENABLE_SCHEDULER" in config_overrides):
+        app.config["ENABLE_SCHEDULER"] = _resolve_web_scheduler_enabled(app)
 
     app.secret_key = app.config["SECRET_KEY"]
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
@@ -194,10 +253,15 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
     login_manager.login_view = "auth.login"
 
     _create_scheduler(app)
-    _register_blueprints(app)
-    _register_backward_compat_aliases(app)
-    _register_media_route(app)
-    _register_cli_commands(app)
+    if app.config.get("REGISTER_BLUEPRINTS", True):
+        _register_blueprints(app)
+    if app.config.get("REGISTER_BACKWARD_COMPAT_ALIASES", True):
+        _register_backward_compat_aliases(app)
+    _register_health_route(app)
+    if app.config.get("REGISTER_MEDIA_ROUTE", True):
+        _register_media_route(app)
+    if app.config.get("REGISTER_CLI_COMMANDS", True):
+        _register_cli_commands(app)
 
     return app
 
@@ -273,7 +337,106 @@ def _register_scheduler_jobs(app: Flask) -> None:
     app.extensions["esp_scheduler_jobs_registered"] = True
 
 
-def _acquire_scheduler_lock():
+class _FileSchedulerLockHandle:
+    def __init__(self, lock_fd):
+        self.lock_fd = lock_fd
+
+    def close(self) -> None:
+        if self.lock_fd is not None:
+            self.lock_fd.close()
+            self.lock_fd = None
+
+
+class _RedisSchedulerLockHandle:
+    def __init__(self, lock, stop_event: threading.Event, renew_thread: threading.Thread):
+        self.lock = lock
+        self.stop_event = stop_event
+        self.renew_thread = renew_thread
+
+    def close(self) -> None:
+        self.stop_event.set()
+        self.renew_thread.join(timeout=1.0)
+        if self.lock is not None:
+            try:
+                self.lock.release()
+            except Exception:
+                pass
+            self.lock = None
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _should_try_redis_scheduler_lock(app: Flask) -> bool:
+    backend = str(app.config.get("SCHEDULER_LOCK_BACKEND", "auto") or "auto").strip().lower()
+    if backend == "redis":
+        return True
+    if backend != "auto":
+        return False
+
+    runtime_role = str(app.config.get("ESP_RUNTIME_ROLE", "") or "").strip().lower()
+    queue_backend = str(app.config.get("SCRAPE_QUEUE_BACKEND", "inmemory") or "inmemory").strip().lower()
+
+    # Keep today's single-web-service deployment safe: when web still owns the
+    # scheduler under the in-memory queue, do not treat the default REDIS_URL as
+    # a hard dependency for lock acquisition.
+    if runtime_role == "web" and queue_backend != "rq":
+        return False
+    return True
+
+
+def _try_acquire_redis_scheduler_lock(app: Flask):
+    if not _should_try_redis_scheduler_lock(app):
+        return None
+
+    redis_url = str(app.config.get("REDIS_URL", "") or "").strip()
+    if not redis_url:
+        return None
+
+    try:
+        from redis import Redis
+    except ImportError:
+        return None
+
+    ttl_seconds = max(30, int(app.config.get("SCHEDULER_LOCK_TTL_SECONDS", 120) or 120))
+    renew_every_seconds = max(10.0, ttl_seconds / 3)
+    lock_key = str(app.config.get("SCHEDULER_LOCK_KEY", "esp:scheduler:lock") or "esp:scheduler:lock")
+    try:
+        connection = Redis.from_url(redis_url)
+        lock = connection.lock(lock_key, timeout=ttl_seconds, blocking=False, thread_local=False)
+        if not lock.acquire(blocking=False):
+            return False
+    except Exception:
+        return False
+
+    stop_event = threading.Event()
+
+    def renew_loop() -> None:
+        while not stop_event.wait(renew_every_seconds):
+            try:
+                lock.extend(ttl_seconds)
+            except Exception:
+                break
+
+    renew_thread = threading.Thread(
+        target=renew_loop,
+        name="esp-scheduler-lock-renew",
+        daemon=True,
+    )
+    renew_thread.start()
+    return _RedisSchedulerLockHandle(lock, stop_event, renew_thread)
+
+
+def _acquire_scheduler_lock(app: Flask):
+    redis_lock_handle = _try_acquire_redis_scheduler_lock(app)
+    if redis_lock_handle is False:
+        return False, None
+    if redis_lock_handle is not None:
+        return True, redis_lock_handle
+
     if _fcntl is None:
         return True, None
 
@@ -284,7 +447,7 @@ def _acquire_scheduler_lock():
         lock_fd.close()
         return False, None
 
-    return True, lock_fd
+    return True, _FileSchedulerLockHandle(lock_fd)
 
 
 def start_scheduler(app: Flask) -> bool:
@@ -292,14 +455,20 @@ def start_scheduler(app: Flask) -> bool:
     if app.extensions.get("esp_scheduler_started"):
         return True
 
-    acquired, lock_fd = _acquire_scheduler_lock()
+    acquired, lock_handle = _acquire_scheduler_lock(app)
     if not acquired:
         return False
 
-    _register_scheduler_jobs(app)
-    scheduler.start()
+    try:
+        _register_scheduler_jobs(app)
+        scheduler.start()
+    except Exception:
+        if lock_handle is not None:
+            lock_handle.close()
+        raise
+
     app.extensions["esp_scheduler_started"] = True
-    app.extensions["esp_scheduler_lock_fd"] = lock_fd
+    app.extensions["esp_scheduler_lock_handle"] = lock_handle
     return True
 
 

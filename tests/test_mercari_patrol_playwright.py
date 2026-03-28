@@ -133,6 +133,25 @@ def test_fetch_error_handling():
     assert result.error is not None
 
 
+def test_fetch_can_use_browser_pool(monkeypatch):
+    mock_page = _make_mock_page(meta_price=1000, price_text="")
+    monkeypatch.setenv("MERCARI_PATROL_USE_BROWSER_POOL", "true")
+
+    with patch(
+        "services.patrol.mercari_patrol.fetch_mercari_page_via_browser_pool_sync",
+        return_value=mock_page,
+    ) as mock_pool_fetch, patch("services.patrol.mercari_patrol.fetch_dynamic") as mock_fetch_dynamic:
+        from services.patrol.mercari_patrol import MercariPatrol
+
+        patrol = MercariPatrol()
+        result = patrol.fetch("https://jp.mercari.com/item/xxx")
+
+    mock_pool_fetch.assert_called_once_with("https://jp.mercari.com/item/xxx", network_idle=False)
+    mock_fetch_dynamic.assert_not_called()
+    assert result.success
+    assert result.price == 1000
+
+
 def test_monitor_service_no_driver():
     from services.monitor_service import _BROWSER_SITES
 

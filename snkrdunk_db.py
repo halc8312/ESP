@@ -9,6 +9,10 @@ import re
 from urllib.parse import urljoin
 
 from selector_config import get_selectors, get_valid_domains
+from services.snkrdunk_browser_fetch import (
+    fetch_snkrdunk_page_via_browser_pool_sync,
+    should_use_snkrdunk_browser_pool_dynamic,
+)
 from services.extraction_policy import attach_extraction_trace, pick_first
 from scrape_metrics import check_scrape_health, get_metrics, log_scrape_result
 from services.selector_healer import get_healer
@@ -422,7 +426,10 @@ def scrape_item_detail_light(url: str) -> dict:
             page = fetch_static(url)
         except Exception as exc:
             logger.debug("SNKRDUNK static detail fetch failed, retrying dynamic fetch: %s", exc)
-            page = fetch_dynamic(url, headless=True, network_idle=True)
+            if should_use_snkrdunk_browser_pool_dynamic():
+                page = fetch_snkrdunk_page_via_browser_pool_sync(url, network_idle=True)
+            else:
+                page = fetch_dynamic(url, headless=True, network_idle=True)
             return _parse_detail_page(page, url)
 
         result = _parse_detail_page(page, url)
@@ -430,7 +437,10 @@ def scrape_item_detail_light(url: str) -> dict:
             return result
 
         logger.debug("SNKRDUNK static detail parse incomplete, retrying dynamic fetch")
-        page = fetch_dynamic(url, headless=True, network_idle=True)
+        if should_use_snkrdunk_browser_pool_dynamic():
+            page = fetch_snkrdunk_page_via_browser_pool_sync(url, network_idle=True)
+        else:
+            page = fetch_dynamic(url, headless=True, network_idle=True)
         return _parse_detail_page(page, url)
     except Exception as exc:
         logger.debug("SNKRDUNK light scrape error: %s", exc)
@@ -452,7 +462,10 @@ async def _scrape_item_detail_async(url: str) -> dict:
             )
         except Exception as exc:
             logger.debug("SNKRDUNK async static detail fetch failed, retrying dynamic fetch: %s", exc)
-            page = await asyncio.to_thread(fetch_dynamic, url, headless=True, network_idle=True)
+            if should_use_snkrdunk_browser_pool_dynamic():
+                page = await asyncio.to_thread(fetch_snkrdunk_page_via_browser_pool_sync, url, network_idle=True)
+            else:
+                page = await asyncio.to_thread(fetch_dynamic, url, headless=True, network_idle=True)
             return _parse_detail_page(page, url)
 
         result = _parse_detail_page(page, url)
@@ -460,7 +473,10 @@ async def _scrape_item_detail_async(url: str) -> dict:
             return result
 
         logger.debug("SNKRDUNK async static detail parse incomplete, retrying dynamic fetch")
-        page = await asyncio.to_thread(fetch_dynamic, url, headless=True, network_idle=True)
+        if should_use_snkrdunk_browser_pool_dynamic():
+            page = await asyncio.to_thread(fetch_snkrdunk_page_via_browser_pool_sync, url, network_idle=True)
+        else:
+            page = await asyncio.to_thread(fetch_dynamic, url, headless=True, network_idle=True)
         return _parse_detail_page(page, url)
     except Exception as exc:
         logger.debug("SNKRDUNK async detail scrape error: %s", exc)
@@ -573,11 +589,18 @@ def scrape_search_result(
 
         while current_url and current_url not in seen_pages and len(seen_pages) < max_pages:
             seen_pages.add(current_url)
-            try:
-                page = fetch_dynamic(current_url, headless=headless, network_idle=True)
-            except Exception as exc:
-                logger.debug("SNKRDUNK dynamic search fetch failed, retrying static fetch: %s", exc)
-                page = fetch_static(current_url)
+            if should_use_snkrdunk_browser_pool_dynamic():
+                try:
+                    page = fetch_snkrdunk_page_via_browser_pool_sync(current_url, network_idle=True)
+                except Exception as exc:
+                    logger.debug("SNKRDUNK browser-pool search fetch failed, retrying static fetch: %s", exc)
+                    page = fetch_static(current_url)
+            else:
+                try:
+                    page = fetch_dynamic(current_url, headless=headless, network_idle=True)
+                except Exception as exc:
+                    logger.debug("SNKRDUNK dynamic search fetch failed, retrying static fetch: %s", exc)
+                    page = fetch_static(current_url)
 
             for item_url in _extract_search_urls(page, current_url, max_items=candidate_target):
                 if item_url not in candidate_urls:

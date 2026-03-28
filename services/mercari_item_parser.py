@@ -813,7 +813,9 @@ def parse_mercari_item_page(page, url: str) -> tuple[dict, dict]:
             status = "deleted" if page_type == "deleted_detail" else "unknown"
         price_source = "none"
 
-    description = _extract_description(page, body_text)
+    description = ""
+    if page_type not in {"deleted_detail", "unknown_page"} and status != "deleted":
+        description = _extract_description(page, body_text)
     image_urls, image_source = _extract_image_urls(page, product_jsonld)
     variants = _extract_variants(page, price)
 

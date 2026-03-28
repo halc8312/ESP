@@ -37,7 +37,7 @@
         ↓
 価格計算ルールを適用して販売価格を自動算出
         ↓
-Shopify / eBay 用 CSV を生成して一括出品
+Shopify 用 CSV を生成して一括出品
         ↓
 15 分ごとのパトロールで価格変動・売り切れを自動検知
 ```
@@ -256,7 +256,81 @@ flask run --port 5000
 gunicorn --worker-class gthread --workers 1 --threads 8 \
          --max-requests 0 --timeout 600 \
          --bind 0.0.0.0:5000 wsgi:app
+
+# 単一 Web Service の既存本番互換:
+# `SCRAPE_QUEUE_BACKEND=inmemory` の間は、web が scheduler を自動で所有する。
+# このモードでは scheduler lock も file lock 側へ倒すので、Redis は不要。
+# 将来 `SCRAPE_QUEUE_BACKEND=rq` に切り替えたら、web 側 scheduler は自動で無効になり、
+# worker を別サービスで立てる前提になる。
+
+# Arc 2/B4 のローカル検証例（Render 契約はまだ不要）
+# 先にローカル Redis/PostgreSQL を立てたうえで:
+# 推奨: repo 直下の compose を使う
+docker compose -f docker-compose.local.yml up -d
+# 既存の SQLite のまま queue だけ試すなら `DATABASE_URL` は省略可。
+# PostgreSQL 前提で進める時は:
+$env:DATABASE_URL="postgresql+psycopg://esp:esp@localhost:5432/esp_local"
+$env:SCRAPE_QUEUE_BACKEND="rq"
+$env:REDIS_URL="redis://localhost:6379/0"
+# まず DB smoke を通す:
+flask db-smoke --require-backend postgresql --apply-migrations
+# detail parser だけを local dump で確認:
+flask detail-fixture-smoke --site mercari --fixture-path mercari_page_dump_live.html --target-url https://jp.mercari.com/item/m71383569733
+# search result dump が skeleton/challenge ではなく実結果を含むか確認:
+flask search-fixture-smoke --site mercari --fixture-path search_dump.html --target-url https://jp.mercari.com/search?keyword=sneaker
+# local-first の順序つき総合確認:
+flask local-verify --profile full --require-backend postgresql --apply-migrations
+# queue + worker + status/result までまとめて通す:
+flask stack-smoke --require-backend postgresql --apply-migrations
+# Product / Variant / ProductSnapshot まで保存されるかを見る:
+flask stack-smoke --require-backend postgresql --apply-migrations --mode persist
+# real Mercari dump を parser に通したうえで full-stack smoke:
+flask stack-smoke --require-backend postgresql --apply-migrations --mode persist --fixture-site mercari --fixture-path mercari_page_dump_live.html --fixture-target-url https://jp.mercari.com/item/m71383569733
+# real SNKRDUNK dump を parser に通したうえで full-stack smoke:
+flask stack-smoke --require-backend postgresql --apply-migrations --mode persist --fixture-site snkrdunk --fixture-path dump.html --fixture-target-url https://snkrdunk.com/products/nike-air-max-95-og-big-bubble-neon-yellow-2025-2026
+# その後 web/worker を起動:
+flask run --port 5000
+# Worker は別端末で dedicated entrypoint を起動:
+# 定期 patrol / trash purge を持たせる worker は 1 台だけ `WORKER_ENABLE_SCHEDULER=1`
+py -3 worker.py
+# 旧 `run_rq_worker.py` も互換ラッパとして残してある。
+# `worker.py` は既定で shared browser runtime を有効化し、Mercari browser を warm する。
+# worker/RQ の現在状態を JSON で確認:
+flask worker-health
+# backlog warning も失敗扱いにしたい時:
+flask worker-health --fail-on-warning
+# 現在の単一 Web 本番へ安全に再デプロイできるかを見る:
+flask predeploy-check --target single-web
+# 現本番と同じ single-web + inmemory 経路を実際に流す:
+flask single-web-smoke --mode preview
+# 将来の paid split (`web + worker + postgres + key value`) 向け readiness:
+flask predeploy-check --target split-render --strict
+# DB 単体の smoke（local PostgreSQL を指して migrate + connect + write/read を確認したい時）:
+flask db-smoke --require-backend postgresql --apply-migrations
+# parser 単体の fixture smoke（queue/DB を使わず detail dump を検証したい時）:
+flask detail-fixture-smoke --site mercari --fixture-path mercari_page_dump_live.html --target-url https://jp.mercari.com/item/m71383569733
+# local verification suite（single-web predeploy + parser fixture + db + fixture-backed stack smoke を順に回す）:
+flask local-verify --profile full --require-backend postgresql --apply-migrations
+# RQ + worker + API/result page まで含む full-stack smoke:
+flask stack-smoke --require-backend postgresql --apply-migrations
+# persist 経路まで見る full-stack smoke:
+flask stack-smoke --require-backend postgresql --apply-migrations --mode persist
+# real parser を通した fixture-backed full-stack smoke:
+flask stack-smoke --require-backend postgresql --apply-migrations --mode persist --fixture-site mercari --fixture-path mercari_page_dump_live.html --fixture-target-url https://jp.mercari.com/item/m71383569733
+flask stack-smoke --require-backend postgresql --apply-migrations --mode persist --fixture-site snkrdunk --fixture-path dump.html --fixture-target-url https://snkrdunk.com/products/nike-air-max-95-og-big-bubble-neon-yellow-2025-2026
+
+# live site に触れない local RQ end-to-end smoke:
+py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 ```
+
+### Render Blueprint（準備済み・未適用）
+
+リポジトリ直下の `render.yaml` は、将来の初回有料構成向け Blueprint です。これは Render に import / sync するまで何も起こりません。さらに、service 名は現在の単一 Web 本番と意図的に分けてあり、`autoDeployTrigger: off` なので、ファイルを commit しただけで現本番へ影響しないようにしています。
+
+- 現本番を維持する間は、Render 側の単一 Web Service を従来どおり `SCRAPE_QUEUE_BACKEND=inmemory` のまま使う
+- `render.yaml` を sync するのは、`rq + worker + postgres + key value` の paid split を実際に確認したい段階になってから
+- Blueprint の web は `/healthz` を health check に使い、worker は `python worker.py` で起動する
+- 画像とショップロゴの永続化がまだ filesystem 前提なので、Blueprint では web に小さい persistent disk を付け、`IMAGE_STORAGE_PATH=/var/data/images` を使う
 
 ---
 
@@ -267,8 +341,40 @@ gunicorn --worker-class gthread --workers 1 --threads 8 \
 | `SECRET_KEY` | なし（必須） | Flask セッション署名キー |
 | `DATABASE_URL` | `sqlite:///mercari.db` | DB 接続文字列 |
 | `SCHEMA_BOOTSTRAP_MODE` | `auto` (`web`/`cli`) | `alembic` 優先で schema を適用。Alembic 未導入時は `legacy` にフォールバック |
+| `SCRAPE_QUEUE_BACKEND` | `inmemory` | `inmemory` または `rq`。`rq` はローカル Redis で先行検証可能 |
+| `REDIS_URL` | `redis://localhost:6379/0` | `SCRAPE_QUEUE_BACKEND=rq` 時の接続先 |
+| `SCRAPE_QUEUE_NAME` | `scrape` | RQ queue 名 |
+| `RQ_BURST` | `false` | `worker.py` を burst モードで1回だけ動かすか |
+| `RQ_WITH_SCHEDULER` | `false` | RQ の scheduler 機能を worker に有効化するか。通常は `false` |
+| `SCRAPE_JOB_HEARTBEAT_SECONDS` | `30` | running job の heartbeat 間隔 |
+| `SCRAPE_JOB_STALL_TIMEOUT_SECONDS` | `900` | heartbeat が止まった running job を failed 扱いに切り替える秒数 |
+| `SCRAPE_JOB_ORPHAN_TIMEOUT_SECONDS` | `60` | durable state は non-terminal だが Redis/RQ 上に job 本体が見つからない場合に failed 扱いへ切り替える猶予秒数 |
+| `WORKER_ENABLE_SCHEDULER` | `false` | patrol / trash purge の APScheduler をこの worker が所有するか。`true` にする worker は 1 台だけ |
+| `WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP` | `true` | worker 起動時に、stall timeout を超えた `running` job を durable state 上で `failed` に掃除するか |
+| `WORKER_BACKLOG_WARN_COUNT` | `25` | worker 起動時 backlog 診断で warning を出す queued job 件数しきい値。`0` で無効 |
+| `WORKER_BACKLOG_WARN_AGE_SECONDS` | `900` | worker 起動時 backlog 診断で warning を出す oldest queued/running age しきい値。`0` で無効 |
+| `OPERATIONAL_ALERT_WEBHOOK_URL` | unset | worker backlog などの silent operational alert 送信先 webhook |
+| `OPERATIONAL_ALERT_COOLDOWN_SECONDS` | `900` | 同一 operational alert の再送 cooldown |
+| `OPERATIONAL_ALERT_MAX_PER_WINDOW` | `10` | operational alert の window 内最大送信数 |
+| `OPERATIONAL_ALERT_WINDOW_SECONDS` | `300` | operational alert の rate-limit window 秒数 |
+| `WEB_SCHEDULER_MODE` | `auto` | `auto` は `SCRAPE_QUEUE_BACKEND=inmemory` の web だけ scheduler を持つ。`enabled` / `disabled` で明示上書き可能 |
+| `SCHEDULER_LOCK_BACKEND` | `auto` | scheduler lock。`auto` は single-service web/inmemory では file lock、worker/rq 側では Redis lock を優先する |
+| `SCHEDULER_LOCK_KEY` | `esp:scheduler:lock` | Redis lock key |
+| `SCHEDULER_LOCK_TTL_SECONDS` | `120` | Redis scheduler lock の TTL |
+| `ENABLE_SHARED_BROWSER_RUNTIME` | `false` (`worker.py` では `true` 既定) | shared Playwright browser runtime を使うか |
+| `WARM_BROWSER_POOL` | `false` (`worker.py` では `true` 既定) | worker 起動時に browser pool を warm するか |
+| `BROWSER_POOL_WARM_SITES` | `mercari` | 起動時に warm する browser site 一覧 |
+| `BROWSER_POOL_MAX_CONTEXTS` | `1` | shared browser 1 プロセスあたりの同時 page/context 実行上限 |
+| `BROWSER_POOL_RESTART_ATTEMPTS` | `1` | browser crash 時の自動再起動回数 |
+| `BROWSER_POOL_MAX_TASKS_BEFORE_RESTART` | `0` | 0 より大きい時、同一 browser を使うジョブ回数の上限。超えたら次ジョブ開始前に計画的 recycle |
+| `BROWSER_POOL_MAX_RUNTIME_SECONDS` | `0` | 0 より大きい時、browser 生存時間の上限。超えたら次ジョブ開始前に計画的 recycle |
+| `BROWSER_POOL_STARTUP_TIMEOUT_SECONDS` | `60` | shared browser 起動タイムアウト |
+| `MERCARI_USE_BROWSER_POOL_DETAIL` | `false` (`worker.py` では `true` 既定) | Mercari detail DOM fetch を browser pool 経由にする |
+| `MERCARI_PATROL_USE_BROWSER_POOL` | `false` (`worker.py` では `true` 既定) | Mercari patrol DOM fetch を browser pool 経由にする |
+| `SNKRDUNK_USE_BROWSER_POOL_DYNAMIC` | `false` (`worker.py` では `true` 既定) | SNKRDUNK search と dynamic detail fallback を browser pool 経由にする |
+| `LOG_LEVEL` | `INFO` (`worker.py`) | worker/browser pool instrumentation の出力レベル |
 | `PORT` | `10000` | Gunicorn バインドポート |
-| `IMAGE_STORAGE_PATH` | `static/images` | ダウンロード画像の保存先 |
+| `IMAGE_STORAGE_PATH` | `static/images` | ダウンロード画像の保存先。Render disk を付ける場合は `/var/data/images` を推奨 |
 | `MERCARI_USE_NETWORK_PAYLOAD` | `false` | メルカリ API インターセプト有効化 |
 | `{SITE}_DETAIL_CONCURRENCY` | サイト依存 | 詳細ページの並列取得数 |
 | `{SITE}_DETAIL_TIMEOUT` | サイト依存 | タイムアウト秒数 |
@@ -276,6 +382,28 @@ gunicorn --worker-class gthread --workers 1 --threads 8 \
 | `{SITE}_DETAIL_BACKOFF` | サイト依存 | リトライ間隔（秒） |
 
 `{SITE}` には `MERCARI`, `RAKUMA`, `YAHOO`, `YAHUOKU`, `SURUGAYA`, `OFFMALL`, `SNKRDUNK` が入ります。
+
+shared browser runtime を有効にした worker は、起動時の durable backlog 要約、browser warm・restart・close 前 health snapshot を worker log に出します。backlog warning がしきい値を超えたままなら、`OPERATIONAL_ALERT_WEBHOOK_URL` が設定されている場合だけ silent alert も送れます。`{SITE}_BROWSER_POOL_MAX_CONTEXTS`、`{SITE}_BROWSER_POOL_MAX_TASKS_BEFORE_RESTART`、`{SITE}_BROWSER_POOL_MAX_RUNTIME_SECONDS` を使うと site 別に上限を上書きできます。
+
+`flask predeploy-check` は deploy 前の安全確認用です。`--target single-web` は現在の単一 Render Web Service 互換を、`--target split-render` は将来の `$61/month` 想定構成を前提に、queue / schema bootstrap / scheduler / storage の blocker と warning を JSON で返します。
+
+`flask single-web-smoke` は、現本番と同じ `single-web + SCRAPE_QUEUE_BACKEND=inmemory` の互換 path を live site なしで end-to-end に確認するコマンドです。内部 smoke payload を使って job enqueue、`/api/scrape/status/<job_id>`、`/api/scrape/jobs`、`/scrape/result/<job_id>` まで確認します。`--mode preview` では DB に商品が保存されないこと、`--mode persist` では保存経路まで確認できます。
+
+`flask db-smoke` は `DATABASE_URL` に対する明示的な DB smoke です。`--apply-migrations` を付けると Alembic/legacy 設定に従って schema を適用したうえで、接続・簡易 write/read・主要テーブル存在確認を行います。local PostgreSQL を立てた段階で、まずこれを通してから web/worker の end-to-end に進めるのが安全です。
+
+`flask detail-fixture-smoke` は queue / Redis / DB を使わずに local detail dump を real parser へ通すための軽量チェックです。`--strict` を付けると title / price / image / page_type などの warning を blocker 扱いにできます。日々の DOM 修正時はこれで parser 単体を先に見てから `stack-smoke` へ進めるのが安全です。
+
+`flask search-fixture-smoke` は local search-result dump が「実際の item URL を含む検索結果」なのか、「skeleton / challenge / 未描画ページ」なのかを素早く判定する軽量チェックです。現在は Mercari search dump に対応していて、`item_urls_missing` や `search_results_not_rendered` を blocker として返します。日々の DOM 修正時に、detail 側へ進む前の入口チェックとして使えます。
+
+`flask local-verify` は、いま積み上げた local-first 検証を順序つきでまとめて回すコマンドです。`--profile parser` は single-web predeploy に続いて `single-web-smoke --mode preview` を実行し、その後に detail fixture 群と、`search_dump.html` があれば Mercari search fixture 判定も advisory step として含みます。`--profile stack` は split-render を含む advisory predeploy + db-smoke + fixture-backed stack smoke、`--profile full` はその両方に加えて `single-web-smoke --mode persist --fixture-site mercari ...` と `single-web-smoke --mode persist --fixture-site snkrdunk ...` も含みます。predeploy/search 系の advisory step は「今ある dump の質」や「切替準備の不足」を見える化するために出し、suite 全体の成否は single-web/parser/db/stack の実動作で判定します。daily の DOM 修正後は `parser`、しっかり確認する時は `full` を流す運用を想定しています。
+
+`flask render-cutover-readiness` は、最初の paid Render split に入ってよいかをローカルで判定する C4 用 gate です。current single-web predeploy は advisory として残しつつ、split-render predeploy、split worker health、`local-verify --profile full` を一つに束ねます。paid activation 前は `flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict` を通してから進めてください。手順全体は `docs/RENDER_CUTOVER_RUNBOOK.md` にまとめています。
+
+`flask render-blueprint-audit` は `render.yaml` の静的監査です。`esp-web` / `esp-worker` / `esp-keyvalue` / `esp-postgres` の service 名、`autoDeployTrigger: off`、`/healthz`、`python worker.py`、managed `DATABASE_URL` / `REDIS_URL`、manual secret env の棚卸しを確認します。Render Dashboard に入る前の secret/env チェックとして使えます。
+
+`flask render-dashboard-inputs` は `render.yaml` から Dashboard 入力用の env 一覧を JSON で出します。service ごとの `manual_envs`、`managed_envs`、`fixed_envs` を分けて見られるので、「Render 側で手入力するもの」と「Blueprint に任せるもの」を混ぜにくくなります。
+
+`flask stack-smoke` は live site に触れない full-stack smoke です。local DB/Redis に対して一時ユーザーを作り、internal smoke payload を preview または persist mode で RQ に enqueue し、`worker.py` 相当の burst worker で処理し、最後に `/api/scrape/status/<job_id>`、`/api/scrape/jobs`、`/scrape/result/<job_id>` を確認します。`--mode persist` を付けると `Product` / `Variant` / `ProductSnapshot` まで検証します。通常は完了後に一時 user/job/product を cleanup し、`--keep-artifacts` を付けた時だけ残します。`--fixture-site mercari` や `--fixture-site snkrdunk` を付けると internal dummy item の代わりに local HTML dump を real parser に通した結果で同じ smoke を流せます。
 
 ---
 

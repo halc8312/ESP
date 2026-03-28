@@ -1,5 +1,6 @@
 import pytest
 
+import jobs.scrape_tasks as scrape_tasks
 import offmall_db
 import routes.scrape as scrape_routes
 import snkrdunk_db
@@ -63,8 +64,8 @@ def test_build_scrape_task_buffers_large_requests_without_changing_visible_limit
         captured["max_scroll"] = max_scroll
         return list(scraped_items)
 
-    monkeypatch.setattr(scrape_routes.yahoo_db, "scrape_search_result", fake_search_result)
-    monkeypatch.setattr(scrape_routes, "filter_excluded_items", lambda items, user_id: (list(items), 12))
+    monkeypatch.setattr(scrape_tasks.yahoo_db, "scrape_search_result", fake_search_result)
+    monkeypatch.setattr(scrape_tasks, "filter_excluded_items", lambda items, user_id: (list(items), 12))
 
     task = scrape_routes._build_scrape_task(
         site="yahoo",
@@ -112,8 +113,8 @@ def test_build_scrape_task_includes_native_price_params_for_supported_sites(
         captured["search_url"] = search_url
         return []
 
-    monkeypatch.setattr(getattr(scrape_routes, module_attr), "scrape_search_result", fake_search_result)
-    monkeypatch.setattr(scrape_routes, "filter_excluded_items", lambda items, user_id: (list(items), 0))
+    monkeypatch.setattr(getattr(scrape_tasks, module_attr), "scrape_search_result", fake_search_result)
+    monkeypatch.setattr(scrape_tasks, "filter_excluded_items", lambda items, user_id: (list(items), 0))
 
     task = scrape_routes._build_scrape_task(
         site=site,
@@ -179,8 +180,8 @@ def test_build_scrape_task_applies_post_scrape_price_filter_even_with_native_pri
         captured["search_url"] = search_url
         return list(scraped_items)
 
-    monkeypatch.setattr(scrape_routes.offmall_db, "scrape_search_result", fake_search_result)
-    monkeypatch.setattr(scrape_routes, "filter_excluded_items", lambda items, user_id: (list(items), 0))
+    monkeypatch.setattr(scrape_tasks.offmall_db, "scrape_search_result", fake_search_result)
+    monkeypatch.setattr(scrape_tasks, "filter_excluded_items", lambda items, user_id: (list(items), 0))
 
     task = scrape_routes._build_scrape_task(
         site="offmall",

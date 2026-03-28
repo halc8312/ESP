@@ -1,8 +1,9 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from models import Product, User, Variant
 from services.monitor_service import MonitorService
 from services.patrol.base_patrol import PatrolResult
+from time_utils import utc_now
 from utils import is_valid_detail_url
 
 
@@ -28,7 +29,7 @@ def _create_user(db_session, username):
 
 def test_monitor_service_skips_deleted_products(client, db_session, monkeypatch):
     user = _create_user(db_session, 'monitor_deleted_user')
-    old_time = datetime.utcnow() - timedelta(days=1)
+    old_time = utc_now() - timedelta(days=1)
 
     active_product = Product(
         user_id=user.id,
@@ -50,7 +51,7 @@ def test_monitor_service_skips_deleted_products(client, db_session, monkeypatch)
         last_price=900,
         last_status='on_sale',
         archived=False,
-        deleted_at=datetime.utcnow(),
+        deleted_at=utc_now(),
         created_at=old_time,
         updated_at=old_time - timedelta(minutes=5),
     )
@@ -81,7 +82,7 @@ def test_monitor_service_skips_deleted_products(client, db_session, monkeypatch)
 def test_invalid_url_skipped_with_backoff(client, db_session, monkeypatch):
     """Products with search URLs are skipped and get backoff applied."""
     user = _create_user(db_session, 'monitor_invalid_url_user')
-    old_time = datetime.utcnow() - timedelta(days=1)
+    old_time = utc_now() - timedelta(days=1)
 
     # A Yahoo product with a search URL (not a detail page)
     bad_product = Product(
@@ -113,7 +114,7 @@ def test_invalid_url_skipped_with_backoff(client, db_session, monkeypatch):
     # Fail count incremented
     assert refreshed.patrol_fail_count == 1
     # updated_at pushed into the future (at least 10 min from now)
-    assert refreshed.updated_at > datetime.utcnow() + timedelta(minutes=10)
+    assert refreshed.updated_at > utc_now() + timedelta(minutes=10)
     # Price unchanged
     assert refreshed.last_price == 500
 
@@ -121,7 +122,7 @@ def test_invalid_url_skipped_with_backoff(client, db_session, monkeypatch):
 def test_patrol_failure_updates_timestamp(client, db_session, monkeypatch):
     """When patrol.fetch returns an error, backoff is applied."""
     user = _create_user(db_session, 'monitor_fail_ts_user')
-    old_time = datetime.utcnow() - timedelta(days=1)
+    old_time = utc_now() - timedelta(days=1)
 
     product = Product(
         user_id=user.id,
@@ -150,7 +151,7 @@ def test_patrol_failure_updates_timestamp(client, db_session, monkeypatch):
     # Fail count incremented from 2 → 3
     assert refreshed.patrol_fail_count == 3
     # updated_at pushed into the future (3 * 15 = 45 min backoff)
-    assert refreshed.updated_at > datetime.utcnow() + timedelta(minutes=40)
+    assert refreshed.updated_at > utc_now() + timedelta(minutes=40)
     # Price NOT changed
     assert refreshed.last_price == 2000
 
@@ -158,7 +159,7 @@ def test_patrol_failure_updates_timestamp(client, db_session, monkeypatch):
 def test_patrol_success_resets_fail_count(client, db_session, monkeypatch):
     """Successful patrol resets patrol_fail_count to 0."""
     user = _create_user(db_session, 'monitor_success_reset_user')
-    old_time = datetime.utcnow() - timedelta(days=1)
+    old_time = utc_now() - timedelta(days=1)
 
     product = Product(
         user_id=user.id,
@@ -190,12 +191,12 @@ def test_patrol_success_resets_fail_count(client, db_session, monkeypatch):
     assert refreshed.last_price == 3500
     assert refreshed.last_status == 'on_sale'
     # updated_at should be recent (not in the future)
-    assert refreshed.updated_at <= datetime.utcnow() + timedelta(seconds=10)
+    assert refreshed.updated_at <= utc_now() + timedelta(seconds=10)
 
 
 def test_patrol_deleted_status_only_preserves_price_and_zeroes_inventory(client, db_session, monkeypatch):
     user = _create_user(db_session, 'monitor_deleted_status_user')
-    old_time = datetime.utcnow() - timedelta(days=1)
+    old_time = utc_now() - timedelta(days=1)
 
     product = Product(
         user_id=user.id,
@@ -239,7 +240,7 @@ def test_patrol_deleted_status_only_preserves_price_and_zeroes_inventory(client,
 
 def test_low_confidence_active_without_price_triggers_backoff(client, db_session, monkeypatch):
     user = _create_user(db_session, 'monitor_low_confidence_user')
-    old_time = datetime.utcnow() - timedelta(days=1)
+    old_time = utc_now() - timedelta(days=1)
 
     product = Product(
         user_id=user.id,

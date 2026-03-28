@@ -1,7 +1,7 @@
 # ESP Backend Renewal Execution Plan
 
-- Updated: 2026-03-18
-- Status: Proposal / awaiting approval
+- Updated: 2026-03-27
+- Status: In progress / local-first execution
 - Scope: Backend optimization, queue/database separation preparation, distributed worker completion
 
 ## 1. Objective
@@ -304,6 +304,22 @@ What must be locally testable before paid Render rollout:
 - browser pool lifecycle and crash-recovery behavior
 - scheduler relocation behavior
 - export/admin compatibility regressions
+- ordered parser-level verification with local HTML fixtures before queue-backed smoke
+- ordered stack-level verification with local `Web + Redis + PostgreSQL + burst worker`
+- a green repository app-suite run via `py -3 -m pytest tests -q`
+
+Current local-first verification ladder:
+
+1. `flask detail-fixture-smoke`
+2. `flask db-smoke --require-backend postgresql --apply-migrations`
+3. `flask stack-smoke --require-backend postgresql --apply-migrations`
+4. `flask local-verify --profile full --require-backend postgresql --apply-migrations`
+5. `py -3 -m pytest tests -q`
+
+Operational rule during this phase:
+
+- keep current single-service production on the safe compatibility path (`SCRAPE_QUEUE_BACKEND=inmemory`) until `Move C4` cutover is explicitly approved
+- any mixed deploy for routine scraper/UI fixes must preserve that single-web compatibility default
 
 What still requires final Render verification:
 
@@ -388,6 +404,7 @@ Minimum verification before any mixed deploy:
 - export golden tests
 - tests covering the specific site scraper that changed
 - queue/status compatibility checks for the active backend mode
+- when the change touches queue/runtime/bootstrap code, also run the ordered local verification ladder from `5.7`
 
 Rollback rule:
 
@@ -749,8 +766,11 @@ Target files:
 Concrete changes:
 
 - Split Web and Worker start commands.
+- Commit a dormant `render.yaml` before provisioning, with service names that do not target the current single-service production deployment and with auto-deploy disabled until cutover is explicitly approved.
 - Keep browser/runtime dependencies only where needed.
 - Configure Redis and PostgreSQL environment wiring for Render.
+- Add a cutover runbook and explicit local gate so `Move C4` is never the first place we discover integration mistakes.
+- Require a passing `flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict` run before the first paid activation attempt.
 - Target the initial paid Render shape defined in `5.6 Deployment budget guardrail`.
 - Keep the first paid deployment at or below the `$80/month` recurring budget ceiling.
 - If filesystem-backed image/logo storage still exists, attach only a small `Persistent Disk` to `Web` and treat disk removal or storage redesign as follow-up optimization work rather than a blocker to `Move C4`.

@@ -1,7 +1,6 @@
-from datetime import datetime
-
 from models import PricingRule, Product, ProductSnapshot, Shop, User, Variant
 from services.product_service import save_scraped_items_to_db
+from time_utils import utc_now
 
 
 
@@ -69,8 +68,8 @@ def test_save_scraped_items_recalculates_selling_price_when_cost_changes(client,
         last_status='on_sale',
         pricing_rule_id=rule.id,
         selling_price=1500,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=utc_now(),
+        updated_at=utc_now(),
     )
     db_session.add(product)
     db_session.commit()
@@ -151,8 +150,8 @@ def test_save_scraped_items_allows_status_only_deleted_update(client, db_session
         last_title='Original Title',
         last_price=3500,
         last_status='on_sale',
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=utc_now(),
+        updated_at=utc_now(),
     )
     db_session.add(product)
     db_session.commit()

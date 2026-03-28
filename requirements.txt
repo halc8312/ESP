@@ -2,6 +2,8 @@ Flask
 SQLAlchemy
 alembic
 psycopg[binary]
+redis
+rq
 requests
 pandas
 gunicorn

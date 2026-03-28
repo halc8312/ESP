@@ -1,6 +1,6 @@
 # Arc 1 KPI Runbook
 
-- Updated: 2026-03-19
+- Updated: 2026-03-24
 - Scope: low-cost closeout checks for `Arc 1`
 
 ## Goal
@@ -167,8 +167,6 @@ py -3 scripts/arc1_kpi_probe.py `
 
 ## Known Non-Blocking Warnings
 
-Current local warning debt:
+The prior `datetime.utcnow()` warning debt was cleaned up on 2026-03-24 via `time_utils.utc_now()`.
 
-- `[services/product_service.py](/f:/ESP-main/ESP-main/services/product_service.py)` still uses `datetime.utcnow()`
-
-This is not an `Arc 1` blocker, but it should be cleaned up before or during `Arc 2`.
+Current local warnings are mainly third-party/test-environment warnings and are not `Arc 1` blockers.

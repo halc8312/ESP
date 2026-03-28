@@ -1,7 +1,6 @@
 """
 Main routes: index and dashboard.
 """
-from datetime import datetime
 from flask import Blueprint, render_template, request, session, redirect, url_for
 from flask_login import login_required, current_user
 from sqlalchemy.orm import subqueryload
@@ -10,6 +9,7 @@ from sqlalchemy import func
 from database import SessionLocal
 from models import Shop, Product, Variant, ProductSnapshot
 from services.validation_service import validate_product, get_issue_summary
+from time_utils import utc_now
 
 main_bp = Blueprint('main', __name__)
 
@@ -384,7 +384,7 @@ def product_manual_add():
         effective_inventory_qty = 0 if stock_state == "sold" else inventory_qty
         effective_last_status = "sold" if stock_state == "sold" else "on_sale"
         normalized_images = _normalize_manual_image_urls(form_data["image_urls"])
-        now = datetime.utcnow()
+        now = utc_now()
 
         product = Product(
             user_id=current_user.id,

@@ -1,6 +1,10 @@
 import pytest
 import os
 import sys
+import uuid
+from pathlib import Path
+
+from sqlalchemy import inspect, text
 
 # Add the application root to the path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -8,18 +12,73 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # Set test database URL before importing database module
 os.environ["DATABASE_URL"] = "sqlite:///test_mercari.db"
 
+import database
 from app import create_app
-from database import SessionLocal, Base, engine
+from database import SessionLocal, Base
+
+
+def _reset_sqlite_test_database_schema(target_engine):
+    target_engine.dispose()
+    with target_engine.begin() as connection:
+        connection.execute(text("PRAGMA foreign_keys=OFF"))
+        inspector = inspect(connection)
+        table_names = inspector.get_table_names()
+        for table_name in table_names:
+            connection.execute(text(f'DROP TABLE IF EXISTS "{table_name}"'))
+        connection.execute(text("PRAGMA foreign_keys=ON"))
+
+
+@pytest.fixture(autouse=True)
+def _reset_feature_flag_env(monkeypatch):
+    for env_name in (
+        "ENABLE_SHARED_BROWSER_RUNTIME",
+        "WARM_BROWSER_POOL",
+        "BROWSER_POOL_WARM_SITES",
+        "BROWSER_POOL_MAX_TASKS_BEFORE_RESTART",
+        "BROWSER_POOL_MAX_RUNTIME_SECONDS",
+        "MERCARI_USE_BROWSER_POOL_DETAIL",
+        "MERCARI_BROWSER_POOL_MAX_TASKS_BEFORE_RESTART",
+        "MERCARI_BROWSER_POOL_MAX_RUNTIME_SECONDS",
+        "MERCARI_PATROL_USE_BROWSER_POOL",
+        "SNKRDUNK_USE_BROWSER_POOL_DYNAMIC",
+        "SNKRDUNK_BROWSER_POOL_MAX_TASKS_BEFORE_RESTART",
+        "SNKRDUNK_BROWSER_POOL_MAX_RUNTIME_SECONDS",
+        "SCRAPE_JOB_ORPHAN_TIMEOUT_SECONDS",
+        "WORKER_BACKLOG_WARN_COUNT",
+        "WORKER_BACKLOG_WARN_AGE_SECONDS",
+        "OPERATIONAL_ALERT_WEBHOOK_URL",
+        "OPERATIONAL_ALERT_COOLDOWN_SECONDS",
+        "OPERATIONAL_ALERT_MAX_PER_WINDOW",
+        "OPERATIONAL_ALERT_WINDOW_SECONDS",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
 
 
 @pytest.fixture
-def app():
+def app(monkeypatch):
+    tmp_dir = Path(__file__).resolve().parent / ".tmp"
+    tmp_dir.mkdir(exist_ok=True)
+    database_path = tmp_dir / f"test_app_{uuid.uuid4().hex}.db"
+    database_url = f"sqlite:///{database_path.as_posix()}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    previous_engine = database.engine
+    test_engine = database.create_app_engine(database_url)
+    database.engine = test_engine
+    SessionLocal.configure(bind=test_engine)
+
     app = create_app(runtime_role="test", config_overrides={"TESTING": True})
     with app.app_context():
-        Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
+        _reset_sqlite_test_database_schema(test_engine)
+        Base.metadata.create_all(bind=test_engine)
         yield app
-        Base.metadata.drop_all(bind=engine)
+        _reset_sqlite_test_database_schema(test_engine)
+
+    test_engine.dispose()
+    database.engine = previous_engine
+    SessionLocal.configure(bind=database.engine)
+    if database_path.exists():
+        database_path.unlink()
 
 
 @pytest.fixture
@@ -28,7 +87,7 @@ def client(app):
         yield client
 
 @pytest.fixture
-def db_session():
+def db_session(app):
     session = SessionLocal()
     yield session
     session.close()

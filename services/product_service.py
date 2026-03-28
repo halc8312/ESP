@@ -2,7 +2,6 @@
 Product service for database operations related to scraped items.
 """
 import hashlib
-from datetime import datetime
 from flask import has_request_context, session
 
 from database import SessionLocal
@@ -12,6 +11,7 @@ from services.scrape_result_policy import (
     evaluate_persistence,
     normalize_item_for_persistence,
 )
+from time_utils import utc_now
 from utils import normalize_url
 
 
@@ -26,7 +26,7 @@ def save_scraped_items_to_db(items, user_id: int, site: str = "mercari", shop_id
     session_db = SessionLocal()
     new_count = 0
     updated_count = 0
-    now = datetime.utcnow()
+    now = utc_now()
     repricing_product_ids = set()
 
     resolved_shop_id = shop_id

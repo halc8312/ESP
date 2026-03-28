@@ -9,7 +9,17 @@ class FakeQueue:
         self.counter = 0
         self.last_enqueue = None
 
-    def enqueue(self, site, task_fn, task_args=(), task_kwargs=None, user_id=None, context=None):
+    def enqueue(
+        self,
+        site,
+        task_fn,
+        task_args=(),
+        task_kwargs=None,
+        user_id=None,
+        context=None,
+        request_payload=None,
+        mode=None,
+    ):
         self.counter += 1
         job_id = f'job-{self.counter}'
         result = task_fn(*(task_args or ()), **(task_kwargs or {}))
@@ -17,6 +27,8 @@ class FakeQueue:
             'site': site,
             'user_id': user_id,
             'context': context or {},
+            'request_payload': request_payload or {},
+            'mode': mode,
         }
         self.jobs[job_id] = {
             'job_id': job_id,
@@ -104,6 +116,8 @@ def test_scrape_run_preview_returns_json_without_saving(client, db_session, monk
     assert response.json['result_url'] == '/scrape?job_id=job-1'
     assert build_calls['persist_to_db'] is False
     assert fake_queue.last_enqueue['context']['persist_to_db'] is False
+    assert fake_queue.last_enqueue['request_payload']['persist_to_db'] is False
+    assert fake_queue.last_enqueue['mode'] == 'preview'
     assert db_session.query(Product).filter_by(user_id=user.id).count() == 0
 
 
@@ -135,6 +149,8 @@ def test_scrape_run_passes_current_shop_id_to_task(client, db_session, monkeypat
     assert response.status_code == 302
     assert build_calls['persist_to_db'] is True
     assert build_calls['shop_id'] == shop.id
+    assert fake_queue.last_enqueue['request_payload']['shop_id'] == shop.id
+    assert fake_queue.last_enqueue['mode'] == 'persist'
 
 
 

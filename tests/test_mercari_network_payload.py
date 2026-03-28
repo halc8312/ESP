@@ -243,3 +243,20 @@ def test_scrape_item_detail_can_return_payload_result_when_dom_fetch_fails(monke
     assert data["description"] == "Payload description"
     assert data["_scrape_meta"]["fallback_mode"] == "payload_without_dom"
     assert data["_scrape_meta"]["network_capture"]["used_payload"] is True
+
+
+def test_scrape_item_detail_can_use_browser_pool_dom_fetch(monkeypatch):
+    url = "https://jp.mercari.com/item/m123456789"
+    monkeypatch.setenv("MERCARI_USE_BROWSER_POOL_DETAIL", "true")
+    monkeypatch.delenv("MERCARI_USE_NETWORK_PAYLOAD", raising=False)
+
+    with patch("mercari_db.fetch_mercari_page_via_browser_pool_sync", return_value=MagicMock()) as mock_pool_fetch, patch(
+        "mercari_db.fetch_dynamic"
+    ) as mock_fetch_dynamic, patch(
+        "mercari_db.parse_mercari_item_page", return_value=(_dom_item(url), _dom_meta())
+    ):
+        data = scrape_item_detail(url)
+
+    mock_pool_fetch.assert_called_once_with(url, network_idle=True)
+    mock_fetch_dynamic.assert_not_called()
+    assert data["title"] == "DOM Title"

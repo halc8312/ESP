@@ -4,7 +4,7 @@ No login required.
 """
 import hashlib
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import timedelta
 from urllib.parse import urlparse
 
 from flask import Blueprint, render_template, abort, jsonify, request, session
@@ -13,6 +13,7 @@ from sqlalchemy.orm import subqueryload
 
 from database import SessionLocal
 from models import Shop, PriceList, PriceListItem, Product, CatalogPageView
+from time_utils import utc_now
 
 catalog_bp = Blueprint('catalog', __name__)
 
@@ -219,7 +220,7 @@ def pricelist_analytics(pricelist_id):
             .all()
         )
 
-        now = datetime.utcnow()
+        now = utc_now()
         seven_days_ago = now - timedelta(days=7)
         thirty_days_ago = now - timedelta(days=30)
         fourteen_days_ago = now - timedelta(days=13)

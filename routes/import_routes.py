@@ -4,11 +4,11 @@ Import routes - CSV product import with preview.
 import csv
 import io
 import json
-from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session as flask_session
 from flask_login import login_required, current_user
 from database import SessionLocal
 from models import Product, Variant, Shop
+from time_utils import utc_now
 
 import_bp = Blueprint('import', __name__)
 
@@ -232,8 +232,8 @@ def _process_import(content: str, shop_id_str: str, site: str):
                     custom_title=title,
                     custom_description=description,
                     last_price=int(float(price_str)) if price_str else 0,
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow()
+                    created_at=utc_now(),
+                    updated_at=utc_now()
                 )
                 session_db.add(product)
                 session_db.flush()
@@ -247,7 +247,7 @@ def _process_import(content: str, shop_id_str: str, site: str):
                         price=product.last_price,
                         description=description,
                         image_urls=image_urls,
-                        scraped_at=datetime.utcnow()
+                        scraped_at=utc_now()
                     )
                     session_db.add(snapshot)
                 

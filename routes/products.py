@@ -2,12 +2,12 @@
 Product detail routes.
 """
 import json
-from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, session
 from flask_login import login_required, current_user
 
 from database import SessionLocal
 from models import Shop, Product, Variant, ProductSnapshot, DescriptionTemplate
+from time_utils import utc_now
 
 products_bp = Blueprint('products', __name__)
 
@@ -69,7 +69,7 @@ def _build_image_snapshot(product, base_snapshot, image_urls):
 
     return ProductSnapshot(
         product_id=product.id,
-        scraped_at=datetime.utcnow(),
+        scraped_at=utc_now(),
         title=(
             base_snapshot.title
             if base_snapshot and base_snapshot.title
@@ -228,7 +228,7 @@ def product_detail(product_id):
                 if primary_variant.price is not None:
                     product.selling_price = primary_variant.price
 
-            product.updated_at = datetime.utcnow()
+            product.updated_at = utc_now()
             session_db.commit()
             return redirect(url_for('products.product_detail', product_id=product.id))
 

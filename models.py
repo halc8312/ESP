@@ -1,9 +1,9 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from database import Base
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
+from time_utils import utc_now
 
 class User(UserMixin, Base):
     __tablename__ = 'users'
@@ -27,7 +27,7 @@ class Shop(Base):
 
     name = Column(String, nullable=False) 
     logo_url = Column(String, nullable=True) # ショップロゴ画像URL
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
     
     products = relationship("Product", back_populates="shop")
     user = relationship("User") # Link to User
@@ -82,8 +82,8 @@ class Product(Base):
     # Patrol failure tracking (exponential backoff)
     patrol_fail_count = Column(Integer, default=0)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now)
 
     snapshots = relationship("ProductSnapshot", back_populates="product", cascade="all, delete-orphan")
     variants = relationship("Variant", back_populates="product", cascade="all, delete-orphan")
@@ -122,7 +122,7 @@ class ProductSnapshot(Base):
 
     id = Column(Integer, primary_key=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
-    scraped_at = Column(DateTime, default=datetime.utcnow)
+    scraped_at = Column(DateTime, default=utc_now)
 
     title = Column(String)
     price = Column(Integer)
@@ -139,8 +139,8 @@ class DescriptionTemplate(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False, unique=True)
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 
 class PricingRule(Base):
@@ -159,7 +159,7 @@ class PricingRule(Base):
     shipping_cost = Column(Integer, default=0)  # Fixed shipping to add (JPY)
     fixed_fee = Column(Integer, default=0)  # Fixed fee to add (JPY)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     user = relationship("User")
 
@@ -176,7 +176,7 @@ class ExclusionKeyword(Base):
     keyword = Column(String, nullable=False)
     match_type = Column(String, default="partial")  # "partial" or "exact"
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     user = relationship("User")
 
@@ -193,8 +193,8 @@ class PriceList(Base):
     currency_rate = Column(Integer, default=150)         # JPY→USD換算レート
     layout = Column(String, default="grid")              # grid / editorial
     notes = Column(Text)                                 # 備考（顧客へのメッセージ等）
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now)
 
     user = relationship("User")
     items = relationship("PriceListItem", back_populates="price_list", cascade="all, delete-orphan")
@@ -222,7 +222,7 @@ class CatalogPageView(Base):
 
     id = Column(Integer, primary_key=True)
     pricelist_id = Column(Integer, ForeignKey("price_lists.id"), nullable=False)
-    viewed_at = Column(DateTime, default=datetime.utcnow, index=True)
+    viewed_at = Column(DateTime, default=utc_now, index=True)
 
     ip_hash = Column(String(64))
     user_agent_short = Column(String(32))
@@ -245,17 +245,18 @@ class ScrapeJob(Base):
     requested_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
     request_payload = Column(Text)
+    context_payload = Column(Text)
     progress_current = Column(Integer)
     progress_total = Column(Integer)
     result_summary = Column(Text)
+    result_payload = Column(Text)
     error_message = Column(Text)
     error_payload = Column(Text)
-    preview_payload = Column(Text)
 
     started_at = Column(DateTime)
     finished_at = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     user = relationship("User")
     parent = relationship("ScrapeJob", remote_side=[job_id], backref="attempts")
@@ -269,6 +270,6 @@ class ScrapeJobEvent(Base):
     job_id = Column(String(64), ForeignKey("scrape_jobs.job_id"), nullable=False, index=True)
     event_type = Column(String(64), nullable=False)
     payload = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
 
     job = relationship("ScrapeJob", back_populates="events")

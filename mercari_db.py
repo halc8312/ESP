@@ -1,6 +1,5 @@
 import logging
 import asyncio
-from playwright.async_api import async_playwright
 import re
 import os
 import shutil
@@ -23,6 +22,11 @@ except ImportError:
 from services.mercari_item_parser import parse_mercari_item_page
 from services.mercari_item_parser import parse_mercari_network_payload
 from services.extraction_policy import attach_extraction_trace, pick_first_valid
+from services.browser_pool import run_browser_page_task
+from services.mercari_browser_fetch import (
+    fetch_mercari_page_via_browser_pool_sync,
+    should_use_mercari_browser_pool_detail,
+)
 from services.scraping_client import fetch_dynamic, gather_with_concurrency, get_async_fetch_settings, run_coro_sync
 
 # Import metrics logging
@@ -223,27 +227,7 @@ async def _capture_mercari_network_payload_async(url: str) -> dict:
     captured_payloads = []
     response_tasks = []
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-extensions",
-                "--disable-background-networking",
-            ],
-        )
-        context = await browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            extra_http_headers={"Accept-Language": "ja,en-US;q=0.9,en;q=0.8"},
-        )
-        page = await context.new_page()
-
+    async def _task(page, context):
         async def _capture_response(response):
             try:
                 headers = await response.all_headers()
@@ -258,21 +242,38 @@ async def _capture_mercari_network_payload_async(url: str) -> dict:
                 return
 
         page.on("response", lambda response: response_tasks.append(asyncio.create_task(_capture_response(response))))
-
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            try:
-                await page.wait_for_load_state("networkidle", timeout=5000)
-            except Exception:
-                pass
-            try:
-                await page.wait_for_selector("h1, [data-testid='price']", timeout=5000)
-            except Exception:
-                pass
-            if response_tasks:
-                await asyncio.gather(*response_tasks, return_exceptions=True)
-        finally:
-            await browser.close()
+            await page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass
+        try:
+            await page.wait_for_selector("h1, [data-testid='price']", timeout=5000)
+        except Exception:
+            pass
+        if response_tasks:
+            await asyncio.gather(*response_tasks, return_exceptions=True)
+
+    await run_browser_page_task(
+        "mercari",
+        _task,
+        headless=True,
+        launch_args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-extensions",
+            "--disable-background-networking",
+        ],
+        context_options={
+            "user_agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "extra_http_headers": {"Accept-Language": "ja,en-US;q=0.9,en;q=0.8"},
+        },
+    )
 
     return _select_best_mercari_payload(captured_payloads, url)
 
@@ -461,15 +462,7 @@ async def _extract_shops_variants_async(page, label_texts: list) -> list:
 
 async def _scrape_shops_product_async(url: str) -> dict:
     """メルカリShops商品ページを Playwright で取得"""
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"]
-        )
-        context = await browser.new_context()
-        page = await context.new_page()
-        
-        try:
+    async def _task(page, context):
             await page.goto(url, wait_until="domcontentloaded")
             try:
                 await page.wait_for_load_state("networkidle", timeout=5000)
@@ -604,9 +597,13 @@ async def _scrape_shops_product_async(url: str) -> dict:
             }
             item_data.update(item_data_update)
             return item_data
-            
-        finally:
-            await browser.close()
+
+    return await run_browser_page_task(
+        "mercari",
+        _task,
+        headless=True,
+        launch_args=["--no-sandbox", "--disable-dev-shm-usage"],
+    )
 
 
 def scrape_shops_product(url: str, driver=None) -> dict:
@@ -648,7 +645,10 @@ def scrape_item_detail(url: str, driver=None):
             logger.warning("Mercari payload capture failed for %s: %s", url, exc)
 
     try:
-        page = fetch_dynamic(url, headless=True, network_idle=True)
+        if should_use_mercari_browser_pool_detail():
+            page = fetch_mercari_page_via_browser_pool_sync(url, network_idle=True)
+        else:
+            page = fetch_dynamic(url, headless=True, network_idle=True)
     except Exception as e:
         if use_payload and _has_usable_payload_item(payload_item):
             payload_item = dict(payload_item)
@@ -702,38 +702,7 @@ async def _scrape_search_async(
     max_scroll: int,
 ) -> list[str]:
     """ページスクロールしながら商品リンクを収集する非同期関数"""
-    
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-extensions",
-                "--disable-background-networking",
-            ]
-        )
-        
-        context = await browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            # Bot検知対策
-            extra_http_headers={
-                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            }
-        )
-        page = await context.new_page()
-        
-        # Bot 検知対策: webdriver フラグを隠す
-        await page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        """)
-        
-        try:
+    async def _task(page, context):
             print(f"DEBUG: Navigating to {search_url}")
             await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
             try:
@@ -784,9 +753,34 @@ async def _scrape_search_async(
             
             print(f"DEBUG: Found {len(item_urls)} valid item URLs.")
             return item_urls[:max_items * 2]  # 最大 max_items * 2 件
-            
-        finally:
-            await browser.close()
+
+    return await run_browser_page_task(
+        "mercari",
+        _task,
+        headless=True,
+        launch_args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-extensions",
+            "--disable-background-networking",
+        ],
+        context_options={
+            "user_agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "extra_http_headers": {
+                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            },
+        },
+        init_scripts=[
+            """
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            """
+        ],
+    )
 
 
 async def _scrape_item_detail_async(url: str) -> dict:

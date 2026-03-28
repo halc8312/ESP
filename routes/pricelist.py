@@ -2,13 +2,13 @@
 Price List management routes: create, edit, delete, manage items.
 """
 import uuid
-from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 from flask_login import login_required, current_user
 from sqlalchemy.orm import subqueryload
 
 from database import SessionLocal
 from models import Shop, Product, ProductSnapshot, Variant, PriceList, PriceListItem
+from time_utils import utc_now
 
 pricelist_bp = Blueprint('pricelist', __name__)
 
@@ -124,7 +124,7 @@ def pricelist_edit(pricelist_id):
             pl.currency_rate = int(request.form.get("currency_rate", 150))
             pl.layout = _normalize_layout(request.form.get("layout"))
             pl.is_active = "is_active" in request.form
-            pl.updated_at = datetime.utcnow()
+            pl.updated_at = utc_now()
             session_db.commit()
             return redirect(url_for("pricelist.pricelist_list"))
 
@@ -165,7 +165,7 @@ def pricelist_items(pricelist_id):
                     custom_price = request.form.get(f"custom_price_{item.id}", "").strip()
                     item.custom_price = int(custom_price) if custom_price else None
 
-                pl.updated_at = datetime.utcnow()
+                pl.updated_at = utc_now()
                 session_db.commit()
 
             elif action == "remove_items":
@@ -175,7 +175,7 @@ def pricelist_items(pricelist_id):
                         PriceListItem.id.in_([int(i) for i in item_ids]),
                         PriceListItem.price_list_id == pl.id,
                     ).delete(synchronize_session=False)
-                    pl.updated_at = datetime.utcnow()
+                    pl.updated_at = utc_now()
                     session_db.commit()
 
             return redirect(url_for("pricelist.pricelist_items", pricelist_id=pl.id))
@@ -275,7 +275,7 @@ def pricelist_add_products(pricelist_id):
                     added += 1
 
         if added > 0:
-            pl.updated_at = datetime.utcnow()
+            pl.updated_at = utc_now()
             session_db.commit()
 
         return redirect(url_for("pricelist.pricelist_items", pricelist_id=pl.id))

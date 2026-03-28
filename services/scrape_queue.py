@@ -99,6 +99,7 @@ class ScrapeQueue:
         task_kwargs: dict = None,
         user_id: int = None,
         context: Optional[dict] = None,
+        job_id: Optional[str] = None,
     ) -> str:
         """
         スクレイピングタスクをキューに追加する。
@@ -118,7 +119,7 @@ class ScrapeQueue:
         Returns:
             str: ジョブID（クライアントがポーリングに使用）
         """
-        job_id = str(uuid.uuid4())
+        job_id = job_id or str(uuid.uuid4())
         job = ScrapeJob(
             job_id=job_id,
             site=site,

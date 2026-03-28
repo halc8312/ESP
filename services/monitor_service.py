@@ -4,12 +4,13 @@ Uses efficient patrol scrapers that only fetch price and stock data.
 Non-Mercari sites use HTTP-only fetching (Scrapling) to avoid launching Chrome.
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from sqlalchemy import asc
 from database import SessionLocal
 from models import Product, Variant
 from services.pricing_service import update_product_selling_price
 from services.scrape_result_policy import normalize_status_for_persistence
+from time_utils import utc_now
 from utils import is_valid_detail_url
 
 # Import lightweight patrol scrapers
@@ -55,7 +56,7 @@ class MonitorService:
         """Increment fail count and push updated_at into the future."""
         product.patrol_fail_count = (product.patrol_fail_count or 0) + 1
         backoff_minutes = min(product.patrol_fail_count * 15, _MAX_BACKOFF_MINUTES)
-        product.updated_at = datetime.utcnow() + timedelta(minutes=backoff_minutes)
+        product.updated_at = utc_now() + timedelta(minutes=backoff_minutes)
         session_db.commit()
 
     @staticmethod
@@ -142,7 +143,7 @@ class MonitorService:
                             update_product_selling_price(product.id)
                     
                     # Always update timestamp even if no changes
-                    product.updated_at = datetime.utcnow()
+                    product.updated_at = utc_now()
                     session_db.commit()
                     
                 except Exception as e:

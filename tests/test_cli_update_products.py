@@ -1,6 +1,5 @@
-from datetime import datetime
-
 from models import Product, User
+from time_utils import utc_now
 
 
 def _create_user(db_session, username):
@@ -20,8 +19,8 @@ def test_update_products_dry_run_uses_site_specific_scraper(app, client, db_sess
         last_title='Old Yahoo Item',
         last_price=1000,
         last_status='on_sale',
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=utc_now(),
+        updated_at=utc_now(),
     )
     db_session.add(product)
     db_session.commit()
