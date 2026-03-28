@@ -2,6 +2,7 @@ from pathlib import Path
 import uuid
 
 import pytest
+from sqlalchemy import inspect, text
 
 import database
 from models import ScrapeJob, ScrapeJobEvent
@@ -87,3 +88,47 @@ def test_run_database_smoke_check_reports_backend_mismatch(monkeypatch):
 def test_scrape_job_tables_registered_in_metadata():
     assert ScrapeJob.__tablename__ in database.Base.metadata.tables
     assert ScrapeJobEvent.__tablename__ in database.Base.metadata.tables
+
+
+def test_apply_additive_startup_migrations_backfills_scrape_job_columns():
+    smoke_db = Path(f"test_db_patchset_{uuid.uuid4().hex}.sqlite")
+    smoke_engine = database.create_app_engine(f"sqlite:///{smoke_db.as_posix()}")
+
+    try:
+        with smoke_engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE scrape_jobs (
+                        job_id VARCHAR(64) PRIMARY KEY,
+                        status VARCHAR(32),
+                        site VARCHAR(32),
+                        mode VARCHAR(32),
+                        requested_by INTEGER,
+                        request_payload TEXT,
+                        result_summary TEXT,
+                        error_message TEXT,
+                        started_at TIMESTAMP,
+                        finished_at TIMESTAMP,
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    )
+                    """
+                )
+            )
+
+        with smoke_engine.begin() as connection:
+            results = database.apply_additive_startup_migrations(bind=connection)
+        columns = {column["name"] for column in inspect(smoke_engine).get_columns("scrape_jobs")}
+    finally:
+        smoke_engine.dispose()
+        smoke_db.unlink(missing_ok=True)
+
+    assert "scrape_jobs.context_payload" in results["applied"]
+    assert "logical_job_id" in columns
+    assert "parent_job_id" in columns
+    assert "context_payload" in columns
+    assert "progress_current" in columns
+    assert "progress_total" in columns
+    assert "result_payload" in columns
+    assert "error_payload" in columns

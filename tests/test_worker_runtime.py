@@ -74,6 +74,23 @@ def test_create_web_app_honors_explicit_disabled_scheduler_mode():
     assert app.extensions.get("esp_scheduler_started") is None
 
 
+def test_create_web_app_runs_additive_patchset_after_alembic(monkeypatch):
+    captured = []
+
+    monkeypatch.setattr("app.bootstrap_schema", lambda mode: "alembic")
+    monkeypatch.setattr("app.run_legacy_startup_migrations", lambda: captured.append("patched"))
+
+    app = create_web_app(
+        config_overrides={
+            "TESTING": True,
+            "SCRAPE_QUEUE_BACKEND": "rq",
+        }
+    )
+
+    assert app.extensions["esp_schema_bootstrap_mode"] == "alembic"
+    assert captured == ["patched"]
+
+
 def test_single_service_web_scheduler_does_not_require_redis_lock():
     app = create_web_app(
         config_overrides={

@@ -268,33 +268,13 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
 
 def run_legacy_startup_migrations() -> None:
     """Safely add missing columns to existing tables."""
-    from sqlalchemy import text
+    from database import apply_additive_startup_migrations
 
-    from database import engine
-
-    migrations = [
-        ("products", "pricing_rule_id", "ALTER TABLE products ADD COLUMN pricing_rule_id INTEGER"),
-        ("products", "selling_price", "ALTER TABLE products ADD COLUMN selling_price INTEGER"),
-        ("products", "custom_title_en", "ALTER TABLE products ADD COLUMN custom_title_en VARCHAR"),
-        ("products", "custom_description_en", "ALTER TABLE products ADD COLUMN custom_description_en TEXT"),
-        ("products", "archived", "ALTER TABLE products ADD COLUMN archived BOOLEAN DEFAULT FALSE"),
-        ("products", "deleted_at", "ALTER TABLE products ADD COLUMN deleted_at DATETIME"),
-        ("price_lists", "layout", "ALTER TABLE price_lists ADD COLUMN layout VARCHAR DEFAULT 'grid'"),
-        ("shops", "logo_url", "ALTER TABLE shops ADD COLUMN logo_url VARCHAR"),
-        ("products", "patrol_fail_count", "ALTER TABLE products ADD COLUMN patrol_fail_count INTEGER DEFAULT 0"),
-    ]
-
-    with engine.connect() as conn:
-        for table, column, sql in migrations:
-            try:
-                conn.execute(text(f"SELECT {column} FROM {table} LIMIT 1"))
-            except Exception:
-                try:
-                    conn.execute(text(sql))
-                    conn.commit()
-                    print(f"Migration: Added column {column} to {table}")
-                except Exception as exc:
-                    print(f"Migration error for {column}: {exc}")
+    results = apply_additive_startup_migrations()
+    for applied in results.get("applied", []):
+        print(f"Migration: Added column {applied}")
+    for error in results.get("errors", []):
+        print(f"Migration error for {error}")
 
 
 def _register_scheduler_jobs(app: Flask) -> None:
@@ -480,7 +460,7 @@ def initialize_app_runtime(app: Flask) -> Flask:
         with app.app_context():
             applied_schema_mode = bootstrap_schema(app.config.get("SCHEMA_BOOTSTRAP_MODE", "auto"))
             app.extensions["esp_schema_bootstrap_mode"] = applied_schema_mode
-            if applied_schema_mode == "legacy" and app.config.get("ENABLE_LEGACY_SCHEMA_PATCHSET"):
+            if applied_schema_mode != "disabled" and app.config.get("ENABLE_LEGACY_SCHEMA_PATCHSET"):
                 run_legacy_startup_migrations()
 
     if app.config.get("ENABLE_SCHEDULER"):
