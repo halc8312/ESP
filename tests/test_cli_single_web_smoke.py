@@ -52,6 +52,18 @@ def test_run_single_web_smoke_preview_mode(app):
     assert snapshot["persistence"]["product_count"] == 0
 
 
+def test_run_single_web_smoke_uses_app_queue_backend_even_if_env_is_rq(app, monkeypatch):
+    monkeypatch.setenv("SCRAPE_QUEUE_BACKEND", "rq")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    app.config["SCRAPE_QUEUE_BACKEND"] = "inmemory"
+
+    snapshot = run_single_web_smoke(app, mode="preview")
+
+    assert snapshot["ready"] is True
+    assert snapshot["queue_backend"] == "inmemory"
+    assert snapshot["status_payload"]["status"] == "completed"
+
+
 def test_run_single_web_smoke_persist_mode_with_fixture(app):
     snapshot = run_single_web_smoke(
         app,

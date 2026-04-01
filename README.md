@@ -301,10 +301,26 @@ flask worker-health
 flask worker-health --fail-on-warning
 # 現在の単一 Web 本番へ安全に再デプロイできるかを見る:
 flask predeploy-check --target single-web
+# 単一 Web 本番向けの local gate を一本で回す:
+flask single-web-redeploy-readiness
+# 現在の単一 Web 本番向けの operator 手順をまとめて出す:
+flask single-web-redeploy-checklist --base-url https://<current-web-url> --username <smoke-user> --password <smoke-password>
+# 単一 Web 本番の post-deploy smoke を current 期待値で流す:
+flask single-web-postdeploy-smoke --base-url https://<current-web-url>
+# paid split worker の post-deploy 確認ポイントを出す:
+flask render-worker-postdeploy-checklist --blueprint-path render.yaml
 # 現本番と同じ single-web + inmemory 経路を実際に流す:
 flask single-web-smoke --mode preview
 # 将来の paid split (`web + worker + postgres + key value`) 向け readiness:
 flask predeploy-check --target split-render --strict
+# paid split の local rehearsal 前提を出す:
+flask render-local-split-checklist --blueprint-path render.yaml
+# paid split の local rehearsal gate を repo 既定の local env で一発実行:
+flask render-local-split-readiness
+# paid split 前の operator bundle をまとめて出す:
+flask render-cutover-brief --base-url https://<esp-web-url> --username <smoke-user> --password <smoke-password>
+# paid split の予算ガードが render.yaml とズレていないかを見る:
+flask render-budget-guardrail-audit --blueprint-path render.yaml
 # DB 単体の smoke（local PostgreSQL を指して migrate + connect + write/read を確認したい時）:
 flask db-smoke --require-backend postgresql --apply-migrations
 # parser 単体の fixture smoke（queue/DB を使わず detail dump を検証したい時）:
@@ -385,23 +401,45 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 
 shared browser runtime を有効にした worker は、起動時の durable backlog 要約、browser warm・restart・close 前 health snapshot を worker log に出します。backlog warning がしきい値を超えたままなら、`OPERATIONAL_ALERT_WEBHOOK_URL` が設定されている場合だけ silent alert も送れます。`{SITE}_BROWSER_POOL_MAX_CONTEXTS`、`{SITE}_BROWSER_POOL_MAX_TASKS_BEFORE_RESTART`、`{SITE}_BROWSER_POOL_MAX_RUNTIME_SECONDS` を使うと site 別に上限を上書きできます。
 
-`flask predeploy-check` は deploy 前の安全確認用です。`--target single-web` は現在の単一 Render Web Service 互換を、`--target split-render` は将来の `$61/month` 想定構成を前提に、queue / schema bootstrap / scheduler / storage の blocker と warning を JSON で返します。
+`flask predeploy-check` は deploy 前の安全確認用です。`--target single-web` は現在の単一 Render Web Service 互換を、`--target split-render` は将来の `$61/month` 想定構成を前提に、queue / schema bootstrap / scheduler / storage の blocker と warning を JSON で返します。CLI 実行時には current DB に対する `schema-drift-check` も併せて走るので、軽い再デプロイ前確認でも additive drift を見落としにくくしています。
+
+`flask single-web-redeploy-readiness` は、現在の Render 単一 Web 本番を再デプロイしてよいかをローカルで判定する gate です。`predeploy-check --target single-web` と `local-verify --profile parser` を一つに束ねるので、routine redeploy 前の確認を一発で回せます。手順全体は `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` にまとめています。
+
+`flask single-web-redeploy-checklist` は、現在の Render 単一 Web 本番を安全に再デプロイするための operator 向け JSON checklist です。local gate、Dashboard 上で崩してはいけない env 前提、post-deploy smoke、rollback を一つにまとめます。日々の DOM/UI 修正に伴う再デプロイでは、まずこれを出して順番どおりに確認する運用が安全です。post-deploy smoke のコマンド列には cautious default として `--retries 4 --retry-delay-seconds 2` を含めています。手順全体は `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` にまとめています。
+
+`flask single-web-postdeploy-smoke --base-url https://...` は、現在の Render 単一 Web 本番向け post-deploy smoke です。`render-postdeploy-smoke` の current single-web 版で、`queue_backend=inmemory`、`runtime_role=web`、`scheduler_enabled=true` を前提に `/healthz`、`/login`、`/scrape`、`/api/scrape/jobs` を確認します。`--username` と `--password` を付けると authenticated route も見られ、`--ensure-user` を付けると必要時だけ `/register` を試します。deploy 直後の cold start や一時的な 502/503 を吸収したい時は `--retries` と `--retry-delay-seconds` で再試行回数を上げられます。
 
 `flask single-web-smoke` は、現本番と同じ `single-web + SCRAPE_QUEUE_BACKEND=inmemory` の互換 path を live site なしで end-to-end に確認するコマンドです。内部 smoke payload を使って job enqueue、`/api/scrape/status/<job_id>`、`/api/scrape/jobs`、`/scrape/result/<job_id>` まで確認します。`--mode preview` では DB に商品が保存されないこと、`--mode persist` では保存経路まで確認できます。
 
 `flask db-smoke` は `DATABASE_URL` に対する明示的な DB smoke です。`--apply-migrations` を付けると Alembic/legacy 設定に従って schema を適用したうえで、接続・簡易 write/read・主要テーブル存在確認を行います。local PostgreSQL を立てた段階で、まずこれを通してから web/worker の end-to-end に進めるのが安全です。
 
+`flask schema-drift-check` は、persistent DB に additive patchset の不足が残っていないかを見る軽い監査です。特に既存 SQLite を持ったまま再デプロイする前に有効で、今回のような `scrape_jobs.context_payload` 欠落も deploy 前に見つけられます。
+
 `flask detail-fixture-smoke` は queue / Redis / DB を使わずに local detail dump を real parser へ通すための軽量チェックです。`--strict` を付けると title / price / image / page_type などの warning を blocker 扱いにできます。日々の DOM 修正時はこれで parser 単体を先に見てから `stack-smoke` へ進めるのが安全です。
 
 `flask search-fixture-smoke` は local search-result dump が「実際の item URL を含む検索結果」なのか、「skeleton / challenge / 未描画ページ」なのかを素早く判定する軽量チェックです。現在は Mercari search dump に対応していて、`item_urls_missing` や `search_results_not_rendered` を blocker として返します。日々の DOM 修正時に、detail 側へ進む前の入口チェックとして使えます。
 
-`flask local-verify` は、いま積み上げた local-first 検証を順序つきでまとめて回すコマンドです。`--profile parser` は single-web predeploy に続いて `single-web-smoke --mode preview` を実行し、その後に detail fixture 群と、`search_dump.html` があれば Mercari search fixture 判定も advisory step として含みます。`--profile stack` は split-render を含む advisory predeploy + db-smoke + fixture-backed stack smoke、`--profile full` はその両方に加えて `single-web-smoke --mode persist --fixture-site mercari ...` と `single-web-smoke --mode persist --fixture-site snkrdunk ...` も含みます。predeploy/search 系の advisory step は「今ある dump の質」や「切替準備の不足」を見える化するために出し、suite 全体の成否は single-web/parser/db/stack の実動作で判定します。daily の DOM 修正後は `parser`、しっかり確認する時は `full` を流す運用を想定しています。
+`flask local-verify` は、いま積み上げた local-first 検証を順序つきでまとめて回すコマンドです。すべての profile で current DB に対する `schema-drift-check` を先に走らせるので、既存 SQLite や local PostgreSQL に additive drift が残っている状態を日常の再デプロイ前に拾えます。`--profile parser` は single-web predeploy と schema drift 監査に続いて `single-web-smoke --mode preview` を実行し、その後に detail fixture 群と、`search_dump.html` があれば Mercari search fixture 判定も advisory step として含みます。`--profile stack` は split-render を含む advisory predeploy + db-smoke + fixture-backed stack smoke、`--profile full` はその両方に加えて `single-web-smoke --mode persist --fixture-site mercari ...` と `single-web-smoke --mode persist --fixture-site snkrdunk ...` も含みます。predeploy/search 系の advisory step は「今ある dump の質」や「切替準備の不足」を見える化するために出し、suite 全体の成否は schema drift / single-web / parser / db / stack の実動作で判定します。daily の DOM 修正後は `parser`、しっかり確認する時は `full` を流す運用を想定しています。
 
-`flask render-cutover-readiness` は、最初の paid Render split に入ってよいかをローカルで判定する C4 用 gate です。current single-web predeploy は advisory として残しつつ、split-render predeploy、split worker health、`local-verify --profile full` を一つに束ねます。paid activation 前は `flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict` を通してから進めてください。手順全体は `docs/RENDER_CUTOVER_RUNBOOK.md` にまとめています。
+`flask render-cutover-readiness` は、最初の paid Render split に入ってよいかをローカルで判定する C4 用 gate です。current single-web predeploy は advisory として残しつつ、persistent DB の `schema-drift-check`、split-render predeploy、split worker health、`local-verify --profile full` を一つに束ねます。paid activation 前は `flask render-local-split-checklist` で local PostgreSQL/Redis/RQ の前提と順序を確認したうえで、`flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict` を通してから進めてください。手順全体は `docs/RENDER_CUTOVER_RUNBOOK.md` にまとめています。
 
 `flask render-blueprint-audit` は `render.yaml` の静的監査です。`esp-web` / `esp-worker` / `esp-keyvalue` / `esp-postgres` の service 名、`autoDeployTrigger: off`、`/healthz`、`python worker.py`、managed `DATABASE_URL` / `REDIS_URL`、manual secret env の棚卸しを確認します。Render Dashboard に入る前の secret/env チェックとして使えます。
 
+`flask render-budget-guardrail-audit --blueprint-path render.yaml` は、repo に記録した budget guardrail 前提と `render.yaml` の plan を照合する監査です。いまの前提では `esp-web=starter`, `esp-worker=standard`, `esp-keyvalue=starter`, `esp-postgres=basic-1gb` を要求し、core recurring cost estimate は `$61/month` として扱います。これは repo に固定した planning assumption で、actual purchase 前には Render 側の価格再確認が別途必要です。
+
+`flask render-local-split-checklist` は、paid split をローカルで rehearse するための operator 向け JSON checklist です。`docker-compose.local.yml`、local PostgreSQL/Redis 用 env 契約、PowerShell の env export 例、local PostgreSQL/Redis の TCP 到達確認、`db-smoke` / `worker-health` / `local-verify --profile full` / `render-cutover-readiness` の実行順を一つにまとめます。`render-cutover-readiness` が落ちた時に「何を揃えれば gate が通るか」を先に見たい時は、まずこれを出してください。
+
+`flask render-local-split-readiness` は、repo に固定した local split env を一時適用して `render-local-split-checklist` と `render-cutover-readiness --strict` をまとめて回す one-shot gate です。shell に手で env を積まずに paid split rehearsal を再現したい時は、まずこれを使うのが安全です。
+
+`flask render-cutover-brief` は、初回 paid cutover に必要な operator 情報をまとめて出す bundle です。`render-budget-guardrail-audit`, `render-dashboard-inputs`, `render-worker-postdeploy-checklist`, `render-local-split-readiness`, `render-cutover-checklist` を 1 回で集約するので、契約直前に確認コマンドを行き来しなくて済みます。
+
 `flask render-dashboard-inputs` は `render.yaml` から Dashboard 入力用の env 一覧を JSON で出します。service ごとの `manual_envs`、`managed_envs`、`fixed_envs` を分けて見られるので、「Render 側で手入力するもの」と「Blueprint に任せるもの」を混ぜにくくなります。
+
+`flask render-postdeploy-smoke --base-url https://...` は、初回 paid activation 後の web 健全性チェックです。`/healthz` の JSON を見て `runtime_role=web`、`queue_backend=rq`、`scheduler_enabled=false` を確認し、加えて `/login`、`/scrape`、`/api/scrape/jobs` が 500 を返していないことを見ます。`--username` と `--password` を付けるとログイン後の `/scrape` と `/api/scrape/jobs` も確認するので、今回 staging で実際に壊れた「認証後にだけ 500 になる」系も Deploy 後すぐに検知できます。初回 smoke user がまだ存在しない場合は `--ensure-user` を付けると、login が通らなかった時だけ `/register` を試してから authenticated route smoke へ進みます。deploy 直後の一時 502/503 や cold start を見越すなら `--retries` と `--retry-delay-seconds` を増やして判定を安定化できます。
+
+`flask render-worker-postdeploy-checklist --blueprint-path render.yaml` は、paid split の worker post-deploy で見るべき log marker と runtime 契約を JSON で出します。`esp-worker` の fixed / managed / manual env、`python worker.py` 前提、scheduler owner、browser warm、backlog warning 閾値を `render.yaml` から読み取り、worker 起動ログで何を確認すべきかを operator 向けに固定します。
+
+`flask render-cutover-checklist` は、初回 paid cutover 時の実行順を JSON で出します。pre-cutover command、Dashboard 上の手動 step、manual secret env、post-deploy command、rollback step を一つにまとめるので、operator が runbook と CLI を行き来しなくて済みます。pre-cutover command には `schema-drift-check` と `render-local-split-checklist` も含まれるので、persistent DB の additive drift と local split rehearse 手順を見落としにくくなります。`--base-url` と smoke user を渡しておけば、post-deploy smoke のコマンド列まで具体化され、deploy 直後の false negative を減らすために `--retries 4 --retry-delay-seconds 2` も自動で含まれます。
 
 `flask stack-smoke` は live site に触れない full-stack smoke です。local DB/Redis に対して一時ユーザーを作り、internal smoke payload を preview または persist mode で RQ に enqueue し、`worker.py` 相当の burst worker で処理し、最後に `/api/scrape/status/<job_id>`、`/api/scrape/jobs`、`/scrape/result/<job_id>` を確認します。`--mode persist` を付けると `Product` / `Variant` / `ProductSnapshot` まで検証します。通常は完了後に一時 user/job/product を cleanup し、`--keep-artifacts` を付けた時だけ残します。`--fixture-site mercari` や `--fixture-site snkrdunk` を付けると internal dummy item の代わりに local HTML dump を real parser に通した結果で同じ smoke を流せます。
 

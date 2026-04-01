@@ -22,10 +22,19 @@ The intended initial recurring cost stays aligned with the budget guardrail in `
 Do not provision paid Render services until all of the following pass locally.
 
 1. `flask predeploy-check --target single-web`
-2. `flask render-blueprint-audit`
-3. `flask render-dashboard-inputs`
-4. `flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict`
-5. `py -3 -m pytest tests -q`
+2. `flask schema-drift-check`
+3. `flask render-blueprint-audit`
+4. `flask render-budget-guardrail-audit`
+5. `flask render-dashboard-inputs`
+6. `flask render-local-split-checklist --blueprint-path render.yaml`
+7. `flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict`
+8. `py -3 -m pytest tests -q`
+
+If you want the exact operator sequence in one payload, generate it with:
+
+```powershell
+flask render-cutover-checklist --base-url https://<esp-web-url> --username <smoke-user> --password <smoke-password>
+```
 
 If `search-mercari-fixture` is advisory-only and reports `search_skeleton`, that is not a paid-cutover blocker by itself. It means the local search dump is not a rendered result page.
 
@@ -35,6 +44,26 @@ Bring up the local stand-ins before the cutover gate.
 
 ```powershell
 docker compose -f docker-compose.local.yml up -d
+```
+
+If you want the exact local split rehearsal contract in one payload, generate it with:
+
+```powershell
+flask render-local-split-checklist --blueprint-path render.yaml
+```
+
+This checklist also reports whether the recommended local PostgreSQL and Redis endpoints are actually reachable before you run the stricter cutover gates.
+
+If you want to run the same rehearsal with the repo-pinned local PostgreSQL/Redis env defaults in one command, use:
+
+```powershell
+flask render-local-split-readiness
+```
+
+If you want the full operator bundle before the first paid activation, use:
+
+```powershell
+flask render-cutover-brief --base-url https://<esp-web-url> --username <smoke-user> --password <smoke-password>
 ```
 
 Expected local equivalents:
@@ -105,11 +134,13 @@ These should stay managed by the Blueprint and should not be copied by hand from
 4. Fill secret env vars.
 5. Provision `esp-postgres` and `esp-keyvalue`.
 6. Deploy `esp-web` and confirm `/healthz` returns `200`.
-7. Deploy `esp-worker` and confirm startup logs show Redis connectivity and no fatal browser/runtime errors.
-8. Run one preview scrape smoke.
-9. Run one persist scrape smoke.
-10. Confirm status polling, result page rendering, and one persisted product path.
-11. Only after those checks pass, plan any traffic or operator cutover.
+7. Deploy `esp-worker` and compare its startup logs against `flask render-worker-postdeploy-checklist --blueprint-path render.yaml`.
+8. Run `flask render-postdeploy-smoke --base-url https://<esp-web-url> --retries 4 --retry-delay-seconds 2`.
+9. If a smoke user already exists, rerun with `--username <smoke-user> --password <smoke-password>`. If it does not exist yet, add `--ensure-user` so authenticated `/scrape` and `/api/scrape/jobs` are checked too.
+10. Run one preview scrape smoke.
+11. Run one persist scrape smoke.
+12. Confirm status polling, result page rendering, and one persisted product path.
+13. Only after those checks pass, plan any traffic or operator cutover.
 
 ## First Render Checks
 
@@ -120,6 +151,8 @@ After provisioning, verify at minimum:
 - `SCRAPE_QUEUE_BACKEND=rq`
 - `WEB_SCHEDULER_MODE=disabled` on web
 - `WORKER_ENABLE_SCHEDULER=1` only on the intended worker
+- `/login`, `/scrape`, `/api/scrape/jobs` do not return `500`
+- authenticated `/api/scrape/jobs` does not return `500` or redirect back to `/login`
 - Redis-backed queue jobs move from `queued` to `completed`
 - One real scrape job reaches `/api/scrape/status/<job_id>` and `/scrape/result/<job_id>`
 

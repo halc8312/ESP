@@ -96,6 +96,43 @@ def apply_additive_startup_migrations(bind=None) -> dict[str, list[str]]:
             connection.close()
 
 
+def inspect_additive_schema_drift(bind=None) -> dict[str, object]:
+    connection = bind or engine.connect()
+    owns_connection = bind is None
+
+    try:
+        inspector = inspect(connection)
+        existing_tables = set(inspector.get_table_names())
+        table_columns = {
+            table_name: {column["name"] for column in inspector.get_columns(table_name)}
+            for table_name in existing_tables
+        }
+
+        tables_with_additive_expectations = sorted({table for table, _, _ in ADDITIVE_STARTUP_MIGRATIONS})
+        missing_tables = [table for table in tables_with_additive_expectations if table not in existing_tables]
+
+        missing_columns: list[str] = []
+        for table, column, _sql in ADDITIVE_STARTUP_MIGRATIONS:
+            if table not in existing_tables:
+                continue
+            if column not in table_columns.get(table, set()):
+                missing_columns.append(f"{table}.{column}")
+
+        return {
+            "database_backend": get_database_backend(),
+            "database_url": redact_database_url(),
+            "ready": not missing_tables and not missing_columns,
+            "missing_tables": missing_tables,
+            "missing_columns": missing_columns,
+            "expected_tables": tables_with_additive_expectations,
+            "table_count": len(existing_tables),
+            "blockers": list(missing_tables) + missing_columns,
+        }
+    finally:
+        if owns_connection:
+            connection.close()
+
+
 def alembic_available() -> bool:
     return bool(importlib.util.find_spec("alembic"))
 

@@ -13,6 +13,16 @@ def test_predeploy_check_single_web_reports_ready(app, monkeypatch):
             "ready": True,
         },
     )
+    monkeypatch.setattr(
+        "cli.inspect_additive_schema_drift",
+        lambda: {
+            "ready": True,
+            "blockers": [],
+            "missing_tables": [],
+            "missing_columns": [],
+            "database_backend": "sqlite",
+        },
+    )
 
     runner = app.test_cli_runner()
     result = runner.invoke(args=["predeploy-check"])
@@ -21,6 +31,7 @@ def test_predeploy_check_single_web_reports_ready(app, monkeypatch):
     payload = json.loads(result.output)
     assert payload["target"] == "single-web"
     assert payload["ready"] is True
+    assert payload["schema_drift"]["ready"] is True
 
 
 def test_predeploy_check_fails_on_blocker(app, monkeypatch):
@@ -31,6 +42,16 @@ def test_predeploy_check_fails_on_blocker(app, monkeypatch):
             "blockers": ["split_render_requires_postgresql_database"],
             "warnings": [],
             "ready": False,
+        },
+    )
+    monkeypatch.setattr(
+        "cli.inspect_additive_schema_drift",
+        lambda: {
+            "ready": True,
+            "blockers": [],
+            "missing_tables": [],
+            "missing_columns": [],
+            "database_backend": "sqlite",
         },
     )
 
@@ -50,11 +71,51 @@ def test_predeploy_check_strict_fails_on_warning(app, monkeypatch):
             "ready": True,
         },
     )
+    monkeypatch.setattr(
+        "cli.inspect_additive_schema_drift",
+        lambda: {
+            "ready": True,
+            "blockers": [],
+            "missing_tables": [],
+            "missing_columns": [],
+            "database_backend": "sqlite",
+        },
+    )
 
     runner = app.test_cli_runner()
     result = runner.invoke(args=["predeploy-check", "--target", "split-render", "--strict"])
 
     assert result.exit_code == 1
+
+
+def test_predeploy_check_fails_on_schema_drift(app, monkeypatch):
+    monkeypatch.setattr(
+        "cli.build_predeploy_snapshot",
+        lambda current_app, target="single-web": {
+            "target": target,
+            "blockers": [],
+            "warnings": [],
+            "ready": True,
+        },
+    )
+    monkeypatch.setattr(
+        "cli.inspect_additive_schema_drift",
+        lambda: {
+            "ready": False,
+            "blockers": ["missing_column:scrape_jobs.context_payload"],
+            "missing_tables": [],
+            "missing_columns": ["scrape_jobs.context_payload"],
+            "database_backend": "sqlite",
+        },
+    )
+
+    runner = app.test_cli_runner()
+    result = runner.invoke(args=["predeploy-check", "--target", "single-web"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["schema_drift"]["blockers"] == ["missing_column:scrape_jobs.context_payload"]
+    assert "missing_column:scrape_jobs.context_payload" in payload["blockers"]
 
 
 def test_build_predeploy_snapshot_blocks_rq_for_single_web(app):

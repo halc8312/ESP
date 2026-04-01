@@ -52,6 +52,15 @@ def test_run_local_verification_suite_parser_profile(monkeypatch, app):
             "blockers": [],
         },
     )
+    monkeypatch.setattr(
+        "cli.inspect_additive_schema_drift",
+        lambda: {
+            "ready": True,
+            "blockers": [],
+            "missing_tables": [],
+            "missing_columns": [],
+        },
+    )
 
     detail_steps = []
 
@@ -95,6 +104,7 @@ def test_run_local_verification_suite_parser_profile(monkeypatch, app):
     assert snapshot["ready"] is True
     assert [step["name"] for step in snapshot["steps"]] == [
         "predeploy-single-web",
+        "schema-drift-check",
         "single-web-smoke-preview",
         "detail-mercari-active",
         "detail-mercari-deleted",
@@ -103,7 +113,7 @@ def test_run_local_verification_suite_parser_profile(monkeypatch, app):
     ]
     assert snapshot["steps"][0]["advisory"] is True
     assert snapshot["steps"][1]["advisory"] is False
-    assert snapshot["steps"][4]["advisory"] is True
+    assert snapshot["steps"][5]["advisory"] is True
     assert detail_steps[0][0] == "mercari"
     assert detail_steps[0][3] is True
     assert detail_steps[1][0] == "mercari"
@@ -118,6 +128,15 @@ def test_run_local_verification_suite_stack_profile(monkeypatch, app):
             "target": target,
             "ready": True,
             "blockers": [],
+        },
+    )
+    monkeypatch.setattr(
+        "cli.inspect_additive_schema_drift",
+        lambda: {
+            "ready": True,
+            "blockers": [],
+            "missing_tables": [],
+            "missing_columns": [],
         },
     )
     monkeypatch.setattr(
@@ -146,13 +165,15 @@ def test_run_local_verification_suite_stack_profile(monkeypatch, app):
     assert snapshot["ready"] is True
     assert [step["name"] for step in snapshot["steps"]] == [
         "predeploy-single-web",
+        "schema-drift-check",
         "predeploy-split-render",
         "db-smoke",
         "stack-mercari-persist",
         "stack-snkrdunk-persist",
     ]
     assert snapshot["steps"][0]["advisory"] is True
-    assert snapshot["steps"][1]["advisory"] is True
+    assert snapshot["steps"][1]["advisory"] is False
+    assert snapshot["steps"][2]["advisory"] is True
     assert [call["fixture_site"] for call in stack_calls] == ["mercari", "snkrdunk"]
 
 
@@ -163,6 +184,15 @@ def test_run_local_verification_suite_full_profile_includes_fixture_backed_singl
             "target": target,
             "ready": True,
             "blockers": [],
+        },
+    )
+    monkeypatch.setattr(
+        "cli.inspect_additive_schema_drift",
+        lambda: {
+            "ready": True,
+            "blockers": [],
+            "missing_tables": [],
+            "missing_columns": [],
         },
     )
     monkeypatch.setattr(
@@ -226,6 +256,7 @@ def test_run_local_verification_suite_full_profile_includes_fixture_backed_singl
     assert snapshot["ready"] is True
     assert [step["name"] for step in snapshot["steps"]] == [
         "predeploy-single-web",
+        "schema-drift-check",
         "predeploy-split-render",
         "single-web-smoke-preview",
         "single-web-smoke-mercari-persist",
@@ -242,6 +273,53 @@ def test_run_local_verification_suite_full_profile_includes_fixture_backed_singl
     assert single_web_calls[1]["fixture_site"] == "mercari"
     assert single_web_calls[2]["fixture_site"] == "snkrdunk"
     assert [call["fixture_site"] for call in stack_calls] == ["mercari", "snkrdunk"]
+
+
+def test_run_local_verification_suite_fails_on_schema_drift(monkeypatch, app):
+    monkeypatch.setattr(
+        "cli.build_predeploy_snapshot",
+        lambda current_app, target="single-web": {
+            "target": target,
+            "ready": True,
+            "blockers": [],
+        },
+    )
+    monkeypatch.setattr(
+        "cli.inspect_additive_schema_drift",
+        lambda: {
+            "ready": False,
+            "blockers": ["missing_column:scrape_jobs.context_payload"],
+            "missing_tables": [],
+            "missing_columns": ["scrape_jobs.context_payload"],
+        },
+    )
+    monkeypatch.setattr(
+        "cli.run_single_web_smoke",
+        lambda current_app, **kwargs: {
+            "ready": True,
+            "queue_backend": "inmemory",
+            "mode": kwargs["mode"],
+            "blockers": [],
+        },
+    )
+    monkeypatch.setattr(
+        "cli.run_detail_fixture_smoke",
+        lambda site, fixture_path, *, target_url="", strict=False: {
+            "ready": True,
+            "site": site,
+            "status": "on_sale",
+            "page_type": "active_detail",
+            "warnings": [],
+            "blockers": [],
+        },
+    )
+
+    from cli import run_local_verification_suite
+
+    snapshot = run_local_verification_suite(app, profile="parser")
+
+    assert snapshot["ready"] is False
+    assert snapshot["blockers"] == ["schema-drift-check"]
 
 
 def test_run_render_cutover_readiness_aggregates_split_readiness(monkeypatch, app):
@@ -277,6 +355,24 @@ def test_run_render_cutover_readiness_aggregates_split_readiness(monkeypatch, ap
         },
     )
     monkeypatch.setattr(
+        "cli.run_render_budget_guardrail_audit",
+        lambda path="render.yaml": {
+            "ready": True,
+            "blockers": [],
+            "warnings": [],
+            "estimated_monthly_core_usd": 61,
+        },
+    )
+    monkeypatch.setattr(
+        "cli.inspect_additive_schema_drift",
+        lambda: {
+            "ready": True,
+            "blockers": [],
+            "missing_tables": [],
+            "missing_columns": [],
+        },
+    )
+    monkeypatch.setattr(
         "cli.run_local_verification_suite",
         lambda current_app, **kwargs: {
             "ready": True,
@@ -299,14 +395,16 @@ def test_run_render_cutover_readiness_aggregates_split_readiness(monkeypatch, ap
     ]
     assert [step["name"] for step in snapshot["steps"]] == [
         "current-single-web-predeploy",
+        "schema-drift-check",
         "split-render-predeploy",
         "render-blueprint-audit",
+        "render-budget-guardrail-audit",
         "split-render-worker-health",
         "local-verify-full",
     ]
     assert snapshot["steps"][0]["advisory"] is True
     assert snapshot["steps"][1]["advisory"] is False
-    assert snapshot["steps"][4]["profile"] == "full"
+    assert snapshot["steps"][6]["profile"] == "full"
 
 
 def test_run_render_cutover_readiness_strict_mode_elevates_split_warnings(monkeypatch, app):
@@ -342,6 +440,24 @@ def test_run_render_cutover_readiness_strict_mode_elevates_split_warnings(monkey
         },
     )
     monkeypatch.setattr(
+        "cli.run_render_budget_guardrail_audit",
+        lambda path="render.yaml": {
+            "ready": True,
+            "blockers": [],
+            "warnings": [],
+            "estimated_monthly_core_usd": 61,
+        },
+    )
+    monkeypatch.setattr(
+        "cli.inspect_additive_schema_drift",
+        lambda: {
+            "ready": True,
+            "blockers": [],
+            "missing_tables": [],
+            "missing_columns": [],
+        },
+    )
+    monkeypatch.setattr(
         "cli.run_local_verification_suite",
         lambda current_app, **kwargs: {
             "ready": True,
@@ -357,3 +473,71 @@ def test_run_render_cutover_readiness_strict_mode_elevates_split_warnings(monkey
 
     assert snapshot["ready"] is False
     assert snapshot["blockers"] == ["split-render-predeploy"]
+
+
+def test_run_render_cutover_readiness_fails_on_schema_drift(monkeypatch, app):
+    split_web_app = object()
+    split_worker_app = object()
+
+    monkeypatch.setattr("app.create_web_app", lambda **kwargs: split_web_app)
+    monkeypatch.setattr("app.create_worker_app", lambda **kwargs: split_worker_app)
+    monkeypatch.setattr(
+        "cli.build_predeploy_snapshot",
+        lambda current_app, target="single-web": {
+            "target": target,
+            "ready": True,
+            "blockers": [],
+            "warnings": [],
+        },
+    )
+    monkeypatch.setattr(
+        "cli.inspect_additive_schema_drift",
+        lambda: {
+            "ready": False,
+            "blockers": ["missing_column:scrape_jobs.context_payload"],
+            "missing_tables": [],
+            "missing_columns": ["scrape_jobs.context_payload"],
+        },
+    )
+    monkeypatch.setattr(
+        "cli.run_render_blueprint_audit",
+        lambda path="render.yaml": {
+            "ready": True,
+            "blockers": [],
+            "warnings": [],
+        },
+    )
+    monkeypatch.setattr(
+        "cli.run_render_budget_guardrail_audit",
+        lambda path="render.yaml": {
+            "ready": True,
+            "blockers": [],
+            "warnings": [],
+            "estimated_monthly_core_usd": 61,
+        },
+    )
+    monkeypatch.setattr(
+        "cli.get_worker_health_snapshot",
+        lambda current_app: {
+            "queue_backend": "rq",
+            "redis_ok": True,
+            "redis_error": None,
+            "backlog_issues": [],
+        },
+    )
+    monkeypatch.setattr(
+        "cli.run_local_verification_suite",
+        lambda current_app, **kwargs: {
+            "ready": True,
+            "profile": "full",
+            "steps": [],
+            "blockers": [],
+        },
+    )
+
+    from cli import run_render_cutover_readiness
+
+    snapshot = run_render_cutover_readiness(app)
+
+    assert snapshot["ready"] is False
+    assert snapshot["blockers"] == ["schema-drift-check"]

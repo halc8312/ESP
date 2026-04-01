@@ -132,3 +132,40 @@ def test_apply_additive_startup_migrations_backfills_scrape_job_columns():
     assert "progress_total" in columns
     assert "result_payload" in columns
     assert "error_payload" in columns
+
+
+def test_inspect_additive_schema_drift_reports_missing_scrape_job_columns():
+    smoke_db = Path(f"test_db_drift_{uuid.uuid4().hex}.sqlite")
+    smoke_engine = database.create_app_engine(f"sqlite:///{smoke_db.as_posix()}")
+
+    try:
+        with smoke_engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE scrape_jobs (
+                        job_id VARCHAR(64) PRIMARY KEY,
+                        status VARCHAR(32),
+                        site VARCHAR(32),
+                        mode VARCHAR(32),
+                        requested_by INTEGER,
+                        request_payload TEXT,
+                        result_summary TEXT,
+                        error_message TEXT,
+                        started_at TIMESTAMP,
+                        finished_at TIMESTAMP,
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    )
+                    """
+                )
+            )
+
+            snapshot = database.inspect_additive_schema_drift(bind=connection)
+    finally:
+        smoke_engine.dispose()
+        smoke_db.unlink(missing_ok=True)
+
+    assert snapshot["ready"] is False
+    assert "scrape_jobs.context_payload" in snapshot["missing_columns"]
+    assert "scrape_job_events" in snapshot["missing_tables"]

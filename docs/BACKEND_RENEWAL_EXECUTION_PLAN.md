@@ -320,6 +320,8 @@ Operational rule during this phase:
 
 - keep current single-service production on the safe compatibility path (`SCRAPE_QUEUE_BACKEND=inmemory`) until `Move C4` cutover is explicitly approved
 - any mixed deploy for routine scraper/UI fixes must preserve that single-web compatibility default
+- use `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` and `flask single-web-redeploy-checklist` as the standard operator path for routine single-web redeploys during this phase
+- require a passing `flask single-web-redeploy-readiness` run before routine single-web production redeploys that bundle normal scraper/UI fixes with Arc-era backend changes
 
 What still requires final Render verification:
 
@@ -770,7 +772,7 @@ Concrete changes:
 - Keep browser/runtime dependencies only where needed.
 - Configure Redis and PostgreSQL environment wiring for Render.
 - Add a cutover runbook and explicit local gate so `Move C4` is never the first place we discover integration mistakes.
-- Require a passing `flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict` run before the first paid activation attempt.
+- Require a passing `flask schema-drift-check`, `flask render-budget-guardrail-audit`, `flask render-local-split-checklist`, and `flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict` run before the first paid activation attempt.
 - Target the initial paid Render shape defined in `5.6 Deployment budget guardrail`.
 - Keep the first paid deployment at or below the `$80/month` recurring budget ceiling.
 - If filesystem-backed image/logo storage still exists, attach only a small `Persistent Disk` to `Web` and treat disk removal or storage redesign as follow-up optimization work rather than a blocker to `Move C4`.

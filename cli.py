@@ -4,12 +4,16 @@ CLI commands for the application.
 import html
 import json
 import os
+import socket
 import time
 import traceback
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 import click
+import requests
 from redis import Redis
 
 import offmall_db
@@ -18,7 +22,12 @@ import snkrdunk_db
 import surugaya_db
 import yahoo_db
 import yahuoku_db
-from database import SessionLocal, describe_schema_bootstrap, run_database_smoke_check
+from database import (
+    SessionLocal,
+    describe_schema_bootstrap,
+    inspect_additive_schema_drift,
+    run_database_smoke_check,
+)
 from mercari_db import scrape_single_item as scrape_mercari_single_item
 from models import Product, ProductSnapshot, Variant
 from services.html_page_adapter import HtmlPageAdapter
@@ -48,6 +57,75 @@ def _get_single_item_scrapers() -> dict:
 
 def _emit_json(payload: dict) -> None:
     click.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True, default=str))
+
+
+def _build_local_split_env_defaults() -> dict[str, str]:
+    return {
+        "SECRET_KEY": "local-split-secret",
+        "DATABASE_URL": "postgresql+psycopg://esp:esp@localhost:5432/esp_local",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "SCRAPE_QUEUE_BACKEND": "rq",
+        "WEB_SCHEDULER_MODE": "disabled",
+        "SCHEMA_BOOTSTRAP_MODE": "auto",
+        "WORKER_ENABLE_SCHEDULER": "1",
+        "WARM_BROWSER_POOL": "1",
+        "ENABLE_SHARED_BROWSER_RUNTIME": "1",
+        "IMAGE_STORAGE_PATH": os.path.abspath(str(IMAGE_STORAGE_PATH)),
+    }
+
+
+@contextmanager
+def _temporary_env(overrides: dict[str, str]):
+    original = {key: os.environ.get(key) for key in overrides}
+    try:
+        for key, value in overrides.items():
+            os.environ[key] = str(value)
+        yield
+    finally:
+        for key, previous in original.items():
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
+
+
+def _probe_tcp_endpoint(name: str, url: str, *, timeout_seconds: float = 1.0) -> dict[str, object]:
+    parsed = urlparse(str(url or "").strip())
+    host = parsed.hostname
+    port = parsed.port
+    blockers: list[str] = []
+    error = None
+    if not host or not port:
+        blockers.append(f"{name}_endpoint_invalid")
+    else:
+        try:
+            with socket.create_connection((host, port), timeout=timeout_seconds):
+                pass
+        except Exception as exc:
+            error = str(exc)
+            blockers.append(f"{name}_endpoint_unreachable")
+
+    return {
+        "name": name,
+        "url": url,
+        "host": host,
+        "port": port,
+        "timeout_seconds": timeout_seconds,
+        "ready": not blockers,
+        "blockers": blockers,
+        "error": error,
+    }
+
+
+def _probe_local_split_services(database_url: str, redis_url: str) -> dict[str, object]:
+    postgres_probe = _probe_tcp_endpoint("postgres", database_url)
+    redis_probe = _probe_tcp_endpoint("redis", redis_url)
+    blockers = list(postgres_probe.get("blockers") or []) + list(redis_probe.get("blockers") or [])
+    return {
+        "ready": not blockers,
+        "blockers": blockers,
+        "probes": [postgres_probe, redis_probe],
+    }
 
 
 def _response_contains_title(page_body: str, title: str) -> bool:
@@ -457,6 +535,72 @@ def run_render_blueprint_audit(path: str = "render.yaml") -> dict:
     }
 
 
+RENDER_BUDGET_GUARDRAIL_USD = 80
+RENDER_BUDGET_ASSUMPTION_DATE = "2026-03-23"
+RENDER_GUARDRAIL_EXPECTED_PLANS = {
+    "esp-web": ("web", "starter", 7),
+    "esp-worker": ("worker", "standard", 25),
+    "esp-keyvalue": ("keyvalue", "starter", 10),
+    "esp-postgres": ("database", "basic-1gb", 19),
+}
+
+
+def run_render_budget_guardrail_audit(path: str = "render.yaml") -> dict:
+    blueprint = _parse_render_blueprint(path)
+    services = blueprint["services"]
+    databases = blueprint["databases"]
+    services_by_name = {service.get("name"): service for service in services if service.get("name")}
+    databases_by_name = {database.get("name"): database for database in databases if database.get("name")}
+
+    blockers = []
+    warnings = []
+    estimated_monthly_core_usd = 0
+    plan_snapshot: dict[str, dict[str, object]] = {}
+
+    for name, (kind, expected_plan, expected_cost) in RENDER_GUARDRAIL_EXPECTED_PLANS.items():
+        entity = databases_by_name.get(name) if kind == "database" else services_by_name.get(name)
+        actual_plan = str((entity or {}).get("plan") or "").strip().lower()
+
+        if entity is None:
+            blockers.append(f"missing_budget_subject:{name}")
+        elif actual_plan != expected_plan:
+            blockers.append(f"plan_guardrail_mismatch:{name}:{actual_plan or 'missing'}:{expected_plan}")
+        else:
+            estimated_monthly_core_usd += expected_cost
+
+        plan_snapshot[name] = {
+            "kind": kind,
+            "expected_plan": expected_plan,
+            "actual_plan": actual_plan or None,
+            "expected_monthly_usd": expected_cost,
+        }
+
+    web_disk = dict((services_by_name.get("esp-web") or {}).get("disk") or {})
+    disk_size_gb = None
+    if web_disk:
+        try:
+            disk_size_gb = int(web_disk.get("sizeGB"))
+        except (TypeError, ValueError):
+            disk_size_gb = None
+        if disk_size_gb and disk_size_gb > 10:
+            blockers.append("web_disk_exceeds_small_disk_guardrail")
+        elif disk_size_gb:
+            warnings.append("web_persistent_disk_cost_not_included")
+
+    return {
+        "ready": not blockers,
+        "blueprint_path": blueprint["path"],
+        "budget_guardrail_usd": RENDER_BUDGET_GUARDRAIL_USD,
+        "pricing_assumption_date": RENDER_BUDGET_ASSUMPTION_DATE,
+        "estimated_monthly_core_usd": estimated_monthly_core_usd,
+        "disk_configured": bool(web_disk),
+        "disk_size_gb": disk_size_gb,
+        "plan_snapshot": plan_snapshot,
+        "blockers": blockers,
+        "warnings": warnings,
+    }
+
+
 def _summarize_render_service_envs(service: dict) -> dict:
     env_map = dict(service.get("env_vars") or {})
     manual_envs = []
@@ -515,6 +659,981 @@ def run_render_dashboard_inputs(path: str = "render.yaml") -> dict:
         "service_inputs": service_inputs,
         "manual_secret_envs": list(audit.get("manual_secret_envs") or []),
         "expected_render_services": list(audit.get("expected_render_services") or []),
+    }
+
+
+def run_render_local_split_checklist(
+    app,
+    *,
+    blueprint_path: str = "render.yaml",
+    compose_path: str = "docker-compose.local.yml",
+) -> dict:
+    from app import create_app
+
+    normalized_blueprint_path = str(blueprint_path or "render.yaml").strip() or "render.yaml"
+    normalized_compose_path = str(compose_path or "docker-compose.local.yml").strip() or "docker-compose.local.yml"
+
+    resolved_compose_path = Path(normalized_compose_path).expanduser()
+    if not resolved_compose_path.is_absolute():
+        resolved_compose_path = (Path.cwd() / resolved_compose_path).resolve()
+    else:
+        resolved_compose_path = resolved_compose_path.resolve()
+
+    split_web_app = create_app(
+        runtime_role="web",
+        config_overrides={
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "WEB_SCHEDULER_MODE": "disabled",
+        },
+    )
+    split_worker_app = create_app(
+        runtime_role="worker",
+        config_overrides={
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "ENABLE_SCHEDULER": True,
+            "WORKER_ENABLE_SCHEDULER": "1",
+            "WARM_BROWSER_POOL": "1",
+            "ENABLE_SHARED_BROWSER_RUNTIME": "1",
+        },
+    )
+
+    current_schema = describe_schema_bootstrap(app.config.get("SCHEMA_BOOTSTRAP_MODE", "auto"))
+    split_predeploy = build_predeploy_snapshot(split_web_app, target="split-render")
+    worker_health = get_worker_health_snapshot(split_worker_app)
+    blueprint_audit = run_render_blueprint_audit(normalized_blueprint_path)
+    budget_guardrail = run_render_budget_guardrail_audit(normalized_blueprint_path)
+    recommended_env = _build_local_split_env_defaults()
+    service_probes = _probe_local_split_services(
+        recommended_env["DATABASE_URL"],
+        recommended_env["REDIS_URL"],
+    )
+
+    local_env_contract = [
+        {
+            "scope": "shared",
+            "key": "SECRET_KEY",
+            "desired_value": "<non-default-secret>",
+            "current_value": str(app.config.get("SECRET_KEY", "") or ""),
+            "matches": str(app.config.get("SECRET_KEY", "") or "") != "dev-secret-key-change-this",
+        },
+        {
+            "scope": "shared",
+            "key": "DATABASE_URL",
+            "desired_value": recommended_env["DATABASE_URL"],
+            "current_value": current_schema.get("database_url"),
+            "matches": current_schema.get("database_backend") == "postgresql"
+            and "localhost" in str(current_schema.get("database_url") or ""),
+        },
+        {
+            "scope": "shared",
+            "key": "REDIS_URL",
+            "desired_value": recommended_env["REDIS_URL"],
+            "current_value": str(app.config.get("REDIS_URL", "") or ""),
+            "matches": str(app.config.get("REDIS_URL", "") or "").startswith("redis://localhost")
+            or str(app.config.get("REDIS_URL", "") or "").startswith("redis://127.0.0.1"),
+        },
+        {
+            "scope": "web",
+            "key": "SCRAPE_QUEUE_BACKEND",
+            "desired_value": recommended_env["SCRAPE_QUEUE_BACKEND"],
+            "current_value": str(app.config.get("SCRAPE_QUEUE_BACKEND", "") or ""),
+            "matches": str(app.config.get("SCRAPE_QUEUE_BACKEND", "") or "").strip().lower() == "rq",
+        },
+        {
+            "scope": "web",
+            "key": "WEB_SCHEDULER_MODE",
+            "desired_value": recommended_env["WEB_SCHEDULER_MODE"],
+            "current_value": str(app.config.get("WEB_SCHEDULER_MODE", "") or ""),
+            "matches": str(app.config.get("WEB_SCHEDULER_MODE", "") or "").strip().lower() == "disabled",
+        },
+        {
+            "scope": "shared",
+            "key": "SCHEMA_BOOTSTRAP_MODE",
+            "desired_value": recommended_env["SCHEMA_BOOTSTRAP_MODE"],
+            "current_value": str(app.config.get("SCHEMA_BOOTSTRAP_MODE", "") or ""),
+            "matches": str(current_schema.get("effective_mode") or "") == "alembic",
+        },
+        {
+            "scope": "worker",
+            "key": "WORKER_ENABLE_SCHEDULER",
+            "desired_value": recommended_env["WORKER_ENABLE_SCHEDULER"],
+            "current_value": str(app.config.get("WORKER_ENABLE_SCHEDULER", "") or ""),
+            "matches": str(app.config.get("WORKER_ENABLE_SCHEDULER", "") or "").strip().lower()
+            in {"1", "true", "yes", "on"},
+        },
+        {
+            "scope": "worker",
+            "key": "WARM_BROWSER_POOL",
+            "desired_value": recommended_env["WARM_BROWSER_POOL"],
+            "current_value": str(app.config.get("WARM_BROWSER_POOL", "") or ""),
+            "matches": str(app.config.get("WARM_BROWSER_POOL", "") or "").strip().lower()
+            in {"1", "true", "yes", "on"},
+        },
+        {
+            "scope": "shared",
+            "key": "IMAGE_STORAGE_PATH",
+            "desired_value": recommended_env["IMAGE_STORAGE_PATH"],
+            "current_value": str(IMAGE_STORAGE_PATH),
+            "matches": os.path.isabs(str(IMAGE_STORAGE_PATH)),
+        },
+    ]
+
+    blockers = []
+    warnings = []
+    if not resolved_compose_path.exists():
+        blockers.append("local_compose_missing")
+    if blueprint_audit.get("blockers"):
+        blockers.append("render-blueprint-audit")
+    if budget_guardrail.get("blockers"):
+        blockers.append("render-budget-guardrail-audit")
+    if service_probes.get("blockers"):
+        blockers.append("local-split-service-probes")
+    if split_predeploy.get("blockers"):
+        blockers.append("split-render-predeploy")
+    if worker_health.get("queue_backend") == "rq" and worker_health.get("redis_ok") is False:
+        blockers.append("split-render-worker-health")
+
+    warnings.extend(list(blueprint_audit.get("warnings") or []))
+    warnings.extend(list(budget_guardrail.get("warnings") or []))
+    warnings.extend(list(split_predeploy.get("warnings") or []))
+    warnings.extend(list(worker_health.get("backlog_issues") or []))
+
+    rehearsal_commands = [
+        f"docker compose -f {normalized_compose_path} up -d",
+        "flask db-smoke --require-backend postgresql --apply-migrations",
+        "flask worker-health",
+        "flask local-verify --profile full --require-backend postgresql --apply-migrations",
+        "flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict",
+    ]
+    powershell_env_commands = [f"$env:{key}='{value}'" for key, value in recommended_env.items()]
+
+    return {
+        "ready": not blockers,
+        "blueprint_path": normalized_blueprint_path,
+        "compose_path": str(resolved_compose_path),
+        "compose_file_present": resolved_compose_path.exists(),
+        "runbook_path": "docs/RENDER_CUTOVER_RUNBOOK.md",
+        "blockers": blockers,
+        "warnings": warnings,
+        "local_env_contract": local_env_contract,
+        "powershell_env_commands": powershell_env_commands,
+        "rehearsal_commands": rehearsal_commands,
+        "service_probes": service_probes,
+        "blueprint_audit": {
+            "ready": blueprint_audit.get("ready", False),
+            "blockers": list(blueprint_audit.get("blockers") or []),
+            "warnings": list(blueprint_audit.get("warnings") or []),
+        },
+        "budget_guardrail": {
+            "ready": budget_guardrail.get("ready", False),
+            "blockers": list(budget_guardrail.get("blockers") or []),
+            "warnings": list(budget_guardrail.get("warnings") or []),
+            "estimated_monthly_core_usd": budget_guardrail.get("estimated_monthly_core_usd"),
+        },
+        "split_render_predeploy": {
+            "ready": split_predeploy.get("ready", False),
+            "blockers": list(split_predeploy.get("blockers") or []),
+            "warnings": list(split_predeploy.get("warnings") or []),
+            "queue_backend": split_predeploy.get("queue_backend"),
+            "schema": split_predeploy.get("schema"),
+        },
+        "split_worker_health": {
+            "ready": worker_health.get("redis_ok") is not False,
+            "queue_backend": worker_health.get("queue_backend"),
+            "redis_ok": worker_health.get("redis_ok"),
+            "redis_error": worker_health.get("redis_error"),
+            "backlog_issues": list(worker_health.get("backlog_issues") or []),
+        },
+    }
+
+
+def run_render_local_split_readiness(
+    app,
+    *,
+    blueprint_path: str = "render.yaml",
+    compose_path: str = "docker-compose.local.yml",
+    require_backend: str = "postgresql",
+    apply_migrations: bool = True,
+    strict: bool = True,
+    strict_parser: bool = False,
+) -> dict:
+    from app import create_cli_app
+
+    env_overrides = _build_local_split_env_defaults()
+    with _temporary_env(env_overrides):
+        rehearsal_app = create_cli_app()
+        checklist = run_render_local_split_checklist(
+            rehearsal_app,
+            blueprint_path=blueprint_path,
+            compose_path=compose_path,
+        )
+        readiness = run_render_cutover_readiness(
+            rehearsal_app,
+            require_backend=require_backend,
+            apply_migrations=apply_migrations,
+            strict=strict,
+            strict_parser=strict_parser,
+        )
+
+    steps = [
+        {
+            "name": "render-local-split-checklist",
+            "ready": bool(checklist.get("ready", not checklist.get("blockers"))),
+            "blockers": list(checklist.get("blockers") or []),
+            "warnings": list(checklist.get("warnings") or []),
+        },
+        {
+            "name": "render-cutover-readiness",
+            "ready": bool(readiness.get("ready", not readiness.get("blockers"))),
+            "blockers": list(readiness.get("blockers") or []),
+            "warnings": [],
+        },
+    ]
+    blockers = [step["name"] for step in steps if step["blockers"]]
+
+    return {
+        "ready": not blockers,
+        "blueprint_path": blueprint_path,
+        "compose_path": compose_path,
+        "require_backend": require_backend,
+        "apply_migrations": apply_migrations,
+        "strict": strict,
+        "strict_parser": strict_parser,
+        "runbook_path": "docs/RENDER_CUTOVER_RUNBOOK.md",
+        "powershell_env_commands": list(checklist.get("powershell_env_commands") or []),
+        "rehearsal_commands": list(checklist.get("rehearsal_commands") or []),
+        "steps": steps,
+        "blockers": blockers,
+    }
+
+
+def run_render_cutover_brief(
+    app,
+    *,
+    blueprint_path: str = "render.yaml",
+    compose_path: str = "docker-compose.local.yml",
+    base_url: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
+) -> dict:
+    budget_guardrail = run_render_budget_guardrail_audit(blueprint_path)
+    dashboard_inputs = run_render_dashboard_inputs(blueprint_path)
+    worker_checklist = run_render_worker_postdeploy_checklist(blueprint_path)
+    local_split_readiness = run_render_local_split_readiness(
+        app,
+        blueprint_path=blueprint_path,
+        compose_path=compose_path,
+    )
+    cutover_checklist = run_render_cutover_checklist(
+        blueprint_path=blueprint_path,
+        base_url=base_url,
+        username=username,
+        password=password,
+    )
+
+    sections = [
+        ("render-budget-guardrail-audit", budget_guardrail),
+        ("render-dashboard-inputs", dashboard_inputs),
+        ("render-worker-postdeploy-checklist", worker_checklist),
+        ("render-local-split-readiness", local_split_readiness),
+        ("render-cutover-checklist", cutover_checklist),
+    ]
+    blockers = [name for name, snapshot in sections if list(snapshot.get("blockers") or [])]
+    warnings = []
+    for name, snapshot in sections:
+        for warning in list(snapshot.get("warnings") or []):
+            warnings.append(f"{name}:{warning}")
+
+    return {
+        "ready": not blockers,
+        "blueprint_path": blueprint_path,
+        "compose_path": compose_path,
+        "base_url": str(base_url or "").strip() or None,
+        "authenticated_smoke_configured": bool(str(base_url or "").strip() and str(username or "").strip() and str(password or "")),
+        "blockers": blockers,
+        "warnings": warnings,
+        "runbook_path": "docs/RENDER_CUTOVER_RUNBOOK.md",
+        "budget_guardrail": budget_guardrail,
+        "dashboard_inputs": dashboard_inputs,
+        "worker_postdeploy_checklist": worker_checklist,
+        "local_split_readiness": local_split_readiness,
+        "cutover_checklist": cutover_checklist,
+    }
+
+
+def _normalize_base_url(base_url: str) -> str:
+    normalized = str(base_url or "").strip().rstrip("/")
+    if not normalized:
+        raise ValueError("base_url is required")
+    return normalized
+
+
+def _request_with_retries(
+    request_fn,
+    url: str,
+    *,
+    timeout_seconds: float,
+    allow_redirects: bool = False,
+    retries: int = 2,
+    retry_delay_seconds: float = 1.0,
+    retryable_status_codes: tuple[int, ...] = (502, 503, 504),
+) -> dict[str, object]:
+    safe_retries = max(0, int(retries))
+    safe_retry_delay_seconds = max(0.0, float(retry_delay_seconds))
+    attempts: list[dict[str, object]] = []
+    response = None
+    error = None
+
+    for attempt_number in range(1, safe_retries + 2):
+        try:
+            response = request_fn(url, timeout=timeout_seconds, allow_redirects=allow_redirects)
+            attempts.append({"attempt": attempt_number, "status_code": response.status_code})
+            if response.status_code not in retryable_status_codes:
+                error = None
+                break
+            error = f"retryable_status:{response.status_code}"
+        except Exception as exc:
+            response = None
+            error = str(exc)
+            attempts.append({"attempt": attempt_number, "error": error})
+
+        if attempt_number <= safe_retries and safe_retry_delay_seconds > 0:
+            time.sleep(safe_retry_delay_seconds)
+
+    return {
+        "response": response,
+        "error": error,
+        "attempts": attempts,
+        "attempt_count": len(attempts),
+        "retries": safe_retries,
+        "retry_delay_seconds": safe_retry_delay_seconds,
+        "retryable_status_codes": list(retryable_status_codes),
+    }
+
+
+def _check_render_route(
+    request_fn,
+    route_url: str,
+    route_path: str,
+    *,
+    timeout_seconds: float,
+    retries: int = 2,
+    retry_delay_seconds: float = 1.0,
+) -> dict[str, object]:
+    request_snapshot = _request_with_retries(
+        request_fn,
+        route_url,
+        timeout_seconds=timeout_seconds,
+        allow_redirects=False,
+        retries=retries,
+        retry_delay_seconds=retry_delay_seconds,
+    )
+    response = request_snapshot.get("response")
+    if response is None:
+        error = str(request_snapshot.get("error") or "request_failed")
+        raise RuntimeError(error)
+    return {
+        "path": route_path,
+        "status_code": response.status_code,
+        "location": response.headers.get("Location"),
+        "attempt_count": request_snapshot.get("attempt_count", 1),
+        "attempts": list(request_snapshot.get("attempts") or []),
+    }
+
+
+def _is_authenticated_redirect(status_code: int | None, location: str | None) -> bool:
+    normalized_location = str(location or "").strip()
+    return status_code == 302 and normalized_location not in {"", "/login", "/register"}
+
+
+def run_render_postdeploy_smoke(
+    base_url: str,
+    *,
+    timeout_seconds: float = 15.0,
+    retries: int = 2,
+    retry_delay_seconds: float = 1.0,
+    expect_queue_backend: str = "rq",
+    expect_runtime_role: str = "web",
+    expect_scheduler_mode: str = "disabled",
+    username: str | None = None,
+    password: str | None = None,
+    ensure_user: bool = False,
+) -> dict:
+    normalized_base_url = _normalize_base_url(base_url)
+    health_url = f"{normalized_base_url}/healthz"
+    blockers: list[str] = []
+    warnings: list[str] = []
+    route_checks: list[dict[str, object]] = []
+    authenticated_route_checks: list[dict[str, object]] = []
+    health_payload: dict | None = None
+    health_error = None
+    health_status_code = None
+    login_status_code = None
+    login_location = None
+    login_error = None
+    login_attempted = False
+    login_success = False
+    registration_attempted = False
+    registration_status_code = None
+    registration_location = None
+    registration_error = None
+    registration_success = False
+    health_attempt_count = 0
+    health_attempts: list[dict[str, object]] = []
+
+    expected_scheduler_enabled = None
+    normalized_scheduler_mode = str(expect_scheduler_mode or "disabled").strip().lower()
+    if normalized_scheduler_mode == "enabled":
+        expected_scheduler_enabled = True
+    elif normalized_scheduler_mode == "disabled":
+        expected_scheduler_enabled = False
+    elif normalized_scheduler_mode != "any":
+        raise ValueError(f"Unsupported expect_scheduler_mode: {expect_scheduler_mode}")
+
+    normalized_username = str(username or "").strip()
+    normalized_password = str(password or "")
+    auth_requested = bool(normalized_username or normalized_password)
+    if bool(normalized_username) != bool(normalized_password):
+        blockers.append("auth_credentials_incomplete")
+
+    health_snapshot = _request_with_retries(
+        requests.get,
+        health_url,
+        timeout_seconds=timeout_seconds,
+        allow_redirects=True,
+        retries=retries,
+        retry_delay_seconds=retry_delay_seconds,
+    )
+    health_attempt_count = int(health_snapshot.get("attempt_count") or 0)
+    health_attempts = list(health_snapshot.get("attempts") or [])
+    response = health_snapshot.get("response")
+    if response is None:
+        health_error = str(health_snapshot.get("error") or "request_failed")
+        blockers.append("healthz_request_failed")
+    else:
+        health_status_code = response.status_code
+        if health_attempt_count > 1:
+            warnings.append(f"healthz_required_retry:{health_attempt_count}")
+        if response.status_code != 200:
+            blockers.append("healthz_status_not_200")
+        else:
+            try:
+                health_payload = dict(response.json() or {})
+            except Exception as exc:
+                health_error = str(exc)
+                blockers.append("healthz_invalid_json")
+
+    if health_payload:
+        if health_payload.get("status") != "ok":
+            blockers.append("healthz_status_not_ok")
+        if expect_runtime_role and health_payload.get("runtime_role") != expect_runtime_role:
+            blockers.append("runtime_role_mismatch")
+        if expect_queue_backend and health_payload.get("queue_backend") != expect_queue_backend:
+            blockers.append("queue_backend_mismatch")
+        if (
+            expected_scheduler_enabled is not None
+            and bool(health_payload.get("scheduler_enabled")) != expected_scheduler_enabled
+        ):
+            blockers.append("scheduler_mode_mismatch")
+
+    for route_path in ("/login", "/scrape", "/api/scrape/jobs"):
+        route_url = f"{normalized_base_url}{route_path}"
+        try:
+            route_snapshot = _check_render_route(
+                requests.get,
+                route_url,
+                route_path,
+                timeout_seconds=timeout_seconds,
+                retries=retries,
+                retry_delay_seconds=retry_delay_seconds,
+            )
+            route_checks.append(route_snapshot)
+            if int(route_snapshot.get("attempt_count") or 1) > 1:
+                warnings.append(f"route_required_retry:{route_path}:{route_snapshot['attempt_count']}")
+            if route_snapshot["status_code"] == 404:
+                blockers.append(f"route_missing:{route_path}")
+            elif route_snapshot["status_code"] >= 500:
+                blockers.append(f"route_server_error:{route_path}")
+            elif route_snapshot["status_code"] not in {200, 302, 401, 403}:
+                warnings.append(f"route_unexpected_status:{route_path}:{route_snapshot['status_code']}")
+        except Exception as exc:
+            route_checks.append({"path": route_path, "error": str(exc)})
+            blockers.append(f"route_request_failed:{route_path}")
+
+    if auth_requested and "auth_credentials_incomplete" not in blockers:
+        login_attempted = True
+        session = requests.Session()
+        login_url = f"{normalized_base_url}/login"
+        try:
+            login_request = _request_with_retries(
+                lambda url, **kwargs: session.post(
+                    url,
+                    data={"username": normalized_username, "password": normalized_password},
+                    **kwargs,
+                ),
+                login_url,
+                timeout_seconds=timeout_seconds,
+                allow_redirects=False,
+                retries=retries,
+                retry_delay_seconds=retry_delay_seconds,
+            )
+            login_response = login_request.get("response")
+            if login_response is None:
+                raise RuntimeError(str(login_request.get("error") or "login_request_failed"))
+            login_status_code = login_response.status_code
+            login_location = login_response.headers.get("Location")
+            login_success = _is_authenticated_redirect(login_response.status_code, login_location)
+            if int(login_request.get("attempt_count") or 1) > 1:
+                warnings.append(f"login_required_retry:{login_request['attempt_count']}")
+            if login_response.status_code >= 500:
+                blockers.append("login_route_server_error")
+            elif not login_success:
+                warnings.append("login_did_not_redirect_to_authenticated_page")
+        except Exception as exc:
+            login_error = str(exc)
+            blockers.append("login_request_failed")
+            session = None
+
+        if session is not None and ensure_user and not login_success:
+            register_url = f"{normalized_base_url}/register"
+            registration_attempted = True
+            try:
+                registration_request = _request_with_retries(
+                    lambda url, **kwargs: session.post(
+                        url,
+                        data={"username": normalized_username, "password": normalized_password},
+                        **kwargs,
+                    ),
+                    register_url,
+                    timeout_seconds=timeout_seconds,
+                    allow_redirects=False,
+                    retries=retries,
+                    retry_delay_seconds=retry_delay_seconds,
+                )
+                register_response = registration_request.get("response")
+                if register_response is None:
+                    raise RuntimeError(str(registration_request.get("error") or "register_request_failed"))
+                registration_status_code = register_response.status_code
+                registration_location = register_response.headers.get("Location")
+                registration_success = _is_authenticated_redirect(
+                    registration_status_code,
+                    registration_location,
+                )
+                if int(registration_request.get("attempt_count") or 1) > 1:
+                    warnings.append(f"register_required_retry:{registration_request['attempt_count']}")
+                if register_response.status_code >= 500:
+                    blockers.append("register_route_server_error")
+                elif not registration_success:
+                    warnings.append("register_did_not_redirect_to_authenticated_page")
+            except Exception as exc:
+                registration_error = str(exc)
+                blockers.append("register_request_failed")
+
+        auth_session_established = login_success or registration_success
+        if auth_requested and not auth_session_established:
+            blockers.append("authenticated_session_not_established")
+
+        if session is not None and auth_session_established:
+            for route_path in ("/scrape", "/api/scrape/jobs"):
+                route_url = f"{normalized_base_url}{route_path}"
+                try:
+                    route_snapshot = _check_render_route(
+                        session.get,
+                        route_url,
+                        route_path,
+                        timeout_seconds=timeout_seconds,
+                        retries=retries,
+                        retry_delay_seconds=retry_delay_seconds,
+                    )
+                    authenticated_route_checks.append(route_snapshot)
+                    if int(route_snapshot.get("attempt_count") or 1) > 1:
+                        warnings.append(
+                            f"authenticated_route_required_retry:{route_path}:{route_snapshot['attempt_count']}"
+                        )
+                    if route_snapshot["status_code"] == 404:
+                        blockers.append(f"authenticated_route_missing:{route_path}")
+                    elif route_snapshot["status_code"] >= 500:
+                        blockers.append(f"authenticated_route_server_error:{route_path}")
+                    elif route_snapshot["status_code"] == 302 and route_snapshot.get("location") == "/login":
+                        blockers.append(f"authenticated_route_redirected_to_login:{route_path}")
+                    elif route_snapshot["status_code"] not in {200, 401, 403, 302}:
+                        warnings.append(
+                            f"authenticated_route_unexpected_status:{route_path}:{route_snapshot['status_code']}"
+                        )
+                except Exception as exc:
+                    authenticated_route_checks.append({"path": route_path, "error": str(exc)})
+                    blockers.append(f"authenticated_route_request_failed:{route_path}")
+
+    return {
+        "ready": not blockers,
+        "blockers": blockers,
+        "warnings": warnings,
+        "base_url": normalized_base_url,
+        "health_url": health_url,
+        "health_status_code": health_status_code,
+        "health_payload": health_payload,
+        "health_error": health_error,
+        "health_attempt_count": health_attempt_count,
+        "health_attempts": health_attempts,
+        "route_checks": route_checks,
+        "auth_requested": auth_requested,
+        "login_attempted": login_attempted,
+        "login_status_code": login_status_code,
+        "login_location": login_location,
+        "login_error": login_error,
+        "login_success": login_success,
+        "registration_attempted": registration_attempted,
+        "registration_status_code": registration_status_code,
+        "registration_location": registration_location,
+        "registration_error": registration_error,
+        "registration_success": registration_success,
+        "authenticated_route_checks": authenticated_route_checks,
+        "retry_policy": {
+            "retries": max(0, int(retries)),
+            "retry_delay_seconds": max(0.0, float(retry_delay_seconds)),
+            "retryable_status_codes": [502, 503, 504],
+        },
+        "expect_queue_backend": expect_queue_backend,
+        "expect_runtime_role": expect_runtime_role,
+        "expect_scheduler_mode": normalized_scheduler_mode,
+    }
+
+
+def run_render_worker_postdeploy_checklist(blueprint_path: str = "render.yaml") -> dict:
+    audit = run_render_blueprint_audit(blueprint_path)
+    blueprint = _parse_render_blueprint(blueprint_path)
+    services = blueprint["services"]
+    services_by_name = {service.get("name"): service for service in services if service.get("name")}
+    worker_service = services_by_name.get("esp-worker") or {}
+    worker_env = worker_service.get("env_vars", {})
+
+    blockers = list(audit.get("blockers") or [])
+    warnings = list(audit.get("warnings") or [])
+
+    def _env_value(key: str, default=None):
+        env_entry = worker_env.get(key) or {}
+        if "value" in env_entry:
+            return env_entry.get("value")
+        return default
+
+    def _env_bool(value, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    def _env_int(value, default: int = 0) -> int:
+        if value is None or value == "":
+            return default
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    manual_envs = sorted(
+        key
+        for key, env_entry in worker_env.items()
+        if env_entry.get("sync") is False
+    )
+    managed_envs = sorted(
+        key
+        for key, env_entry in worker_env.items()
+        if env_entry.get("source_type") in {"fromService", "fromDatabase"}
+    )
+    fixed_envs = {
+        key: env_entry.get("value")
+        for key, env_entry in worker_env.items()
+        if "value" in env_entry
+    }
+
+    scheduler_enabled = _env_bool(_env_value("WORKER_ENABLE_SCHEDULER", False))
+    warm_browser_pool = _env_bool(_env_value("WARM_BROWSER_POOL", False))
+    shared_browser_runtime = _env_bool(_env_value("ENABLE_SHARED_BROWSER_RUNTIME", False))
+    reconcile_stalled_jobs = _env_bool(_env_value("WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP", False))
+    browser_pool_warm_sites = str(_env_value("BROWSER_POOL_WARM_SITES", "") or "").strip()
+
+    expected_log_markers = [
+        "Worker durable job backlog before startup reconcile:",
+        "Worker durable job backlog after startup reconcile:",
+    ]
+    if warm_browser_pool:
+        expected_log_markers.append("Worker browser pool warmed:")
+    if shared_browser_runtime:
+        expected_log_markers.append("Worker browser pool closing:")
+
+    optional_log_markers = []
+    if reconcile_stalled_jobs:
+        optional_log_markers.append("Reconciled stalled scrape jobs before worker start:")
+    optional_log_markers.extend(
+        [
+            "Worker durable job backlog warning before startup reconcile:",
+            "Worker durable job backlog warning after startup reconcile:",
+        ]
+    )
+
+    manual_checks = [
+        "Confirm the worker deploy uses `python worker.py`.",
+        "Confirm startup logs do not show Redis connection failures or browser startup exceptions.",
+        "Confirm the worker remains running after startup and does not crash-loop.",
+    ]
+    if scheduler_enabled:
+        manual_checks.append("Confirm this worker is the only scheduler owner for the paid split.")
+    if warm_browser_pool:
+        manual_checks.append("Confirm browser warm-up logs appear for the expected sites.")
+
+    expected_runtime = {
+        "service_name": worker_service.get("name") or "esp-worker",
+        "plan": worker_service.get("plan"),
+        "docker_command": worker_service.get("dockerCommand"),
+        "queue_backend": str(_env_value("SCRAPE_QUEUE_BACKEND", "") or ""),
+        "scheduler_enabled": scheduler_enabled,
+        "warm_browser_pool": warm_browser_pool,
+        "shared_browser_runtime": shared_browser_runtime,
+        "browser_pool_warm_sites": [site.strip() for site in browser_pool_warm_sites.split(",") if site.strip()],
+        "reconcile_stalled_jobs_on_startup": reconcile_stalled_jobs,
+        "backlog_warn_count": max(0, _env_int(_env_value("WORKER_BACKLOG_WARN_COUNT", 0), default=0)),
+        "backlog_warn_age_seconds": max(0, _env_int(_env_value("WORKER_BACKLOG_WARN_AGE_SECONDS", 0), default=0)),
+    }
+
+    return {
+        "ready": not blockers,
+        "blueprint_path": blueprint_path,
+        "runbook_path": "docs/RENDER_CUTOVER_RUNBOOK.md",
+        "blockers": blockers,
+        "warnings": warnings,
+        "service_name": worker_service.get("name") or "esp-worker",
+        "manual_envs": manual_envs,
+        "managed_envs": managed_envs,
+        "fixed_envs": fixed_envs,
+        "expected_runtime": expected_runtime,
+        "expected_log_markers": expected_log_markers,
+        "optional_log_markers": optional_log_markers,
+        "manual_checks": manual_checks,
+    }
+
+
+def run_single_web_postdeploy_smoke(
+    base_url: str,
+    *,
+    timeout_seconds: float = 15.0,
+    retries: int = 2,
+    retry_delay_seconds: float = 1.0,
+    username: str | None = None,
+    password: str | None = None,
+    ensure_user: bool = False,
+) -> dict:
+    snapshot = run_render_postdeploy_smoke(
+        base_url,
+        timeout_seconds=timeout_seconds,
+        retries=retries,
+        retry_delay_seconds=retry_delay_seconds,
+        expect_queue_backend="inmemory",
+        expect_runtime_role="web",
+        expect_scheduler_mode="enabled",
+        username=username,
+        password=password,
+        ensure_user=ensure_user,
+    )
+    snapshot = dict(snapshot)
+    snapshot["runbook_path"] = "docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md"
+    return snapshot
+
+
+def run_render_cutover_checklist(
+    *,
+    blueprint_path: str = "render.yaml",
+    base_url: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
+) -> dict:
+    normalized_base_url = str(base_url or "").strip()
+    normalized_username = str(username or "").strip()
+    normalized_password = str(password or "")
+    cautious_smoke_flags = "--retries 4 --retry-delay-seconds 2"
+
+    pre_cutover_commands = [
+        "flask predeploy-check --target single-web",
+        "flask schema-drift-check",
+        f"flask render-blueprint-audit --blueprint-path {blueprint_path}",
+        f"flask render-budget-guardrail-audit --blueprint-path {blueprint_path}",
+        f"flask render-dashboard-inputs --blueprint-path {blueprint_path}",
+        f"flask render-local-split-checklist --blueprint-path {blueprint_path}",
+        "flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict",
+        "py -3 -m pytest tests -q",
+    ]
+
+    dashboard_steps = [
+        "Leave the current single-web production service unchanged.",
+        f"Import/sync {blueprint_path} as a dormant Blueprint with new service names only.",
+        "Fill manual secret env vars for esp-web and esp-worker.",
+        "Provision esp-postgres and esp-keyvalue before relying on esp-web/esp-worker traffic.",
+        "Deploy esp-web first, then esp-worker.",
+    ]
+
+    postdeploy_commands = []
+    postdeploy_commands.append(
+        f"flask render-postdeploy-smoke --base-url {normalized_base_url or 'https://<esp-web-url>'} {cautious_smoke_flags}"
+    )
+    postdeploy_commands.append(f"flask render-worker-postdeploy-checklist --blueprint-path {blueprint_path}")
+    if normalized_base_url and normalized_username and normalized_password:
+        postdeploy_commands.append(
+            "flask render-postdeploy-smoke "
+            f"--base-url {normalized_base_url} {cautious_smoke_flags} "
+            f"--username {normalized_username} --password <redacted> --ensure-user"
+        )
+    elif normalized_base_url:
+        postdeploy_commands.append(
+            "flask render-postdeploy-smoke "
+            f"--base-url {normalized_base_url} {cautious_smoke_flags} "
+            "--username <smoke-user> --password <smoke-password> --ensure-user"
+        )
+
+    postdeploy_commands.extend(
+        [
+            "Run one preview scrape smoke in the deployed environment.",
+            "Run one persist scrape smoke in the deployed environment.",
+            "Confirm /api/scrape/status/<job_id>, /api/scrape/jobs, and /scrape/result/<job_id> all work.",
+        ]
+    )
+
+    rollback_steps = [
+        "Keep the existing single-web production service as the live fallback.",
+        "Do not mutate the legacy single-web service into rq mode during rollback.",
+        "Fix the issue locally first.",
+        "Re-run flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict before retrying.",
+    ]
+
+    manual_secret_envs = [
+        {"service": "esp-web", "key": "SECRET_KEY", "required": True},
+        {"service": "esp-web", "key": "SELECTOR_ALERT_WEBHOOK_URL", "required": False},
+        {"service": "esp-worker", "key": "SECRET_KEY", "required": True},
+        {"service": "esp-worker", "key": "OPERATIONAL_ALERT_WEBHOOK_URL", "required": False},
+    ]
+
+    return {
+        "ready": True,
+        "blueprint_path": blueprint_path,
+        "base_url": normalized_base_url or None,
+        "authenticated_smoke_configured": bool(normalized_base_url and normalized_username and normalized_password),
+        "pre_cutover_commands": pre_cutover_commands,
+        "dashboard_steps": dashboard_steps,
+        "manual_secret_envs": manual_secret_envs,
+        "postdeploy_commands": postdeploy_commands,
+        "rollback_steps": rollback_steps,
+    }
+
+
+def run_single_web_redeploy_checklist(
+    *,
+    base_url: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
+) -> dict:
+    normalized_base_url = str(base_url or "").strip()
+    normalized_username = str(username or "").strip()
+    normalized_password = str(password or "")
+    cautious_smoke_flags = "--retries 4 --retry-delay-seconds 2"
+
+    predeploy_commands = [
+        "flask single-web-redeploy-readiness",
+    ]
+
+    dashboard_steps = [
+        "Keep the current Render service in single-web mode.",
+        "Leave SCRAPE_QUEUE_BACKEND as inmemory.",
+        "Do not add worker-only Redis/RQ env vars to the current single-web service.",
+        "Keep WEB_SCHEDULER_MODE on auto or enabled so the single service remains the scheduler owner.",
+        "Redeploy only after the local gate passes.",
+    ]
+
+    postdeploy_commands = [
+        f"flask single-web-postdeploy-smoke --base-url {normalized_base_url or 'https://<current-web-url>'} {cautious_smoke_flags}"
+    ]
+    if normalized_base_url and normalized_username and normalized_password:
+        postdeploy_commands.append(
+            "flask single-web-postdeploy-smoke "
+            f"--base-url {normalized_base_url} {cautious_smoke_flags} "
+            f"--username {normalized_username} --password <redacted> --ensure-user"
+        )
+    elif normalized_base_url:
+        postdeploy_commands.append(
+            "flask single-web-postdeploy-smoke "
+            f"--base-url {normalized_base_url} {cautious_smoke_flags} "
+            "--username <smoke-user> --password <smoke-password> --ensure-user"
+        )
+
+    rollback_steps = [
+        "Keep SCRAPE_QUEUE_BACKEND on inmemory during rollback.",
+        "Restore the last known-good single-web deployment or release.",
+        "Re-run flask predeploy-check --target single-web before retrying the redeploy.",
+    ]
+
+    return {
+        "ready": True,
+        "base_url": normalized_base_url or None,
+        "authenticated_smoke_configured": bool(normalized_base_url and normalized_username and normalized_password),
+        "predeploy_commands": predeploy_commands,
+        "dashboard_steps": dashboard_steps,
+        "postdeploy_commands": postdeploy_commands,
+        "rollback_steps": rollback_steps,
+        "runbook_path": "docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md",
+    }
+
+
+def run_single_web_redeploy_readiness(
+    app,
+    *,
+    strict_parser: bool = False,
+) -> dict:
+    steps = []
+    suite_blockers = []
+
+    def _append_step(name: str, snapshot: dict, *, enforce: bool = True) -> None:
+        step_payload = {
+            "name": name,
+            "ready": bool(snapshot.get("ready", not snapshot.get("blockers"))),
+            "blockers": list(snapshot.get("blockers") or []),
+            "advisory": not enforce,
+        }
+        for key in (
+            "warnings",
+            "target",
+            "profile",
+            "step_count",
+            "failed_step_names",
+            "runbook_path",
+        ):
+            if key in snapshot:
+                step_payload[key] = snapshot.get(key)
+        steps.append(step_payload)
+        if enforce and step_payload["blockers"]:
+            suite_blockers.append(name)
+
+    predeploy = build_predeploy_snapshot(app, target="single-web")
+    _append_step("single-web-predeploy", predeploy)
+
+    local_verify = run_local_verification_suite(
+        app,
+        profile="parser",
+        strict_parser=strict_parser,
+    )
+    local_verify_snapshot = {
+        "ready": local_verify.get("ready", False),
+        "blockers": list(local_verify.get("blockers") or []),
+        "profile": local_verify.get("profile"),
+        "step_count": len(local_verify.get("steps") or []),
+        "failed_step_names": list(local_verify.get("blockers") or []),
+        "runbook_path": "docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md",
+    }
+    _append_step("single-web-local-verify-parser", local_verify_snapshot)
+
+    return {
+        "ready": not suite_blockers,
+        "strict_parser": strict_parser,
+        "runbook_path": "docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md",
+        "steps": steps,
+        "blockers": suite_blockers,
     }
 
 
@@ -740,6 +1859,9 @@ def run_local_verification_suite(
     single_web_predeploy = build_predeploy_snapshot(app, target="single-web")
     _append_step("predeploy-single-web", single_web_predeploy, enforce=False)
 
+    schema_drift = inspect_additive_schema_drift()
+    _append_step("schema-drift-check", schema_drift)
+
     if normalized_profile in {"stack", "full"}:
         split_render_predeploy = build_predeploy_snapshot(app, target="split-render")
         _append_step("predeploy-split-render", split_render_predeploy, enforce=False)
@@ -865,7 +1987,16 @@ def run_render_cutover_readiness(
         "image_storage_path_should_be_absolute",
     }
 
-    current_web_app = app if app.config.get("TESTING") else create_web_app()
+    current_web_app = (
+        app
+        if app.config.get("TESTING")
+        else create_web_app(
+            config_overrides={
+                "SCRAPE_QUEUE_BACKEND": "inmemory",
+                "WEB_SCHEDULER_MODE": "auto",
+            }
+        )
+    )
     split_web_app = create_web_app(
         config_overrides={
             "SCRAPE_QUEUE_BACKEND": "rq",
@@ -909,6 +2040,9 @@ def run_render_cutover_readiness(
     current_prod_predeploy = build_predeploy_snapshot(current_web_app, target="single-web")
     _append_step("current-single-web-predeploy", current_prod_predeploy, enforce=False)
 
+    schema_drift = inspect_additive_schema_drift()
+    _append_step("schema-drift-check", schema_drift)
+
     split_render_predeploy = build_predeploy_snapshot(split_web_app, target="split-render")
     if strict and split_render_predeploy.get("warnings"):
         promoted_warnings = [
@@ -929,6 +2063,9 @@ def run_render_cutover_readiness(
         )
         blueprint_audit["ready"] = not blueprint_audit["blockers"]
     _append_step("render-blueprint-audit", blueprint_audit)
+
+    budget_guardrail = run_render_budget_guardrail_audit("render.yaml")
+    _append_step("render-budget-guardrail-audit", budget_guardrail)
 
     worker_health = get_worker_health_snapshot(split_worker_app)
     worker_health_blockers = []
@@ -1128,7 +2265,8 @@ def run_single_web_smoke(
             persist_to_db=persist_to_db,
         )
 
-        queue = get_queue_backend()
+        with app.app_context():
+            queue = get_queue_backend()
         job_id = queue.enqueue(
             site=site,
             task_fn=lambda: execute_scrape_job(request_payload),
@@ -1732,6 +2870,18 @@ def register_cli_commands(app):
     def predeploy_check(target, strict):
         """Print local predeploy readiness checks as JSON."""
         snapshot = build_predeploy_snapshot(app, target=target)
+        schema_drift = inspect_additive_schema_drift()
+        snapshot = dict(snapshot)
+        snapshot["schema_drift"] = {
+            "ready": bool(schema_drift.get("ready", not schema_drift.get("blockers"))),
+            "blockers": list(schema_drift.get("blockers") or []),
+            "missing_tables": list(schema_drift.get("missing_tables") or []),
+            "missing_columns": list(schema_drift.get("missing_columns") or []),
+            "database_backend": schema_drift.get("database_backend"),
+        }
+        if schema_drift.get("blockers"):
+            snapshot["blockers"] = list(snapshot.get("blockers") or []) + list(schema_drift.get("blockers") or [])
+            snapshot["ready"] = not snapshot["blockers"]
         _emit_json(snapshot)
 
         if snapshot.get("blockers"):
@@ -1753,6 +2903,15 @@ def register_cli_commands(app):
             apply_migrations=apply_migrations,
             schema_mode=app.config.get("SCHEMA_BOOTSTRAP_MODE", "auto"),
         )
+        _emit_json(snapshot)
+
+        if snapshot.get("blockers"):
+            raise SystemExit(1)
+
+    @app.cli.command("schema-drift-check")
+    def schema_drift_check():
+        """Inspect additive schema drift on the configured DATABASE_URL."""
+        snapshot = inspect_additive_schema_drift()
         _emit_json(snapshot)
 
         if snapshot.get("blockers"):
@@ -1860,6 +3019,55 @@ def register_cli_commands(app):
         if snapshot.get("blockers"):
             raise SystemExit(1)
 
+    @app.cli.command("render-local-split-readiness")
+    @click.option("--blueprint-path", type=click.Path(dir_okay=False, path_type=str), default="render.yaml")
+    @click.option("--compose-path", type=click.Path(dir_okay=False, path_type=str), default="docker-compose.local.yml")
+    @click.option(
+        "--require-backend",
+        type=click.Choice(["sqlite", "postgresql", "mysql"]),
+        default="postgresql",
+        show_default=True,
+    )
+    @click.option("--apply-migrations/--no-apply-migrations", default=True, show_default=True)
+    @click.option("--strict/--no-strict", default=True, show_default=True)
+    @click.option("--strict-parser", is_flag=True, default=False)
+    def render_local_split_readiness(blueprint_path, compose_path, require_backend, apply_migrations, strict, strict_parser):
+        """Run the paid-split local rehearsal gate with repo-pinned local env defaults."""
+        snapshot = run_render_local_split_readiness(
+            app,
+            blueprint_path=blueprint_path,
+            compose_path=compose_path,
+            require_backend=require_backend,
+            apply_migrations=apply_migrations,
+            strict=strict,
+            strict_parser=strict_parser,
+        )
+        _emit_json(snapshot)
+
+        if snapshot.get("blockers"):
+            raise SystemExit(1)
+
+    @app.cli.command("render-cutover-brief")
+    @click.option("--blueprint-path", type=click.Path(dir_okay=False, path_type=str), default="render.yaml")
+    @click.option("--compose-path", type=click.Path(dir_okay=False, path_type=str), default="docker-compose.local.yml")
+    @click.option("--base-url", type=str, default=None)
+    @click.option("--username", type=str, default=None)
+    @click.option("--password", type=str, default=None)
+    def render_cutover_brief(blueprint_path, compose_path, base_url, username, password):
+        """Print the pre-activation operator bundle for the first paid Render cutover."""
+        snapshot = run_render_cutover_brief(
+            app,
+            blueprint_path=blueprint_path,
+            compose_path=compose_path,
+            base_url=base_url,
+            username=username,
+            password=password,
+        )
+        _emit_json(snapshot)
+
+        if snapshot.get("blockers"):
+            raise SystemExit(1)
+
     @app.cli.command("render-blueprint-audit")
     @click.option("--blueprint-path", type=click.Path(dir_okay=False, path_type=str), default="render.yaml")
     @click.option("--strict", is_flag=True, default=False)
@@ -1873,11 +3081,157 @@ def register_cli_commands(app):
         if strict and snapshot.get("warnings"):
             raise SystemExit(1)
 
+    @app.cli.command("render-budget-guardrail-audit")
+    @click.option("--blueprint-path", type=click.Path(dir_okay=False, path_type=str), default="render.yaml")
+    @click.option("--strict", is_flag=True, default=False)
+    def render_budget_guardrail_audit(blueprint_path, strict):
+        """Audit the dormant Render Blueprint against the repo budget guardrail assumptions."""
+        snapshot = run_render_budget_guardrail_audit(blueprint_path)
+        _emit_json(snapshot)
+
+        if snapshot.get("blockers"):
+            raise SystemExit(1)
+        if strict and snapshot.get("warnings"):
+            raise SystemExit(1)
+
+    @app.cli.command("render-local-split-checklist")
+    @click.option("--blueprint-path", type=click.Path(dir_okay=False, path_type=str), default="render.yaml")
+    @click.option("--compose-path", type=click.Path(dir_okay=False, path_type=str), default="docker-compose.local.yml")
+    def render_local_split_checklist(blueprint_path, compose_path):
+        """Print the local PostgreSQL/Redis/RQ rehearsal contract for the first paid Render split."""
+        snapshot = run_render_local_split_checklist(
+            app,
+            blueprint_path=blueprint_path,
+            compose_path=compose_path,
+        )
+        _emit_json(snapshot)
+
     @app.cli.command("render-dashboard-inputs")
     @click.option("--blueprint-path", type=click.Path(dir_okay=False, path_type=str), default="render.yaml")
     def render_dashboard_inputs(blueprint_path):
         """Print the manual, managed, and fixed Render env inputs derived from the Blueprint."""
         snapshot = run_render_dashboard_inputs(blueprint_path)
+        _emit_json(snapshot)
+
+        if snapshot.get("blockers"):
+            raise SystemExit(1)
+
+    @app.cli.command("render-postdeploy-smoke")
+    @click.option("--base-url", required=True, type=str)
+    @click.option("--timeout-seconds", default=15.0, show_default=True, type=float)
+    @click.option("--retries", default=2, show_default=True, type=int)
+    @click.option("--retry-delay-seconds", default=1.0, show_default=True, type=float)
+    @click.option("--expect-queue-backend", default="rq", show_default=True, type=str)
+    @click.option("--expect-runtime-role", default="web", show_default=True, type=str)
+    @click.option(
+        "--expect-scheduler-mode",
+        type=click.Choice(["disabled", "enabled", "any"]),
+        default="disabled",
+        show_default=True,
+    )
+    @click.option("--username", type=str, default=None, help="Optional login username for authenticated route smoke.")
+    @click.option("--password", type=str, default=None, help="Optional login password for authenticated route smoke.")
+    @click.option("--ensure-user", is_flag=True, default=False, help="Register the smoke user if login does not succeed.")
+    def render_postdeploy_smoke(
+        base_url,
+        timeout_seconds,
+        retries,
+        retry_delay_seconds,
+        expect_queue_backend,
+        expect_runtime_role,
+        expect_scheduler_mode,
+        username,
+        password,
+        ensure_user,
+    ):
+        """Run the first post-deploy smoke checks against a live web URL."""
+        snapshot = run_render_postdeploy_smoke(
+            base_url,
+            timeout_seconds=timeout_seconds,
+            retries=retries,
+            retry_delay_seconds=retry_delay_seconds,
+            expect_queue_backend=expect_queue_backend,
+            expect_runtime_role=expect_runtime_role,
+            expect_scheduler_mode=expect_scheduler_mode,
+            username=username,
+            password=password,
+            ensure_user=ensure_user,
+        )
+        _emit_json(snapshot)
+
+        if snapshot.get("blockers"):
+            raise SystemExit(1)
+
+    @app.cli.command("single-web-postdeploy-smoke")
+    @click.option("--base-url", type=str, required=True)
+    @click.option("--timeout-seconds", type=float, default=15.0, show_default=True)
+    @click.option("--retries", default=2, show_default=True, type=int)
+    @click.option("--retry-delay-seconds", default=1.0, show_default=True, type=float)
+    @click.option("--username", type=str, default=None, help="Optional login username for authenticated route smoke.")
+    @click.option("--password", type=str, default=None, help="Optional login password for authenticated route smoke.")
+    @click.option("--ensure-user", is_flag=True, default=False, help="Register the smoke user if login does not succeed.")
+    def single_web_postdeploy_smoke(base_url, timeout_seconds, retries, retry_delay_seconds, username, password, ensure_user):
+        """Run post-deploy smoke checks against the current single-web production shape."""
+        snapshot = run_single_web_postdeploy_smoke(
+            base_url,
+            timeout_seconds=timeout_seconds,
+            retries=retries,
+            retry_delay_seconds=retry_delay_seconds,
+            username=username,
+            password=password,
+            ensure_user=ensure_user,
+        )
+        _emit_json(snapshot)
+
+        if snapshot.get("blockers"):
+            raise SystemExit(1)
+
+    @app.cli.command("render-worker-postdeploy-checklist")
+    @click.option("--blueprint-path", type=click.Path(dir_okay=False, path_type=str), default="render.yaml")
+    def render_worker_postdeploy_checklist(blueprint_path):
+        """Print the expected worker log markers and runtime contract for paid Render activation."""
+        snapshot = run_render_worker_postdeploy_checklist(blueprint_path=blueprint_path)
+        _emit_json(snapshot)
+
+        if snapshot.get("blockers"):
+            raise SystemExit(1)
+
+    @app.cli.command("render-cutover-checklist")
+    @click.option("--blueprint-path", type=click.Path(dir_okay=False, path_type=str), default="render.yaml")
+    @click.option("--base-url", type=str, default=None)
+    @click.option("--username", type=str, default=None)
+    @click.option("--password", type=str, default=None)
+    def render_cutover_checklist(blueprint_path, base_url, username, password):
+        """Print the ordered commands and manual steps for the first paid Render cutover."""
+        snapshot = run_render_cutover_checklist(
+            blueprint_path=blueprint_path,
+            base_url=base_url,
+            username=username,
+            password=password,
+        )
+        _emit_json(snapshot)
+
+    @app.cli.command("single-web-redeploy-checklist")
+    @click.option("--base-url", type=str, default=None)
+    @click.option("--username", type=str, default=None)
+    @click.option("--password", type=str, default=None)
+    def single_web_redeploy_checklist(base_url, username, password):
+        """Print the ordered commands and manual steps for a current single-web redeploy."""
+        snapshot = run_single_web_redeploy_checklist(
+            base_url=base_url,
+            username=username,
+            password=password,
+        )
+        _emit_json(snapshot)
+
+    @app.cli.command("single-web-redeploy-readiness")
+    @click.option("--strict-parser", is_flag=True, default=False)
+    def single_web_redeploy_readiness(strict_parser):
+        """Run the local gate required before redeploying the current single-web production shape."""
+        snapshot = run_single_web_redeploy_readiness(
+            app,
+            strict_parser=strict_parser,
+        )
         _emit_json(snapshot)
 
         if snapshot.get("blockers"):
