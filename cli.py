@@ -26,10 +26,17 @@ from database import (
     SessionLocal,
     describe_schema_bootstrap,
     inspect_additive_schema_drift,
+    redact_database_url,
+    run_alembic_upgrade_for_database_url,
     run_database_smoke_check,
 )
 from mercari_db import scrape_single_item as scrape_mercari_single_item
 from models import Product, ProductSnapshot, Variant
+from services.database_migration import (
+    DEFAULT_EXISTING_WEB_SQLITE_URL,
+    DEFAULT_MIGRATION_BATCH_SIZE,
+    run_existing_web_database_migration,
+)
 from services.html_page_adapter import HtmlPageAdapter
 from services.mercari_item_parser import parse_mercari_item_page
 from services.pricing_service import update_product_selling_price
@@ -2903,6 +2910,66 @@ def register_cli_commands(app):
             apply_migrations=apply_migrations,
             schema_mode=app.config.get("SCHEMA_BOOTSTRAP_MODE", "auto"),
         )
+        _emit_json(snapshot)
+
+        if snapshot.get("blockers"):
+            raise SystemExit(1)
+
+    @app.cli.command("existing-web-db-migrate")
+    @click.option(
+        "--source-url",
+        type=str,
+        default=DEFAULT_EXISTING_WEB_SQLITE_URL,
+        show_default=True,
+        help="Existing Render Web Service SQLite DATABASE_URL.",
+    )
+    @click.option("--destination-url", type=str, required=True, help="Destination Postgres DATABASE_URL.")
+    @click.option("--prepare-destination-schema", is_flag=True, default=False)
+    @click.option("--dry-run", is_flag=True, default=False)
+    @click.option("--verify-only", is_flag=True, default=False)
+    @click.option("--batch-size", type=int, default=DEFAULT_MIGRATION_BATCH_SIZE, show_default=True)
+    @click.option("--table", "table_names", multiple=True, type=str)
+    def existing_web_db_migrate(
+        source_url,
+        destination_url,
+        prepare_destination_schema,
+        dry_run,
+        verify_only,
+        batch_size,
+        table_names,
+    ):
+        """Migrate or verify the existing Render Web SQLite database into Postgres."""
+        prepared_destination_schema = None
+        schema_prepare_error = None
+        if prepare_destination_schema:
+            try:
+                run_alembic_upgrade_for_database_url(destination_url)
+                prepared_destination_schema = "alembic"
+            except Exception as exc:
+                schema_prepare_error = str(exc)
+
+        if schema_prepare_error:
+            snapshot = {
+                "ready": False,
+                "mode": "verify-only" if verify_only else "dry-run" if dry_run else "migrate",
+                "source_url": redact_database_url(source_url),
+                "destination_url": redact_database_url(destination_url),
+                "prepared_destination_schema": prepared_destination_schema,
+                "blockers": ["destination_schema_prepare_failed"],
+                "warnings": [],
+                "migration_error": schema_prepare_error,
+            }
+        else:
+            snapshot = run_existing_web_database_migration(
+                source_url=source_url,
+                destination_url=destination_url,
+                dry_run=dry_run,
+                verify_only=verify_only,
+                batch_size=batch_size,
+                table_names=table_names,
+            )
+            snapshot["prepared_destination_schema"] = prepared_destination_schema
+
         _emit_json(snapshot)
 
         if snapshot.get("blockers"):

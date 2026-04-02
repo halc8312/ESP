@@ -59,6 +59,23 @@ def test_get_queue_backend_defaults_to_inmemory(app):
     assert hasattr(backend, "get_jobs_for_user")
 
 
+def test_get_queue_backend_selects_rq_backend_from_app_config(app):
+    with app.app_context():
+        app.config.update(
+            {
+                "SCRAPE_QUEUE_BACKEND": "rq",
+                "REDIS_URL": "redis://example.test:6379/9",
+                "SCRAPE_QUEUE_NAME": "existing-web-cutover",
+            }
+        )
+
+        backend = get_queue_backend()
+
+    assert backend.__class__.__name__ == "RQQueueBackend"
+    assert backend._redis_url == "redis://example.test:6379/9"
+    assert backend._queue_name == "existing-web-cutover"
+
+
 def test_get_queue_backend_rejects_unknown_backend():
     app = create_app(
         runtime_role="test",

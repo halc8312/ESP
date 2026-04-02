@@ -219,6 +219,23 @@ def run_alembic_upgrade(revision: str = "head", config_path: str = "alembic.ini"
     return revision
 
 
+def run_alembic_upgrade_for_database_url(
+    database_url: str,
+    revision: str = "head",
+    config_path: str = "alembic.ini",
+) -> str:
+    if not alembic_available():
+        raise RuntimeError("Alembic is not installed")
+
+    from alembic import command
+    from alembic.config import Config
+
+    config = Config(config_path)
+    config.set_main_option("sqlalchemy.url", str(database_url or "").strip())
+    command.upgrade(config, revision)
+    return revision
+
+
 def bootstrap_schema(schema_mode: str = "auto") -> str:
     description = describe_schema_bootstrap(schema_mode)
     effective_mode = str(description["effective_mode"])
