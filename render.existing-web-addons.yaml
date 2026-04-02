@@ -10,6 +10,7 @@ services:
   - type: worker
     name: esp-worker
     runtime: docker
+    region: singapore
     plan: standard
     dockerfilePath: ./Dockerfile
     dockerContext: .
@@ -56,12 +57,14 @@ services:
 
   - type: keyvalue
     name: esp-keyvalue
+    region: singapore
     plan: starter
     maxmemoryPolicy: noeviction
     ipAllowList: []
 
 databases:
   - name: esp-postgres
+    region: singapore
     plan: basic-256mb
     databaseName: esp_production
     user: esp_user
