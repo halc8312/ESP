@@ -2,6 +2,7 @@ Flask
 SQLAlchemy
 alembic
 psycopg[binary]
+psycopg2-binary
 redis
 rq
 requests

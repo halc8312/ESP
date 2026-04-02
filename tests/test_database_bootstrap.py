@@ -48,6 +48,33 @@ def test_describe_schema_bootstrap_reports_postgres_legacy_fallback(monkeypatch)
     assert "***" in snapshot["database_url"]
 
 
+def test_get_database_url_normalizes_legacy_postgres_scheme(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgres://user:secret@example.com/app")
+
+    assert database.get_database_url() == "postgresql://user:secret@example.com/app"
+    assert database.get_database_backend() == "postgresql"
+    assert "***" in database.redact_database_url()
+
+
+def test_create_app_engine_normalizes_legacy_postgres_scheme(monkeypatch):
+    captured = {}
+
+    def fake_create_engine(url, echo=False):
+        captured["url"] = url
+
+        class FakeEngine:
+            url = type("FakeUrl", (), {"drivername": "postgresql"})()
+
+        return FakeEngine()
+
+    monkeypatch.setattr(database, "create_engine", fake_create_engine)
+
+    engine = database.create_app_engine("postgres://user:secret@example.com/app")
+
+    assert captured["url"] == "postgresql://user:secret@example.com/app"
+    assert engine.url.drivername == "postgresql"
+
+
 def test_run_database_smoke_check_with_migrations(monkeypatch):
     smoke_db = Path(f"test_db_smoke_{uuid.uuid4().hex}.sqlite")
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{smoke_db.as_posix()}")

@@ -13,13 +13,24 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 DEFAULT_DATABASE_URL = "sqlite:///mercari.db"
 
 
+def normalize_database_url(database_url: str | None = None) -> str:
+    resolved_url = str(database_url or DEFAULT_DATABASE_URL).strip()
+    if resolved_url.startswith("postgres://"):
+        return "postgresql://" + resolved_url[len("postgres://") :]
+    return resolved_url
+
+
 def get_database_url() -> str:
-    return os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL)
+    return normalize_database_url(os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL))
 
 
 def create_app_engine(database_url: str | None = None):
-    resolved_url = database_url or get_database_url()
-    print(f"DEBUG: Using database URL: {resolved_url}")
+    resolved_url = normalize_database_url(database_url or get_database_url())
+    try:
+        debug_url = make_url(resolved_url).render_as_string(hide_password=True)
+    except Exception:
+        debug_url = resolved_url
+    print(f"DEBUG: Using database URL: {debug_url}")
     engine = create_engine(resolved_url, echo=False)
 
     if "sqlite" in engine.url.drivername:
@@ -138,7 +149,7 @@ def alembic_available() -> bool:
 
 
 def get_database_backend(database_url: str | None = None) -> str:
-    resolved_url = database_url or get_database_url()
+    resolved_url = normalize_database_url(database_url or get_database_url())
     try:
         driver_name = make_url(resolved_url).drivername.lower()
     except Exception:
@@ -154,7 +165,7 @@ def get_database_backend(database_url: str | None = None) -> str:
 
 
 def redact_database_url(database_url: str | None = None) -> str:
-    resolved_url = database_url or get_database_url()
+    resolved_url = normalize_database_url(database_url or get_database_url())
     try:
         return make_url(resolved_url).render_as_string(hide_password=True)
     except Exception:
@@ -231,7 +242,7 @@ def run_alembic_upgrade_for_database_url(
     from alembic.config import Config
 
     config = Config(config_path)
-    config.set_main_option("sqlalchemy.url", str(database_url or "").strip())
+    config.set_main_option("sqlalchemy.url", normalize_database_url(database_url))
     command.upgrade(config, revision)
     return revision
 
