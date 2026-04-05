@@ -22,6 +22,7 @@
 <div class="content-card">
     <div class="content-card-body">
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="form-group">
                 <label for="name">価格表名 *</label>
                 <input type="text" id="name" name="name" value="{{ pricelist.name if pricelist else '' }}"

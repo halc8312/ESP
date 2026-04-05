@@ -15,6 +15,7 @@
         <div class="error">{{ error }}</div>
         {% endif %}
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="form-group">
                 <label for="username">Username</label>
                 <input type="text" id="username" name="username" required autocomplete="username">

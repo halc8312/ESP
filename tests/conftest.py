@@ -67,7 +67,7 @@ def app(monkeypatch):
     database.engine = test_engine
     SessionLocal.configure(bind=test_engine)
 
-    app = create_app(runtime_role="test", config_overrides={"TESTING": True})
+    app = create_app(runtime_role="test", config_overrides={"TESTING": True, "WTF_CSRF_ENABLED": False})
     with app.app_context():
         _reset_sqlite_test_database_schema(test_engine)
         Base.metadata.create_all(bind=test_engine)

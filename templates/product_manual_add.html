@@ -25,6 +25,7 @@
 {% endif %}
 
 <form method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <div class="product-edit-layout">
         <div class="product-edit-main">
             <div class="content-card">

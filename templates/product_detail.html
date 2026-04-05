@@ -12,6 +12,7 @@
 </div>
 
 <form method="POST" class="product-edit-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <input type="hidden" name="delete_v_ids" id="delete_v_ids" value="">
     <input type="hidden" name="image_urls_json" id="image_urls_json" value='{{ images|tojson|safe }}'>
 

@@ -1,4 +1,5 @@
 Flask
+Flask-WTF
 SQLAlchemy
 alembic
 psycopg[binary]
@@ -19,3 +20,4 @@ playwright
 browserforge
 patchright
 msgspec
+nh3

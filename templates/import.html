@@ -69,6 +69,7 @@
 
         <div style="margin-top: 20px; display: flex; gap: 12px;">
             <form action="{{ url_for('import.import_execute') }}" method="POST" style="display: inline;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <button type="submit" class="btn" style="background: #2e7d32; color: white; padding: 12px 24px;">
                     ✓ {{ preview_data.ok_count }}件をインポート
                 </button>
@@ -96,6 +97,7 @@
         </div>
 
         <form action="{{ url_for('import.import_preview') }}" method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="form-group" style="margin-bottom: 16px;">
                 <label for="file">CSVファイル</label>
                 <input type="file" id="file" name="file" accept=".csv" required

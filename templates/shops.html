@@ -24,7 +24,7 @@
     <div class="content-card-body">
         <form method="POST" enctype="multipart/form-data" class="shop-add-form"
             style="display:flex; gap:10px; flex-wrap: wrap;">
-            <input type="text" name="name" placeholder="ショップ名 (例: 文具店A)" required autocomplete="organization"
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/> placeholder="ショップ名 (例: 文具店A)" required autocomplete="organization"
                 style="flex: 1; min-width: 200px;">
             <input type="url" name="logo_url" placeholder="外部ロゴURL (任意)" style="flex: 2; min-width: 250px;">
             <input type="file" name="logo_file" accept="image/*" style="flex: 1; min-width: 220px;">
@@ -68,6 +68,7 @@
                                 onclick="document.getElementById('edit-form-{{ s.id }}').style.display='table-row';">編集</button>
                             <form method="POST" action="{{ url_for('shops.delete_shop', shop_id=s.id) }}"
                                 style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                                 <button type="submit" onclick="return confirm('削除すると紐付いている商品も影響を受けます。本当によろしいですか？');"
                                     class="btn-danger">削除</button>
                             </form>
@@ -81,6 +82,7 @@
                         <form method="POST" enctype="multipart/form-data"
                             action="{{ url_for('shops.edit_shop', shop_id=s.id) }}"
                             style="display:flex; gap:10px; padding: 10px; flex-wrap: wrap;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                             <input type="text" name="name" value="{{ s.name }}" required style="flex: 1;">
                             <input type="url" name="logo_url" value="{{ s.logo_url or '' }}" placeholder="ロゴURL"
                                 style="flex: 2;">
