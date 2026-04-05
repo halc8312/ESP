@@ -504,6 +504,9 @@
                     'Content-Type': 'application/json',
                     'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content
                 },
+                body: JSON.stringify({
+                    field: input.dataset.field,
+                    value: payloadValue
                 })
             });
 
