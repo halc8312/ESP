@@ -5,6 +5,7 @@
     <meta charset="utf-8">
     <title>{% block title %}ESP{% endblock %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     {% block head %}{% endblock %}
 </head>
@@ -26,6 +27,7 @@
         <h1 class="mobile-header-title">{% block header_title %}ESP{% endblock %}</h1>
         <div class="mobile-header-shop">
             <form action="{{ url_for('set_current_shop') }}" method="post" class="shop-select-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <label class="shop-select-label visually-hidden" for="mobile-shop-select">ショップ選択</label>
                 <select name="shop_id" id="mobile-shop-select" class="shop-select-compact"
                     aria-describedby="shop-current" data-auto-submit="true">
@@ -122,6 +124,7 @@
         <div class="sidebar-shop-section">
             <label class="sidebar-shop-label">ショップ選択</label>
             <form action="{{ url_for('set_current_shop') }}" method="post" class="shop-select-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <select name="shop_id" class="sidebar-shop-select">
                     <option value="">(ショップ未選択)</option>
                     {% for s in all_shops %}

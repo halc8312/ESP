@@ -6,7 +6,10 @@ import tempfile
 import threading
 from typing import Any
 
-from flask import Flask, send_from_directory
+import logging
+
+from flask import Flask, render_template, send_from_directory
+from flask_wtf.csrf import CSRFProtect
 from flask_apscheduler import APScheduler
 from flask_login import LoginManager
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -22,6 +25,7 @@ except ModuleNotFoundError:
 
 
 login_manager = LoginManager()
+csrf = CSRFProtect()
 
 
 class SchedulerConfig:
@@ -219,14 +223,44 @@ def _resolve_web_scheduler_enabled(app: Flask) -> bool:
     return queue_backend == "inmemory"
 
 
+def _register_security_headers(app: Flask) -> None:
+    @app.after_request
+    def set_security_headers(response):
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        if app.config.get("SESSION_COOKIE_SECURE"):
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+            )
+        return response
+
+
+def _register_error_handlers(app: Flask) -> None:
+    @app.errorhandler(404)
+    def not_found(_error):
+        return render_template("error.html", code=404, message="ページが見つかりません"), 404
+
+    @app.errorhandler(500)
+    def internal_error(_error):
+        return render_template("error.html", code=500, message="サーバー内部エラーが発生しました"), 500
+
+
 def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | None = None) -> Flask:
+    logger = logging.getLogger("esp.app")
     app = Flask(__name__)
     app.config.from_object(SchedulerConfig())
     app.config.update(_get_runtime_defaults(runtime_role))
+    secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-this")
+    if secret_key == "dev-secret-key-change-this" and runtime_role in ("web", "worker"):
+        logger.warning(
+            "SECRET_KEY is using the insecure default value. "
+            "Set the SECRET_KEY environment variable to a random string in production."
+        )
     app.config.update(
         {
             "ESP_RUNTIME_ROLE": runtime_role,
-            "SECRET_KEY": os.environ.get("SECRET_KEY", "dev-secret-key-change-this"),
+            "SECRET_KEY": secret_key,
             "SCRAPE_QUEUE_BACKEND": os.environ.get("SCRAPE_QUEUE_BACKEND", "inmemory"),
             "REDIS_URL": os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
             "SCRAPE_QUEUE_NAME": os.environ.get("SCRAPE_QUEUE_NAME", "scrape"),
@@ -239,6 +273,9 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
             "SCHEDULER_LOCK_KEY": os.environ.get("SCHEDULER_LOCK_KEY", "esp:scheduler:lock"),
             "SCHEDULER_LOCK_TTL_SECONDS": os.environ.get("SCHEDULER_LOCK_TTL_SECONDS", "120"),
             "WARM_BROWSER_POOL": os.environ.get("WARM_BROWSER_POOL", ""),
+            "SESSION_COOKIE_HTTPONLY": True,
+            "SESSION_COOKIE_SAMESITE": "Lax",
+            "SESSION_COOKIE_SECURE": _as_bool(os.environ.get("SESSION_COOKIE_SECURE", "")),
         }
     )
     if config_overrides:
@@ -251,6 +288,10 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
 
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
+
+    csrf.init_app(app)
+    _register_security_headers(app)
+    _register_error_handlers(app)
 
     _create_scheduler(app)
     if app.config.get("REGISTER_BLUEPRINTS", True):

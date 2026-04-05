@@ -30,6 +30,7 @@
                     <td>
                         <form method="POST" action="{{ url_for('delete_template', template_id=t.id) }}"
                             style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                             <button type="submit" onclick="return confirm('本当に削除しますか？');" class="btn-danger">削除</button>
                         </form>
                     </td>
@@ -47,6 +48,7 @@
     </div>
     <div class="content-card-body">
         <form method="POST" action="{{ url_for('manage_templates') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="form-group">
                 <label>テンプレート名</label>
                 <input type="text" name="name" required>

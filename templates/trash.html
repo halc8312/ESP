@@ -11,6 +11,7 @@
 
 {% if items %}
 <form id="trashForm" method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <div class="batch-action-bar"
         style="margin-bottom: 16px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
         <label style="display: flex; align-items: center; gap: 8px;">

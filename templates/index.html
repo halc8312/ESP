@@ -501,11 +501,9 @@
             const response = await fetch(input.dataset.url, {
                 method: 'PATCH',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content
                 },
-                body: JSON.stringify({
-                    field: input.dataset.field,
-                    value: payloadValue
                 })
             });
 
@@ -592,7 +590,8 @@
         const response = await fetch('{{ url_for("api.bulk_price_update") }}', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content
             },
             body: JSON.stringify({
                 ids: selectedIds.map(id => Number(id)),

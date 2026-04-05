@@ -2,6 +2,7 @@
 Price List management routes: create, edit, delete, manage items.
 """
 import uuid
+import nh3
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 from flask_login import login_required, current_user
 from sqlalchemy.orm import subqueryload
@@ -13,6 +14,18 @@ from time_utils import utc_now
 pricelist_bp = Blueprint('pricelist', __name__)
 
 PRICE_LIST_LAYOUTS = {"grid", "editorial"}
+
+_NOTES_ALLOWED_TAGS = {"p", "br", "b", "strong", "i", "em", "ul", "ol", "li", "a"}
+_NOTES_ALLOWED_ATTRIBUTES = {"a": {"href", "target"}}
+
+
+def _sanitize_notes(raw_html: str) -> str:
+    """Sanitize pricelist notes to allow only safe HTML tags."""
+    return nh3.clean(
+        raw_html,
+        tags=_NOTES_ALLOWED_TAGS,
+        attributes=_NOTES_ALLOWED_ATTRIBUTES,
+    )
 
 
 def _normalize_layout(value):
@@ -63,7 +76,7 @@ def pricelist_create():
     try:
         if request.method == "POST":
             name = request.form.get("name", "").strip()
-            notes = request.form.get("notes", "").strip()
+            notes = _sanitize_notes(request.form.get("notes", "").strip())
             currency_rate = int(request.form.get("currency_rate", 150))
             layout = _normalize_layout(request.form.get("layout"))
 
@@ -120,7 +133,7 @@ def pricelist_edit(pricelist_id):
 
         if request.method == "POST":
             pl.name = request.form.get("name", pl.name).strip()
-            pl.notes = request.form.get("notes", "").strip()
+            pl.notes = _sanitize_notes(request.form.get("notes", "").strip())
             pl.currency_rate = int(request.form.get("currency_rate", 150))
             pl.layout = _normalize_layout(request.form.get("layout"))
             pl.is_active = "is_active" in request.form

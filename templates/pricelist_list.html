@@ -64,6 +64,7 @@
                 </a>
                 <form action="{{ url_for('pricelist.pricelist_delete', pricelist_id=pl.id) }}" method="post"
                     style="display: inline;" onsubmit="return confirm('本当に削除しますか？')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                     <button type="submit" class="btn"
                         style="font-size: 12px; padding: 6px 10px; background: #fce4ec; border: 1px solid #ef9a9a; border-radius: 4px; color: #c62828; cursor: pointer;">
                         🗑️ 削除
