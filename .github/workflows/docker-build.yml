@@ -1,0 +1,54 @@
+name: Docker Build Check
+
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - 'requirements.txt'
+      - '.dockerignore'
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'requirements.txt'
+      - '.dockerignore'
+
+permissions:
+  contents: read
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: esp-test:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+
+      - name: Report image size
+        run: |
+          echo "## Docker Image Size Report" >> "$GITHUB_STEP_SUMMARY"
+          docker images esp-test:ci --format "{{.Size}}" | xargs -I{} echo "Image size: {}" >> "$GITHUB_STEP_SUMMARY"
+          docker history esp-test:ci --no-trunc --format "{{.Size}}\t{{.CreatedBy}}" | head -20 >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify runtime imports
+        run: |
+          docker run --rm esp-test:ci python -c "
+          import flask; print('flask OK')
+          import scrapling; print('scrapling OK')
+          import playwright; print('playwright OK')
+          import browserforge; print('browserforge OK')
+          import patchright; print('patchright OK')
+          print('All runtime imports verified')
+          "
