@@ -49,6 +49,13 @@ def _build_catalog_item(item):
     display_price = item.custom_price or p.selling_price or p.last_price or 0
     total_stock = sum(v.inventory_qty or 0 for v in p.variants)
 
+    # Public catalog: prefer curated custom content over raw scraped text.
+    # Never expose source_url, site, or other internal sourcing details.
+    description = p.custom_description or ""
+    if not description and snapshot:
+        description = snapshot.description or ""
+    description_en = p.custom_description_en or ""
+
     return {
         "product_id": p.id,
         "title": display_title,
@@ -58,10 +65,8 @@ def _build_catalog_item(item):
         "image_urls": image_urls,
         "stock": total_stock,
         "in_stock": total_stock > 0,
-        "source_url": p.source_url,
-        "site": p.site,
-        "description": p.custom_description or (snapshot.description if snapshot else "") or "",
-        "description_en": p.custom_description_en or "",
+        "description": description,
+        "description_en": description_en,
     }
 
 

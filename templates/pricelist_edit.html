@@ -43,14 +43,20 @@
                     <label
                         style="display: block; border: 1px solid {% if layout_value == 'grid' %}#90caf9{% else %}#d9dde3{% endif %}; background: {% if layout_value == 'grid' %}#e3f2fd{% else %}#fff{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
                         <input type="radio" name="layout" value="grid" {% if layout_value == 'grid' %}checked{% endif %}>
-                        <strong style="display: block; margin-top: 6px;">グリッド</strong>
-                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">既存のカード型。商品点数が多い価格表向け。</span>
+                        <strong style="display: block; margin-top: 6px;">グリッド (Grid)</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">Card-based layout. Best for catalogs with many products.</span>
                     </label>
                     <label
                         style="display: block; border: 1px solid {% if layout_value == 'editorial' %}#f4b183{% else %}#d9dde3{% endif %}; background: {% if layout_value == 'editorial' %}#fff4e8{% else %}#fff{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
                         <input type="radio" name="layout" value="editorial" {% if layout_value == 'editorial' %}checked{% endif %}>
-                        <strong style="display: block; margin-top: 6px;">エディトリアル</strong>
-                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">画像を大きく見せる縦積み型。少数精鋭の提案向け。</span>
+                        <strong style="display: block; margin-top: 6px;">エディトリアル (Editorial)</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">Large images with alternating layout. Best for curated selections.</span>
+                    </label>
+                    <label
+                        style="display: block; border: 1px solid {% if layout_value == 'list' %}#81c784{% else %}#d9dde3{% endif %}; background: {% if layout_value == 'list' %}#e8f5e9{% else %}#fff{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
+                        <input type="radio" name="layout" value="list" {% if layout_value == 'list' %}checked{% endif %}>
+                        <strong style="display: block; margin-top: 6px;">高密度リスト (Compact List)</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">High-density rows for fast browsing. Shows thumbnail, title, price, and stock at a glance.</span>
                     </label>
                 </div>
             </div>

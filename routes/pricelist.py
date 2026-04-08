@@ -13,7 +13,7 @@ from time_utils import utc_now
 
 pricelist_bp = Blueprint('pricelist', __name__)
 
-PRICE_LIST_LAYOUTS = {"grid", "editorial"}
+PRICE_LIST_LAYOUTS = {"grid", "editorial", "list"}
 
 _NOTES_ALLOWED_TAGS = {"p", "br", "b", "strong", "i", "em", "ul", "ol", "li", "a"}
 _NOTES_ALLOWED_ATTRIBUTES = {"a": {"href", "target"}}

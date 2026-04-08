@@ -177,6 +177,104 @@
             max-width: 1120px;
         }
 
+        /* High-density list layout for browsing many products quickly */
+        body.catalog-layout-list .catalog-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        body.catalog-layout-list .product-card {
+            display: grid;
+            grid-template-columns: 72px minmax(0, 1fr);
+            min-height: auto;
+            border-radius: var(--radius-sm);
+            box-shadow: none;
+        }
+
+        body.catalog-layout-list .product-card:hover {
+            transform: none;
+        }
+
+        body.catalog-layout-list .product-card-media {
+            width: 72px;
+            height: 72px;
+        }
+
+        body.catalog-layout-list .product-card-image {
+            width: 72px;
+            height: 72px;
+            aspect-ratio: 1;
+            border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+        }
+
+        body.catalog-layout-list .product-card-image-placeholder {
+            width: 72px;
+            height: 72px;
+            aspect-ratio: 1;
+            font-size: 20px;
+        }
+
+        body.catalog-layout-list .product-card-body {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto auto;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 14px;
+        }
+
+        body.catalog-layout-list .product-card-title {
+            font-size: 13px;
+            -webkit-line-clamp: 1;
+            line-clamp: 1;
+        }
+
+        body.catalog-layout-list .product-card-desc-snippet {
+            display: none;
+        }
+
+        body.catalog-layout-list .product-card-price {
+            font-size: 14px;
+            white-space: nowrap;
+        }
+
+        body.catalog-layout-list .product-card-footer {
+            margin-top: 0;
+            gap: 6px;
+        }
+
+        body.catalog-layout-list .product-card-actions {
+            margin-top: 0;
+        }
+
+        body.catalog-layout-list .quick-view-btn {
+            padding: 5px 10px;
+            font-size: 11px;
+        }
+
+        body.catalog-layout-list .stock-badge {
+            font-size: 10px;
+            padding: 2px 8px;
+        }
+
+        body.catalog-layout-list .stock-qty {
+            display: none;
+        }
+
+        body.catalog-layout-list .product-card-meta {
+            display: none;
+        }
+
+        .product-card-desc-snippet {
+            font-size: 12px;
+            color: var(--text-secondary);
+            display: none;
+        }
+
+        body.catalog-layout-editorial .product-card-desc-snippet {
+            display: none;
+        }
+
         .product-card {
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -521,20 +619,6 @@
             min-height: 120px;
         }
 
-        .modal-source-link {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            padding: 12px 16px;
-            border-radius: 999px;
-            background: linear-gradient(135deg, rgba(217, 119, 6, 0.18), rgba(251, 191, 36, 0.12));
-            border: 1px solid rgba(251, 191, 36, 0.28);
-            color: var(--text-primary);
-            text-decoration: none;
-            font-weight: 600;
-            width: fit-content;
-        }
-
         .modal-loading {
             color: var(--text-secondary);
             font-size: 14px;
@@ -565,6 +649,23 @@
             body.catalog-layout-editorial .catalog-grid {
                 padding: 0 12px 32px;
                 gap: 14px;
+            }
+
+            body.catalog-layout-list .catalog-grid {
+                padding: 0 8px 32px;
+            }
+
+            body.catalog-layout-list .product-card-body {
+                grid-template-columns: minmax(0, 1fr) auto;
+                gap: 6px;
+            }
+
+            body.catalog-layout-list .product-card-footer {
+                display: none;
+            }
+
+            body.catalog-layout-list .product-card-actions {
+                display: none;
             }
 
             .product-card-body {
@@ -746,8 +847,6 @@
 </head>
 
 <body class="catalog-layout-{{ pricelist.layout or 'grid' }}">
-    {% set site_display = {'mercari': 'Mercari', 'yahuoku': 'Yahoo Auctions', 'yahoo': 'Yahoo Shopping', 'snkrdunk':
-    'SNKRDUNK', 'surugaya': 'Surugaya', 'rakuma': 'Rakuma', 'offmall': 'Off Mall', 'manual': 'Manual'} %}
 
     <header class="catalog-header">
         <div class="header-inner">
@@ -763,18 +862,6 @@
 
             <div class="filters-bar">
                 <input type="text" id="searchInput" placeholder="Search products..." onkeyup="filterProducts()">
-                <select id="categorySelect" onchange="filterProducts()">
-                    <option value="">All Categories</option>
-                    {% set unique_sites = [] %}
-                    {% for item in items %}
-                    {% if item.site not in unique_sites %}
-                    {% set _ = unique_sites.append(item.site) %}
-                    {% endif %}
-                    {% endfor %}
-                    {% for site in unique_sites|sort %}
-                    <option value="{{ site }}">{{ site_display.get(site, site|title) }}</option>
-                    {% endfor %}
-                </select>
             </div>
 
             <div style="display: flex; gap: 12px; align-items: center;">
@@ -809,7 +896,7 @@
         <div class="stat-badge">
             <strong>{{ items|selectattr('in_stock')|list|length }}</strong> in stock
         </div>
-        <div class="stat-badge"><strong>{{ 'Editorial' if pricelist.layout == 'editorial' else 'Grid' }}</strong> layout
+        <div class="stat-badge"><strong>{{ {'editorial': 'Editorial', 'list': 'List', 'grid': 'Grid'}.get(pricelist.layout, 'Grid') }}</strong> layout
         </div>
         <div class="stat-badge" id="rateDisplay">⏳ Loading live rates...</div>
         <div class="stat-badge" id="rateSource" style="font-size: 11px; opacity: 0.7;">Powered by open.er-api.com</div>
@@ -817,7 +904,7 @@
 
     <section class="catalog-grid">
         {% for item in items %}
-        <article class="product-card" data-product-id="{{ item.product_id }}" data-site="{{ item.site }}"
+        <article class="product-card" data-product-id="{{ item.product_id }}"
             data-title="{{ item.title|lower }} {{ item.title_en|lower }}">
             <div class="product-card-media">
                 {% if item.thumb_url %}
@@ -828,13 +915,15 @@
             </div>
             <div class="product-card-body">
                 {% if pricelist.layout == 'editorial' %}
-                <div class="product-card-kicker">{{ site_display.get(item.site, item.site|title) }}</div>
                 <div class="product-card-meta">
                     <span class="meta-pill">{{ item.image_urls|length }} images</span>
                     <span class="meta-pill">{{ 'Available' if item.in_stock else 'Unavailable' }}</span>
                 </div>
                 {% endif %}
-                <div class="product-card-title">{{ item.title }}</div>
+                <div class="product-card-title">{{ item.title_en or item.title }}</div>
+                {% if pricelist.layout == 'list' %}
+                <div class="product-card-desc-snippet">{{ (item.description_en or item.description)[:80] }}{% if (item.description_en or item.description)|length > 80 %}…{% endif %}</div>
+                {% endif %}
                 <div class="product-card-price" data-jpy-price="{{ item.price }}">
                     ¥{{ "{:,}".format(item.price) }}
                 </div>
@@ -867,7 +956,6 @@
                 </div>
                 <div class="modal-info">
                     <div class="modal-info-header">
-                        <div id="modalKicker" class="product-card-kicker">Loading</div>
                         <h2 id="modalTitle" class="modal-product-title">Loading...</h2>
                         <div id="modalTitleEn" class="modal-product-title-en" hidden></div>
                     </div>
@@ -876,8 +964,6 @@
                     <div id="modalDescription" class="modal-description">
                         <span class="modal-loading">Loading product details...</span>
                     </div>
-                    <a id="modalSourceLink" class="modal-source-link" href="#" target="_blank" rel="noopener"
-                        hidden>View Source</a>
                 </div>
             </div>
         </div>
@@ -913,19 +999,16 @@
             }
         }
 
-        // Filtering Logic
+        // Filtering Logic (search only, no source site filter)
         function filterProducts() {
             const query = document.getElementById('searchInput').value.toLowerCase();
-            const category = document.getElementById('categorySelect').value;
             const cards = document.querySelectorAll('.product-card');
 
             cards.forEach(card => {
                 const title = card.getAttribute('data-title') || '';
-                const site = card.getAttribute('data-site') || '';
                 const matchesQuery = !query || title.includes(query);
-                const matchesCategory = !category || site === category;
 
-                if (matchesQuery && matchesCategory) {
+                if (matchesQuery) {
                     card.style.display = '';
                 } else {
                     card.style.display = 'none';
@@ -936,17 +1019,6 @@
         const SYMBOLS = {
             'JPY': '¥', 'USD': '$', 'EUR': '€', 'GBP': '£',
             'AUD': 'A$', 'CAD': 'C$', 'CNY': '¥', 'KRW': '₩'
-        };
-
-        const SITE_LABELS = {
-            mercari: 'Mercari',
-            yahuoku: 'Yahoo Auctions',
-            yahoo: 'Yahoo Shopping',
-            snkrdunk: 'SNKRDUNK',
-            surugaya: 'Surugaya',
-            rakuma: 'Rakuma',
-            offmall: 'Off Mall',
-            manual: 'Manual'
         };
 
         const DECIMALS = { 'JPY': 0, 'KRW': 0 };
@@ -1126,13 +1198,11 @@
             const modal = document.getElementById('productModal');
             const title = document.getElementById('modalTitle');
             const titleEn = document.getElementById('modalTitleEn');
-            const kicker = document.getElementById('modalKicker');
             const price = document.getElementById('modalPrice');
             const stock = document.getElementById('modalStock');
             const description = document.getElementById('modalDescription');
-            const sourceLink = document.getElementById('modalSourceLink');
 
-            if (!modal || !title || !titleEn || !kicker || !price || !stock || !description || !sourceLink) {
+            if (!modal || !title || !titleEn || !price || !stock || !description) {
                 return;
             }
 
@@ -1145,7 +1215,6 @@
                 titleEn.textContent = '';
             }
 
-            kicker.textContent = SITE_LABELS[data.site] || data.site || 'Product';
             price.dataset.jpyPrice = String(data.price || 0);
             price.textContent = formatPriceFromJpy(data.price || 0, currentCurrency());
 
@@ -1160,21 +1229,13 @@
             stockQty.textContent = data.in_stock ? 'Qty: ' + (data.stock || 0) : 'Qty: 0';
             stock.appendChild(stockQty);
 
-            if (data.description && data.description.trim()) {
-                description.textContent = data.description;
-            } else if (data.description_en && data.description_en.trim()) {
+            // Prefer English description for international public customers
+            if (data.description_en && data.description_en.trim()) {
                 description.textContent = data.description_en;
+            } else if (data.description && data.description.trim()) {
+                description.textContent = data.description;
             } else {
                 description.textContent = 'No description available.';
-            }
-
-            if (data.source_url) {
-                sourceLink.hidden = false;
-                sourceLink.href = data.source_url;
-                sourceLink.textContent = 'View Source';
-            } else {
-                sourceLink.hidden = true;
-                sourceLink.removeAttribute('href');
             }
 
             renderModalGallery(data.image_urls || [], data.title || 'product image');
