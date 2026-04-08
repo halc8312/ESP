@@ -1,0 +1,89 @@
+# ===== Git =====
+.git
+.gitignore
+
+# ===== GitHub / CI =====
+.github
+.gemini
+
+# ===== Documentation =====
+docs/
+knowledge/
+*.md
+LICENSE
+
+# ===== Database files =====
+*.db
+*.db.backup
+*.db-shm
+*.db-wal
+
+# ===== HTML dumps (debug artifacts, NOT templates/) =====
+dump.html
+search_dump.html
+mercari_page_dump.html
+mercari_page_dump_live.html
+mercari_test.html
+
+# ===== CSV / data artifacts =====
+*.csv
+
+# ===== Test output / reports =====
+scrape_test_results.json
+scraping_test_report.json
+out.txt
+
+# ===== Test suites =====
+tests/
+test_*.py
+simple_test.py
+run_tests_windows_hack.py
+
+# ===== Debug / one-off scripts =====
+debug_*.py
+analyze_dump.py
+parse_dump.py
+parse_mercari_html.py
+save_mercari_html.py
+find_mercari_url.py
+get_active_mercari_from_db.py
+get_live_mercari.py
+inspect_db.py
+cleanup_db.py
+create_test_user.py
+env_check.py
+verify_*.py
+add_patrol_fail_count.py
+
+# ===== Development files =====
+docker-compose.local.yml
+render.yaml
+render.existing-web-addons.yaml
+llama.cpp/
+
+# ===== Python artifacts =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+venv/
+env/
+ENV/
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== Logs =====
+*.log
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
