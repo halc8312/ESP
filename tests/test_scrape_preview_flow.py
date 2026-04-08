@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from models import Product, Shop, User
@@ -74,6 +76,12 @@ def login_user(client, db_session, username='preview_user'):
         'password': 'testpassword'
     })
     return user
+
+
+def _extract_csrf_token(html: str) -> str:
+    match = re.search(r'<meta name="csrf-token" content="([^"]+)"', html)
+    assert match is not None
+    return match.group(1)
 
 
 def test_scrape_run_preview_returns_json_without_saving(client, db_session, monkeypatch):
@@ -271,6 +279,58 @@ def test_register_selected_uses_job_shop_id_over_current_session_shop(client, db
     db_session.expire_all()
     product = db_session.query(Product).filter_by(user_id=user.id).one()
     assert product.shop_id == source_shop.id
+
+
+def test_register_selected_requires_csrf_header_when_enabled(app, client, db_session, monkeypatch):
+    user = login_user(client, db_session, 'register_selected_csrf_user')
+    app.config['WTF_CSRF_ENABLED'] = True
+
+    fake_queue = FakeQueue()
+    fake_queue.jobs['job-1'] = {
+        'job_id': 'job-1',
+        'status': 'completed',
+        'result': {
+            'items': [
+                {
+                    'url': 'https://jp.mercari.com/item/m-preview-csrf',
+                    'title': 'Preview CSRF Item',
+                    'price': 1800,
+                    'status': 'on_sale',
+                    'description': 'preview csrf',
+                    'image_urls': ['https://img.example.com/csrf.jpg'],
+                },
+            ],
+            'site': 'mercari',
+        },
+        'error': None,
+        'elapsed_seconds': 0.1,
+        'queue_position': None,
+        'user_id': user.id,
+    }
+
+    monkeypatch.setattr('routes.scrape.get_queue', lambda: fake_queue)
+
+    page_response = client.get('/scrape')
+    assert page_response.status_code == 200
+    csrf_token = _extract_csrf_token(page_response.get_data(as_text=True))
+
+    missing_header_response = client.post('/scrape/register-selected', json={
+        'job_id': 'job-1',
+        'selected_indices': [0]
+    })
+    assert missing_header_response.status_code == 400
+
+    response = client.post(
+        '/scrape/register-selected',
+        json={
+            'job_id': 'job-1',
+            'selected_indices': [0]
+        },
+        headers={'X-CSRFToken': csrf_token},
+    )
+
+    assert response.status_code == 200
+    assert response.json['ok'] is True
 
 
 def test_scrape_status_hides_other_users_job(client, db_session, monkeypatch):

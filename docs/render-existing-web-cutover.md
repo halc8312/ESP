@@ -8,6 +8,7 @@ This runbook is for the path where the current Render Web Service stays in place
 
 It does **not** create a new Render Web Service. The existing Web Service keeps its current disk and keeps serving `/media` from the same `IMAGE_STORAGE_PATH`.
 The existing Web Service also stays outside Blueprint management for this cutover path; any instance type change on that service is done manually in the Render Dashboard `Scaling` tab.
+All add-ons for this path must be created in the **same Render region as the existing Web Service** so private-network connection strings work. In the current production layout, that region is `singapore`.
 
 ## Goal
 
@@ -44,8 +45,23 @@ Import `render.existing-web-addons.yaml` as a **custom Blueprint path** instead 
 - `esp-postgres`
 
 This Blueprint must show only those three resources in the preview. It must **not** show the existing Web Service as a create or update target.
+This Blueprint must also target the same region as the existing Web Service. For the current production environment, `esp-worker`, `esp-keyvalue`, and `esp-postgres` must all be created in `singapore`.
 
 Do not change the current Web Service env vars yet.
+
+## Region Guardrail
+
+Render private networking is region-scoped. Internal Postgres / Key Value URLs work only when the connecting service and datastore are in the same workspace and the same region.
+
+If `esp-worker`, `esp-keyvalue`, or `esp-postgres` were created in `oregon` by mistake:
+
+1. Leave the existing production Web Service in place.
+2. Delete the mistaken Oregon add-ons.
+3. Re-import `render.existing-web-addons.yaml` and recreate the add-ons in `singapore`.
+4. Re-copy the Singapore connection strings from the recreated resources.
+5. Only then continue with schema preparation and migration from the existing Web shell in Singapore.
+
+Render does not support moving an existing service or datastore to a different region. The recovery path is delete-and-recreate, not move-in-place.
 
 ## Existing Web Scaling Note
 
@@ -57,6 +73,8 @@ If you want to reduce the existing Web Service from `Standard` to `Starter`, do 
 This repo does not attempt to manage the existing Web Service plan through Blueprint YAML for this path.
 
 ## Step 2: Prepare the Destination Postgres Schema
+
+Run schema preparation and migration from the **existing Web Service shell in Singapore** so the command can read `sqlite:////var/data/mercari.db` from the current disk and connect to the new Singapore Postgres instance over the private network.
 
 Either prepare the destination schema with the migration command itself:
 
@@ -133,6 +151,7 @@ Set these env vars on `esp-worker`:
 
 Deploy the worker and confirm it starts with `python worker.py`.
 Also confirm in the Render Dashboard that `esp-worker` was created with **2 instances**.
+Also confirm the worker service is in `singapore`.
 
 ## Step 7: Switch the Existing Web Service
 
@@ -151,6 +170,7 @@ Required env vars for the existing Web Service:
 
 Keep the current disk attached to the existing Web Service. Do not change the web service into a worker, and do not add a second web service for this path.
 Do not switch these env vars before the add-ons exist and the SQLite -> Postgres migration has completed.
+Use the internal connection strings from the Singapore `esp-postgres` and Singapore `esp-keyvalue` resources. These internal URLs are valid only for same-workspace, same-region private networking. Do not use internal URLs from a different region.
 
 ## Step 8: Redeploy the Existing Web Service
 
@@ -192,20 +212,23 @@ Before cutover:
 1. Open the existing Web Service and confirm whether Auto-Deploy is enabled.
 2. Decide whether to leave the existing Web Service on `Standard` until the end or downgrade it first.
 3. If you downgrade it, do so from the existing Web Service `Scaling` screen, not from Blueprint.
-4. Create add-ons by importing `render.existing-web-addons.yaml` as a custom Blueprint path.
-5. In the Blueprint preview, confirm only `esp-worker`, `esp-keyvalue`, and `esp-postgres` appear.
-6. After creation, open `esp-worker` and confirm it has 2 instances.
-7. Open `esp-postgres` and copy its connection string from the Render Dashboard.
-8. Open `esp-keyvalue` and copy its connection string from the Render Dashboard.
-9. Run the SQLite -> Postgres migration.
-10. Only after the migration is verified, update env vars on the existing Web Service.
+4. Confirm the existing Web Service region is `singapore`.
+5. If Oregon add-ons already exist by mistake, delete those add-ons first. Do not delete the existing Web Service.
+6. Create add-ons by importing `render.existing-web-addons.yaml` as a custom Blueprint path.
+7. In the Blueprint preview, confirm only `esp-worker`, `esp-keyvalue`, and `esp-postgres` appear.
+8. In the Blueprint preview or created resource pages, confirm all three add-ons target `singapore`.
+9. After creation, open `esp-worker` and confirm it has 2 instances.
+10. Open `esp-postgres` and copy its Singapore internal connection string from the Render Dashboard.
+11. Open `esp-keyvalue` and copy its Singapore internal connection string from the Render Dashboard.
+12. Run the SQLite -> Postgres migration from the existing Web shell in Singapore.
+13. Only after the migration is verified, update env vars on the existing Web Service.
 
 Render Dashboard reference points:
 
 - Existing Web instance type: existing Web Service -> `Scaling`
 - Existing Web Auto-Deploy: existing Web Service -> `Settings` / deploy settings
-- Postgres connection string: `esp-postgres` -> connection info / external connection string
-- Key Value connection string: `esp-keyvalue` -> connection info
+- Postgres connection string: `esp-postgres` -> connection info / internal connection string
+- Key Value connection string: `esp-keyvalue` -> connection info / internal connection string
 
 ## Rollback
 

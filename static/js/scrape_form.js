@@ -19,6 +19,87 @@
     var activePreviewJob = null;
     var pollTimer = null;
 
+    function getCsrfToken() {
+        var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+        return csrfMeta ? String(csrfMeta.content || "").trim() : "";
+    }
+
+    function normalizeUrl(rawUrl) {
+        var value = String(rawUrl || "").trim();
+        if (!value) {
+            return "";
+        }
+        try {
+            return new URL(value, window.location.origin).toString();
+        } catch (_error) {
+            return "";
+        }
+    }
+
+    function assignUrl(element, propertyName, rawUrl) {
+        var normalized = normalizeUrl(rawUrl);
+        if (!normalized) {
+            return false;
+        }
+        element[propertyName] = normalized;
+        return true;
+    }
+
+    function buildResponseErrorMessage(response, responseText, fallbackMessage) {
+        var trimmed = String(responseText || "").trim();
+        if (trimmed && trimmed.charAt(0) !== "<" && trimmed.length <= 160) {
+            return trimmed;
+        }
+        if (response.status === 400) {
+            return "送信内容が不正です。ページを再読み込みして再度お試しください。";
+        }
+        if (response.status === 401) {
+            return "ログイン状態を確認して再度お試しください。";
+        }
+        if (response.status === 403) {
+            return "送信が拒否されました。ページを再読み込みして再度お試しください。";
+        }
+        if (response.status === 404) {
+            return "リクエスト先が見つかりません。";
+        }
+        if (response.status >= 500) {
+            return "サーバーエラーが発生しました。";
+        }
+        return fallbackMessage;
+    }
+
+    function parseJsonResponse(response, fallbackMessage) {
+        return response.text().then(function (responseText) {
+            var trimmed = String(responseText || "").trim();
+            var contentType = String(response.headers.get("content-type") || "").toLowerCase();
+            var payload = null;
+            var looksLikeJson = contentType.indexOf("application/json") !== -1
+                || trimmed.charAt(0) === "{"
+                || trimmed.charAt(0) === "[";
+
+            if (trimmed) {
+                if (looksLikeJson) {
+                    try {
+                        payload = JSON.parse(trimmed);
+                    } catch (_error) {
+                        throw new Error(buildResponseErrorMessage(response, trimmed, fallbackMessage));
+                    }
+                } else {
+                    throw new Error(buildResponseErrorMessage(response, trimmed, fallbackMessage));
+                }
+            }
+
+            if (!response.ok) {
+                throw new Error(
+                    (payload && payload.error)
+                    || buildResponseErrorMessage(response, trimmed, fallbackMessage)
+                );
+            }
+
+            return payload || {};
+        });
+    }
+
     function clearPollTimer() {
         if (pollTimer) {
             clearTimeout(pollTimer);
@@ -95,11 +176,12 @@
 
         if (result.search_url) {
             var metaLink = document.createElement("a");
-            metaLink.href = result.search_url;
-            metaLink.target = "_blank";
-            metaLink.rel = "noopener";
-            metaLink.textContent = "検索URLを開く";
-            previewMeta.appendChild(metaLink);
+            if (assignUrl(metaLink, "href", result.search_url)) {
+                metaLink.target = "_blank";
+                metaLink.rel = "noopener";
+                metaLink.textContent = "検索URLを開く";
+                previewMeta.appendChild(metaLink);
+            }
         }
 
         if (!items.length) {
@@ -133,9 +215,13 @@
             var imageUrl = getItemImageUrl(item);
             if (imageUrl) {
                 var img = document.createElement("img");
-                img.src = imageUrl;
-                img.alt = item.title || "preview image";
-                imageWrap.appendChild(img);
+                if (assignUrl(img, "src", imageUrl)) {
+                    img.alt = item.title || "preview image";
+                    imageWrap.appendChild(img);
+                } else {
+                    imageWrap.textContent = "No Image";
+                    imageWrap.classList.add("is-empty");
+                }
             } else {
                 imageWrap.textContent = "No Image";
                 imageWrap.classList.add("is-empty");
@@ -162,12 +248,13 @@
 
             if (item.url) {
                 var link = document.createElement("a");
-                link.href = item.url;
-                link.target = "_blank";
-                link.rel = "noopener";
-                link.textContent = "商品ページを開く";
-                link.className = "scrape-preview-link";
-                body.appendChild(link);
+                if (assignUrl(link, "href", item.url)) {
+                    link.target = "_blank";
+                    link.rel = "noopener";
+                    link.textContent = "商品ページを開く";
+                    link.className = "scrape-preview-link";
+                    body.appendChild(link);
+                }
             }
 
             card.appendChild(checkbox);
@@ -184,10 +271,7 @@
         clearPollTimer();
         fetch(statusUrl)
             .then(function (response) {
-                if (!response.ok) {
-                    throw new Error("ステータス取得に失敗しました");
-                }
-                return response.json();
+                return parseJsonResponse(response, "ステータス取得に失敗しました");
             })
             .then(function (data) {
                 registerTrackerJob(data);
@@ -223,16 +307,20 @@
 
         var formData = new FormData(form);
         formData.append("response_mode", "preview");
-
-        fetch(form.action, {
+        var csrfToken = getCsrfToken();
+        var requestOptions = {
             method: "POST",
             body: formData
-        })
+        };
+        if (csrfToken) {
+            requestOptions.headers = {
+                "X-CSRFToken": csrfToken
+            };
+        }
+
+        fetch(form.action, requestOptions)
             .then(function (response) {
-                if (!response.ok) {
-                    throw new Error("商品抽出ジョブの作成に失敗しました");
-                }
-                return response.json();
+                return parseJsonResponse(response, "商品抽出ジョブの作成に失敗しました");
             })
             .then(function (data) {
                 activePreviewJob = {
@@ -257,10 +345,7 @@
         var statusUrl = buildStatusUrl(jobId);
         fetch(statusUrl)
             .then(function (response) {
-                if (!response.ok) {
-                    throw new Error("抽出ジョブの復元に失敗しました");
-                }
-                return response.json();
+                return parseJsonResponse(response, "抽出ジョブの復元に失敗しました");
             })
             .then(function (data) {
                 registerTrackerJob(data);
@@ -314,23 +399,23 @@
         }
 
         registerButton.disabled = true;
+        var csrfToken = getCsrfToken();
+        var headers = {
+            "Content-Type": "application/json"
+        };
+        if (csrfToken) {
+            headers["X-CSRFToken"] = csrfToken;
+        }
         fetch(activePreviewJob.registerUrl, {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
+            headers: headers,
             body: JSON.stringify({
                 job_id: activePreviewJob.jobId,
                 selected_indices: selectedIndices
             })
         })
             .then(function (response) {
-                return response.json().then(function (data) {
-                    if (!response.ok) {
-                        throw new Error(data.error || "登録に失敗しました");
-                    }
-                    return data;
-                });
+                return parseJsonResponse(response, "登録に失敗しました");
             })
             .then(function (data) {
                 showFlash(
