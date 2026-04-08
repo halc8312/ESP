@@ -2,6 +2,8 @@
 Comprehensive E2E Tests for the refactored Flask application.
 Tests all routes after the app.py split to ensure functionality is preserved.
 """
+import re
+
 import pytest
 from datetime import datetime
 from models import User, Shop, Product, Variant, ProductSnapshot, DescriptionTemplate, PriceList, PriceListItem, CatalogPageView
@@ -160,6 +162,144 @@ class TestMainRoutes:
         
         response = client.get('/dashboard')
         assert response.status_code == 200
+
+    def test_dashboard_uses_current_scope_metrics(self, client, db_session):
+        """Dashboard metrics should align with current product model and index scope."""
+        user = User(username='dashmetricstest')
+        user.set_password('testpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        shop = Shop(name='Dashboard Shop', user_id=user.id)
+        db_session.add(shop)
+        db_session.commit()
+
+        active_product = Product(
+            user_id=user.id,
+            shop_id=shop.id,
+            site='mercari',
+            source_url='https://example.com/active',
+            last_title='Active Product',
+            last_price=1200,
+            last_status='on_sale',
+            status='active',
+            selling_price=2400,
+            custom_title_en='Active Product EN',
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        draft_product = Product(
+            user_id=user.id,
+            shop_id=shop.id,
+            site='manual',
+            source_url='https://example.com/draft',
+            last_title='Draft Product',
+            last_price=900,
+            last_status='sold',
+            status='draft',
+            selling_price=None,
+            custom_title_en='',
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        archived_product = Product(
+            user_id=user.id,
+            shop_id=shop.id,
+            site='mercari',
+            source_url='https://example.com/archived',
+            last_title='Archived Product',
+            last_price=800,
+            last_status='on_sale',
+            status='active',
+            selling_price=1000,
+            archived=True,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        deleted_product = Product(
+            user_id=user.id,
+            shop_id=shop.id,
+            site='mercari',
+            source_url='https://example.com/deleted',
+            last_title='Deleted Product',
+            last_price=700,
+            last_status='deleted',
+            status='draft',
+            selling_price=1100,
+            deleted_at=utc_now(),
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        db_session.add_all([active_product, draft_product, archived_product, deleted_product])
+        db_session.commit()
+
+        db_session.add_all([
+            Variant(product_id=active_product.id, option1_value='Default Title', sku='SKU-A', price=2400, inventory_qty=2),
+            Variant(product_id=draft_product.id, option1_value='Default Title', sku='SKU-B', price=900, inventory_qty=0),
+            Variant(product_id=archived_product.id, option1_value='Default Title', sku='SKU-C', price=1000, inventory_qty=0),
+        ])
+        db_session.add_all([
+            ProductSnapshot(
+                product_id=active_product.id,
+                scraped_at=utc_now(),
+                title='Active Product',
+                price=1200,
+                status='on_sale',
+                description='',
+                image_urls='https://img.example.com/active.jpg',
+            ),
+            ProductSnapshot(
+                product_id=draft_product.id,
+                scraped_at=utc_now(),
+                title='Draft Product',
+                price=900,
+                status='sold',
+                description='',
+                image_urls='',
+            ),
+        ])
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'dashmetricstest',
+            'password': 'testpassword'
+        })
+        with client.session_transaction() as session_state:
+            session_state['current_shop_id'] = shop.id
+
+        response = client.get('/dashboard')
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+
+        assert re.search(r'管理対象商品</span>\s*<strong class="dashboard-summary-value">2</strong>', html)
+        assert re.search(r'公開中</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
+        assert re.search(r'下書き</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
+        assert re.search(r'仕入先在庫あり</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
+        assert re.search(r'要対応商品</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
+        assert re.search(r'0在庫バリアント</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
+
+        assert 'Active Product' in html
+        assert 'Draft Product' in html
+        assert 'Archived Product' not in html
+        assert 'Deleted Product' not in html
+
+    def test_dashboard_nav_link_is_marked_active(self, client, db_session):
+        """Sidebar and bottom nav should mark dashboard as active on the dashboard route."""
+        user = User(username='dashnavtest')
+        user.set_password('testpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'dashnavtest',
+            'password': 'testpassword'
+        })
+
+        response = client.get('/dashboard')
+        html = response.get_data(as_text=True)
+
+        assert re.search(r'<a href="/dashboard"\s+class="sidebar-link active"', html)
+        assert re.search(r'<a href="/dashboard"\s+class="bottom-nav-item active"', html)
     
     def test_index_pagination(self, client, db_session):
         """Test index pagination parameters"""

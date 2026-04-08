@@ -13,6 +13,7 @@
 <body class="{% block body_class %}has-bottom-nav{% endblock %}">
     <a class="skip-link" href="#main-content">本文へスキップ</a>
     {% set current_shop = namespace(name='未選択') %}
+    {% set current_endpoint = request.endpoint or '' %}
     {% for s in all_shops %}
     {% if current_shop_id == s.id %}
     {% set current_shop.name = s.name %}
@@ -53,68 +54,68 @@
             <button class="sidebar-close" data-action="close-sidebar" aria-label="メニューを閉じる">×</button>
         </div>
         <nav class="sidebar-nav">
-            <a href="{{ url_for('index') }}" class="sidebar-link {% if request.endpoint == 'index' %}active{% endif %}"
-                {% if request.endpoint=='index' %}aria-current="page" {% endif %}>
+            <a href="{{ url_for('index') }}" class="sidebar-link {% if current_endpoint.endswith('index') %}active{% endif %}"
+                {% if current_endpoint.endswith('index') %}aria-current="page" {% endif %}>
                 <span class="nav-icon">📦</span>
                 <span class="nav-text">商品一覧</span>
             </a>
             <a href="{{ url_for('dashboard') }}"
-                class="sidebar-link {% if request.endpoint == 'dashboard' %}active{% endif %}" {% if
-                request.endpoint=='dashboard' %}aria-current="page" {% endif %}>
+                class="sidebar-link {% if current_endpoint.endswith('dashboard') %}active{% endif %}" {% if
+                current_endpoint.endswith('dashboard') %}aria-current="page" {% endif %}>
                 <span class="nav-icon">📊</span>
                 <span class="nav-text">ダッシュボード</span>
             </a>
             <a href="{{ url_for('scrape_form') }}"
-                class="sidebar-link {% if request.endpoint == 'scrape_form' %}active{% endif %}" {% if
-                request.endpoint=='scrape_form' %}aria-current="page" {% endif %}>
+                class="sidebar-link {% if current_endpoint.endswith('scrape_form') %}active{% endif %}" {% if
+                current_endpoint.endswith('scrape_form') %}aria-current="page" {% endif %}>
                 <span class="nav-icon">🔍</span>
                 <span class="nav-text">商品抽出</span>
             </a>
             <a href="{{ url_for('manage_templates') }}"
-                class="sidebar-link {% if request.endpoint == 'manage_templates' %}active{% endif %}" {% if
-                request.endpoint=='manage_templates' %}aria-current="page" {% endif %}>
+                class="sidebar-link {% if current_endpoint.endswith('manage_templates') %}active{% endif %}" {% if
+                current_endpoint.endswith('manage_templates') %}aria-current="page" {% endif %}>
                 <span class="nav-icon">📝</span>
                 <span class="nav-text">テンプレート</span>
             </a>
             <a href="{{ url_for('manage_shops') }}"
-                class="sidebar-link {% if request.endpoint == 'manage_shops' %}active{% endif %}" {% if
-                request.endpoint=='manage_shops' %}aria-current="page" {% endif %}>
+                class="sidebar-link {% if current_endpoint.endswith('manage_shops') %}active{% endif %}" {% if
+                current_endpoint.endswith('manage_shops') %}aria-current="page" {% endif %}>
                 <span class="nav-icon">🏪</span>
                 <span class="nav-text">ショップ管理</span>
             </a>
             <a href="{{ url_for('pricing.pricing_list') }}"
-                class="sidebar-link {% if request.endpoint == 'pricing.pricing_list' %}active{% endif %}" {% if
-                request.endpoint=='pricing.pricing_list' %}aria-current="page" {% endif %}>
+                class="sidebar-link {% if current_endpoint.endswith('pricing_list') %}active{% endif %}" {% if
+                current_endpoint.endswith('pricing_list') %}aria-current="page" {% endif %}>
                 <span class="nav-icon">💰</span>
                 <span class="nav-text">価格ルール</span>
             </a>
             <a href="{{ url_for('pricelist.pricelist_list') }}"
-                class="sidebar-link {% if request.endpoint and request.endpoint.startswith('pricelist.') %}active{% endif %}"
-                {% if request.endpoint and request.endpoint.startswith('pricelist.') %}aria-current="page" {% endif %}>
+                class="sidebar-link {% if current_endpoint.startswith('pricelist.') %}active{% endif %}"
+                {% if current_endpoint.startswith('pricelist.') %}aria-current="page" {% endif %}>
                 <span class="nav-icon">📋</span>
                 <span class="nav-text">価格表</span>
             </a>
             <a href="{{ url_for('settings.settings_list') }}"
-                class="sidebar-link {% if request.endpoint == 'settings.settings_list' %}active{% endif %}" {% if
-                request.endpoint=='settings.settings_list' %}aria-current="page" {% endif %}>
+                class="sidebar-link {% if current_endpoint.endswith('settings_list') %}active{% endif %}" {% if
+                current_endpoint.endswith('settings_list') %}aria-current="page" {% endif %}>
                 <span class="nav-icon">⚙️</span>
                 <span class="nav-text">設定</span>
             </a>
             <a href="{{ url_for('import.import_form') }}"
-                class="sidebar-link {% if request.endpoint == 'import.import_form' %}active{% endif %}" {% if
-                request.endpoint=='import.import_form' %}aria-current="page" {% endif %}>
+                class="sidebar-link {% if current_endpoint.endswith('import_form') %}active{% endif %}" {% if
+                current_endpoint.endswith('import_form') %}aria-current="page" {% endif %}>
                 <span class="nav-icon">📥</span>
                 <span class="nav-text">インポート</span>
             </a>
             <a href="{{ url_for('archive.archive_list') }}"
-                class="sidebar-link {% if request.endpoint == 'archive.archive_list' %}active{% endif %}" {% if
-                request.endpoint=='archive.archive_list' %}aria-current="page" {% endif %}>
+                class="sidebar-link {% if current_endpoint.endswith('archive_list') %}active{% endif %}" {% if
+                current_endpoint.endswith('archive_list') %}aria-current="page" {% endif %}>
                 <span class="nav-icon">📦</span>
                 <span class="nav-text">アーカイブ</span>
             </a>
             <a href="{{ url_for('trash.trash_list') }}"
-                class="sidebar-link {% if request.endpoint == 'trash.trash_list' %}active{% endif %}" {% if
-                request.endpoint=='trash.trash_list' %}aria-current="page" {% endif %}>
+                class="sidebar-link {% if current_endpoint.endswith('trash_list') %}active{% endif %}" {% if
+                current_endpoint.endswith('trash_list') %}aria-current="page" {% endif %}>
                 <span class="nav-icon">🗑️</span>
                 <span class="nav-text">ゴミ箱</span>
             </a>
@@ -150,32 +151,32 @@
 
     <!-- Bottom Navigation (Mobile only) -->
     <nav class="bottom-nav">
-        <a href="{{ url_for('index') }}" class="bottom-nav-item {% if request.endpoint == 'index' %}active{% endif %}"
-            {% if request.endpoint=='index' %}aria-current="page" {% endif %}>
+        <a href="{{ url_for('index') }}" class="bottom-nav-item {% if current_endpoint.endswith('index') %}active{% endif %}"
+            {% if current_endpoint.endswith('index') %}aria-current="page" {% endif %}>
             <span class="bottom-nav-icon">📦</span>
             <span class="bottom-nav-label">商品</span>
         </a>
         <a href="{{ url_for('dashboard') }}"
-            class="bottom-nav-item {% if request.endpoint == 'dashboard' %}active{% endif %}" {% if
-            request.endpoint=='dashboard' %}aria-current="page" {% endif %}>
+            class="bottom-nav-item {% if current_endpoint.endswith('dashboard') %}active{% endif %}" {% if
+            current_endpoint.endswith('dashboard') %}aria-current="page" {% endif %}>
             <span class="bottom-nav-icon">📊</span>
             <span class="bottom-nav-label">ダッシュ</span>
         </a>
         <a href="{{ url_for('scrape_form') }}"
-            class="bottom-nav-item {% if request.endpoint == 'scrape_form' %}active{% endif %}" {% if
-            request.endpoint=='scrape_form' %}aria-current="page" {% endif %}>
+            class="bottom-nav-item {% if current_endpoint.endswith('scrape_form') %}active{% endif %}" {% if
+            current_endpoint.endswith('scrape_form') %}aria-current="page" {% endif %}>
             <span class="bottom-nav-icon">🔍</span>
             <span class="bottom-nav-label">抽出</span>
         </a>
         <a href="{{ url_for('manage_templates') }}"
-            class="bottom-nav-item {% if request.endpoint == 'manage_templates' %}active{% endif %}" {% if
-            request.endpoint=='manage_templates' %}aria-current="page" {% endif %}>
+            class="bottom-nav-item {% if current_endpoint.endswith('manage_templates') %}active{% endif %}" {% if
+            current_endpoint.endswith('manage_templates') %}aria-current="page" {% endif %}>
             <span class="bottom-nav-icon">📝</span>
             <span class="bottom-nav-label">テンプレ</span>
         </a>
         <a href="{{ url_for('manage_shops') }}"
-            class="bottom-nav-item {% if request.endpoint == 'manage_shops' %}active{% endif %}" {% if
-            request.endpoint=='manage_shops' %}aria-current="page" {% endif %}>
+            class="bottom-nav-item {% if current_endpoint.endswith('manage_shops') %}active{% endif %}" {% if
+            current_endpoint.endswith('manage_shops') %}aria-current="page" {% endif %}>
             <span class="bottom-nav-icon">🏪</span>
             <span class="bottom-nav-label">店舗</span>
         </a>

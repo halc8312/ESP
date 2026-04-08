@@ -1092,6 +1092,242 @@ tr.changed {
     }
 }
 
+.dashboard-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 0 0 16px;
+}
+
+.dashboard-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.dashboard-summary-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 16px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.dashboard-summary-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #667085;
+}
+
+.dashboard-summary-value {
+    font-size: 30px;
+    line-height: 1;
+    color: #111827;
+}
+
+.dashboard-summary-note {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.dashboard-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.9fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.dashboard-main,
+.dashboard-side {
+    min-width: 0;
+}
+
+.dashboard-progress-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.dashboard-progress-card {
+    padding: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: #fafafa;
+}
+
+.dashboard-progress-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.dashboard-progress-bar {
+    height: 10px;
+    border-radius: 999px;
+    background: #e5e7eb;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.dashboard-progress-bar span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: #94a3b8;
+}
+
+.dashboard-progress-bar.is-good span {
+    background: #16a34a;
+}
+
+.dashboard-progress-bar.is-neutral span {
+    background: #2563eb;
+}
+
+.dashboard-progress-bar.is-warn span {
+    background: #d97706;
+}
+
+.dashboard-thumbnail {
+    width: 56px;
+    height: 56px;
+    object-fit: cover;
+    border-radius: 6px;
+}
+
+.dashboard-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.dashboard-badge.is-active,
+.dashboard-badge.is-on_sale,
+.dashboard-badge.is-clean {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.dashboard-badge.is-draft,
+.dashboard-badge.is-unknown {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.dashboard-badge.is-sold,
+.dashboard-badge.is-deleted {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.dashboard-issue-badges {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+}
+
+.dashboard-issue-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.dashboard-issue-badge.is-error {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.dashboard-issue-badge.is-warning {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.dashboard-issue-list {
+    display: grid;
+    gap: 4px;
+    font-size: 12px;
+    color: #4b5563;
+}
+
+.dashboard-row-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.dashboard-list {
+    display: grid;
+    gap: 10px;
+}
+
+.dashboard-list-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.dashboard-list-row:last-child {
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.dashboard-site-list {
+    display: grid;
+    gap: 12px;
+}
+
+.dashboard-site-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.dashboard-site-row:last-child {
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.dashboard-site-meta {
+    display: grid;
+    gap: 4px;
+    font-size: 12px;
+    color: #4b5563;
+    text-align: right;
+}
+
+.dashboard-empty {
+    text-align: center;
+    padding: 40px 20px;
+}
+
+@media (max-width: 1023px) {
+    .dashboard-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* Collapsible Sections */
 .collapsible-section {
     background: var(--card-bg);
