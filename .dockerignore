@@ -1,0 +1,95 @@
+# ── Git ──
+.git
+.gitignore
+
+# ── CI / IDE / Editor ──
+.github
+.vscode
+.idea
+.gemini
+*.swp
+*.swo
+*~
+
+# ── Python artifacts ──
+__pycache__
+*.py[cod]
+*$py.class
+*.egg-info
+*.egg
+.eggs
+dist
+build
+wheels
+sdist
+venv
+ENV
+env
+.pytest_cache
+.mypy_cache
+
+# ── SQLite databases & backups ──
+*.db
+*.db-shm
+*.db-wal
+*.db.backup
+*.sqlite
+
+# ── HTML / JSON / CSV dumps (debug artifacts) ──
+dump.html
+search_dump.html
+mercari_page_dump.html
+mercari_page_dump_live.html
+mercari_test.html
+out.txt
+scrape_test_results.json
+scraping_test_report.json
+shopify_products*.csv
+
+# ── Debug & one-off scripts (not needed at runtime) ──
+analyze_dump.py
+parse_dump.py
+parse_mercari_html.py
+save_mercari_html.py
+debug_*.py
+find_mercari_url.py
+get_active_mercari_from_db.py
+get_live_mercari.py
+inspect_db.py
+simple_test.py
+test_active_item_live.py
+test_active_mercari.py
+test_fetch.py
+test_mercari_full.py
+test_mercari_html.py
+test_mercari_speed.py
+test_scraping_real.py
+test_scrapling.py
+test_search_html.py
+test_single_csv.py
+test_snkrdunk_search.py
+verify_fix.py
+verify_isolation.py
+verify_register.py
+run_tests_windows_hack.py
+scrape_metrics.py
+env_check.py
+
+# ── Test suite (not needed in production image) ──
+tests/
+pytest.ini
+
+# ── Documentation & analysis (not needed at runtime) ──
+docs/
+knowledge/
+*.md
+LICENSE
+
+# ── Docker / Render configs (not needed inside image) ──
+docker-compose*.yml
+render*.yaml
+Dockerfile
+
+# ── Misc large / unnecessary files ──
+llama.cpp
+.agent

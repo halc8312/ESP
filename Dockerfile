@@ -8,7 +8,8 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Playwright / Patchright の実行に必要なシステム依存関係
-RUN apt-get update && apt-get install -y \
+# --no-install-recommends で推奨パッケージを除外しサイズ削減
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libxss1 \
     fonts-liberation \
@@ -19,7 +20,7 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     libgbm1 \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 WORKDIR /app
 
@@ -27,11 +28,13 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Playwright / Patchright ブラウザを root で共有インストールし、非 root ユーザーでも参照可能にする
+# ブラウザインストール後にキャッシュを削除してイメージサイズを削減
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 ENV PATCHRIGHT_BROWSERS_PATH=/opt/ms-playwright
 RUN scrapling install \
     && patchright install chromium \
-    && chmod -R 755 /opt/ms-playwright
+    && chmod -R 755 /opt/ms-playwright \
+    && rm -rf /root/.cache /tmp/*
 
 COPY . .
 
