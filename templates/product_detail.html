@@ -18,11 +18,61 @@
 
     <div class="product-edit-layout">
         <div class="product-edit-main">
+
+            <!-- ① Images (top priority for sales content) -->
             <details class="content-card product-edit-panel" open>
                 <summary class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
-                        <h2>基本情報</h2>
-                        <p>タイトル・説明・テンプレート設定</p>
+                        <h2>Product Images</h2>
+                        <p>Manage images for the public catalog</p>
+                    </div>
+                    <span class="product-edit-summary-side">
+                        <span class="product-edit-summary-meta" id="imageCountBadge">{{ images|length }}枚</span>
+                        <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
+                    </span>
+                </summary>
+                <div class="content-card-body">
+                    <div class="product-image-manager">
+                        <p class="product-image-note">ドラッグで並べ替え、不要な画像は削除できます。追加は画像 URL のみ対応しています。</p>
+
+                        <div id="imageSortGrid" class="image-sort-grid">
+                            {% for url in images %}
+                            <article class="product-image-card" data-image-url="{{ url }}">
+                                <img src="{{ url }}" alt="image {{ loop.index }}" class="product-image-thumb">
+                                <div class="product-image-card-body">
+                                    <div class="product-image-card-top">
+                                        <span class="product-image-order">{{ loop.index }}枚目</span>
+                                        <button type="button" class="image-sort-handle">並べ替え</button>
+                                    </div>
+                                    <div class="product-image-url">{{ url }}</div>
+                                    <button type="button" class="btn-muted image-delete-btn">この画像を削除</button>
+                                </div>
+                            </article>
+                            {% endfor %}
+                        </div>
+
+                        <div id="imageEmptyState" class="image-empty-state" {% if images %}hidden{% endif %}>
+                            画像はまだ登録されていません。
+                        </div>
+
+                        <div class="form-group image-add-group">
+                            <label for="image_url_input">画像 URL を追加</label>
+                            <div class="image-add-row">
+                                <input type="url" id="image_url_input" placeholder="https://example.com/image.jpg">
+                                <button type="button" class="btn-secondary" onclick="addImageUrl()">URLを追加</button>
+                            </div>
+                            <p class="text-small text-muted mb-0">バイナリアップロードはまだ実装していません。http(s) または `/media/...` 形式を追加してください。</p>
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            <!-- ② Public Title & Description -->
+            <details class="content-card product-edit-panel" open>
+                <summary class="content-card-header product-edit-summary">
+                    <div class="product-edit-summary-copy">
+                        <h2>Public Title &amp; Description</h2>
+                        <p>Customer-facing product name and description for the public catalog</p>
                     </div>
                     <span class="product-edit-summary-side">
                         <span class="product-edit-summary-meta">必須</span>
@@ -41,7 +91,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="title">商品名 (Title)</label>
+                        <label for="title">商品名 / Public Title</label>
                         <input type="text" id="title" name="title"
                             value="{{ product.custom_title or product.last_title or '' }}">
                     </div>
@@ -65,13 +115,40 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="description">商品説明 (Body HTML)</label>
+                        <label for="description">商品説明 / Public Description (Body HTML)</label>
                         <textarea id="description" name="description"
                             rows="6">{{ product.custom_description or (snapshot.description if snapshot else '') }}</textarea>
                     </div>
                 </div>
             </details>
 
+            <!-- ③ English Title & Description -->
+            <details class="content-card product-edit-panel" open>
+                <summary class="content-card-header product-edit-summary">
+                    <div class="product-edit-summary-copy">
+                        <h2>English Title &amp; Description</h2>
+                        <p>English content for international public customers</p>
+                    </div>
+                    <span class="product-edit-summary-side">
+                        <span class="product-edit-summary-meta">EN</span>
+                        <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
+                    </span>
+                </summary>
+                <div class="content-card-body">
+                    <div class="form-group">
+                        <label for="title_en">英語タイトル (Title EN)</label>
+                        <input type="text" id="title_en" name="title_en" value="{{ product.custom_title_en or '' }}"
+                            placeholder="e.g. Vintage Camera Body">
+                    </div>
+                    <div class="form-group">
+                        <label for="description_en">英語説明 (Description EN)</label>
+                        <textarea id="description_en" name="description_en"
+                            rows="5">{{ product.custom_description_en or '' }}</textarea>
+                    </div>
+                </div>
+            </details>
+
+            <!-- ④ Price & Stock (Variants) -->
             <details class="content-card product-edit-panel" open>
                 <summary class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
@@ -191,14 +268,16 @@
         </div>
 
         <div class="product-edit-side">
+
+            <!-- ⑤ SEO & Tags -->
             <details class="content-card product-edit-panel" open>
                 <summary class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
-                        <h2>分類</h2>
-                        <p>販売元とタグを整理</p>
+                        <h2>SEO &amp; Tags</h2>
+                        <p>Search optimization and classification</p>
                     </div>
                     <span class="product-edit-summary-side">
-                        <span class="product-edit-summary-meta">補足</span>
+                        <span class="product-edit-summary-meta">SEO</span>
                         <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
                     </span>
                 </summary>
@@ -206,56 +285,16 @@
                     <div class="form-group">
                         <label for="vendor">販売元 (Vendor)</label>
                         <input type="text" id="vendor" name="vendor"
-                            value="{{ product.custom_vendor or product.site or '' }}">
+                            value="{{ product.custom_vendor or '' }}" placeholder="e.g. My Brand">
                     </div>
                     <div class="form-group">
                         <label for="tags">タグ (Tags)</label>
                         <input type="text" id="tags" name="tags" value="{{ product.tags or '' }}" placeholder="カンマ区切りで入力">
                     </div>
-                </div>
-            </details>
-
-            <details class="content-card product-edit-panel" open>
-                <summary class="content-card-header product-edit-summary">
-                    <div class="product-edit-summary-copy">
-                        <h2>英語情報</h2>
-                        <p>英語タイトルと説明文を手動で保持</p>
-                    </div>
-                    <span class="product-edit-summary-side">
-                        <span class="product-edit-summary-meta">C-1</span>
-                        <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
-                    </span>
-                </summary>
-                <div class="content-card-body">
-                    <div class="form-group">
-                        <label for="title_en">英語タイトル (Title EN)</label>
-                        <input type="text" id="title_en" name="title_en" value="{{ product.custom_title_en or '' }}"
-                            placeholder="例: Vintage Camera Body">
-                    </div>
-                    <div class="form-group">
-                        <label for="description_en">英語説明 (Description EN)</label>
-                        <textarea id="description_en" name="description_en"
-                            rows="5">{{ product.custom_description_en or '' }}</textarea>
-                    </div>
-                </div>
-            </details>
-
-            <details class="content-card product-edit-panel">
-                <summary class="content-card-header product-edit-summary">
-                    <div class="product-edit-summary-copy">
-                        <h2>SEO</h2>
-                        <p>必要なときだけ開く補助設定</p>
-                    </div>
-                    <span class="product-edit-summary-side">
-                        <span class="product-edit-summary-meta">折りたたみ</span>
-                        <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
-                    </span>
-                </summary>
-                <div class="content-card-body">
                     <div class="form-group">
                         <label for="handle">URLハンドル (Handle)</label>
                         <input type="text" id="handle" name="handle"
-                            value="{{ product.custom_handle or ('mercari-' + product.id|string) }}">
+                            value="{{ product.custom_handle or '' }}">
                     </div>
                     <div class="form-group">
                         <label for="seo_title">ページタイトル (SEO Title)</label>
@@ -270,52 +309,47 @@
                 </div>
             </details>
 
-            <details class="content-card product-edit-panel" open>
-                <summary class="content-card-header product-edit-summary">
+            <!-- ⑥ Internal Sourcing Details (admin user only, visually separated) -->
+            <details class="content-card product-edit-panel" style="border: 2px dashed rgba(0,0,0,0.15); opacity: 0.85;">
+                <summary class="content-card-header product-edit-summary" style="background: #f5f5f5;">
                     <div class="product-edit-summary-copy">
-                        <h2>画像</h2>
-                        <p>削除・並べ替え・URL追加</p>
+                        <h2>🔒 Internal Sourcing Details</h2>
+                        <p>Internal use only — not visible in the public catalog</p>
                     </div>
                     <span class="product-edit-summary-side">
-                        <span class="product-edit-summary-meta" id="imageCountBadge">{{ images|length }}枚</span>
+                        <span class="product-edit-summary-meta">内部</span>
                         <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
                     </span>
                 </summary>
-                <div class="content-card-body">
-                    <div class="product-image-manager">
-                        <p class="product-image-note">ドラッグで並べ替え、不要な画像は削除できます。追加は画像 URL のみ対応しています。</p>
-
-                        <div id="imageSortGrid" class="image-sort-grid">
-                            {% for url in images %}
-                            <article class="product-image-card" data-image-url="{{ url }}">
-                                <img src="{{ url }}" alt="image {{ loop.index }}" class="product-image-thumb">
-                                <div class="product-image-card-body">
-                                    <div class="product-image-card-top">
-                                        <span class="product-image-order">{{ loop.index }}枚目</span>
-                                        <button type="button" class="image-sort-handle">並べ替え</button>
-                                    </div>
-                                    <div class="product-image-url">{{ url }}</div>
-                                    <button type="button" class="btn-muted image-delete-btn">この画像を削除</button>
-                                </div>
-                            </article>
-                            {% endfor %}
-                        </div>
-
-                        <div id="imageEmptyState" class="image-empty-state" {% if images %}hidden{% endif %}>
-                            画像はまだ登録されていません。
-                        </div>
-
-                        <div class="form-group image-add-group">
-                            <label for="image_url_input">画像 URL を追加</label>
-                            <div class="image-add-row">
-                                <input type="url" id="image_url_input" placeholder="https://example.com/image.jpg">
-                                <button type="button" class="btn-secondary" onclick="addImageUrl()">URLを追加</button>
-                            </div>
-                            <p class="text-small text-muted mb-0">バイナリアップロードはまだ実装していません。http(s) または `/media/...` 形式を追加してください。</p>
-                        </div>
+                <div class="content-card-body" style="background: #fafafa;">
+                    <div class="form-group">
+                        <label>Source Site</label>
+                        <input type="text" value="{{ product.site or '' }}" readonly disabled
+                            style="background: #eee; cursor: not-allowed;">
+                    </div>
+                    <div class="form-group">
+                        <label>Source URL</label>
+                        <input type="text" value="{{ product.source_url or '' }}" readonly disabled
+                            style="background: #eee; cursor: not-allowed; word-break: break-all;">
+                    </div>
+                    <div class="form-group">
+                        <label>Last Scraped Title</label>
+                        <input type="text" value="{{ product.last_title or '' }}" readonly disabled
+                            style="background: #eee; cursor: not-allowed;">
+                    </div>
+                    <div class="form-group">
+                        <label>Last Scraped Price</label>
+                        <input type="text" value="{{ product.last_price or '' }}" readonly disabled
+                            style="background: #eee; cursor: not-allowed;">
+                    </div>
+                    <div class="form-group">
+                        <label>Last Status</label>
+                        <input type="text" value="{{ product.last_status or '' }}" readonly disabled
+                            style="background: #eee; cursor: not-allowed;">
                     </div>
                 </div>
             </details>
+
         </div>
     </div>
 
