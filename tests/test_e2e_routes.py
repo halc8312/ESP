@@ -562,7 +562,11 @@ class TestPriceListRoutes:
         assert str(product.id).encode('utf-8') in response.data
 
     def test_catalog_product_detail_endpoint_returns_json(self, client, db_session):
-        """Test catalog detail endpoint returns modal payload"""
+        """Test catalog detail endpoint returns customer-safe modal payload.
+
+        The public catalog must NOT expose source_url, site, or other
+        internal sourcing details to public customers.
+        """
         user, product, pricelist, item = self._create_catalog_fixture(
             db_session,
             username='catalogdetailapitest',
@@ -571,16 +575,19 @@ class TestPriceListRoutes:
 
         response = client.get(f'/catalog/{pricelist.token}/product/{product.id}')
         assert response.status_code == 200
-        assert response.json['product_id'] == product.id
-        assert response.json['title'] == 'Catalog Layout Product'
-        assert response.json['price'] == 3200
-        assert response.json['description'] == 'Catalog description'
-        assert response.json['site'] == 'manual'
-        assert response.json['in_stock'] is True
-        assert response.json['image_urls'] == [
+        data = response.json
+        assert data['product_id'] == product.id
+        assert data['title'] == 'Catalog Layout Product'
+        assert data['price'] == 3200
+        assert data['description'] == 'Catalog description'
+        assert data['in_stock'] is True
+        assert data['image_urls'] == [
             'https://img.example.com/catalog-layout.jpg',
             'https://img.example.com/catalog-layout-2.jpg',
         ]
+        # Information boundary: source/supplier data must not leak
+        assert 'source_url' not in data
+        assert 'site' not in data
 
     def test_catalog_product_detail_returns_404_for_missing_item(self, client, db_session):
         """Test catalog detail endpoint rejects products outside the price list"""
@@ -715,6 +722,69 @@ class TestPriceListRoutes:
 
         response = client.get(f'/pricelists/{pricelist.id}/analytics')
         assert response.status_code == 404
+
+    def test_catalog_view_does_not_expose_source_info(self, client, db_session):
+        """Public catalog HTML must not contain source site names or source URLs."""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogsourcehidetest',
+            layout='grid'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+        assert response.status_code == 200
+        html = response.data.decode('utf-8')
+
+        # No source_url or source site name should appear in public HTML
+        assert 'example.com/manual-product' not in html
+        assert 'View Source' not in html
+        assert 'data-site' not in html
+        assert 'categorySelect' not in html
+
+    def test_catalog_list_layout_renders(self, client, db_session):
+        """Public catalog with list layout renders the correct layout class."""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='cataloglistlayouttest',
+            layout='list'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+        assert response.status_code == 200
+        assert b'catalog-layout-list' in response.data
+        assert b'List' in response.data
+        assert b'Catalog Layout Product' in response.data
+
+    def test_pricelist_create_saves_list_layout(self, client, db_session):
+        """Creating a price list with 'list' layout persists correctly."""
+        user = self._login_user(client, db_session, 'pricelistcreatelisttest')
+
+        response = client.post('/pricelists/create', data={
+            'name': 'Compact List',
+            'notes': '',
+            'currency_rate': '150',
+            'layout': 'list'
+        }, follow_redirects=False)
+
+        assert response.status_code == 302
+        pricelist = db_session.query(PriceList).filter_by(user_id=user.id, name='Compact List').one()
+        assert pricelist.layout == 'list'
+
+    def test_catalog_quick_view_modal_is_customer_safe(self, client, db_session):
+        """Quick-view modal markup must not contain source link elements."""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogmodalsafetest',
+            layout='grid'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+        assert response.status_code == 200
+        html = response.data.decode('utf-8')
+
+        assert 'modalSourceLink' not in html
+        assert 'modal-source-link' not in html
+        assert 'SITE_LABELS' not in html
 
 
 class TestProductRoutes:
