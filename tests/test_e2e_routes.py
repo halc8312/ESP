@@ -274,9 +274,12 @@ class TestMainRoutes:
         assert re.search(r'管理対象商品</span>\s*<strong class="dashboard-summary-value">2</strong>', html)
         assert re.search(r'公開中</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
         assert re.search(r'下書き</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
-        assert re.search(r'仕入先在庫あり</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
+        assert re.search(r'公開準備OK</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
         assert re.search(r'要対応商品</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
-        assert re.search(r'0在庫バリアント</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
+
+        assert re.search(r'仕入先在庫あり</span>\s*<strong>1</strong>', html)
+        assert re.search(r'仕入先売切れ</span>\s*<strong>1</strong>', html)
+        assert re.search(r'0在庫バリアント</span>\s*<strong>1</strong>', html)
 
         assert 'Active Product' in html
         assert 'Draft Product' in html

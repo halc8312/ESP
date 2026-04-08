@@ -11,7 +11,6 @@
 
 <div class="dashboard-actions">
     <a href="{{ url_for('main.index') }}" class="btn btn-primary">商品一覧を開く</a>
-    <a href="{{ url_for('main.product_manual_add') }}" class="btn btn-secondary">手動で追加</a>
     <a href="{{ url_for('scrape.scrape_form') }}" class="btn btn-secondary">商品抽出へ</a>
 </div>
 
@@ -40,46 +39,19 @@
         <span class="dashboard-summary-note">`Product.status = draft`</span>
     </article>
     <article class="dashboard-summary-card">
-        <span class="dashboard-summary-label">仕入先在庫あり</span>
-        <strong class="dashboard-summary-value">{{ source_counts.get('on_sale', 0) }}</strong>
-        <span class="dashboard-summary-note">`Product.last_status` を正規化</span>
+        <span class="dashboard-summary-label">公開準備OK</span>
+        <strong class="dashboard-summary-value">{{ ready_count }}</strong>
+        <span class="dashboard-summary-note">現行バリデーションで問題なし</span>
     </article>
     <article class="dashboard-summary-card">
         <span class="dashboard-summary-label">要対応商品</span>
         <strong class="dashboard-summary-value">{{ issue_summary.products_with_issues }}</strong>
         <span class="dashboard-summary-note">バリデーションで警告またはエラーあり</span>
     </article>
-    <article class="dashboard-summary-card">
-        <span class="dashboard-summary-label">0在庫バリアント</span>
-        <strong class="dashboard-summary-value">{{ zero_stock_variant_count }}</strong>
-        <span class="dashboard-summary-note">`Variant.inventory_qty = 0`</span>
-    </article>
 </div>
 
 <div class="dashboard-layout">
     <div class="dashboard-main">
-        <section class="content-card">
-            <div class="content-card-header">
-                <h2>整備状況</h2>
-            </div>
-            <div class="content-card-body">
-                <div class="dashboard-progress-grid">
-                    {% for metric in quality_metrics %}
-                    <div class="dashboard-progress-card">
-                        <div class="dashboard-progress-header">
-                            <span>{{ metric.label }}</span>
-                            <strong>{{ metric.count }} / {{ total_items }}</strong>
-                        </div>
-                        <div class="dashboard-progress-bar is-{{ metric.tone }}">
-                            <span style="width: {{ metric.percent }}%;"></span>
-                        </div>
-                        <p class="text-muted">{{ metric.description }}</p>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-        </section>
-
         <section class="content-card">
             <div class="content-card-header">
                 <h2>要対応商品</h2>
@@ -253,70 +225,17 @@
     <aside class="dashboard-side">
         <section class="content-card">
             <div class="content-card-header">
-                <h2>状態サマリ</h2>
+                <h2>運用メモ</h2>
             </div>
             <div class="content-card-body">
                 <div class="dashboard-list">
+                    {% for note in operational_notes %}
                     <div class="dashboard-list-row">
-                        <span>公開中</span>
-                        <strong>{{ publication_counts.get('active', 0) }}</strong>
-                    </div>
-                    <div class="dashboard-list-row">
-                        <span>下書き</span>
-                        <strong>{{ publication_counts.get('draft', 0) }}</strong>
-                    </div>
-                    <div class="dashboard-list-row">
-                        <span>仕入先在庫あり</span>
-                        <strong>{{ source_counts.get('on_sale', 0) }}</strong>
-                    </div>
-                    <div class="dashboard-list-row">
-                        <span>仕入先売切れ</span>
-                        <strong>{{ source_counts.get('sold', 0) }}</strong>
-                    </div>
-                    <div class="dashboard-list-row">
-                        <span>仕入先削除/停止</span>
-                        <strong>{{ source_counts.get('deleted', 0) }}</strong>
-                    </div>
-                    <div class="dashboard-list-row">
-                        <span>仕入先要確認</span>
-                        <strong>{{ source_counts.get('unknown', 0) }}</strong>
-                    </div>
-                    <div class="dashboard-list-row">
-                        <span>エラー件数</span>
-                        <strong>{{ issue_summary.error_count }}</strong>
-                    </div>
-                    <div class="dashboard-list-row">
-                        <span>警告件数</span>
-                        <strong>{{ issue_summary.warning_count }}</strong>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <section class="content-card">
-            <div class="content-card-header">
-                <h2>サイト別内訳</h2>
-            </div>
-            <div class="content-card-body">
-                {% if site_breakdown %}
-                <div class="dashboard-site-list">
-                    {% for site in site_breakdown %}
-                    <div class="dashboard-site-row">
-                        <div>
-                            <strong>{{ site.site_label }}</strong>
-                            <div class="text-muted">{{ site.count }} 件</div>
-                        </div>
-                        <div class="dashboard-site-meta">
-                            <span>公開 {{ site.active_count }}</span>
-                            <span>在庫あり {{ site.on_sale_count }}</span>
-                            <span>要対応 {{ site.issue_count }}</span>
-                        </div>
+                        <span>{{ note.label }}</span>
+                        <strong>{{ note.count }}</strong>
                     </div>
                     {% endfor %}
                 </div>
-                {% else %}
-                <p class="text-muted">表示できるサイト内訳はありません。</p>
-                {% endif %}
             </div>
         </section>
     </aside>

@@ -234,34 +234,33 @@ def dashboard():
         ]
         issue_summary = get_issue_summary(products_with_issues)
 
-        quality_metrics = [
+        ready_count = total_items - issue_summary["products_with_issues"]
+        operational_notes = [
             {
-                "count": sum(1 for row in dashboard_rows if row["selling_price"] is not None and row["selling_price"] > 0),
-                "description": "公開価格として使う selling_price が入っている商品",
-                "label": "販売価格設定済み",
-                "tone": "good",
+                "count": source_counts.get("on_sale", 0),
+                "label": "仕入先在庫あり",
             },
             {
-                "count": sum(1 for row in dashboard_rows if row["has_english_title"]),
-                "description": "英語タイトルまで入力されている商品",
-                "label": "英語タイトル入力済み",
-                "tone": "neutral",
+                "count": source_counts.get("sold", 0),
+                "label": "仕入先売切れ",
+            },
+            {
+                "count": source_counts.get("unknown", 0),
+                "label": "仕入先要確認",
+            },
+            {
+                "count": zero_stock_variant_count,
+                "label": "0在庫バリアント",
+            },
+            {
+                "count": sum(1 for row in dashboard_rows if row["selling_price"] is not None and row["selling_price"] > 0),
+                "label": "販売価格設定済み",
             },
             {
                 "count": sum(1 for row in dashboard_rows if row["image_count"] > 0),
-                "description": "公開カタログで使える画像が1枚以上ある商品",
                 "label": "画像登録済み",
-                "tone": "good",
-            },
-            {
-                "count": total_items - issue_summary["products_with_issues"],
-                "description": "現在のバリデーションでエラー/警告が出ていない商品",
-                "label": "問題なし",
-                "tone": "good",
             },
         ]
-        for metric in quality_metrics:
-            metric["percent"] = int((metric["count"] / total_items) * 100) if total_items else 0
 
         recent_items = sorted(
             dashboard_rows,
@@ -278,37 +277,6 @@ def dashboard():
             reverse=True,
         )[:6]
 
-        site_rollup = {}
-        for row in dashboard_rows:
-            site_bucket = site_rollup.setdefault(
-                row["site"],
-                {
-                    "active_count": 0,
-                    "count": 0,
-                    "issue_count": 0,
-                    "on_sale_count": 0,
-                    "site_label": row["site_label"],
-                },
-            )
-            site_bucket["count"] += 1
-            if row["publication_status"] == "active":
-                site_bucket["active_count"] += 1
-            if row["source_status"] == "on_sale":
-                site_bucket["on_sale_count"] += 1
-            if row["issues"]:
-                site_bucket["issue_count"] += 1
-
-        site_breakdown = [
-            {
-                "site": site,
-                **stats,
-            }
-            for site, stats in sorted(
-                site_rollup.items(),
-                key=lambda item: (-item[1]["count"], item[1]["site_label"]),
-            )
-        ]
-
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         current_shop = next((shop for shop in all_shops if shop.id == current_shop_id), None)
 
@@ -317,10 +285,10 @@ def dashboard():
             attention_items=attention_items,
             current_scope_name=current_shop.name if current_shop else "全ショップ",
             issue_summary=issue_summary,
+            operational_notes=operational_notes,
             publication_counts=publication_counts,
-            quality_metrics=quality_metrics,
             recent_items=recent_items,
-            site_breakdown=site_breakdown,
+            ready_count=ready_count,
             source_counts=source_counts,
             total_items=total_items,
             zero_stock_variant_count=zero_stock_variant_count,
