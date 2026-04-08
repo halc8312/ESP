@@ -8,7 +8,8 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Playwright / Patchright の実行に必要なシステム依存関係
-RUN apt-get update && apt-get install -y \
+# --no-install-recommends で推奨パッケージを除外しイメージサイズを削減
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libxss1 \
     fonts-liberation \
@@ -27,11 +28,13 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Playwright / Patchright ブラウザを root で共有インストールし、非 root ユーザーでも参照可能にする
+# Chromium のみインストールし、不要なブラウザは除外
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 ENV PATCHRIGHT_BROWSERS_PATH=/opt/ms-playwright
 RUN scrapling install \
     && patchright install chromium \
-    && chmod -R 755 /opt/ms-playwright
+    && chmod -R 755 /opt/ms-playwright \
+    && rm -rf /root/.cache /tmp/*
 
 COPY . .
 
@@ -39,4 +42,5 @@ RUN useradd -m myuser
 USER myuser
 
 # ScrapeQueue はプロセス内シングルトンのため worker は 1 を維持する
+# シェル形式を使用して ${PORT} 変数を展開する
 CMD gunicorn --worker-class gthread --workers 1 --threads 8 --max-requests 0 --timeout 600 --bind 0.0.0.0:${PORT:-10000} wsgi:app
