@@ -3,32 +3,31 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>Login - ESP</title>
+    <title>ログイン - ESP</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 
 <body class="login-page">
     <div class="login-container">
-        <h1>Login</h1>
+        <h1>ログイン</h1>
         {% if error %}
         <div class="error">{{ error }}</div>
         {% endif %}
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="form-group">
-                <label for="username">Username</label>
-                <input type="text" id="username" name="username" required autocomplete="username">
+                <label for="username">ユーザー名</label>
+                <input type="text" id="username" name="username" required autocomplete="username" autofocus>
             </div>
             <div class="form-group">
-                <label for="password">Password</label>
+                <label for="password">パスワード</label>
                 <input type="password" id="password" name="password" required autocomplete="current-password">
             </div>
-            <button type="submit">Log In</button>
+            <button type="submit">ログイン</button>
         </form>
-        <div class="link" style="text-align: center; margin-top: 1rem;">
-            Don't have an account? <a href="{{ url_for('register') }}"
-                style="color: #007bff; text-decoration: none;">Create Account</a>
+        <div class="link">
+            はじめての方は <a href="{{ url_for('register') }}">新規登録</a>
         </div>
     </div>
 </body>

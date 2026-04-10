@@ -8,6 +8,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from database import SessionLocal
 from models import Product, Variant, Shop
+from services.rich_text import normalize_rich_text
 from time_utils import utc_now
 
 import_bp = Blueprint('import', __name__)
@@ -203,6 +204,7 @@ def _process_import(content: str, shop_id_str: str, site: str):
                 price_str = mapped.get('price', '0')
                 url = mapped.get('url', '')
                 description = mapped.get('description', '')
+                normalized_description = normalize_rich_text(description)
                 image_urls = mapped.get('image_urls', '')
                 sku = mapped.get('sku', '')
                 inventory = mapped.get('inventory', '1')
@@ -230,7 +232,7 @@ def _process_import(content: str, shop_id_str: str, site: str):
                     source_url=url,
                     last_title=title,
                     custom_title=title,
-                    custom_description=description,
+                    custom_description=normalized_description,
                     last_price=int(float(price_str)) if price_str else 0,
                     created_at=utc_now(),
                     updated_at=utc_now()
@@ -245,7 +247,7 @@ def _process_import(content: str, shop_id_str: str, site: str):
                         product_id=product.id,
                         title=title,
                         price=product.last_price,
-                        description=description,
+                        description=normalized_description,
                         image_urls=image_urls,
                         scraped_at=utc_now()
                     )

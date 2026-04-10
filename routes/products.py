@@ -7,6 +7,7 @@ from flask_login import login_required, current_user
 
 from database import SessionLocal
 from models import Shop, Product, Variant, ProductSnapshot, DescriptionTemplate
+from services.rich_text import normalize_rich_text
 from time_utils import utc_now
 
 products_bp = Blueprint('products', __name__)
@@ -119,9 +120,9 @@ def product_detail(product_id):
 
             # --- 基本情報 (Product) ---
             product.custom_title = request.form.get("title")
-            product.custom_description = request.form.get("description")
+            product.custom_description = normalize_rich_text(request.form.get("description")) or None
             product.custom_title_en = request.form.get("title_en")
-            product.custom_description_en = request.form.get("description_en")
+            product.custom_description_en = normalize_rich_text(request.form.get("description_en")) or None
             product.status = request.form.get("status")
 
             # --- オプション名 (Product) ---

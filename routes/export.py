@@ -9,6 +9,7 @@ from flask_login import login_required, current_user
 from database import SessionLocal
 from models import Product, Variant, ProductSnapshot
 from services.image_service import cache_mercari_image
+from services.rich_text import normalize_rich_text
 
 export_bp = Blueprint('export', __name__)
 
@@ -74,7 +75,6 @@ def export_shopify():
             )
 
             title = product.custom_title or product.last_title or ""
-            # Description processing remains same
             description = product.custom_description or (snapshot.description if snapshot else "")
             vendor = product.custom_vendor or product.site.capitalize()
             handle = product.custom_handle or f"{product.site or 'product'}-{product.id}"
@@ -102,7 +102,7 @@ def export_shopify():
 
                 if i == 0:
                     row["Title"] = title
-                    row["Body (HTML)"] = description.replace("\n", "<br>")
+                    row["Body (HTML)"] = normalize_rich_text(description)
                     row["Vendor"] = vendor
                     row["Type"] = "Mercari Item" # Default Type
                     row["Published"] = "true" if product.status == 'active' else 'false'
@@ -215,11 +215,10 @@ def export_ebay():
             snap = p.snapshots[-1] if p.snapshots else None
             title_src = snap.title if snap and snap.title else (p.last_title or "")
             title = (title_src or "")[:80]
-            description_src = snap.description if snap and snap.description else ""
+            description_src = p.custom_description or (snap.description if snap and snap.description else "")
             if not description_src:
                 description_src = title_src
-            desc_clean = description_src.replace("\r\n", "\n").replace("\r", "\n")
-            description_html = desc_clean.replace("\n", "<br>")
+            description_html = normalize_rich_text(description_src)
 
             base_price_yen = None
             if snap and snap.price is not None:

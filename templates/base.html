@@ -101,6 +101,12 @@
                 <span class="nav-icon">⚙️</span>
                 <span class="nav-text">設定</span>
             </a>
+            <a href="{{ url_for('auth.account') }}"
+                class="sidebar-link {% if current_endpoint == 'auth.account' %}active{% endif %}" {% if
+                current_endpoint == 'auth.account' %}aria-current="page" {% endif %}>
+                <span class="nav-icon">👤</span>
+                <span class="nav-text">アカウント</span>
+            </a>
             <a href="{{ url_for('import.import_form') }}"
                 class="sidebar-link {% if current_endpoint.endswith('import_form') %}active{% endif %}" {% if
                 current_endpoint.endswith('import_form') %}aria-current="page" {% endif %}>
@@ -137,11 +143,23 @@
                 <button type="submit" class="btn btn-compact">適用</button>
             </form>
             <span class="shop-current">現在: {{ current_shop.name }}</span>
+            {% if current_user.is_authenticated %}
+            <div class="sidebar-user-name">{{ current_user.username }}</div>
+            {% endif %}
         </div>
     </aside>
 
     <!-- Main Content -->
     <main class="main-content" id="main-content">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="flash-stack" aria-live="polite">
+            {% for category, message in messages %}
+            <div class="flash-banner is-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
         {% block content %}{% endblock %}
     </main>
 

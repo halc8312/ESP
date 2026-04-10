@@ -13,6 +13,7 @@ from sqlalchemy.orm import subqueryload
 
 from database import SessionLocal
 from models import Shop, PriceList, PriceListItem, Product, CatalogPageView
+from services.rich_text import build_rich_text_excerpt, normalize_rich_text, rich_text_to_plain_text
 from time_utils import utc_now
 
 catalog_bp = Blueprint('catalog', __name__)
@@ -55,6 +56,10 @@ def _build_catalog_item(item):
     if not description and snapshot:
         description = snapshot.description or ""
     description_en = p.custom_description_en or ""
+    description_html = normalize_rich_text(description)
+    description_en_html = normalize_rich_text(description_en)
+    description_text = rich_text_to_plain_text(description)
+    description_en_text = rich_text_to_plain_text(description_en)
 
     return {
         "product_id": p.id,
@@ -65,8 +70,11 @@ def _build_catalog_item(item):
         "image_urls": image_urls,
         "stock": total_stock,
         "in_stock": total_stock > 0,
-        "description": description,
-        "description_en": description_en,
+        "description_html": description_html,
+        "description_en_html": description_en_html,
+        "description_text": description_text,
+        "description_en_text": description_en_text,
+        "description_snippet": build_rich_text_excerpt(description_en or description, limit=80),
     }
 
 

@@ -17,13 +17,13 @@ class TestAuthenticationRoutes:
         """Test that login page renders correctly"""
         response = client.get('/login')
         assert response.status_code == 200
-        assert b'Login' in response.data or b'login' in response.data.lower()
+        assert "ログイン".encode("utf-8") in response.data
     
     def test_register_page_renders(self, client):
         """Test that register page renders correctly"""
         response = client.get('/register')
         assert response.status_code == 200
-        assert b'Register' in response.data or b'register' in response.data.lower()
+        assert "新規登録".encode("utf-8") in response.data
     
     def test_successful_registration(self, client, db_session):
         """Test user registration creates user and logs in"""
@@ -54,7 +54,7 @@ class TestAuthenticationRoutes:
         })
         
         assert response.status_code == 200
-        assert b'already exists' in response.data or b'Username' in response.data
+        assert "すでに使われています".encode("utf-8") in response.data
     
     def test_login_success(self, client, db_session):
         """Test successful login redirects to index"""
@@ -85,7 +85,7 @@ class TestAuthenticationRoutes:
         })
         
         assert response.status_code == 200
-        assert b'Invalid' in response.data or b'error' in response.data.lower()
+        assert "違います".encode("utf-8") in response.data
     
     def test_logout(self, client, db_session):
         """Test logout redirects to login"""
@@ -118,6 +118,30 @@ class TestAuthenticationRoutes:
         
         response = client.get('/login', follow_redirects=True)
         assert response.request.path == '/'
+
+    def test_account_page_and_password_change(self, client, db_session):
+        """Test account page renders and password can be updated"""
+        user = User(username='accounttest')
+        user.set_password('testpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'accounttest',
+            'password': 'testpassword'
+        })
+
+        response = client.get('/account')
+        assert response.status_code == 200
+        assert "アカウント".encode("utf-8") in response.data
+
+        response = client.post('/account', data={
+            'current_password': 'testpassword',
+            'new_password': 'newtestpassword',
+            'confirm_password': 'newtestpassword',
+        }, follow_redirects=True)
+        assert response.status_code == 200
+        assert "変更しました".encode("utf-8") in response.data
 
 
 class TestMainRoutes:
@@ -537,6 +561,22 @@ class TestShopsRoutes:
         template = db_session.query(DescriptionTemplate).filter_by(name='Test Template').first()
         assert template is not None
         assert template.content == 'This is test template content'
+
+    def test_create_template_sanitizes_rich_text(self, client, db_session):
+        """Test template content is normalized to the shared safe rich-text subset"""
+        self._login_user(client, db_session, 'createtemplatesanitizetest')
+
+        response = client.post('/templates', data={
+            'name': 'Sanitized Template',
+            'content': '<p>Hello</p><script>alert(1)</script>'
+        }, follow_redirects=True)
+
+        assert response.status_code == 200
+
+        template = db_session.query(DescriptionTemplate).filter_by(name='Sanitized Template').first()
+        assert template is not None
+        assert '<script' not in template.content.lower()
+        assert 'Hello' in template.content
     
     def test_delete_template(self, client, db_session):
         """Test deleting a template"""
@@ -722,7 +762,9 @@ class TestPriceListRoutes:
         assert data['product_id'] == product.id
         assert data['title'] == 'Catalog Layout Product'
         assert data['price'] == 3200
-        assert data['description'] == 'Catalog description'
+        assert data['description_html'] == 'Catalog description'
+        assert data['description_text'] == 'Catalog description'
+        assert data['description_snippet'] == 'Catalog description'
         assert data['in_stock'] is True
         assert data['image_urls'] == [
             'https://img.example.com/catalog-layout.jpg',
@@ -1061,6 +1103,33 @@ class TestProductRoutes:
         assert product.custom_title_en == 'Updated English Title'
         assert product.custom_description_en == 'Updated English Description'
         assert product.status == 'active'
+
+    def test_product_detail_update_sanitizes_rich_text(self, client, db_session):
+        """Test product descriptions are saved in the shared safe rich-text format"""
+        user, product, variant = self._setup_user_with_product(client, db_session, 'productrichtexttest')
+
+        response = client.post(f'/product/{product.id}', data={
+            'title': 'Updated Title',
+            'description': '<p>Updated Description</p><script>alert(1)</script>',
+            'title_en': 'Updated English Title',
+            'description_en': 'Line one\nLine two',
+            'status': 'active',
+            'vendor': 'Test Vendor',
+            'tags': 'tag1,tag2',
+            'handle': 'custom-handle',
+            'v_ids': [str(variant.id)],
+            f'v_opt1_{variant.id}': 'Size M',
+            f'v_price_{variant.id}': '2000',
+            f'v_sku_{variant.id}': 'UPDATED-SKU',
+            f'v_qty_{variant.id}': '5'
+        }, follow_redirects=True)
+
+        assert response.status_code == 200
+
+        db_session.refresh(product)
+        assert '<script' not in (product.custom_description or '').lower()
+        assert 'Updated Description' in (product.custom_description or '')
+        assert '<br' in (product.custom_description_en or '')
 
     def test_product_detail_update_reorders_and_removes_images(self, client, db_session):
         """Test image updates create a new latest snapshot without mutating history"""

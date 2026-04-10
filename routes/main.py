@@ -11,6 +11,7 @@ from sqlalchemy import func
 
 from database import SessionLocal
 from models import Shop, Product, Variant, ProductSnapshot
+from services.rich_text import normalize_rich_text
 from services.validation_service import validate_product, get_issue_summary
 from time_utils import utc_now
 
@@ -516,6 +517,8 @@ def product_manual_add():
         effective_inventory_qty = 0 if stock_state == "sold" else inventory_qty
         effective_last_status = "sold" if stock_state == "sold" else "on_sale"
         normalized_images = _normalize_manual_image_urls(form_data["image_urls"])
+        normalized_description = normalize_rich_text(form_data["description"]) or None
+        normalized_description_en = normalize_rich_text(form_data["description_en"]) or None
         now = utc_now()
 
         product = Product(
@@ -527,9 +530,9 @@ def product_manual_add():
             last_price=cost_price,
             last_status=effective_last_status,
             custom_title=title,
-            custom_description=form_data["description"] or None,
+            custom_description=normalized_description,
             custom_title_en=form_data["title_en"] or None,
-            custom_description_en=form_data["description_en"] or None,
+            custom_description_en=normalized_description_en,
             status=publish_status,
             tags=form_data["tags"] or None,
             selling_price=selling_price,
@@ -545,7 +548,7 @@ def product_manual_add():
             title=title,
             price=cost_price,
             status=effective_last_status,
-            description=form_data["description"] or None,
+            description=normalized_description,
             image_urls="|".join(normalized_images),
         )
         session_db.add(snapshot)

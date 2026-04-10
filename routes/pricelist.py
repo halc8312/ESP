@@ -2,30 +2,23 @@
 Price List management routes: create, edit, delete, manage items.
 """
 import uuid
-import nh3
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 from flask_login import login_required, current_user
 from sqlalchemy.orm import subqueryload
 
 from database import SessionLocal
 from models import Shop, Product, ProductSnapshot, Variant, PriceList, PriceListItem
+from services.rich_text import normalize_rich_text
 from time_utils import utc_now
 
 pricelist_bp = Blueprint('pricelist', __name__)
 
 PRICE_LIST_LAYOUTS = {"grid", "editorial", "list"}
 
-_NOTES_ALLOWED_TAGS = {"p", "br", "b", "strong", "i", "em", "ul", "ol", "li", "a"}
-_NOTES_ALLOWED_ATTRIBUTES = {"a": {"href", "target"}}
-
 
 def _sanitize_notes(raw_html: str) -> str:
-    """Sanitize pricelist notes to allow only safe HTML tags."""
-    return nh3.clean(
-        raw_html,
-        tags=_NOTES_ALLOWED_TAGS,
-        attributes=_NOTES_ALLOWED_ATTRIBUTES,
-    )
+    """Normalize pricelist notes into the shared safe rich-text subset."""
+    return normalize_rich_text(raw_html)
 
 
 def _normalize_layout(value):

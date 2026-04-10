@@ -40,6 +40,7 @@ from services.database_migration import (
 from services.html_page_adapter import HtmlPageAdapter
 from services.mercari_item_parser import parse_mercari_item_page
 from services.pricing_service import update_product_selling_price
+from services.rich_text_maintenance import run_rich_text_maintenance
 from services.scrape_result_policy import (
     build_policy_reason,
     evaluate_persistence,
@@ -2909,6 +2910,22 @@ def register_cli_commands(app):
             require_backend=require_backend,
             apply_migrations=apply_migrations,
             schema_mode=app.config.get("SCHEMA_BOOTSTRAP_MODE", "auto"),
+        )
+        _emit_json(snapshot)
+
+        if snapshot.get("blockers"):
+            raise SystemExit(1)
+
+    @app.cli.command("rich-text-maintenance")
+    @click.option("--apply", is_flag=True, default=False, help="Persist normalized rich-text back into the database.")
+    @click.option("--user-id", type=int, default=None, help="Optionally restrict Product/PriceList/Snapshot rows to one user.")
+    @click.option("--include-snapshots/--skip-snapshots", default=True, show_default=True)
+    def rich_text_maintenance(apply, user_id, include_snapshots):
+        """Normalize existing rich-text fields in the configured database."""
+        snapshot = run_rich_text_maintenance(
+            apply=apply,
+            user_id=user_id,
+            include_snapshots=include_snapshots,
         )
         _emit_json(snapshot)
 

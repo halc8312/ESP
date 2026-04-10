@@ -124,14 +124,51 @@
             padding: 0 20px;
         }
 
-        .catalog-notes p {
-            background: var(--accent-glow);
-            border: 1px solid rgba(251, 191, 36, 0.22);
-            padding: 14px 18px;
-            border-radius: var(--radius-sm);
+        .catalog-notes-content {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            padding: 16px 18px;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+        }
+
+        .rich-text-content {
             font-size: 14px;
-            color: var(--accent-light);
             line-height: 1.7;
+            color: var(--text-secondary);
+        }
+
+        .rich-text-content>:first-child {
+            margin-top: 0;
+        }
+
+        .rich-text-content>:last-child {
+            margin-bottom: 0;
+        }
+
+        .rich-text-content p,
+        .rich-text-content ul,
+        .rich-text-content ol {
+            margin: 0 0 12px;
+        }
+
+        .rich-text-content ul,
+        .rich-text-content ol {
+            padding-left: 1.4em;
+        }
+
+        .rich-text-content li + li {
+            margin-top: 6px;
+        }
+
+        .rich-text-content a {
+            color: var(--accent-light);
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+
+        .rich-text-content strong {
+            color: var(--text-primary);
         }
 
         .stats-bar {
@@ -611,7 +648,6 @@
             color: var(--text-secondary);
             font-size: 14px;
             line-height: 1.7;
-            white-space: pre-wrap;
             padding: 16px 18px;
             border-radius: 16px;
             background: rgba(255, 255, 255, 0.03);
@@ -887,7 +923,9 @@
 
     {% if pricelist.notes %}
     <div class="catalog-notes">
-        {{ pricelist.notes | safe }}
+        <div class="catalog-notes-content rich-text-content">
+            {{ pricelist.notes | safe }}
+        </div>
     </div>
     {% endif %}
 
@@ -922,7 +960,7 @@
                 {% endif %}
                 <div class="product-card-title">{{ item.title_en or item.title }}</div>
                 {% if pricelist.layout == 'list' %}
-                <div class="product-card-desc-snippet">{{ (item.description_en or item.description)[:80] }}{% if (item.description_en or item.description)|length > 80 %}…{% endif %}</div>
+                <div class="product-card-desc-snippet">{{ item.description_snippet }}</div>
                 {% endif %}
                 <div class="product-card-price" data-jpy-price="{{ item.price }}">
                     ¥{{ "{:,}".format(item.price) }}
@@ -961,7 +999,7 @@
                     </div>
                     <div id="modalPrice" class="modal-product-price" data-jpy-price="">¥0</div>
                     <div id="modalStock" class="modal-stock-info"></div>
-                    <div id="modalDescription" class="modal-description">
+                    <div id="modalDescription" class="modal-description rich-text-content">
                         <span class="modal-loading">Loading product details...</span>
                     </div>
                 </div>
@@ -1230,10 +1268,14 @@
             stock.appendChild(stockQty);
 
             // Prefer English description for international public customers
-            if (data.description_en && data.description_en.trim()) {
-                description.textContent = data.description_en;
-            } else if (data.description && data.description.trim()) {
-                description.textContent = data.description;
+            if (data.description_en_html && data.description_en_html.trim()) {
+                description.innerHTML = data.description_en_html;
+            } else if (data.description_html && data.description_html.trim()) {
+                description.innerHTML = data.description_html;
+            } else if (data.description_en_text && data.description_en_text.trim()) {
+                description.textContent = data.description_en_text;
+            } else if (data.description_text && data.description_text.trim()) {
+                description.textContent = data.description_text;
             } else {
                 description.textContent = 'No description available.';
             }

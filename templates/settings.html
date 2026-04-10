@@ -6,92 +6,98 @@
 {% block content %}
 <div class="page-header">
     <h1>設定</h1>
+    <p class="page-subtitle">見せたくない言葉を登録できます</p>
 </div>
 
 <div class="content-card">
     <div class="content-card-header">
-        <h2>除外キーワード</h2>
+        <h2>表示したくない言葉</h2>
     </div>
     <div class="content-card-body">
-        <p style="color: #666; margin-bottom: 16px;">
-            商品抽出時に、これらのキーワードを含む商品は自動的に除外されます。
-        </p>
+        <div class="settings-summary">
+            <span class="settings-count">{{ keywords|length }}件登録済み</span>
+            <p class="text-muted settings-summary-text">ここに入れた言葉が商品名にあると、その商品は登録しません。</p>
+        </div>
 
         <form action="{{ url_for('settings.add_keyword') }}" method="POST" class="form-inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-            <div class="form-row" style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;">
-                <div class="form-group" style="flex: 1; min-width: 200px;">
-                    <label for="keyword">キーワード</label>
-                    <input type="text" id="keyword" name="keyword" placeholder="例: ジャンク" required>
+            <div class="settings-form-row">
+                <div class="form-group settings-form-main">
+                    <label for="keyword">言葉</label>
+                    <input type="text" id="keyword" name="keyword" placeholder="例: ジャンク" required autocomplete="off">
                 </div>
-                <div class="form-group">
-                    <label for="match_type">マッチタイプ</label>
+                <details class="settings-advanced">
+                    <summary>細かい設定</summary>
+                    <div class="form-group settings-advanced-body">
+                        <label for="match_type">一致のしかた</label>
                     <select id="match_type" name="match_type">
-                        <option value="partial">部分一致</option>
-                        <option value="exact">完全一致</option>
+                            <option value="partial">ふつう</option>
+                            <option value="exact">ぴったり同じときだけ</option>
                     </select>
-                </div>
-                <div class="form-group">
-                    <button type="submit" class="btn btn-primary">追加</button>
+                    </div>
+                </details>
+                <div class="form-group settings-form-action">
+                    <button type="submit" class="btn btn-primary">追加する</button>
                 </div>
             </div>
         </form>
     </div>
 </div>
 
-<div class="content-card" style="margin-top: 24px;">
+<div class="content-card">
     <div class="content-card-header">
-        <h2>登録済みキーワード</h2>
+        <h2>登録済み</h2>
     </div>
     <div class="content-card-body">
         {% if keywords %}
-        <div class="keyword-tags" style="display: flex; flex-wrap: wrap; gap: 8px;">
+        <div class="settings-keyword-list">
             {% for kw in keywords %}
-            <div class="keyword-tag"
-                style="display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; background: #f5f5f5; border-radius: 20px; border: 1px solid #ddd;">
-                <span style="font-weight: 500;">{{ kw.keyword }}</span>
-                <span
-                    style="font-size: 0.75em; color: #666; background: #e0e0e0; padding: 2px 6px; border-radius: 4px;">
-                    {{ "部分一致" if kw.match_type == "partial" else "完全一致" }}
-                </span>
+            <div class="settings-keyword-item">
+                <div class="settings-keyword-copy">
+                    <span class="settings-keyword-text">{{ kw.keyword }}</span>
+                    {% if kw.match_type == "exact" %}
+                    <span class="settings-keyword-badge">ぴったり</span>
+                    {% endif %}
+                </div>
                 <form action="{{ url_for('settings.delete_keyword', keyword_id=kw.id) }}" method="POST"
-                    style="display: inline;">
+                    class="settings-delete-form">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                    <button type="submit"
-                        style="border: none; background: none; color: #d32f2f; cursor: pointer; font-size: 1.2em; padding: 0;"
-                        title="削除">×</button>
+                    <button type="submit" class="btn btn-muted settings-delete-button">削除</button>
                 </form>
             </div>
             {% endfor %}
         </div>
         {% else %}
-        <p style="text-align: center; color: #666;">まだ除外キーワードが登録されていません。</p>
+        <p class="text-muted settings-empty">まだ登録されていません。</p>
         {% endif %}
     </div>
 </div>
 
-<div class="content-card" style="margin-top: 24px;">
+<div class="content-card">
     <div class="content-card-header">
-        <h2>よく使われる除外キーワード</h2>
+        <h2>よく使う例</h2>
     </div>
     <div class="content-card-body">
-        <p style="color: #666; margin-bottom: 12px;">参考として、よく除外に使われるキーワードの例です：</p>
-        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-            <span class="example-tag"
-                style="padding: 6px 12px; background: #e3f2fd; border-radius: 16px; font-size: 0.9em;">ジャンク</span>
-            <span class="example-tag"
-                style="padding: 6px 12px; background: #e3f2fd; border-radius: 16px; font-size: 0.9em;">専用</span>
-            <span class="example-tag"
-                style="padding: 6px 12px; background: #e3f2fd; border-radius: 16px; font-size: 0.9em;">訳あり</span>
-            <span class="example-tag"
-                style="padding: 6px 12px; background: #e3f2fd; border-radius: 16px; font-size: 0.9em;">確認用</span>
-            <span class="example-tag"
-                style="padding: 6px 12px; background: #e3f2fd; border-radius: 16px; font-size: 0.9em;">部品取り</span>
-            <span class="example-tag"
-                style="padding: 6px 12px; background: #e3f2fd; border-radius: 16px; font-size: 0.9em;">まとめ売り</span>
-            <span class="example-tag"
-                style="padding: 6px 12px; background: #e3f2fd; border-radius: 16px; font-size: 0.9em;">難あり</span>
+        <div class="settings-example-list">
+            {% for example in ["ジャンク", "専用", "訳あり", "確認用", "部品取り", "まとめ売り", "難あり"] %}
+            <button type="button" class="settings-example-button" data-keyword-example="{{ example }}">{{ example }}</button>
+            {% endfor %}
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.querySelectorAll('[data-keyword-example]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            const input = document.getElementById('keyword');
+            if (!input) {
+                return;
+            }
+            input.value = button.dataset.keywordExample || '';
+            input.focus();
+        });
+    });
+</script>
 {% endblock %}

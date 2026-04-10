@@ -11,6 +11,7 @@ from werkzeug.utils import secure_filename
 from database import SessionLocal
 from models import Shop, Product, DescriptionTemplate
 from services.image_service import IMAGE_STORAGE_PATH
+from services.rich_text import normalize_rich_text
 
 shops_bp = Blueprint('shops', __name__)
 
@@ -262,7 +263,7 @@ def manage_templates():
     try:
         if request.method == "POST":
             name = request.form.get("name")
-            content = request.form.get("content")
+            content = normalize_rich_text(request.form.get("content"))
             if name and content:
                 new_template = DescriptionTemplate(name=name, content=content)
                 session_db.add(new_template)
