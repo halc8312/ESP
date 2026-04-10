@@ -62,6 +62,7 @@ ADDITIVE_STARTUP_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("scrape_jobs", "progress_total", "ALTER TABLE scrape_jobs ADD COLUMN progress_total INTEGER"),
     ("scrape_jobs", "result_payload", "ALTER TABLE scrape_jobs ADD COLUMN result_payload TEXT"),
     ("scrape_jobs", "error_payload", "ALTER TABLE scrape_jobs ADD COLUMN error_payload TEXT"),
+    ("scrape_jobs", "tracker_dismissed_at", "ALTER TABLE scrape_jobs ADD COLUMN tracker_dismissed_at TIMESTAMP"),
     ("scrape_job_events", "payload", "ALTER TABLE scrape_job_events ADD COLUMN payload TEXT"),
     ("scrape_job_events", "created_at", "ALTER TABLE scrape_job_events ADD COLUMN created_at TIMESTAMP"),
 )

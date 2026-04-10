@@ -159,6 +159,7 @@ def test_apply_additive_startup_migrations_backfills_scrape_job_columns():
     assert "progress_total" in columns
     assert "result_payload" in columns
     assert "error_payload" in columns
+    assert "tracker_dismissed_at" in columns
 
 
 def test_inspect_additive_schema_drift_reports_missing_scrape_job_columns():
@@ -195,4 +196,5 @@ def test_inspect_additive_schema_drift_reports_missing_scrape_job_columns():
 
     assert snapshot["ready"] is False
     assert "scrape_jobs.context_payload" in snapshot["missing_columns"]
+    assert "scrape_jobs.tracker_dismissed_at" in snapshot["missing_columns"]
     assert "scrape_job_events" in snapshot["missing_tables"]

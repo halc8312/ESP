@@ -2,7 +2,8 @@ import re
 
 import pytest
 
-from models import Product, Shop, User
+from models import Product, ScrapeJob, Shop, User
+from time_utils import utc_now
 
 
 class FakeQueue:
@@ -437,6 +438,129 @@ def test_scrape_jobs_api_hides_other_users_jobs(client, db_session, monkeypatch)
     assert response.json['jobs'] == []
 
 
+def test_scrape_jobs_api_hides_dismissed_terminal_jobs(client, db_session, monkeypatch):
+    user = login_user(client, db_session, 'jobs_dismissed_user')
+    dismissed_at = utc_now()
+    db_session.add(
+        ScrapeJob(
+            job_id='job-dismissed-1',
+            logical_job_id='job-dismissed-1',
+            status='completed',
+            site='mercari',
+            mode='persist',
+            requested_by=user.id,
+            result_summary='{"items_count": 1}',
+            created_at=utc_now(),
+            updated_at=utc_now(),
+            finished_at=utc_now(),
+            tracker_dismissed_at=dismissed_at,
+        )
+    )
+    db_session.commit()
+
+    fake_queue = FakeQueue()
+    fake_queue.jobs['job-dismissed-1'] = {
+        'job_id': 'job-dismissed-1',
+        'status': 'completed',
+        'site': 'mercari',
+        'result': {'items': [], 'persist_to_db': True},
+        'error': None,
+        'elapsed_seconds': 0.1,
+        'queue_position': None,
+        'context': {'persist_to_db': True},
+        'created_at': 10.0,
+        'finished_at': 12.0,
+        'user_id': user.id,
+    }
+
+    monkeypatch.setattr('routes.api.get_queue', lambda: fake_queue)
+
+    response = client.get('/api/scrape/jobs')
+    assert response.status_code == 200
+    assert response.json['jobs'] == []
+
+
+def test_scrape_job_dismiss_endpoint_marks_job_hidden(client, db_session):
+    user = login_user(client, db_session, 'jobs_dismiss_endpoint_user')
+    job = ScrapeJob(
+        job_id='job-dismiss-api-1',
+        logical_job_id='job-dismiss-api-1',
+        status='completed',
+        site='mercari',
+        mode='persist',
+        requested_by=user.id,
+        result_summary='{"items_count": 1}',
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        finished_at=utc_now(),
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    response = client.post('/api/scrape/jobs/job-dismiss-api-1/dismiss')
+    assert response.status_code == 200
+    assert response.json['ok'] is True
+
+    db_session.expire_all()
+    refreshed = db_session.query(ScrapeJob).filter_by(job_id='job-dismiss-api-1').one()
+    assert refreshed.tracker_dismissed_at is not None
+
+
+def test_scrape_jobs_dismiss_batch_endpoint_marks_multiple_jobs_hidden(client, db_session):
+    user = login_user(client, db_session, 'jobs_dismiss_batch_user')
+    finished_job = ScrapeJob(
+        job_id='job-dismiss-batch-1',
+        logical_job_id='job-dismiss-batch-1',
+        status='completed',
+        site='mercari',
+        mode='persist',
+        requested_by=user.id,
+        result_summary='{"items_count": 1}',
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        finished_at=utc_now(),
+    )
+    failed_job = ScrapeJob(
+        job_id='job-dismiss-batch-2',
+        logical_job_id='job-dismiss-batch-2',
+        status='failed',
+        site='mercari',
+        mode='persist',
+        requested_by=user.id,
+        error_message='failed',
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        finished_at=utc_now(),
+    )
+    running_job = ScrapeJob(
+        job_id='job-dismiss-batch-3',
+        logical_job_id='job-dismiss-batch-3',
+        status='running',
+        site='mercari',
+        mode='persist',
+        requested_by=user.id,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add_all([finished_job, failed_job, running_job])
+    db_session.commit()
+
+    response = client.post('/api/scrape/jobs/dismiss-batch', json={
+        'job_ids': ['job-dismiss-batch-1', 'job-dismiss-batch-2', 'job-dismiss-batch-3']
+    })
+    assert response.status_code == 200
+    assert response.json['ok'] is True
+    assert response.json['dismissed_count'] == 2
+
+    db_session.expire_all()
+    refreshed_finished = db_session.query(ScrapeJob).filter_by(job_id='job-dismiss-batch-1').one()
+    refreshed_failed = db_session.query(ScrapeJob).filter_by(job_id='job-dismiss-batch-2').one()
+    refreshed_running = db_session.query(ScrapeJob).filter_by(job_id='job-dismiss-batch-3').one()
+    assert refreshed_finished.tracker_dismissed_at is not None
+    assert refreshed_failed.tracker_dismissed_at is not None
+    assert refreshed_running.tracker_dismissed_at is None
+
+
 def test_scrape_form_renders_tracker_config(client, db_session):
     login_user(client, db_session, 'scrape_form_render_user')
 
@@ -448,3 +572,6 @@ def test_scrape_form_renders_tracker_config(client, db_session):
     assert b'globalScrapeTrackerPill' in response.data
     assert b'globalScrapeTrackerSheet' in response.data
     assert b'globalScrapeTrackerMobileList' in response.data
+    assert b'globalScrapeTrackerDismissAll' in response.data
+    assert b'globalScrapeTrackerSheetDismissAll' in response.data
+    assert b'data-dismiss-batch-url=' in response.data

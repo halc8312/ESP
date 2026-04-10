@@ -3190,6 +3190,28 @@ button:active {
     display: block;
 }
 
+.global-scrape-tracker-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
+}
+
+.global-scrape-tracker-toolbar-button {
+    border: 0;
+    background: rgba(255, 255, 255, 0.94);
+    color: #475569;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 999px;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+.global-scrape-tracker-toolbar-button:hover {
+    color: #0f172a;
+}
+
 .global-scrape-tracker-list {
     display: grid;
     gap: 10px;
@@ -3304,6 +3326,12 @@ button:active {
     gap: 12px;
 }
 
+.global-scrape-tracker-sheet-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
 .global-scrape-tracker-sheet-title {
     margin: 0 0 2px;
     color: #0f172a;
@@ -3318,6 +3346,7 @@ button:active {
     font-weight: 600;
 }
 
+.global-scrape-tracker-sheet-action,
 .global-scrape-tracker-sheet-close {
     border: 0;
     background: transparent;
@@ -3892,6 +3921,10 @@ button:active {
     .global-scrape-tracker-sheet .scrape-progress-card {
         border-radius: 16px;
         box-shadow: 0 12px 26px rgba(15, 23, 42, 0.12);
+    }
+
+    .global-scrape-tracker-sheet-actions {
+        gap: 10px;
     }
 
     .global-scrape-tracker-sheet .scrape-progress-shell {

@@ -252,6 +252,7 @@ class ScrapeJob(Base):
     result_payload = Column(Text)
     error_message = Column(Text)
     error_payload = Column(Text)
+    tracker_dismissed_at = Column(DateTime, index=True)
 
     started_at = Column(DateTime)
     finished_at = Column(DateTime)

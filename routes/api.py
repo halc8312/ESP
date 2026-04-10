@@ -7,6 +7,7 @@ from flask_login import login_required, current_user
 from database import SessionLocal
 from models import Product
 from services.queue_backend import get_queue_backend, serialize_scrape_job_for_api
+from services.scrape_job_store import dismiss_job_record, dismiss_job_records, list_dismissed_job_ids_for_user
 from time_utils import utc_now
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
@@ -112,14 +113,46 @@ def get_scrape_jobs():
     raw_limit = request.args.get("limit", "10")
     limit = int(raw_limit) if raw_limit.isdigit() else 10
     limit = max(1, min(limit, 10))
+    fetch_limit = min(30, max(limit, limit * 3))
 
     queue = get_queue()
     jobs = queue.get_jobs_for_user(
         user_id=current_user.id,
-        limit=limit,
+        limit=fetch_limit,
         include_terminal=True,
     )
-    return jsonify({"jobs": [serialize_scrape_job_for_api(job) for job in jobs]})
+    dismissed_job_ids = list_dismissed_job_ids_for_user(current_user.id, limit=50)
+    visible_jobs = [
+        job for job in jobs
+        if not (
+            str(job.get("status") or "") in {"completed", "failed"}
+            and str(job.get("job_id") or "") in dismissed_job_ids
+        )
+    ]
+    return jsonify({"jobs": [serialize_scrape_job_for_api(job) for job in visible_jobs[:limit]]})
+
+
+@api_bp.route("/scrape/jobs/<job_id>/dismiss", methods=["POST"])
+@login_required
+def dismiss_scrape_job(job_id):
+    """小窓トラッカーから閉じたジョブを再表示しないよう記録する。"""
+    dismissed = dismiss_job_record(job_id, current_user.id)
+    if not dismissed:
+        return jsonify({"error": "Job not found"}), 404
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@api_bp.route("/scrape/jobs/dismiss-batch", methods=["POST"])
+@login_required
+def dismiss_scrape_jobs():
+    """小窓トラッカー上の完了済みジョブをまとめて閉じる。"""
+    payload = request.get_json(silent=True) or {}
+    raw_job_ids = payload.get("job_ids")
+    if not isinstance(raw_job_ids, list):
+        return jsonify({"error": "job_ids must be an array"}), 400
+
+    dismissed_count = dismiss_job_records(raw_job_ids[:50], current_user.id)
+    return jsonify({"ok": True, "dismissed_count": dismissed_count})
 
 
 @api_bp.route("/products/<int:product_id>/inline-update", methods=["PATCH"])

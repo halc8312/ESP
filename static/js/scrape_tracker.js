@@ -7,6 +7,7 @@
     }
 
     var desktopContainer = document.getElementById("globalScrapeTrackerDesktop");
+    var toolbarEl = document.getElementById("globalScrapeTrackerToolbar");
     var listEl = document.getElementById("globalScrapeTrackerList");
     var overflowEl = document.getElementById("globalScrapeTrackerOverflow");
     var pillEl = document.getElementById("globalScrapeTrackerPill");
@@ -16,10 +17,13 @@
     var backdropEl = document.getElementById("globalScrapeTrackerBackdrop");
     var sheetEl = document.getElementById("globalScrapeTrackerSheet");
     var sheetHeaderEl = document.getElementById("globalScrapeTrackerSheetHeader");
+    var sheetDismissAllEl = document.getElementById("globalScrapeTrackerSheetDismissAll");
     var sheetCloseEl = document.getElementById("globalScrapeTrackerSheetClose");
     var sheetCountEl = document.getElementById("globalScrapeTrackerSheetCount");
     var mobileListEl = document.getElementById("globalScrapeTrackerMobileList");
     var jobsUrl = root.dataset.jobsUrl;
+    var dismissUrlTemplate = root.dataset.dismissUrlTemplate || "";
+    var dismissBatchUrl = root.dataset.dismissBatchUrl || "";
     var userId = root.dataset.userId || "anonymous";
     var storageKey = "esp_scrape_tracker_dismissed_" + userId;
     var maxVisibleJobs = 3;
@@ -39,6 +43,11 @@
 
     function nowMs() {
         return Date.now();
+    }
+
+    function getCsrfToken() {
+        var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+        return csrfMeta ? String(csrfMeta.content || "").trim() : "";
     }
 
     function loadDismissed() {
@@ -221,6 +230,13 @@
         saveDismissed();
     }
 
+    function buildDismissUrl(jobId) {
+        if (!dismissUrlTemplate) {
+            return "";
+        }
+        return dismissUrlTemplate.replace("__JOB_ID__", encodeURIComponent(jobId));
+    }
+
     function dismissJob(jobId) {
         var job = state.jobs.get(jobId);
         if (!job || !isTerminal(job)) {
@@ -232,6 +248,62 @@
         state.jobs.delete(jobId);
         render();
         schedulePolling();
+
+        var dismissUrl = buildDismissUrl(jobId);
+        if (!dismissUrl) {
+            return;
+        }
+
+        fetch(dismissUrl, {
+            method: "POST",
+            headers: {
+                "Accept": "application/json",
+                "X-CSRFToken": getCsrfToken()
+            }
+        }).catch(function () {
+            // Keep the local dismissal even if the server-side ack fails.
+        });
+    }
+
+    function getDismissibleJobIds() {
+        return state.visibleJobs
+            .filter(function (job) {
+                return isTerminal(job);
+            })
+            .map(function (job) {
+                return job.job_id;
+            });
+    }
+
+    function dismissVisibleJobs() {
+        var jobIds = getDismissibleJobIds();
+        if (!jobIds.length) {
+            return;
+        }
+
+        jobIds.forEach(function (jobId) {
+            state.dismissed[jobId] = nowMs();
+            state.jobs.delete(jobId);
+        });
+        saveDismissed();
+        render();
+        schedulePolling();
+
+        if (!dismissBatchUrl) {
+            return;
+        }
+
+        fetch(dismissBatchUrl, {
+            method: "POST",
+            headers: {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "X-CSRFToken": getCsrfToken()
+            },
+            body: JSON.stringify({ job_ids: jobIds })
+        }).catch(function () {
+            // Keep the local dismissal even if the server-side ack fails.
+        });
     }
 
     function sortJobs(jobs) {
@@ -336,6 +408,11 @@
     }
 
     function renderDesktop(visibleJobs) {
+        var dismissibleCount = visibleJobs.filter(isTerminal).length;
+
+        if (toolbarEl) {
+            toolbarEl.hidden = dismissibleCount <= 1;
+        }
         listEl.innerHTML = "";
 
         visibleJobs.slice(0, maxVisibleJobs).forEach(function (job) {
@@ -362,11 +439,15 @@
     }
 
     function renderMobileSheet(visibleJobs) {
+        var dismissibleCount = visibleJobs.filter(isTerminal).length;
         mobileListEl.innerHTML = "";
         visibleJobs.forEach(function (job) {
             mobileListEl.appendChild(buildCard(job, "mobile"));
         });
         sheetCountEl.textContent = visibleJobs.length === 1 ? "1件" : visibleJobs.length + "件";
+        if (sheetDismissAllEl) {
+            sheetDismissAllEl.hidden = dismissibleCount <= 1;
+        }
     }
 
     function render() {
@@ -381,6 +462,12 @@
         state.visibleJobs = visibleJobs;
 
         if (!visibleJobs.length) {
+            if (toolbarEl) {
+                toolbarEl.hidden = true;
+            }
+            if (sheetDismissAllEl) {
+                sheetDismissAllEl.hidden = true;
+            }
             listEl.innerHTML = "";
             mobileListEl.innerHTML = "";
             overflowEl.hidden = true;
@@ -475,6 +562,23 @@
         event.stopPropagation();
         closeMobileSheet();
     });
+    if (toolbarEl) {
+        toolbarEl.addEventListener("click", function (event) {
+            event.stopPropagation();
+        });
+    }
+    if (sheetDismissAllEl) {
+        sheetDismissAllEl.addEventListener("click", function (event) {
+            event.stopPropagation();
+            dismissVisibleJobs();
+        });
+    }
+    var dismissAllButton = document.getElementById("globalScrapeTrackerDismissAll");
+    if (dismissAllButton) {
+        dismissAllButton.addEventListener("click", function () {
+            dismissVisibleJobs();
+        });
+    }
     sheetHeaderEl.addEventListener("click", closeMobileSheet);
     sheetHeaderEl.addEventListener("keydown", function (event) {
         if (event.key === "Enter" || event.key === " ") {
@@ -497,7 +601,8 @@
     window.ESPScrapeTracker = {
         registerJob: registerJob,
         refreshNow: refreshNow,
-        dismissJob: dismissJob
+        dismissJob: dismissJob,
+        dismissVisibleJobs: dismissVisibleJobs
     };
 
     refreshNow();

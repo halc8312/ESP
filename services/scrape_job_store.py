@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from flask import current_app, has_app_context
+from sqlalchemy import or_
 
 from database import SessionLocal
 from models import ScrapeJob, ScrapeJobEvent
@@ -375,6 +376,7 @@ def _serialize_job_record(record: ScrapeJob) -> dict[str, Any]:
         "updated_at": record.updated_at,
         "result_summary": _json_loads(record.result_summary),
         "error_payload": _json_loads(record.error_payload),
+        "tracker_dismissed_at": record.tracker_dismissed_at,
         "mode": record.mode,
         "request_payload": _json_loads(record.request_payload),
     }
@@ -405,8 +407,94 @@ def list_job_records_for_user(
         query = session.query(ScrapeJob).filter_by(requested_by=user_id)
         if not include_terminal:
             query = query.filter(~ScrapeJob.status.in_(tuple(SCRAPE_JOB_TERMINAL_STATUSES)))
+        else:
+            query = query.filter(
+                or_(
+                    ScrapeJob.tracker_dismissed_at.is_(None),
+                    ~ScrapeJob.status.in_(tuple(SCRAPE_JOB_TERMINAL_STATUSES)),
+                )
+            )
         records = query.order_by(ScrapeJob.created_at.desc()).limit(safe_limit).all()
         return [_serialize_job_record(record) for record in records]
+    finally:
+        session.close()
+
+
+def list_dismissed_job_ids_for_user(user_id: int, limit: int = 100) -> set[str]:
+    safe_limit = max(1, int(limit or 100))
+    session = SessionLocal()
+    try:
+        records = (
+            session.query(ScrapeJob.job_id)
+            .filter(
+                ScrapeJob.requested_by == user_id,
+                ScrapeJob.tracker_dismissed_at.isnot(None),
+                ScrapeJob.status.in_(tuple(SCRAPE_JOB_TERMINAL_STATUSES)),
+            )
+            .order_by(ScrapeJob.tracker_dismissed_at.desc(), ScrapeJob.created_at.desc())
+            .limit(safe_limit)
+            .all()
+        )
+        return {record.job_id for record in records}
+    finally:
+        session.close()
+
+
+def dismiss_job_record(job_id: str, user_id: int) -> bool:
+    session = SessionLocal()
+    try:
+        record = (
+            session.query(ScrapeJob)
+            .filter_by(job_id=job_id, requested_by=user_id)
+            .one_or_none()
+        )
+        if record is None or record.status not in SCRAPE_JOB_TERMINAL_STATUSES:
+            return False
+        if record.tracker_dismissed_at is None:
+            record.tracker_dismissed_at = _utcnow()
+            record.updated_at = _utcnow()
+            _record_event(session, job_id, "tracker_dismissed", None)
+            session.commit()
+        return True
+    finally:
+        session.close()
+
+
+def dismiss_job_records(job_ids: list[str], user_id: int) -> int:
+    normalized_ids = []
+    seen_ids: set[str] = set()
+    for raw_job_id in job_ids or []:
+        job_id = str(raw_job_id or "").strip()
+        if not job_id or job_id in seen_ids:
+            continue
+        seen_ids.add(job_id)
+        normalized_ids.append(job_id)
+
+    if not normalized_ids:
+        return 0
+
+    session = SessionLocal()
+    try:
+        records = (
+            session.query(ScrapeJob)
+            .filter(
+                ScrapeJob.requested_by == user_id,
+                ScrapeJob.job_id.in_(normalized_ids),
+                ScrapeJob.status.in_(tuple(SCRAPE_JOB_TERMINAL_STATUSES)),
+                ScrapeJob.tracker_dismissed_at.is_(None),
+            )
+            .all()
+        )
+        if not records:
+            return 0
+
+        dismissed_at = _utcnow()
+        for record in records:
+            record.tracker_dismissed_at = dismissed_at
+            record.updated_at = dismissed_at
+            _record_event(session, record.job_id, "tracker_dismissed", None)
+        session.commit()
+        return len(records)
     finally:
         session.close()
 
