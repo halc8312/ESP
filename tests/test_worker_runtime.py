@@ -79,6 +79,7 @@ def test_create_web_app_runs_additive_patchset_after_alembic(monkeypatch):
 
     monkeypatch.setattr("app.bootstrap_schema", lambda mode: "alembic")
     monkeypatch.setattr("app.run_legacy_startup_migrations", lambda: captured.append("patched"))
+    monkeypatch.setattr("app.ensure_additive_schema_ready", lambda: {"ready": True, "blockers": []})
 
     app = create_web_app(
         config_overrides={
@@ -89,6 +90,23 @@ def test_create_web_app_runs_additive_patchset_after_alembic(monkeypatch):
 
     assert app.extensions["esp_schema_bootstrap_mode"] == "alembic"
     assert captured == ["patched"]
+
+
+def test_create_web_app_fails_fast_when_schema_drift_remains(monkeypatch):
+    monkeypatch.setattr("app.bootstrap_schema", lambda mode: "alembic")
+    monkeypatch.setattr("app.run_legacy_startup_migrations", lambda: {"applied": [], "errors": []})
+    monkeypatch.setattr(
+        "app.ensure_additive_schema_ready",
+        lambda: (_ for _ in ()).throw(RuntimeError("Database schema drift remains after bootstrap: scrape_jobs.tracker_dismissed_at")),
+    )
+
+    with pytest.raises(RuntimeError, match="tracker_dismissed_at"):
+        create_web_app(
+            config_overrides={
+                "TESTING": True,
+                "SCRAPE_QUEUE_BACKEND": "rq",
+            }
+        )
 
 
 def test_single_service_web_scheduler_does_not_require_redis_lock():
@@ -241,6 +259,7 @@ def test_build_worker_runtime_uses_queue_and_worker_imports(monkeypatch):
     monkeypatch.setattr("services.worker_runtime.Redis", FakeRedis)
     monkeypatch.setattr("services.worker_runtime.import_rq_queue", lambda: FakeQueue)
     monkeypatch.setattr("services.worker_runtime.import_rq_simple_worker", lambda: FakeWorker)
+    monkeypatch.setattr("services.worker_runtime.ensure_additive_schema_ready", lambda: {"ready": True, "blockers": []})
     monkeypatch.setattr("services.worker_runtime.get_job_backlog_snapshot", lambda: {"queued_count": 0, "running_count": 0})
     monkeypatch.setattr("services.worker_runtime.reconcile_stalled_jobs", lambda: ["stalled-1"])
     monkeypatch.setattr("services.worker_runtime.warm_browser_pool", lambda: captured.setdefault("warmed", True))
@@ -291,6 +310,7 @@ def test_run_worker_can_skip_startup_reconcile(monkeypatch):
     monkeypatch.setattr("services.worker_runtime.Redis", FakeRedis)
     monkeypatch.setattr("services.worker_runtime.import_rq_queue", lambda: FakeQueue)
     monkeypatch.setattr("services.worker_runtime.import_rq_simple_worker", lambda: FakeWorker)
+    monkeypatch.setattr("services.worker_runtime.ensure_additive_schema_ready", lambda: {"ready": True, "blockers": []})
     monkeypatch.setattr("services.worker_runtime.get_job_backlog_snapshot", lambda: {"queued_count": 0, "running_count": 0})
     monkeypatch.setattr("services.worker_runtime.reconcile_stalled_jobs", lambda: captured.setdefault("reconciled", True))
     monkeypatch.setattr("services.worker_runtime.close_browser_pool", lambda: captured.setdefault("closed", True))
@@ -301,6 +321,22 @@ def test_run_worker_can_skip_startup_reconcile(monkeypatch):
     assert captured["worked"] is True
     assert captured["closed"] is True
     assert status == 0
+
+
+def test_run_worker_fails_fast_when_schema_drift_remains(monkeypatch):
+    app = create_worker_app(
+        config_overrides={
+            "SCRAPE_QUEUE_BACKEND": "rq",
+        }
+    )
+
+    monkeypatch.setattr(
+        "services.worker_runtime.ensure_additive_schema_ready",
+        lambda: (_ for _ in ()).throw(RuntimeError("Database schema drift remains after bootstrap: scrape_jobs.tracker_dismissed_at")),
+    )
+
+    with pytest.raises(RuntimeError, match="tracker_dismissed_at"):
+        run_worker(app)
 
 
 def test_run_worker_logs_backlog_before_and_after_reconcile(monkeypatch):
@@ -336,6 +372,7 @@ def test_run_worker_logs_backlog_before_and_after_reconcile(monkeypatch):
     monkeypatch.setattr("services.worker_runtime.Redis", FakeRedis)
     monkeypatch.setattr("services.worker_runtime.import_rq_queue", lambda: FakeQueue)
     monkeypatch.setattr("services.worker_runtime.import_rq_simple_worker", lambda: FakeWorker)
+    monkeypatch.setattr("services.worker_runtime.ensure_additive_schema_ready", lambda: {"ready": True, "blockers": []})
     monkeypatch.setattr("services.worker_runtime.get_job_backlog_snapshot", fake_backlog_snapshot)
     monkeypatch.setattr("services.worker_runtime.reconcile_stalled_jobs", lambda: [])
     monkeypatch.setattr("services.worker_runtime.close_browser_pool", lambda: captured.setdefault("closed", True))
@@ -379,6 +416,7 @@ def test_run_worker_warns_when_backlog_is_unhealthy(monkeypatch):
     monkeypatch.setattr("services.worker_runtime.Redis", FakeRedis)
     monkeypatch.setattr("services.worker_runtime.import_rq_queue", lambda: FakeQueue)
     monkeypatch.setattr("services.worker_runtime.import_rq_simple_worker", lambda: FakeWorker)
+    monkeypatch.setattr("services.worker_runtime.ensure_additive_schema_ready", lambda: {"ready": True, "blockers": []})
     monkeypatch.setattr(
         "services.worker_runtime.get_job_backlog_snapshot",
         lambda: {
@@ -476,6 +514,7 @@ def test_run_worker_emits_operational_alert_for_unhealthy_backlog(monkeypatch):
     monkeypatch.setattr("services.worker_runtime.Redis", FakeRedis)
     monkeypatch.setattr("services.worker_runtime.import_rq_queue", lambda: FakeQueue)
     monkeypatch.setattr("services.worker_runtime.import_rq_simple_worker", lambda: FakeWorker)
+    monkeypatch.setattr("services.worker_runtime.ensure_additive_schema_ready", lambda: {"ready": True, "blockers": []})
     monkeypatch.setattr(
         "services.worker_runtime.get_job_backlog_snapshot",
         lambda: {

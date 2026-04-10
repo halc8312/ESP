@@ -14,7 +14,8 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_database_url())
+configured_sqlalchemy_url = config.attributes.get("configured_sqlalchemy_url") or get_database_url()
+config.set_main_option("sqlalchemy.url", configured_sqlalchemy_url)
 target_metadata = Base.metadata
 
 

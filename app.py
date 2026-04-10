@@ -14,7 +14,7 @@ from flask_apscheduler import APScheduler
 from flask_login import LoginManager
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from database import SessionLocal, bootstrap_schema
+from database import SessionLocal, bootstrap_schema, ensure_additive_schema_ready
 from models import User
 from services.image_service import IMAGE_STORAGE_PATH
 
@@ -47,6 +47,7 @@ RUNTIME_DEFAULTS: dict[str, dict[str, Any]] = {
         "RUN_SCHEMA_BOOTSTRAP_ON_STARTUP": True,
         "SCHEMA_BOOTSTRAP_MODE": os.environ.get("SCHEMA_BOOTSTRAP_MODE", "auto"),
         "ENABLE_LEGACY_SCHEMA_PATCHSET": True,
+        "VERIFY_SCHEMA_DRIFT_ON_STARTUP": True,
         "ENABLE_SCHEDULER": False,
         "WEB_SCHEDULER_MODE": os.environ.get("WEB_SCHEDULER_MODE", "auto"),
         "REGISTER_BLUEPRINTS": True,
@@ -58,6 +59,7 @@ RUNTIME_DEFAULTS: dict[str, dict[str, Any]] = {
         "RUN_SCHEMA_BOOTSTRAP_ON_STARTUP": True,
         "SCHEMA_BOOTSTRAP_MODE": os.environ.get("SCHEMA_BOOTSTRAP_MODE", "auto"),
         "ENABLE_LEGACY_SCHEMA_PATCHSET": True,
+        "VERIFY_SCHEMA_DRIFT_ON_STARTUP": True,
         "ENABLE_SCHEDULER": False,
         "REGISTER_BLUEPRINTS": True,
         "REGISTER_BACKWARD_COMPAT_ALIASES": True,
@@ -307,7 +309,7 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
     return app
 
 
-def run_legacy_startup_migrations() -> None:
+def run_legacy_startup_migrations() -> dict[str, list[str]]:
     """Safely add missing columns to existing tables."""
     from database import apply_additive_startup_migrations
 
@@ -316,6 +318,7 @@ def run_legacy_startup_migrations() -> None:
         print(f"Migration: Added column {applied}")
     for error in results.get("errors", []):
         print(f"Migration error for {error}")
+    return results
 
 
 def _register_scheduler_jobs(app: Flask) -> None:
@@ -502,7 +505,15 @@ def initialize_app_runtime(app: Flask) -> Flask:
             applied_schema_mode = bootstrap_schema(app.config.get("SCHEMA_BOOTSTRAP_MODE", "auto"))
             app.extensions["esp_schema_bootstrap_mode"] = applied_schema_mode
             if applied_schema_mode != "disabled" and app.config.get("ENABLE_LEGACY_SCHEMA_PATCHSET"):
-                run_legacy_startup_migrations()
+                patch_results = run_legacy_startup_migrations() or {}
+                patch_errors = list(patch_results.get("errors") or [])
+                if patch_errors:
+                    raise RuntimeError(
+                        "Legacy startup patchset failed: " + "; ".join(str(error) for error in patch_errors)
+                    )
+            if applied_schema_mode != "disabled" and app.config.get("VERIFY_SCHEMA_DRIFT_ON_STARTUP"):
+                schema_snapshot = ensure_additive_schema_ready()
+                app.extensions["esp_schema_drift_snapshot"] = schema_snapshot
 
     if app.config.get("ENABLE_SCHEDULER"):
         start_scheduler(app)

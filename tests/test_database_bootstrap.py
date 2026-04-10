@@ -162,6 +162,123 @@ def test_apply_additive_startup_migrations_backfills_scrape_job_columns():
     assert "tracker_dismissed_at" in columns
 
 
+def test_apply_additive_startup_migrations_avoids_missing_column_probe_queries(monkeypatch):
+    class FakeInspector:
+        def __init__(self, table_columns):
+            self._table_columns = table_columns
+
+        def get_table_names(self):
+            return list(self._table_columns)
+
+        def get_columns(self, table_name):
+            return [{"name": name} for name in sorted(self._table_columns.get(table_name, set()))]
+
+    class FakeConnection:
+        class dialect:
+            supports_savepoints = False
+
+        def __init__(self):
+            self.table_columns = {
+                "scrape_jobs": {
+                    "job_id",
+                    "status",
+                    "site",
+                    "mode",
+                    "requested_by",
+                    "request_payload",
+                    "result_summary",
+                    "error_message",
+                    "started_at",
+                    "finished_at",
+                    "created_at",
+                    "updated_at",
+                }
+            }
+            self.statements = []
+
+        def execute(self, statement):
+            sql = str(statement)
+            self.statements.append(sql)
+            if sql.lstrip().upper().startswith("SELECT "):
+                raise AssertionError("missing-column probes should not use SELECT statements")
+            if sql.startswith("ALTER TABLE scrape_jobs ADD COLUMN "):
+                column_name = sql.split()[5]
+                self.table_columns.setdefault("scrape_jobs", set()).add(column_name)
+
+        def in_transaction(self):
+            return False
+
+        def commit(self):
+            return None
+
+        def rollback(self):
+            return None
+
+    fake_connection = FakeConnection()
+    monkeypatch.setattr(database, "inspect", lambda connection: FakeInspector(connection.table_columns))
+
+    results = database.apply_additive_startup_migrations(bind=fake_connection)
+
+    assert "scrape_jobs.tracker_dismissed_at" in results["applied"]
+    assert all(not statement.lstrip().upper().startswith("SELECT ") for statement in fake_connection.statements)
+
+
+def test_run_alembic_upgrade_for_database_url_backfills_tracker_dismissed_at_from_0003():
+    smoke_db = Path(f"test_db_alembic_upgrade_{uuid.uuid4().hex}.sqlite")
+    smoke_db_url = f"sqlite:///{smoke_db.resolve().as_posix()}"
+    smoke_engine = database.create_app_engine(smoke_db_url)
+
+    try:
+        with smoke_engine.begin() as connection:
+            connection.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"))
+            connection.execute(text("INSERT INTO alembic_version (version_num) VALUES ('20260329_0003')"))
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE scrape_jobs (
+                        job_id VARCHAR(64) PRIMARY KEY,
+                        logical_job_id VARCHAR(64),
+                        parent_job_id VARCHAR(64),
+                        status VARCHAR(32),
+                        site VARCHAR(32),
+                        mode VARCHAR(32),
+                        requested_by INTEGER,
+                        request_payload TEXT,
+                        context_payload TEXT,
+                        progress_current INTEGER,
+                        progress_total INTEGER,
+                        result_summary TEXT,
+                        result_payload TEXT,
+                        error_message TEXT,
+                        error_payload TEXT,
+                        started_at TIMESTAMP,
+                        finished_at TIMESTAMP,
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    )
+                    """
+                )
+            )
+
+        database.run_alembic_upgrade_for_database_url(smoke_db_url)
+
+        upgraded_engine = database.create_app_engine(smoke_db_url)
+        try:
+            columns = {column["name"] for column in inspect(upgraded_engine).get_columns("scrape_jobs")}
+            indexes = {index["name"] for index in inspect(upgraded_engine).get_indexes("scrape_jobs")}
+            with upgraded_engine.connect() as connection:
+                version_num = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        finally:
+            upgraded_engine.dispose()
+    finally:
+        smoke_engine.dispose()
+        smoke_db.unlink(missing_ok=True)
+
+    assert "tracker_dismissed_at" in columns
+    assert "ix_scrape_jobs_tracker_dismissed_at" in indexes
+    assert version_num == "20260411_0004"
+
+
 def test_inspect_additive_schema_drift_reports_missing_scrape_job_columns():
     smoke_db = Path(f"test_db_drift_{uuid.uuid4().hex}.sqlite")
     smoke_engine = database.create_app_engine(f"sqlite:///{smoke_db.as_posix()}")

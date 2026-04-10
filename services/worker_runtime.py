@@ -10,6 +10,7 @@ from typing import Any
 from flask import Flask
 from redis import Redis
 
+from database import ensure_additive_schema_ready
 from services.alerts import get_alert_dispatcher
 from services.rq_compat import import_rq_queue, import_rq_simple_worker
 from services.browser_pool import close_browser_pool, get_browser_pool_health, warm_browser_pool
@@ -203,6 +204,9 @@ def emit_backlog_operational_alert(
 
 
 def run_worker(app: Flask) -> int:
+    with app.app_context():
+        ensure_additive_schema_ready()
+
     runtime = build_worker_runtime(app)
     try:
         with app.app_context():

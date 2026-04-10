@@ -72,6 +72,28 @@ def init_db(bind=None):
     Base.metadata.create_all(bind or engine)
 
 
+def _collect_table_columns(connection, existing_tables: set[str] | None = None) -> tuple[set[str], dict[str, set[str]]]:
+    inspector = inspect(connection)
+    table_names = set(existing_tables or inspector.get_table_names())
+    table_columns = {
+        table_name: {column["name"] for column in inspector.get_columns(table_name)}
+        for table_name in table_names
+    }
+    return table_names, table_columns
+
+
+def _apply_additive_statement(connection, sql: str, *, owns_connection: bool) -> None:
+    supports_savepoints = bool(getattr(connection.dialect, "supports_savepoints", False))
+    if supports_savepoints:
+        with connection.begin_nested():
+            connection.execute(text(sql))
+        return
+
+    connection.execute(text(sql))
+    if owns_connection and connection.in_transaction():
+        connection.commit()
+
+
 def apply_additive_startup_migrations(bind=None) -> dict[str, list[str]]:
     connection = bind or engine.connect()
     owns_connection = bind is None
@@ -79,24 +101,24 @@ def apply_additive_startup_migrations(bind=None) -> dict[str, list[str]]:
     errors: list[str] = []
 
     try:
-        existing_tables = set(inspect(connection).get_table_names())
+        existing_tables, table_columns = _collect_table_columns(connection)
         for table, column, sql in ADDITIVE_STARTUP_MIGRATIONS:
             if table not in existing_tables:
                 continue
 
-            try:
-                connection.execute(text(f"SELECT {column} FROM {table} LIMIT 1"))
+            if column in table_columns.get(table, set()):
                 continue
-            except Exception:
-                pass
 
             try:
-                connection.execute(text(sql))
+                _apply_additive_statement(connection, sql, owns_connection=owns_connection)
                 applied.append(f"{table}.{column}")
+                table_columns.setdefault(table, set()).add(column)
             except Exception as exc:
+                if owns_connection and connection.in_transaction():
+                    connection.rollback()
                 errors.append(f"{table}.{column}: {exc}")
 
-        if owns_connection:
+        if owns_connection and connection.in_transaction():
             connection.commit()
 
         return {
@@ -113,12 +135,7 @@ def inspect_additive_schema_drift(bind=None) -> dict[str, object]:
     owns_connection = bind is None
 
     try:
-        inspector = inspect(connection)
-        existing_tables = set(inspector.get_table_names())
-        table_columns = {
-            table_name: {column["name"] for column in inspector.get_columns(table_name)}
-            for table_name in existing_tables
-        }
+        existing_tables, table_columns = _collect_table_columns(connection)
 
         tables_with_additive_expectations = sorted({table for table, _, _ in ADDITIVE_STARTUP_MIGRATIONS})
         missing_tables = [table for table in tables_with_additive_expectations if table not in existing_tables]
@@ -143,6 +160,16 @@ def inspect_additive_schema_drift(bind=None) -> dict[str, object]:
     finally:
         if owns_connection:
             connection.close()
+
+
+def ensure_additive_schema_ready(bind=None) -> dict[str, object]:
+    snapshot = inspect_additive_schema_drift(bind=bind)
+    blockers = list(snapshot.get("blockers") or [])
+    if blockers:
+        raise RuntimeError(
+            "Database schema drift remains after bootstrap: " + ", ".join(str(blocker) for blocker in blockers)
+        )
+    return snapshot
 
 
 def alembic_available() -> bool:
@@ -226,7 +253,7 @@ def run_alembic_upgrade(revision: str = "head", config_path: str = "alembic.ini"
     from alembic.config import Config
 
     config = Config(config_path)
-    config.set_main_option("sqlalchemy.url", get_database_url())
+    config.attributes["configured_sqlalchemy_url"] = get_database_url()
     command.upgrade(config, revision)
     return revision
 
@@ -243,7 +270,7 @@ def run_alembic_upgrade_for_database_url(
     from alembic.config import Config
 
     config = Config(config_path)
-    config.set_main_option("sqlalchemy.url", normalize_database_url(database_url))
+    config.attributes["configured_sqlalchemy_url"] = normalize_database_url(database_url)
     command.upgrade(config, revision)
     return revision
 
