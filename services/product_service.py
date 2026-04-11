@@ -167,7 +167,7 @@ def save_scraped_items_to_db(items, user_id: int, site: str = "mercari", shop_id
         session_db.commit()
 
         for product_id in repricing_product_ids:
-            update_product_selling_price(product_id)
+            update_product_selling_price(product_id, session=session_db)
 
         return new_count, updated_count
     except Exception as e:

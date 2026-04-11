@@ -25,7 +25,6 @@ class Shop(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False) # 所有者
     name = Column(String, nullable=False) # ユーザーごとにユニークであれば良いが、シンプルにグローバルユニークのままにするか、user_idと複合ユニークにするか。一旦nameはグローバルユニークの制約を外す方が無難だが、Existing logic relies on name. Let's keep name unique for now or just remove unique constraint if we want same shop names for diff users. Let's start with simple: user_id added.
 
-    name = Column(String, nullable=False) 
     logo_url = Column(String, nullable=True) # ショップロゴ画像URL
     created_at = Column(DateTime, default=utc_now)
     

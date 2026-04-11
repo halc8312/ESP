@@ -51,6 +51,9 @@ def import_form():
     try:
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         return render_template('import.html', all_shops=all_shops, preview_data=None)
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -142,6 +145,9 @@ def import_preview():
                 'warnings': warnings
             }
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 

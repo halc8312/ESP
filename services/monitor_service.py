@@ -140,7 +140,7 @@ class MonitorService:
                         
                         # Recalculate selling price if needed
                         if product.pricing_rule_id:
-                            update_product_selling_price(product.id)
+                            update_product_selling_price(product.id, session=session_db)
                     
                     # Always update timestamp even if no changes
                     product.updated_at = utc_now()
@@ -159,6 +159,7 @@ class MonitorService:
                     
         except Exception as e:
             logger.error(f"Patrol fatal error: {e}")
+            session_db.rollback()
         finally:
             session_db.close()
             logger.info("--- Patrol Finished ---")

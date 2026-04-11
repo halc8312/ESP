@@ -29,6 +29,9 @@ def trash_list():
             item.days_remaining = max(0, 30 - days_passed)
         
         return render_template('trash.html', items=items)
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -57,6 +60,9 @@ def trash_delete():
         session_db.commit()
         flash(f'{count}件をゴミ箱に移動しました', 'success')
         return redirect(request.referrer or url_for('main.index'))
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -86,6 +92,9 @@ def trash_restore():
         session_db.commit()
         flash(f'{count}件を復元しました', 'success')
         return redirect(url_for('trash.trash_list'))
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -118,6 +127,9 @@ def trash_purge():
         session_db.commit()
         flash(f'{count}件を完全に削除しました', 'success')
         return redirect(url_for('trash.trash_list'))
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -141,5 +153,8 @@ def purge_old_trash():
         
         session_db.commit()
         return count
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()

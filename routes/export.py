@@ -160,6 +160,9 @@ def export_shopify():
         response.headers["Content-Disposition"] = "attachment; filename=shopify_products.csv"
         response.headers["Content-type"] = "text/csv"
         return response
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -253,6 +256,9 @@ def export_ebay():
         resp.headers["Content-Type"] = "text/csv; charset=utf-8"
         resp.headers["Content-Disposition"] = 'attachment; filename="ebay_export.csv"'
         return resp
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -294,6 +300,9 @@ def export_stock_update():
         response.headers["Content-Disposition"] = "attachment; filename=shopify_stock_update.csv"
         response.headers["Content-type"] = "text/csv"
         return response
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -333,6 +342,9 @@ def export_price_update():
         response.headers["Content-Disposition"] = "attachment; filename=shopify_price_update.csv"
         response.headers["Content-type"] = "text/csv"
         return response
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -391,5 +403,8 @@ def export_images():
         response.headers["Content-Disposition"] = "attachment; filename=product_images.zip"
         response.headers["Content-type"] = "application/zip"
         return response
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
