@@ -275,6 +275,21 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
             "SCHEDULER_LOCK_KEY": os.environ.get("SCHEDULER_LOCK_KEY", "esp:scheduler:lock"),
             "SCHEDULER_LOCK_TTL_SECONDS": os.environ.get("SCHEDULER_LOCK_TTL_SECONDS", "120"),
             "WARM_BROWSER_POOL": os.environ.get("WARM_BROWSER_POOL", ""),
+            "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP": os.environ.get(
+                "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP",
+                "0",
+            ),
+            "WORKER_SELECTOR_REPAIR_LIMIT": os.environ.get("WORKER_SELECTOR_REPAIR_LIMIT", "1"),
+            "SELECTOR_REPAIR_MIN_SCORE": os.environ.get("SELECTOR_REPAIR_MIN_SCORE", "90"),
+            "SELECTOR_REPAIR_MIN_CANARIES": os.environ.get("SELECTOR_REPAIR_MIN_CANARIES", "2"),
+            "SELECTOR_REPAIR_CANARY_URLS_MERCARI_DETAIL": os.environ.get(
+                "SELECTOR_REPAIR_CANARY_URLS_MERCARI_DETAIL",
+                "",
+            ),
+            "SELECTOR_REPAIR_CANARY_URLS_SNKRDUNK_DETAIL": os.environ.get(
+                "SELECTOR_REPAIR_CANARY_URLS_SNKRDUNK_DETAIL",
+                "",
+            ),
             "SESSION_COOKIE_HTTPONLY": True,
             "SESSION_COOKIE_SAMESITE": "Lax",
             "SESSION_COOKIE_SECURE": _as_bool(os.environ.get("SESSION_COOKIE_SECURE", "")),

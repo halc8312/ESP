@@ -176,6 +176,8 @@ def test_load_worker_runtime_settings_reads_worker_flags():
             "RQ_WITH_SCHEDULER": "1",
             "WARM_BROWSER_POOL": "1",
             "WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP": "0",
+            "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP": "0",
+            "WORKER_SELECTOR_REPAIR_LIMIT": "7",
             "WORKER_BACKLOG_WARN_COUNT": "12",
             "WORKER_BACKLOG_WARN_AGE_SECONDS": "345",
         }
@@ -190,6 +192,8 @@ def test_load_worker_runtime_settings_reads_worker_flags():
     assert settings.with_scheduler is True
     assert settings.warm_browser_pool is True
     assert settings.reconcile_stalled_jobs_on_startup is False
+    assert settings.process_selector_repairs_on_startup is False
+    assert settings.selector_repair_limit == 7
     assert settings.backlog_warn_count == 12
     assert settings.backlog_warn_age_seconds == 345
 
@@ -318,6 +322,99 @@ def test_run_worker_can_skip_startup_reconcile(monkeypatch):
     status = run_worker(app)
 
     assert captured.get("reconciled") is None
+    assert captured["worked"] is True
+    assert captured["closed"] is True
+    assert status == 0
+
+
+def test_run_worker_processes_selector_repairs_on_startup(monkeypatch):
+    captured = {}
+
+    class FakeRedis:
+        @staticmethod
+        def from_url(redis_url):
+            return FakeRedis()
+
+    class FakeQueue:
+        def __init__(self, name, connection):
+            pass
+
+    class FakeWorker:
+        def __init__(self, queues, connection):
+            pass
+
+        def work(self, burst, with_scheduler):
+            captured["worked"] = True
+
+    app = create_worker_app(
+        config_overrides={
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP": True,
+            "WORKER_SELECTOR_REPAIR_LIMIT": 4,
+        }
+    )
+
+    monkeypatch.setattr("services.worker_runtime.Redis", FakeRedis)
+    monkeypatch.setattr("services.worker_runtime.import_rq_queue", lambda: FakeQueue)
+    monkeypatch.setattr("services.worker_runtime.import_rq_simple_worker", lambda: FakeWorker)
+    monkeypatch.setattr("services.worker_runtime.ensure_additive_schema_ready", lambda: {"ready": True, "blockers": []})
+    monkeypatch.setattr("services.worker_runtime.get_job_backlog_snapshot", lambda: {"queued_count": 0, "running_count": 0})
+    monkeypatch.setattr("services.worker_runtime.reconcile_stalled_jobs", lambda: [])
+    monkeypatch.setattr(
+        "services.worker_runtime.process_pending_repair_candidates",
+        lambda limit: captured.setdefault("repair_limits", []).append(limit) or {"promoted": 1},
+    )
+    monkeypatch.setattr("services.worker_runtime.close_browser_pool", lambda: captured.setdefault("closed", True))
+
+    status = run_worker(app)
+
+    assert captured["repair_limits"] == [4]
+    assert captured["worked"] is True
+    assert captured["closed"] is True
+    assert status == 0
+
+
+def test_run_worker_can_skip_selector_repairs_on_startup(monkeypatch):
+    captured = {}
+
+    class FakeRedis:
+        @staticmethod
+        def from_url(redis_url):
+            return FakeRedis()
+
+    class FakeQueue:
+        def __init__(self, name, connection):
+            pass
+
+    class FakeWorker:
+        def __init__(self, queues, connection):
+            pass
+
+        def work(self, burst, with_scheduler):
+            captured["worked"] = True
+
+    app = create_worker_app(
+        config_overrides={
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP": False,
+        }
+    )
+
+    monkeypatch.setattr("services.worker_runtime.Redis", FakeRedis)
+    monkeypatch.setattr("services.worker_runtime.import_rq_queue", lambda: FakeQueue)
+    monkeypatch.setattr("services.worker_runtime.import_rq_simple_worker", lambda: FakeWorker)
+    monkeypatch.setattr("services.worker_runtime.ensure_additive_schema_ready", lambda: {"ready": True, "blockers": []})
+    monkeypatch.setattr("services.worker_runtime.get_job_backlog_snapshot", lambda: {"queued_count": 0, "running_count": 0})
+    monkeypatch.setattr("services.worker_runtime.reconcile_stalled_jobs", lambda: [])
+    monkeypatch.setattr(
+        "services.worker_runtime.process_pending_repair_candidates",
+        lambda limit: captured.setdefault("repair_called", True),
+    )
+    monkeypatch.setattr("services.worker_runtime.close_browser_pool", lambda: captured.setdefault("closed", True))
+
+    status = run_worker(app)
+
+    assert captured.get("repair_called") is None
     assert captured["worked"] is True
     assert captured["closed"] is True
     assert status == 0

@@ -27,6 +27,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from services.alerts import get_alert_dispatcher
+from services.page_state_classifier import classify_page_state
+from services.repair_store import record_repair_candidate
 
 logger = logging.getLogger("selector_healer")
 
@@ -94,6 +96,51 @@ def _save_selectors(data: dict) -> None:
         load_selectors(force_reload=True)
     except Exception:
         pass
+
+
+def _assess_page_state(site: str, page, page_type: str):
+    try:
+        return classify_page_state(site, page, page_type=page_type)
+    except Exception as exc:
+        logger.warning("[%s/%s] Page-state classification failed, allowing legacy healing path: %s", site, page_type, exc)
+        return None
+
+
+def evaluate_selector_candidate(
+    page,
+    site: str,
+    page_type: str,
+    field: str,
+    selector: str,
+    *,
+    parser: str = "scrapling",
+) -> dict[str, Any]:
+    adapter = _get_adapter(parser)
+    fp_config = get_healer()._get_field_config(site, page_type, field)
+    validators = fp_config.get("validators", {})
+    elements = adapter.query_all(page, str(selector or "").strip())
+
+    if field == "images":
+        urls = []
+        for element in elements:
+            src = adapter.get_attr(element, "src") or adapter.get_attr(element, "data-src")
+            if src and _validate_url(src, validators) and src not in urls:
+                urls.append(src)
+        return {
+            "ok": bool(urls),
+            "value": urls,
+            "match_count": len(elements),
+        }
+
+    value = ""
+    if elements:
+        value = adapter.get_text(elements[0])
+
+    return {
+        "ok": bool(value and _validate_text(value, validators)),
+        "value": value,
+        "match_count": len(elements),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +588,25 @@ class SelectorHealer:
         logger.info("[%s/%s/%s] All %d selectors failed, attempting self-healing...",
                     site, page_type, field, len(selectors))
 
+        assessment = _assess_page_state(site, page, page_type)
+        if assessment is not None and not assessment.allow_healing:
+            self._notify_selector_issue(
+                event_type="heal_skipped",
+                site=site,
+                page_type=page_type,
+                field=field,
+                severity="warning",
+                message="Self-healing was skipped because the page state was not classified as healthy.",
+                details={
+                    "reason": "page_state_disallowed",
+                    "page_state": assessment.state,
+                    "page_state_reasons": list(assessment.reasons),
+                    "selector_count": len(selectors),
+                    "parser": parser,
+                },
+            )
+            return "", False
+
         # --- Phase 2: Fingerprint-based rediscovery ---
         if not fingerprint:
             logger.debug("No fingerprint available for %s/%s/%s", site, page_type, field)
@@ -616,6 +682,21 @@ class SelectorHealer:
                     message="Selector healing succeeded in memory but could not be persisted.",
                     details={"reason": "selector_persist_failed", "new_selector": new_selector, "score": round(score, 2)},
                 )
+            record_repair_candidate(
+                site=site,
+                page_type=page_type,
+                field=field,
+                parser=parser,
+                proposed_selector=new_selector,
+                source_selector=old_first,
+                score=score,
+                page_state="healthy",
+                details={
+                    "persisted_to_json": persisted,
+                    "page_url": str(getattr(page, "url", "") or ""),
+                    "selector_count": len(selectors),
+                },
+            )
             self._record_low_confidence_hit(site, page_type, field, score, new_selector)
             return value, True
         else:
@@ -659,6 +740,25 @@ class SelectorHealer:
 
         logger.info("[%s/%s/images] All %d selectors failed, attempting self-healing...",
                     site, page_type, len(selectors))
+
+        assessment = _assess_page_state(site, page, page_type)
+        if assessment is not None and not assessment.allow_healing:
+            self._notify_selector_issue(
+                event_type="heal_skipped",
+                site=site,
+                page_type=page_type,
+                field="images",
+                severity="warning",
+                message="Image healing was skipped because the page state was not classified as healthy.",
+                details={
+                    "reason": "page_state_disallowed",
+                    "page_state": assessment.state,
+                    "page_state_reasons": list(assessment.reasons),
+                    "selector_count": len(selectors),
+                    "parser": parser,
+                },
+            )
+            return [], False
 
         # --- Phase 2: Fingerprint scan for all image elements ---
         if not fingerprint:
@@ -714,6 +814,21 @@ class SelectorHealer:
                         message="Image healing succeeded in memory but could not be persisted.",
                         details={"reason": "selector_persist_failed", "new_selector": new_selector, "score": 100},
                     )
+                record_repair_candidate(
+                    site=site,
+                    page_type=page_type,
+                    field="images",
+                    parser=parser,
+                    proposed_selector=new_selector,
+                    source_selector=old_first,
+                    score=100,
+                    page_state="healthy",
+                    details={
+                        "persisted_to_json": persisted,
+                        "page_url": str(getattr(page, "url", "") or ""),
+                        "selector_count": len(selectors),
+                    },
+                )
             return urls, True
 
         self._notify_selector_issue(

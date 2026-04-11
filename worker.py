@@ -41,6 +41,14 @@ def main() -> int:
                 "WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP",
                 "1",
             ),
+            "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP": os.environ.get(
+                "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP",
+                "0",
+            ),
+            "WORKER_SELECTOR_REPAIR_LIMIT": os.environ.get(
+                "WORKER_SELECTOR_REPAIR_LIMIT",
+                "1",
+            ),
         }
     )
     return run_worker(app)

@@ -26,6 +26,7 @@ def test_run_render_cutover_checklist_with_authenticated_postdeploy_smoke():
         "flask render-postdeploy-smoke --base-url https://example.com --retries 4 --retry-delay-seconds 2"
     )
     assert "flask render-worker-postdeploy-checklist --blueprint-path render.yaml" in snapshot["postdeploy_commands"]
+    assert "flask process-selector-repairs --limit 1 --dry-run" in snapshot["postdeploy_commands"]
     assert any(
         "--retries 4 --retry-delay-seconds 2 --username smoke --password <redacted> --ensure-user" in command
         for command in snapshot["postdeploy_commands"]
@@ -45,6 +46,7 @@ def test_run_render_cutover_checklist_without_auth_uses_placeholder():
         "<smoke-user>" in command and "--retries 4 --retry-delay-seconds 2" in command and "--ensure-user" in command
         for command in snapshot["postdeploy_commands"]
     )
+    assert "flask process-selector-repairs --limit 1 --dry-run" in snapshot["postdeploy_commands"]
 
 
 def test_render_cutover_checklist_cli_prints_json(app):

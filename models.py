@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
 from flask_login import UserMixin
@@ -274,3 +274,60 @@ class ScrapeJobEvent(Base):
     created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
 
     job = relationship("ScrapeJob", back_populates="events")
+
+
+class SelectorRepairCandidate(Base):
+    __tablename__ = "selector_repair_candidates"
+    __table_args__ = (
+        Index(
+            "ix_selector_repair_candidates_lookup",
+            "site",
+            "page_type",
+            "field",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    site = Column(String(32), nullable=False, index=True)
+    page_type = Column(String(32), nullable=False, index=True)
+    field = Column(String(64), nullable=False, index=True)
+    parser = Column(String(32), nullable=False, default="scrapling")
+    proposed_selector = Column(Text, nullable=False)
+    source_selector = Column(Text)
+    score = Column(Integer)
+    page_state = Column(String(32), nullable=False, default="healthy")
+    status = Column(String(32), nullable=False, default="pending", index=True)
+    details_payload = Column(Text)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class SelectorActiveRuleSet(Base):
+    __tablename__ = "selector_active_rule_sets"
+    __table_args__ = (
+        UniqueConstraint("site", "page_type", "field", "version", name="uq_selector_active_rule_sets_version"),
+        Index(
+            "ix_selector_active_rule_sets_lookup",
+            "site",
+            "page_type",
+            "field",
+            "is_active",
+            "version",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    site = Column(String(32), nullable=False, index=True)
+    page_type = Column(String(32), nullable=False, index=True)
+    field = Column(String(64), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    selectors_payload = Column(Text, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=False, index=True)
+    source_candidate_id = Column(Integer, ForeignKey("selector_repair_candidates.id"), nullable=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+    activated_at = Column(DateTime, nullable=True)
+
+    source_candidate = relationship("SelectorRepairCandidate")

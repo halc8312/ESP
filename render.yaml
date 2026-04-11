@@ -84,6 +84,18 @@ services:
         value: "1"
       - key: WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP
         value: "1"
+      - key: WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP
+        value: "0"
+      - key: WORKER_SELECTOR_REPAIR_LIMIT
+        value: "1"
+      - key: SELECTOR_REPAIR_MIN_SCORE
+        value: "90"
+      - key: SELECTOR_REPAIR_MIN_CANARIES
+        value: "2"
+      - key: SELECTOR_REPAIR_CANARY_URLS_MERCARI_DETAIL
+        sync: false
+      - key: SELECTOR_REPAIR_CANARY_URLS_SNKRDUNK_DETAIL
+        sync: false
       - key: WORKER_BACKLOG_WARN_COUNT
         value: "25"
       - key: WORKER_BACKLOG_WARN_AGE_SECONDS

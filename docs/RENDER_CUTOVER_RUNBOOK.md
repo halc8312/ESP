@@ -123,8 +123,19 @@ These should stay managed by the Blueprint and should not be copied by hand from
 - `MERCARI_PATROL_USE_BROWSER_POOL`
 - `SNKRDUNK_USE_BROWSER_POOL_DYNAMIC`
 - `WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP`
+- `WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP`
+- `WORKER_SELECTOR_REPAIR_LIMIT`
+- `SELECTOR_REPAIR_MIN_SCORE`
+- `SELECTOR_REPAIR_MIN_CANARIES`
 - `WORKER_BACKLOG_WARN_COUNT`
 - `WORKER_BACKLOG_WARN_AGE_SECONDS`
+
+## Manual Non-Secret Env Vars
+
+These stay manual because they are deployment-specific and should not be hardcoded into the Blueprint.
+
+- `SELECTOR_REPAIR_CANARY_URLS_MERCARI_DETAIL`
+- `SELECTOR_REPAIR_CANARY_URLS_SNKRDUNK_DETAIL`
 
 ## Safe Activation Order
 
@@ -132,15 +143,18 @@ These should stay managed by the Blueprint and should not be copied by hand from
 2. Re-run the local gate immediately before provisioning.
 3. Import/sync `render.yaml` without pointing it at the current single-web service.
 4. Fill secret env vars.
-5. Provision `esp-postgres` and `esp-keyvalue`.
-6. Deploy `esp-web` and confirm `/healthz` returns `200`.
-7. Deploy `esp-worker` and compare its startup logs against `flask render-worker-postdeploy-checklist --blueprint-path render.yaml`.
-8. Run `flask render-postdeploy-smoke --base-url https://<esp-web-url> --retries 4 --retry-delay-seconds 2`.
-9. If a smoke user already exists, rerun with `--username <smoke-user> --password <smoke-password>`. If it does not exist yet, add `--ensure-user` so authenticated `/scrape` and `/api/scrape/jobs` are checked too.
-10. Run one preview scrape smoke.
-11. Run one persist scrape smoke.
-12. Confirm status polling, result page rendering, and one persisted product path.
-13. Only after those checks pass, plan any traffic or operator cutover.
+5. Fill selector repair canary URL env vars on `esp-worker`.
+6. Keep `WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP=0` for the first paid split deploy.
+7. Provision `esp-postgres` and `esp-keyvalue`.
+8. Deploy `esp-web` and confirm `/healthz` returns `200`.
+9. Deploy `esp-worker` and compare its startup logs against `flask render-worker-postdeploy-checklist --blueprint-path render.yaml`.
+10. Run `flask render-postdeploy-smoke --base-url https://<esp-web-url> --retries 4 --retry-delay-seconds 2`.
+11. Run `flask process-selector-repairs --limit 1 --dry-run`.
+12. If a smoke user already exists, rerun with `--username <smoke-user> --password <smoke-password>`. If it does not exist yet, add `--ensure-user` so authenticated `/scrape` and `/api/scrape/jobs` are checked too.
+13. Run one preview scrape smoke.
+14. Run one persist scrape smoke.
+15. Confirm status polling, result page rendering, and one persisted product path.
+16. Only after those checks pass, consider a manual `flask process-selector-repairs --candidate-id <id> --apply` or enabling startup automation.
 
 ## First Render Checks
 
@@ -151,6 +165,9 @@ After provisioning, verify at minimum:
 - `SCRAPE_QUEUE_BACKEND=rq`
 - `WEB_SCHEDULER_MODE=disabled` on web
 - `WORKER_ENABLE_SCHEDULER=1` only on the intended worker
+- `WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP=0` on the first deploy
+- `SELECTOR_REPAIR_MIN_SCORE=90`
+- `SELECTOR_REPAIR_MIN_CANARIES=2`
 - `/login`, `/scrape`, `/api/scrape/jobs` do not return `500`
 - authenticated `/api/scrape/jobs` does not return `500` or redirect back to `/login`
 - Redis-backed queue jobs move from `queued` to `completed`

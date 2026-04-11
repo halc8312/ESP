@@ -18,7 +18,13 @@ def test_run_render_worker_postdeploy_checklist_reads_worker_contract_from_bluep
     assert snapshot["expected_runtime"]["scheduler_enabled"] is True
     assert snapshot["expected_runtime"]["warm_browser_pool"] is True
     assert snapshot["expected_runtime"]["browser_pool_warm_sites"] == ["mercari"]
+    assert snapshot["expected_runtime"]["process_selector_repairs_on_startup"] is False
+    assert snapshot["expected_runtime"]["selector_repair_limit"] == 1
+    assert snapshot["expected_runtime"]["selector_repair_min_score"] == 90
+    assert snapshot["expected_runtime"]["selector_repair_min_canaries"] == 2
     assert "Worker browser pool warmed:" in snapshot["expected_log_markers"]
+    assert "SELECTOR_REPAIR_CANARY_URLS_MERCARI_DETAIL" in snapshot["manual_envs"]
+    assert any("process-selector-repairs --limit 1 --dry-run" in check for check in snapshot["manual_checks"])
 
 
 def test_render_worker_postdeploy_checklist_cli_prints_json(app):

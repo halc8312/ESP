@@ -145,3 +145,33 @@ def test_build_predeploy_snapshot_blocks_non_postgres_split_render(app):
 
     assert "split_render_requires_postgresql_database" in snapshot["blockers"]
     assert "split_render_requires_alembic_schema_bootstrap" in snapshot["blockers"]
+
+
+def test_build_predeploy_snapshot_blocks_selector_repair_startup_without_canaries(app, monkeypatch):
+    monkeypatch.setattr(
+        "cli.describe_schema_bootstrap",
+        lambda mode: {
+            "database_backend": "postgresql",
+            "effective_mode": "alembic",
+            "database_url": "postgresql://example.test/esp",
+        },
+    )
+    app.config.update(
+        {
+            "SECRET_KEY": "not-dev-secret",
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "WEB_SCHEDULER_MODE": "disabled",
+            "ENABLE_SCHEDULER": False,
+            "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP": "1",
+            "WORKER_SELECTOR_REPAIR_LIMIT": "1",
+            "SELECTOR_REPAIR_MIN_SCORE": "90",
+            "SELECTOR_REPAIR_MIN_CANARIES": "2",
+            "SELECTOR_REPAIR_CANARY_URLS_MERCARI_DETAIL": "",
+            "SELECTOR_REPAIR_CANARY_URLS_SNKRDUNK_DETAIL": "",
+        }
+    )
+
+    snapshot = build_predeploy_snapshot(app, target="split-render")
+
+    assert "selector_repair_canaries_missing:mercari_detail" in snapshot["blockers"]
+    assert "selector_repair_canaries_missing:snkrdunk_detail" in snapshot["blockers"]

@@ -28,7 +28,12 @@ def test_run_render_local_split_checklist_reports_local_contract(app, monkeypatc
     assert snapshot["local_env_contract"][0]["key"] == "SECRET_KEY"
     assert snapshot["local_env_contract"][1]["key"] == "DATABASE_URL"
     assert snapshot["local_env_contract"][3]["key"] == "SCRAPE_QUEUE_BACKEND"
+    assert any(entry["key"] == "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP" for entry in snapshot["local_env_contract"])
     assert snapshot["powershell_env_commands"][0].startswith("$env:SECRET_KEY=")
+    assert any(
+        command == "$env:WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP='0'"
+        for command in snapshot["powershell_env_commands"]
+    )
     assert snapshot["budget_guardrail"]["estimated_monthly_core_usd"] == 61
     assert snapshot["service_probes"]["ready"] is True
     assert snapshot["service_probes"]["probes"][0]["name"] == "postgres"

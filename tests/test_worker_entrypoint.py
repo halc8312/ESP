@@ -23,6 +23,8 @@ def test_worker_main_builds_worker_app_and_runs_runtime(monkeypatch):
     assert captured["app"] is sentinel_app
     assert captured["config_overrides"]["SCRAPE_QUEUE_BACKEND"] == "rq"
     assert captured["config_overrides"]["WARM_BROWSER_POOL"] == "1"
+    assert captured["config_overrides"]["WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP"] == "0"
+    assert captured["config_overrides"]["WORKER_SELECTOR_REPAIR_LIMIT"] == "1"
     assert worker.os.environ["MERCARI_USE_BROWSER_POOL_DETAIL"] == "1"
     assert worker.os.environ["MERCARI_PATROL_USE_BROWSER_POOL"] == "1"
     assert worker.os.environ["SNKRDUNK_USE_BROWSER_POOL_DYNAMIC"] == "1"
@@ -42,6 +44,10 @@ def test_worker_main_passes_scheduler_flag(monkeypatch):
     monkeypatch.setattr("worker.create_worker_app", fake_create_worker_app)
     monkeypatch.setattr("worker.run_worker", lambda app: 0)
     monkeypatch.setenv("WORKER_ENABLE_SCHEDULER", "1")
+    monkeypatch.setenv("WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP", "0")
+    monkeypatch.setenv("WORKER_SELECTOR_REPAIR_LIMIT", "3")
 
     assert worker.main() == 0
     assert captured["config_overrides"]["ENABLE_SCHEDULER"] == "1"
+    assert captured["config_overrides"]["WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP"] == "0"
+    assert captured["config_overrides"]["WORKER_SELECTOR_REPAIR_LIMIT"] == "3"

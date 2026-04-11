@@ -40,6 +40,8 @@ from services.database_migration import (
 from services.html_page_adapter import HtmlPageAdapter
 from services.mercari_item_parser import parse_mercari_item_page
 from services.pricing_service import update_product_selling_price
+from services.repair_store import inspect_repair_store_state
+from services.repair_worker import preview_pending_repair_candidates, process_pending_repair_candidates
 from services.rich_text_maintenance import run_rich_text_maintenance
 from services.scrape_result_policy import (
     build_policy_reason,
@@ -78,6 +80,10 @@ def _build_local_split_env_defaults() -> dict[str, str]:
         "WORKER_ENABLE_SCHEDULER": "1",
         "WARM_BROWSER_POOL": "1",
         "ENABLE_SHARED_BROWSER_RUNTIME": "1",
+        "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP": "0",
+        "WORKER_SELECTOR_REPAIR_LIMIT": "1",
+        "SELECTOR_REPAIR_MIN_SCORE": "90",
+        "SELECTOR_REPAIR_MIN_CANARIES": "2",
         "IMAGE_STORAGE_PATH": os.path.abspath(str(IMAGE_STORAGE_PATH)),
     }
 
@@ -466,6 +472,12 @@ def run_render_blueprint_audit(path: str = "render.yaml") -> dict:
         "MERCARI_PATROL_USE_BROWSER_POOL",
         "SNKRDUNK_USE_BROWSER_POOL_DYNAMIC",
         "WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP",
+        "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP",
+        "WORKER_SELECTOR_REPAIR_LIMIT",
+        "SELECTOR_REPAIR_MIN_SCORE",
+        "SELECTOR_REPAIR_MIN_CANARIES",
+        "SELECTOR_REPAIR_CANARY_URLS_MERCARI_DETAIL",
+        "SELECTOR_REPAIR_CANARY_URLS_SNKRDUNK_DETAIL",
         "WORKER_BACKLOG_WARN_COUNT",
         "WORKER_BACKLOG_WARN_AGE_SECONDS",
     ):
@@ -497,6 +509,14 @@ def run_render_blueprint_audit(path: str = "render.yaml") -> dict:
         blockers.append("worker_browser_pool_warm_must_be_enabled")
     if worker_env.get("ENABLE_SHARED_BROWSER_RUNTIME", {}).get("value") != "1":
         blockers.append("worker_shared_browser_runtime_must_be_enabled")
+    if worker_env.get("WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP", {}).get("value") != "0":
+        blockers.append("worker_selector_repairs_startup_must_be_disabled_initially")
+    if worker_env.get("WORKER_SELECTOR_REPAIR_LIMIT", {}).get("value") != "1":
+        blockers.append("worker_selector_repair_limit_must_start_at_1")
+    if worker_env.get("SELECTOR_REPAIR_MIN_SCORE", {}).get("value") != "90":
+        blockers.append("selector_repair_min_score_must_start_at_90")
+    if worker_env.get("SELECTOR_REPAIR_MIN_CANARIES", {}).get("value") != "2":
+        blockers.append("selector_repair_min_canaries_must_start_at_2")
 
     for service_name, env_map in (("esp-web", web_env), ("esp-worker", worker_env)):
         secret_env = env_map.get("SECRET_KEY", {})
@@ -506,6 +526,13 @@ def run_render_blueprint_audit(path: str = "render.yaml") -> dict:
             blockers.append(f"database_url_must_be_managed:{service_name}")
         if env_map.get("REDIS_URL", {}).get("source_type") != "fromService":
             blockers.append(f"redis_url_must_be_managed:{service_name}")
+
+    for key in (
+        "SELECTOR_REPAIR_CANARY_URLS_MERCARI_DETAIL",
+        "SELECTOR_REPAIR_CANARY_URLS_SNKRDUNK_DETAIL",
+    ):
+        if str((worker_env.get(key) or {}).get("sync", "")).lower() != "false":
+            blockers.append(f"worker_selector_repair_canaries_must_be_manual:{key.lower()}")
 
     if web_env.get("SELECTOR_ALERT_WEBHOOK_URL"):
         if str(web_env["SELECTOR_ALERT_WEBHOOK_URL"].get("sync", "")).lower() != "false":
@@ -776,6 +803,35 @@ def run_render_local_split_checklist(
             "current_value": str(app.config.get("WARM_BROWSER_POOL", "") or ""),
             "matches": str(app.config.get("WARM_BROWSER_POOL", "") or "").strip().lower()
             in {"1", "true", "yes", "on"},
+        },
+        {
+            "scope": "worker",
+            "key": "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP",
+            "desired_value": recommended_env["WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP"],
+            "current_value": str(app.config.get("WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP", "") or ""),
+            "matches": str(app.config.get("WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP", "") or "").strip().lower()
+            in {"0", "false", "no", "off"},
+        },
+        {
+            "scope": "worker",
+            "key": "WORKER_SELECTOR_REPAIR_LIMIT",
+            "desired_value": recommended_env["WORKER_SELECTOR_REPAIR_LIMIT"],
+            "current_value": str(app.config.get("WORKER_SELECTOR_REPAIR_LIMIT", "") or ""),
+            "matches": str(app.config.get("WORKER_SELECTOR_REPAIR_LIMIT", "") or "").strip() == "1",
+        },
+        {
+            "scope": "worker",
+            "key": "SELECTOR_REPAIR_MIN_SCORE",
+            "desired_value": recommended_env["SELECTOR_REPAIR_MIN_SCORE"],
+            "current_value": str(app.config.get("SELECTOR_REPAIR_MIN_SCORE", "") or ""),
+            "matches": str(app.config.get("SELECTOR_REPAIR_MIN_SCORE", "") or "").strip() == "90",
+        },
+        {
+            "scope": "worker",
+            "key": "SELECTOR_REPAIR_MIN_CANARIES",
+            "desired_value": recommended_env["SELECTOR_REPAIR_MIN_CANARIES"],
+            "current_value": str(app.config.get("SELECTOR_REPAIR_MIN_CANARIES", "") or ""),
+            "matches": str(app.config.get("SELECTOR_REPAIR_MIN_CANARIES", "") or "").strip() == "2",
         },
         {
             "scope": "shared",
@@ -1342,7 +1398,7 @@ def run_render_worker_postdeploy_checklist(blueprint_path: str = "render.yaml") 
     manual_envs = sorted(
         key
         for key, env_entry in worker_env.items()
-        if env_entry.get("sync") is False
+        if str(env_entry.get("sync", "")).lower() == "false"
     )
     managed_envs = sorted(
         key
@@ -1359,6 +1415,12 @@ def run_render_worker_postdeploy_checklist(blueprint_path: str = "render.yaml") 
     warm_browser_pool = _env_bool(_env_value("WARM_BROWSER_POOL", False))
     shared_browser_runtime = _env_bool(_env_value("ENABLE_SHARED_BROWSER_RUNTIME", False))
     reconcile_stalled_jobs = _env_bool(_env_value("WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP", False))
+    process_selector_repairs_on_startup = _env_bool(
+        _env_value("WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP", False)
+    )
+    selector_repair_limit = max(1, _env_int(_env_value("WORKER_SELECTOR_REPAIR_LIMIT", 1), default=1))
+    selector_repair_min_score = max(0, _env_int(_env_value("SELECTOR_REPAIR_MIN_SCORE", 90), default=90))
+    selector_repair_min_canaries = max(2, _env_int(_env_value("SELECTOR_REPAIR_MIN_CANARIES", 2), default=2))
     browser_pool_warm_sites = str(_env_value("BROWSER_POOL_WARM_SITES", "") or "").strip()
 
     expected_log_markers = [
@@ -1369,6 +1431,8 @@ def run_render_worker_postdeploy_checklist(blueprint_path: str = "render.yaml") 
         expected_log_markers.append("Worker browser pool warmed:")
     if shared_browser_runtime:
         expected_log_markers.append("Worker browser pool closing:")
+    if process_selector_repairs_on_startup:
+        expected_log_markers.append("Worker selector repair startup summary:")
 
     optional_log_markers = []
     if reconcile_stalled_jobs:
@@ -1384,11 +1448,16 @@ def run_render_worker_postdeploy_checklist(blueprint_path: str = "render.yaml") 
         "Confirm the worker deploy uses `python worker.py`.",
         "Confirm startup logs do not show Redis connection failures or browser startup exceptions.",
         "Confirm the worker remains running after startup and does not crash-loop.",
+        "Keep `WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP=0` for the first paid split deploy.",
+        "Fill `SELECTOR_REPAIR_CANARY_URLS_MERCARI_DETAIL` and `SELECTOR_REPAIR_CANARY_URLS_SNKRDUNK_DETAIL` before any repair apply or auto-promotion.",
+        "Run `flask process-selector-repairs --limit 1 --dry-run` before enabling automatic selector repair promotion.",
     ]
     if scheduler_enabled:
         manual_checks.append("Confirm this worker is the only scheduler owner for the paid split.")
     if warm_browser_pool:
         manual_checks.append("Confirm browser warm-up logs appear for the expected sites.")
+    if process_selector_repairs_on_startup:
+        manual_checks.append("If startup automation is enabled later, confirm `Worker selector repair startup summary:` appears once per boot.")
 
     expected_runtime = {
         "service_name": worker_service.get("name") or "esp-worker",
@@ -1400,6 +1469,10 @@ def run_render_worker_postdeploy_checklist(blueprint_path: str = "render.yaml") 
         "shared_browser_runtime": shared_browser_runtime,
         "browser_pool_warm_sites": [site.strip() for site in browser_pool_warm_sites.split(",") if site.strip()],
         "reconcile_stalled_jobs_on_startup": reconcile_stalled_jobs,
+        "process_selector_repairs_on_startup": process_selector_repairs_on_startup,
+        "selector_repair_limit": selector_repair_limit,
+        "selector_repair_min_score": selector_repair_min_score,
+        "selector_repair_min_canaries": selector_repair_min_canaries,
         "backlog_warn_count": max(0, _env_int(_env_value("WORKER_BACKLOG_WARN_COUNT", 0), default=0)),
         "backlog_warn_age_seconds": max(0, _env_int(_env_value("WORKER_BACKLOG_WARN_AGE_SECONDS", 0), default=0)),
     }
@@ -1475,6 +1548,7 @@ def run_render_cutover_checklist(
         "Leave the current single-web production service unchanged.",
         f"Import/sync {blueprint_path} as a dormant Blueprint with new service names only.",
         "Fill manual secret env vars for esp-web and esp-worker.",
+        "Fill selector repair canary URL env vars for esp-worker, but keep startup auto-promotion disabled on the first deploy.",
         "Provision esp-postgres and esp-keyvalue before relying on esp-web/esp-worker traffic.",
         "Deploy esp-web first, then esp-worker.",
     ]
@@ -1484,6 +1558,7 @@ def run_render_cutover_checklist(
         f"flask render-postdeploy-smoke --base-url {normalized_base_url or 'https://<esp-web-url>'} {cautious_smoke_flags}"
     )
     postdeploy_commands.append(f"flask render-worker-postdeploy-checklist --blueprint-path {blueprint_path}")
+    postdeploy_commands.append("flask process-selector-repairs --limit 1 --dry-run")
     if normalized_base_url and normalized_username and normalized_password:
         postdeploy_commands.append(
             "flask render-postdeploy-smoke "
@@ -1499,6 +1574,7 @@ def run_render_cutover_checklist(
 
     postdeploy_commands.extend(
         [
+            "Only after the dry-run and canary URLs look correct, consider `flask process-selector-repairs --candidate-id <id> --apply`.",
             "Run one preview scrape smoke in the deployed environment.",
             "Run one persist scrape smoke in the deployed environment.",
             "Confirm /api/scrape/status/<job_id>, /api/scrape/jobs, and /scrape/result/<job_id> all work.",
@@ -1659,6 +1735,23 @@ def build_predeploy_snapshot(app, target: str = "single-web") -> dict:
     secret_key = str(app.config.get("SECRET_KEY", "") or "")
     configured_image_storage_path = str(IMAGE_STORAGE_PATH)
     image_storage_path = os.path.abspath(configured_image_storage_path)
+    selector_repairs_startup_enabled = str(
+        app.config.get("WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP", "") or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        selector_repair_limit = max(1, int(app.config.get("WORKER_SELECTOR_REPAIR_LIMIT", 1) or 1))
+    except (TypeError, ValueError):
+        selector_repair_limit = 1
+    try:
+        selector_repair_min_score = max(0, int(app.config.get("SELECTOR_REPAIR_MIN_SCORE", 90) or 90))
+    except (TypeError, ValueError):
+        selector_repair_min_score = 90
+    try:
+        selector_repair_min_canaries = max(2, int(app.config.get("SELECTOR_REPAIR_MIN_CANARIES", 2) or 2))
+    except (TypeError, ValueError):
+        selector_repair_min_canaries = 2
+    mercari_repair_canaries = str(app.config.get("SELECTOR_REPAIR_CANARY_URLS_MERCARI_DETAIL", "") or "").strip()
+    snkrdunk_repair_canaries = str(app.config.get("SELECTOR_REPAIR_CANARY_URLS_SNKRDUNK_DETAIL", "") or "").strip()
 
     blockers: list[str] = []
     warnings: list[str] = []
@@ -1690,6 +1783,14 @@ def build_predeploy_snapshot(app, target: str = "single-web") -> dict:
             warnings.append("redis_url_points_to_localhost")
         if not os.path.isabs(configured_image_storage_path):
             warnings.append("image_storage_path_should_be_absolute")
+        if selector_repairs_startup_enabled and not mercari_repair_canaries:
+            blockers.append("selector_repair_canaries_missing:mercari_detail")
+        if selector_repairs_startup_enabled and not snkrdunk_repair_canaries:
+            blockers.append("selector_repair_canaries_missing:snkrdunk_detail")
+        if selector_repairs_startup_enabled and selector_repair_limit > 1:
+            warnings.append("selector_repairs_startup_limit_exceeds_cautious_baseline")
+        if selector_repair_min_score < 90:
+            warnings.append("selector_repair_min_score_less_conservative_than_repo_baseline")
 
     if queue_backend == "rq" and web_scheduler_mode not in {"", "disabled", "auto"}:
         warnings.append("web_scheduler_mode_is_unexpected")
@@ -1707,6 +1808,14 @@ def build_predeploy_snapshot(app, target: str = "single-web") -> dict:
         "web_scheduler_mode": web_scheduler_mode,
         "schema": schema,
         "image_storage_path": image_storage_path,
+        "selector_repairs": {
+            "process_on_startup": selector_repairs_startup_enabled,
+            "limit": selector_repair_limit,
+            "min_score": selector_repair_min_score,
+            "min_canaries": selector_repair_min_canaries,
+            "mercari_detail_canaries_configured": bool(mercari_repair_canaries),
+            "snkrdunk_detail_canaries_configured": bool(snkrdunk_repair_canaries),
+        },
         "blockers": blockers,
         "warnings": warnings,
         "ready": not blockers,
@@ -1822,6 +1931,59 @@ def run_search_fixture_smoke(site: str, fixture_path: str, *, target_url: str = 
         "warnings": warnings,
         "blockers": blockers,
         "meta": meta,
+    }
+
+
+def run_selector_repair_cycle(
+    app,
+    *,
+    limit: int = 10,
+    candidate_id: int | None = None,
+    apply: bool = False,
+) -> dict:
+    del app  # CLI parity with other helpers; current implementation only needs configured globals.
+
+    store_state = inspect_repair_store_state()
+    blockers = list(store_state.get("blockers") or [])
+    warnings: list[str] = []
+    safe_limit = max(1, int(limit or 10))
+
+    if blockers:
+        return {
+            "ready": False,
+            "mode": "apply" if apply else "dry_run",
+            "apply": bool(apply),
+            "limit": safe_limit,
+            "candidate_id": candidate_id,
+            "store": store_state,
+            "blockers": blockers,
+            "warnings": warnings,
+            "results": [],
+            "inspected": 0,
+        }
+
+    summary = (
+        process_pending_repair_candidates(limit=safe_limit, candidate_id=candidate_id)
+        if apply
+        else preview_pending_repair_candidates(limit=safe_limit, candidate_id=candidate_id)
+    )
+
+    inspected = int(summary.get("inspected") or 0)
+    if candidate_id is not None and inspected == 0:
+        blockers.append("candidate_not_found")
+    elif inspected == 0:
+        warnings.append("no_pending_candidates")
+
+    return {
+        "ready": not blockers,
+        "mode": "apply" if apply else "dry_run",
+        "apply": bool(apply),
+        "limit": safe_limit,
+        "candidate_id": candidate_id,
+        "store": store_state,
+        "blockers": blockers,
+        "warnings": warnings,
+        **summary,
     }
 
 
@@ -2865,6 +3027,23 @@ def register_cli_commands(app):
         if snapshot.get("queue_backend") == "rq" and snapshot.get("redis_ok") is False:
             raise SystemExit(1)
         if fail_on_warning and snapshot.get("backlog_issues"):
+            raise SystemExit(1)
+
+    @app.cli.command("process-selector-repairs")
+    @click.option("--limit", type=int, default=10, show_default=True)
+    @click.option("--candidate-id", type=int, default=None, help="Restrict processing to one pending candidate id.")
+    @click.option("--apply/--dry-run", default=False, show_default=True)
+    def process_selector_repairs(limit, candidate_id, apply):
+        """Validate pending selector repair candidates and optionally promote them."""
+        snapshot = run_selector_repair_cycle(
+            app,
+            limit=limit,
+            candidate_id=candidate_id,
+            apply=apply,
+        )
+        _emit_json(snapshot)
+
+        if snapshot.get("blockers"):
             raise SystemExit(1)
 
     @app.cli.command("predeploy-check")

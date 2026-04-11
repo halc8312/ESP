@@ -9,11 +9,12 @@ import re
 from urllib.parse import urljoin
 
 from selector_config import get_selectors, get_valid_domains
+from services.detail_field_strategy_runner import DetailFieldStrategy, run_detail_field_strategies
 from services.snkrdunk_browser_fetch import (
     fetch_snkrdunk_page_via_browser_pool_sync,
     should_use_snkrdunk_browser_pool_dynamic,
 )
-from services.extraction_policy import attach_extraction_trace, pick_first
+from services.extraction_policy import attach_extraction_trace
 from scrape_metrics import check_scrape_health, get_metrics, log_scrape_result
 from services.selector_healer import get_healer
 from services.scraping_client import run_coro_sync
@@ -39,6 +40,14 @@ def _resolve_detail_url(url_or_driver, maybe_url=None) -> str:
     if isinstance(url_or_driver, str) and url_or_driver:
         return url_or_driver
     raise ValueError("url is required")
+
+
+def _is_nonempty_text(value) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _has_image_urls(value) -> bool:
+    return isinstance(value, list) and len(value) > 0
 
 
 def _get_first_meta_content(page, selectors) -> str:
@@ -234,9 +243,11 @@ def _parse_detail_page(page, url: str) -> dict:
                 _get_first_meta_content(page, ["meta[property='og:title']", "meta[name='twitter:title']"])
                 or _get_first_text(page, ["title"])
             )
-            title, title_source = pick_first(
-                ("next_data", item.get("name") or item.get("title") or item.get("productName", "")),
-                ("meta", meta_title),
+            title, title_source = run_detail_field_strategies(
+                DetailFieldStrategy("next_data", item.get("name") or item.get("title") or item.get("productName", "")),
+                DetailFieldStrategy("meta", meta_title),
+                validator=_is_nonempty_text,
+                default="",
             )
             if title:
                 result["title"] = title
@@ -251,9 +262,11 @@ def _parse_detail_page(page, url: str) -> dict:
                     pass
 
             meta_description = _get_first_meta_content(page, ["meta[name='description']", "meta[property='og:description']"])
-            description, description_source = pick_first(
-                ("next_data", item.get("description") or item.get("itemDescription", "")),
-                ("meta", meta_description),
+            description, description_source = run_detail_field_strategies(
+                DetailFieldStrategy("next_data", item.get("description") or item.get("itemDescription", "")),
+                DetailFieldStrategy("meta", meta_description),
+                validator=_is_nonempty_text,
+                default="",
             )
             if description:
                 result["description"] = description
@@ -279,13 +292,18 @@ def _parse_detail_page(page, url: str) -> dict:
                     img_url = imgs.get("url") or imgs.get("src") or imgs.get("imageUrl")
                     if img_url and img_url.startswith("http") and img_url not in image_urls:
                         image_urls.append(img_url)
-            if not image_urls:
-                image_urls = _collect_image_urls(_get_first_meta_content(page, ["meta[property='og:image']"]))
-                if image_urls:
-                    field_sources["images"] = "meta"
-            else:
-                field_sources["images"] = "next_data"
+            image_urls, image_source = run_detail_field_strategies(
+                DetailFieldStrategy("next_data", image_urls),
+                DetailFieldStrategy(
+                    "meta",
+                    resolver=lambda: _collect_image_urls(_get_first_meta_content(page, ["meta[property='og:image']"])),
+                ),
+                validator=_has_image_urls,
+                default=[],
+            )
             result["image_urls"] = image_urls
+            if image_source:
+                field_sources["images"] = image_source
 
             status_flag = item.get("status") or item.get("soldOut") or item.get("isSoldOut")
             if status_flag in (True, "sold_out", "soldout", "SOLD_OUT"):
@@ -306,9 +324,11 @@ def _parse_detail_page(page, url: str) -> dict:
             _get_first_meta_content(page, ["meta[property='og:title']", "meta[name='twitter:title']"])
             or _get_first_text(page, ["title"])
         )
-        title, title_source = pick_first(
-            ("json_ld", str(product_jsonld.get("name") or "").strip()),
-            ("meta", meta_title),
+        title, title_source = run_detail_field_strategies(
+            DetailFieldStrategy("json_ld", str(product_jsonld.get("name") or "").strip()),
+            DetailFieldStrategy("meta", meta_title),
+            validator=_is_nonempty_text,
+            default="",
         )
         if title:
             result["title"] = title
@@ -319,17 +339,26 @@ def _parse_detail_page(page, url: str) -> dict:
             result["price"] = price
             field_sources["price"] = "json_ld"
 
-        description, description_source = pick_first(
-            ("json_ld", str(product_jsonld.get("description") or "").strip()),
-            ("meta", _get_first_meta_content(page, ["meta[name='description']", "meta[property='og:description']"])),
+        description, description_source = run_detail_field_strategies(
+            DetailFieldStrategy("json_ld", str(product_jsonld.get("description") or "").strip()),
+            DetailFieldStrategy(
+                "meta",
+                resolver=lambda: _get_first_meta_content(page, ["meta[name='description']", "meta[property='og:description']"]),
+            ),
+            validator=_is_nonempty_text,
+            default="",
         )
         result["description"] = description or ""
         if description_source:
             field_sources["description"] = description_source
 
-        image_urls, image_source = pick_first(
-            ("json_ld", _collect_image_urls(product_jsonld.get("image"))),
-            ("meta", _collect_image_urls(_get_first_meta_content(page, ["meta[property='og:image']"]))),
+        image_urls, image_source = run_detail_field_strategies(
+            DetailFieldStrategy("json_ld", _collect_image_urls(product_jsonld.get("image"))),
+            DetailFieldStrategy(
+                "meta",
+                resolver=lambda: _collect_image_urls(_get_first_meta_content(page, ["meta[property='og:image']"])),
+            ),
+            validator=_has_image_urls,
             default=[],
         )
         result["image_urls"] = image_urls
@@ -356,9 +385,11 @@ def _parse_detail_page(page, url: str) -> dict:
         or _get_first_text(page, ["title"])
     )
     title_val, _ = healer.extract_with_healing(page, 'snkrdunk', 'detail', 'title', parser='scrapling')
-    title, title_source = pick_first(
-        ("meta", meta_title),
-        ("css", title_val),
+    title, title_source = run_detail_field_strategies(
+        DetailFieldStrategy("meta", meta_title),
+        DetailFieldStrategy("css", title_val),
+        validator=_is_nonempty_text,
+        default="",
     )
     if title:
         result["title"] = title
@@ -388,18 +419,24 @@ def _parse_detail_page(page, url: str) -> dict:
 
     meta_description = _get_first_meta_content(page, ["meta[name='description']", "meta[property='og:description']"])
     desc_val, _ = healer.extract_with_healing(page, 'snkrdunk', 'detail', 'description', parser='scrapling')
-    description, description_source = pick_first(
-        ("meta", meta_description),
-        ("css", desc_val),
+    description, description_source = run_detail_field_strategies(
+        DetailFieldStrategy("meta", meta_description),
+        DetailFieldStrategy("css", desc_val),
+        validator=_is_nonempty_text,
+        default="",
     )
     if description:
         result["description"] = description
         field_sources["description"] = description_source
 
     css_images, _ = healer.extract_images_with_healing(page, 'snkrdunk', 'detail', parser='scrapling')
-    image_urls, image_source = pick_first(
-        ("meta", _collect_image_urls(_get_first_meta_content(page, ["meta[property='og:image']"]))),
-        ("css", css_images),
+    image_urls, image_source = run_detail_field_strategies(
+        DetailFieldStrategy(
+            "meta",
+            resolver=lambda: _collect_image_urls(_get_first_meta_content(page, ["meta[property='og:image']"])),
+        ),
+        DetailFieldStrategy("css", css_images),
+        validator=_has_image_urls,
         default=[],
     )
     result["image_urls"] = image_urls

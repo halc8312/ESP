@@ -14,6 +14,7 @@ from database import ensure_additive_schema_ready
 from services.alerts import get_alert_dispatcher
 from services.rq_compat import import_rq_queue, import_rq_simple_worker
 from services.browser_pool import close_browser_pool, get_browser_pool_health, warm_browser_pool
+from services.repair_worker import process_pending_repair_candidates
 from services.scrape_job_store import get_job_backlog_snapshot, reconcile_stalled_jobs
 
 
@@ -29,6 +30,8 @@ class WorkerRuntimeSettings:
     with_scheduler: bool
     warm_browser_pool: bool
     reconcile_stalled_jobs_on_startup: bool
+    process_selector_repairs_on_startup: bool
+    selector_repair_limit: int
     backlog_warn_count: int
     backlog_warn_age_seconds: int
 
@@ -72,6 +75,15 @@ def _collect_worker_runtime_settings(app: Flask, *, require_rq_backend: bool) ->
         app.config.get("WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP", True),
         default=True,
     )
+    process_selector_repairs_on_startup = _as_bool(
+        app.config.get("WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP", False),
+        default=False,
+    )
+    selector_repair_limit = _as_int(
+        app.config.get("WORKER_SELECTOR_REPAIR_LIMIT", 1),
+        default=1,
+        minimum=1,
+    )
     backlog_warn_count = _as_int(app.config.get("WORKER_BACKLOG_WARN_COUNT", 25), default=25, minimum=0)
     backlog_warn_age_seconds = _as_int(
         app.config.get("WORKER_BACKLOG_WARN_AGE_SECONDS", 900),
@@ -87,6 +99,8 @@ def _collect_worker_runtime_settings(app: Flask, *, require_rq_backend: bool) ->
         with_scheduler=with_scheduler,
         warm_browser_pool=warm_browser_pool_enabled,
         reconcile_stalled_jobs_on_startup=reconcile_stalled_jobs_on_startup,
+        process_selector_repairs_on_startup=process_selector_repairs_on_startup,
+        selector_repair_limit=selector_repair_limit,
         backlog_warn_count=backlog_warn_count,
         backlog_warn_age_seconds=backlog_warn_age_seconds,
     )
@@ -251,6 +265,10 @@ def run_worker(app: Flask) -> int:
                 ",".join(warmed_sites) or "(none)",
                 get_browser_pool_health(),
             )
+        if runtime.settings.process_selector_repairs_on_startup:
+            with app.app_context():
+                repair_summary = process_pending_repair_candidates(limit=runtime.settings.selector_repair_limit)
+                logger.info("Worker selector repair startup summary: %s", repair_summary)
         runtime.worker.work(
             burst=runtime.settings.burst,
             with_scheduler=runtime.settings.with_scheduler,

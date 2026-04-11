@@ -9,7 +9,8 @@ import logging
 import re
 from typing import Optional
 
-from services.extraction_policy import attach_extraction_trace, pick_first_valid
+from services.detail_field_strategy_runner import DetailFieldStrategy, run_detail_field_strategies
+from services.extraction_policy import attach_extraction_trace
 from selector_config import get_selectors
 
 logger = logging.getLogger("mercari.parser")
@@ -43,6 +44,10 @@ def _is_nonempty_text(value) -> bool:
 
 def _is_positive_price(value) -> bool:
     return isinstance(value, int) and value > 0
+
+
+def _has_image_urls(value) -> bool:
+    return isinstance(value, list) and len(value) > 0
 
 
 def _empty_item(url: str, status: str = "unknown") -> dict:
@@ -402,18 +407,13 @@ def _extract_image_urls(page, product_jsonld: Optional[dict]) -> tuple[list, str
             image_url = _extract_node_image_url(image_node)
             if image_url and image_url not in image_urls:
                 image_urls.append(image_url)
-    if image_urls:
-        return image_urls, "dom"
-
-    jsonld_images = _collect_jsonld_images(product_jsonld)
-    if jsonld_images:
-        return jsonld_images, "jsonld"
-
-    meta_images = _extract_meta_image(page)
-    if meta_images:
-        return meta_images, "meta"
-
-    return [], ""
+    return run_detail_field_strategies(
+        DetailFieldStrategy("dom", image_urls),
+        DetailFieldStrategy("jsonld", resolver=lambda: _collect_jsonld_images(product_jsonld)),
+        DetailFieldStrategy("meta", resolver=lambda: _extract_meta_image(page)),
+        validator=_has_image_urls,
+        default=[],
+    )
 
 
 def _extract_variants(page, price: Optional[int]) -> list:
@@ -572,8 +572,8 @@ def parse_mercari_network_payload(payload: dict, url: str) -> tuple[dict, dict]:
         }
 
     field_sources = {}
-    title, title_source = pick_first_valid(
-        ("payload", candidate.get("name") or candidate.get("title")),
+    title, title_source = run_detail_field_strategies(
+        DetailFieldStrategy("payload", candidate.get("name") or candidate.get("title")),
         validator=_is_nonempty_text,
         default="",
     )
@@ -586,8 +586,8 @@ def parse_mercari_network_payload(payload: dict, url: str) -> tuple[dict, dict]:
         item["price"] = price
         field_sources["price"] = "payload"
 
-    description, description_source = pick_first_valid(
-        ("payload", candidate.get("description")),
+    description, description_source = run_detail_field_strategies(
+        DetailFieldStrategy("payload", candidate.get("description")),
         validator=_is_nonempty_text,
         default="",
     )
@@ -777,22 +777,19 @@ def parse_mercari_item_page(page, url: str) -> tuple[dict, dict]:
         status=status,
     )
 
-    price = None
-    price_source = "none"
-    if meta_price is not None:
-        price = meta_price
-        price_source = "meta"
-    elif jsonld_price is not None:
-        price = jsonld_price
-        price_source = "jsonld"
-    elif dom_price is not None:
-        price = dom_price
-        price_source = "dom"
-    elif page_type in {"active_detail", "sold_detail"}:
+    scoped_price = None
+    if page_type in {"active_detail", "sold_detail"}:
         scoped_price = _extract_scoped_text_price(page)
-        if scoped_price is not None:
-            price = scoped_price
-            price_source = "scoped_text"
+
+    price, price_source = run_detail_field_strategies(
+        DetailFieldStrategy("meta", meta_price),
+        DetailFieldStrategy("jsonld", jsonld_price),
+        DetailFieldStrategy("dom", dom_price),
+        DetailFieldStrategy("scoped_text", scoped_price),
+        validator=_is_positive_price,
+        default=None,
+    )
+    price_source = price_source or "none"
 
     confidence = "low"
     if price_source in {"meta", "jsonld"}:

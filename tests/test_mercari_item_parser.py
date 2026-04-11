@@ -118,3 +118,20 @@ def test_parse_mercari_item_page_deleted_fixture_omits_broken_description():
     assert meta["page_type"] == "deleted_detail"
     assert item["status"] == "deleted"
     assert item["description"] == ""
+
+
+def test_parse_mercari_item_page_live_fixture_preserves_price_source_and_strategy():
+    fixture_path = Path(__file__).resolve().parents[1] / "mercari_page_dump_live.html"
+    page_url = "https://jp.mercari.com/item/m56789324689"
+    html = fixture_path.read_text(encoding="utf-8")
+    page = HtmlPageAdapter(html, url=page_url)
+
+    item, meta = parse_mercari_item_page(page, page_url)
+
+    assert meta["page_type"] == "active_detail"
+    assert item["status"] == "on_sale"
+    assert item["price"] == 4999
+    assert item["image_urls"]
+    assert meta["price_source"] == "meta"
+    assert meta["strategy"] == "meta"
+    assert meta["field_sources"]["price"] == "meta"

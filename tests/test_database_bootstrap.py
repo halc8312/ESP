@@ -266,6 +266,7 @@ def test_run_alembic_upgrade_for_database_url_backfills_tracker_dismissed_at_fro
         try:
             columns = {column["name"] for column in inspect(upgraded_engine).get_columns("scrape_jobs")}
             indexes = {index["name"] for index in inspect(upgraded_engine).get_indexes("scrape_jobs")}
+            table_names = set(inspect(upgraded_engine).get_table_names())
             with upgraded_engine.connect() as connection:
                 version_num = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         finally:
@@ -276,7 +277,9 @@ def test_run_alembic_upgrade_for_database_url_backfills_tracker_dismissed_at_fro
 
     assert "tracker_dismissed_at" in columns
     assert "ix_scrape_jobs_tracker_dismissed_at" in indexes
-    assert version_num == "20260411_0004"
+    assert "selector_repair_candidates" in table_names
+    assert "selector_active_rule_sets" in table_names
+    assert version_num == "20260411_0005"
 
 
 def test_inspect_additive_schema_drift_reports_missing_scrape_job_columns():

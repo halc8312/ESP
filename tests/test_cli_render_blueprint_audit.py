@@ -67,3 +67,8 @@ def test_run_render_dashboard_inputs_current_blueprint_contains_manual_and_manag
     assert any(env["key"] == "SECRET_KEY" for env in web_service["manual_envs"])
     assert any(env["key"] == "DATABASE_URL" for env in web_service["managed_envs"])
     assert any(env["key"] == "SCRAPE_QUEUE_BACKEND" for env in worker_service["fixed_envs"])
+    assert any(env["key"] == "SELECTOR_REPAIR_CANARY_URLS_MERCARI_DETAIL" for env in worker_service["manual_envs"])
+    assert any(
+        env["key"] == "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP" and env["value"] == "0"
+        for env in worker_service["fixed_envs"]
+    )
