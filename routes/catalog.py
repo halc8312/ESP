@@ -11,7 +11,7 @@ from flask import Blueprint, render_template, abort, jsonify, request, session
 from flask_login import login_required, current_user
 from sqlalchemy.orm import subqueryload
 
-from database import SessionLocal
+from database import SessionLocal, _session_factory
 from models import Shop, PriceList, PriceListItem, Product, CatalogPageView
 from services.rich_text import build_rich_text_excerpt, normalize_rich_text, rich_text_to_plain_text
 from time_utils import utc_now
@@ -111,7 +111,6 @@ def _referrer_group(domain):
 
 def record_page_view(pricelist_id, request_obj, product_id=None):
     """アクセス記録の失敗で公開画面を止めない。"""
-    from database import _session_factory
     session_db = _session_factory()
     try:
         session_db.add(
