@@ -11,7 +11,7 @@ from flask import Blueprint, render_template, abort, jsonify, request, session
 from flask_login import login_required, current_user
 from sqlalchemy.orm import subqueryload
 
-from database import SessionLocal
+from database import SessionLocal, _session_factory
 from models import Shop, PriceList, PriceListItem, Product, CatalogPageView
 from services.rich_text import build_rich_text_excerpt, normalize_rich_text, rich_text_to_plain_text
 from time_utils import utc_now
@@ -111,7 +111,7 @@ def _referrer_group(domain):
 
 def record_page_view(pricelist_id, request_obj, product_id=None):
     """アクセス記録の失敗で公開画面を止めない。"""
-    session_db = SessionLocal()
+    session_db = _session_factory()
     try:
         session_db.add(
             CatalogPageView(
@@ -173,6 +173,9 @@ def catalog_view(token):
             currency_rate=pl.currency_rate,
             shop_logo=shop_logo,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -208,6 +211,9 @@ def catalog_product_detail(token, product_id):
         record_page_view(pl.id, request, product_id=product_id)
 
         return jsonify(catalog_item)
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -325,5 +331,8 @@ def pricelist_analytics(pricelist_id):
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()

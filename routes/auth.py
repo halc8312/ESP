@@ -83,6 +83,9 @@ def login():
             else:
                 _record_failed_attempt()
                 return render_template('login.html', error="ユーザー名またはパスワードが違います")
+        except Exception:
+            session_db.rollback()
+            raise
         finally:
             session_db.close()
 
@@ -116,6 +119,7 @@ def register():
             return redirect(url_for('main.index'))
         except Exception:
             logger.exception("Registration failed for user %s", username)
+            session_db.rollback()
             return render_template('register.html', error="登録中にエラーが発生しました。再度お試しください。")
         finally:
             session_db.close()
@@ -170,6 +174,9 @@ def account():
             return redirect(url_for('auth.account'))
 
         return render_template('account.html', **_build_account_context(session_db))
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 

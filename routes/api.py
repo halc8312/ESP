@@ -206,6 +206,9 @@ def inline_update_product(product_id):
                 "value": normalized_value,
             }
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -279,5 +282,8 @@ def bulk_price_update():
                 "skipped_products": skipped_products,
             }
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()

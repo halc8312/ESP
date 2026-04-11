@@ -7,7 +7,7 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import declarative_base, scoped_session, sessionmaker
 
 
 DEFAULT_DATABASE_URL = "sqlite:///mercari.db"
@@ -31,17 +31,30 @@ def create_app_engine(database_url: str | None = None):
     except Exception:
         debug_url = resolved_url
     print(f"DEBUG: Using database URL: {debug_url}")
-    engine = create_engine(resolved_url, echo=False)
 
-    if "sqlite" in engine.url.drivername:
+    is_sqlite = "sqlite" in resolved_url.lower()
+
+    if is_sqlite:
+        engine = create_engine(resolved_url, echo=False)
         with engine.connect() as conn:
             conn.execute(text("PRAGMA journal_mode=WAL"))
+    else:
+        engine = create_engine(
+            resolved_url,
+            echo=False,
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=10,
+            pool_recycle=300,
+            pool_timeout=30,
+        )
 
     return engine
 
 
 engine = create_app_engine()
-SessionLocal = sessionmaker(bind=engine)
+_session_factory = sessionmaker(bind=engine)
+SessionLocal = scoped_session(_session_factory)
 Base = declarative_base()
 
 

@@ -96,6 +96,9 @@ def load_user(user_id):
     session_db = SessionLocal()
     try:
         return session_db.query(User).get(int(user_id))
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -307,6 +310,11 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
     login_manager.login_view = "auth.login"
 
     csrf.init_app(app)
+
+    @app.teardown_appcontext
+    def shutdown_session(exception=None):
+        SessionLocal.remove()
+
     _register_security_headers(app)
     _register_error_handlers(app)
 

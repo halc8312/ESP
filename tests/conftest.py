@@ -95,6 +95,6 @@ def client(app):
 
 @pytest.fixture
 def db_session(app):
-    session = SessionLocal()
+    session = database._session_factory()
     yield session
     session.close()

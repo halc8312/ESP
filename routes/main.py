@@ -296,6 +296,9 @@ def dashboard():
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -434,6 +437,9 @@ def index():
             all_shops=all_shops,
             current_shop_id=current_shop_id
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -565,6 +571,9 @@ def product_manual_add():
 
         session_db.commit()
         return redirect(url_for('products.product_detail', product_id=product.id))
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
