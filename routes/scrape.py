@@ -52,6 +52,9 @@ def scrape_form():
             all_shops=all_shops,
             current_shop_id=current_shop_id
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -152,6 +155,9 @@ def scrape_status(job_id):
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -228,6 +234,9 @@ def scrape_result(job_id):
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 

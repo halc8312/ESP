@@ -161,6 +161,9 @@ def delete_shop(shop_id):
                 _remove_managed_logo_file(logo_url_to_remove)
             if session.get('current_shop_id') == shop_id:
                 session.pop('current_shop_id', None)
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
     return redirect(url_for('shops.manage_shops'))
@@ -233,6 +236,9 @@ def edit_shop(shop_id):
 
             if remove_previous_logo:
                 _remove_managed_logo_file(previous_logo_url)
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
     return redirect(url_for('shops.manage_shops'))
@@ -249,6 +255,9 @@ def set_current_shop():
             shop = session_db.query(Shop).filter_by(id=shop_id, user_id=current_user.id).first()
             if shop:
                 session['current_shop_id'] = int(shop_id)
+        except Exception:
+            session_db.rollback()
+            raise
         finally:
             session_db.close()
     else:
@@ -282,6 +291,9 @@ def manage_templates():
             all_shops=all_shops,
             current_shop_id=current_shop_id
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -295,6 +307,9 @@ def delete_template(template_id):
         if template:
             session_db.delete(template)
             session_db.commit()
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
     return redirect(url_for('shops.manage_templates'))

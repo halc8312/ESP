@@ -117,6 +117,9 @@ def create_job_record(
 
         _record_event(session, job_id, "queued", {"site": site})
         session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -136,6 +139,9 @@ def mark_job_running(job_id: str, event_payload: Any = None) -> None:
         record.updated_at = now
         _record_event(session, job_id, "running", event_payload)
         session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -149,6 +155,9 @@ def mark_job_heartbeat(job_id: str) -> None:
             return
         record.updated_at = now
         session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -171,6 +180,9 @@ def mark_job_completed(job_id: str, result: Any) -> None:
         record.updated_at = now
         _record_event(session, job_id, "completed", _build_result_summary(result))
         session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -193,6 +205,9 @@ def mark_job_failed(job_id: str, error_message: str, error_payload: Any = None) 
         record.updated_at = now
         _record_event(session, job_id, "failed", {"message": str(error_message)})
         session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -269,6 +284,9 @@ def maybe_mark_job_stalled(job_id: str, stall_timeout_seconds: int | None = None
         )
         session.commit()
         return True
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -313,6 +331,9 @@ def maybe_mark_job_orphaned(job_id: str, orphan_timeout_seconds: int | None = No
         )
         session.commit()
         return True
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -349,6 +370,9 @@ def reconcile_stalled_jobs(stall_timeout_seconds: int | None = None) -> list[str
         if reconciled_job_ids:
             session.commit()
         return reconciled_job_ids
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -392,6 +416,9 @@ def get_job_record(job_id: str, user_id: int | None = None) -> Optional[dict[str
         if record is None:
             return None
         return _serialize_job_record(record)
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -416,6 +443,9 @@ def list_job_records_for_user(
             )
         records = query.order_by(ScrapeJob.created_at.desc()).limit(safe_limit).all()
         return [_serialize_job_record(record) for record in records]
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -436,6 +466,9 @@ def list_dismissed_job_ids_for_user(user_id: int, limit: int = 100) -> set[str]:
             .all()
         )
         return {record.job_id for record in records}
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -456,6 +489,9 @@ def dismiss_job_record(job_id: str, user_id: int) -> bool:
             _record_event(session, job_id, "tracker_dismissed", None)
             session.commit()
         return True
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -495,6 +531,9 @@ def dismiss_job_records(job_ids: list[str], user_id: int) -> int:
             _record_event(session, record.job_id, "tracker_dismissed", None)
         session.commit()
         return len(records)
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -523,5 +562,8 @@ def get_job_backlog_snapshot() -> dict[str, Any]:
             if oldest_running_reference is not None
             else None,
         }
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()

@@ -252,5 +252,8 @@ def product_detail(product_id):
             current_shop_id=current_shop_id,
             variants=variants
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()

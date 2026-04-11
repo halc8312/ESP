@@ -57,6 +57,9 @@ def pricelist_list():
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -106,6 +109,9 @@ def pricelist_create():
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -143,6 +149,9 @@ def pricelist_edit(pricelist_id):
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -222,6 +231,9 @@ def pricelist_items(pricelist_id):
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -285,6 +297,9 @@ def pricelist_add_products(pricelist_id):
             session_db.commit()
 
         return redirect(url_for("pricelist.pricelist_items", pricelist_id=pl.id))
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -353,6 +368,9 @@ def pricelist_add_products_page(pricelist_id):
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -372,5 +390,8 @@ def pricelist_delete(pricelist_id):
             session_db.delete(pl)
             session_db.commit()
         return redirect(url_for("pricelist.pricelist_list"))
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
