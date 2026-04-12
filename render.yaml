@@ -96,6 +96,8 @@ services:
         sync: false
       - key: SELECTOR_REPAIR_CANARY_URLS_SNKRDUNK_DETAIL
         sync: false
+      - key: SELECTOR_ALERT_WEBHOOK_URL
+        sync: false
       - key: WORKER_BACKLOG_WARN_COUNT
         value: "25"
       - key: WORKER_BACKLOG_WARN_AGE_SECONDS

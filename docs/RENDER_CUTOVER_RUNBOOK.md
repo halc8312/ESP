@@ -101,9 +101,8 @@ Use the dormant Blueprint in `render.yaml`.
 
 These stay manual and must be filled in when the Blueprint is applied.
 
-- `SECRET_KEY`
-- `SELECTOR_ALERT_WEBHOOK_URL`
-- `OPERATIONAL_ALERT_WEBHOOK_URL`
+- `esp-web`: `SECRET_KEY`, `SELECTOR_ALERT_WEBHOOK_URL`
+- `esp-worker`: `SECRET_KEY`, `SELECTOR_ALERT_WEBHOOK_URL`, `OPERATIONAL_ALERT_WEBHOOK_URL`
 
 ## Managed Env Wiring
 

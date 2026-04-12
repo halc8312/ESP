@@ -6,9 +6,18 @@ import time
 from datetime import datetime, UTC
 from typing import Any
 from urllib import request
+from urllib.parse import urlparse
 
 
 logger = logging.getLogger("alerts")
+
+_DISCORD_USERNAME = "ESP Alerts"
+_DISCORD_COLOR_BY_SEVERITY = {
+    "info": 3447003,
+    "warning": 16776960,
+    "error": 15158332,
+    "critical": 10038562,
+}
 
 
 def _env_int(name: str, default: int) -> int:
@@ -168,8 +177,80 @@ class AlertDispatcher:
         )
 
     @staticmethod
+    def _truncate_text(value: Any, *, limit: int) -> str:
+        text = str(value or "").strip()
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 1)].rstrip() + "…"
+
+    @staticmethod
+    def _is_discord_webhook_url(url: str) -> bool:
+        parsed = urlparse(str(url or "").strip())
+        host = (parsed.netloc or "").lower()
+        path = parsed.path or ""
+        if host not in {"discord.com", "www.discord.com", "discordapp.com", "www.discordapp.com"}:
+            return False
+        return path.startswith("/api/webhooks/")
+
+    @classmethod
+    def _build_discord_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        title = cls._truncate_text(
+            payload.get("text")
+            or f"[{payload.get('category') or 'alert'}][{payload.get('severity') or 'warning'}] {payload.get('event_type') or 'event'}",
+            limit=2000,
+        )
+        message = cls._truncate_text(payload.get("message"), limit=4000)
+        details = payload.get("details") or {}
+        target_parts = [
+            str(payload.get("site") or "").strip(),
+            str(payload.get("page_type") or "").strip(),
+            str(payload.get("field") or "").strip(),
+        ]
+        target = "/".join(part for part in target_parts if part)
+
+        embed_fields: list[dict[str, Any]] = []
+        for name, value in (
+            ("Category", payload.get("category")),
+            ("Event", payload.get("event_type")),
+            ("Severity", payload.get("severity")),
+            ("Target", target or payload.get("component")),
+            ("Dedupe", payload.get("dedupe_key")),
+        ):
+            text = cls._truncate_text(value, limit=1024)
+            if text:
+                embed_fields.append({"name": name, "value": text, "inline": name != "Dedupe"})
+
+        if details:
+            details_text = cls._truncate_text(json.dumps(details, ensure_ascii=False, sort_keys=True), limit=1024)
+            embed_fields.append({"name": "Details", "value": details_text, "inline": False})
+
+        embed: dict[str, Any] = {
+            "title": cls._truncate_text(title, limit=256),
+            "color": _DISCORD_COLOR_BY_SEVERITY.get(str(payload.get("severity") or "warning").lower(), 16776960),
+            "fields": embed_fields[:25],
+        }
+        if message:
+            embed["description"] = cls._truncate_text(message, limit=4096)
+        if payload.get("timestamp"):
+            embed["timestamp"] = payload["timestamp"]
+
+        return {
+            "content": title,
+            "username": _DISCORD_USERNAME,
+            "allowed_mentions": {"parse": []},
+            "embeds": [embed],
+        }
+
+    @classmethod
+    def _prepare_outbound_payload(cls, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if cls._is_discord_webhook_url(url):
+            return cls._build_discord_payload(payload)
+        return payload
+
+    @staticmethod
     def _post_json(url: str, payload: dict[str, Any]) -> None:
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        outbound_payload = AlertDispatcher._prepare_outbound_payload(url, payload)
+        body = json.dumps(outbound_payload, ensure_ascii=False).encode("utf-8")
         req = request.Request(
             url,
             data=body,

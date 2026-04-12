@@ -24,6 +24,7 @@ def test_run_render_worker_postdeploy_checklist_reads_worker_contract_from_bluep
     assert snapshot["expected_runtime"]["selector_repair_min_canaries"] == 2
     assert "Worker browser pool warmed:" in snapshot["expected_log_markers"]
     assert "SELECTOR_REPAIR_CANARY_URLS_MERCARI_DETAIL" in snapshot["manual_envs"]
+    assert "SELECTOR_ALERT_WEBHOOK_URL" in snapshot["manual_envs"]
     assert any("process-selector-repairs --limit 1 --dry-run" in check for check in snapshot["manual_checks"])
 
 

@@ -369,6 +369,7 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 | `WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP` | `true` | worker 起動時に、stall timeout を超えた `running` job を durable state 上で `failed` に掃除するか |
 | `WORKER_BACKLOG_WARN_COUNT` | `25` | worker 起動時 backlog 診断で warning を出す queued job 件数しきい値。`0` で無効 |
 | `WORKER_BACKLOG_WARN_AGE_SECONDS` | `900` | worker 起動時 backlog 診断で warning を出す oldest queued/running age しきい値。`0` で無効 |
+| `SELECTOR_ALERT_WEBHOOK_URL` | unset | selector healer / repair candidate 通知の送信先 webhook。Discord raw webhook も利用可 |
 | `OPERATIONAL_ALERT_WEBHOOK_URL` | unset | worker backlog などの silent operational alert 送信先 webhook |
 | `OPERATIONAL_ALERT_COOLDOWN_SECONDS` | `900` | 同一 operational alert の再送 cooldown |
 | `OPERATIONAL_ALERT_MAX_PER_WINDOW` | `10` | operational alert の window 内最大送信数 |

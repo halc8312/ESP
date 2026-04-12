@@ -44,3 +44,45 @@ def test_notify_operational_issue_respects_cooldown(monkeypatch):
     assert first is True
     assert second is False
     assert len(sent) == 1
+
+
+def test_prepare_outbound_payload_for_discord_webhook_uses_discord_fields():
+    payload = {
+        "text": "[selector-healer][warning] repair_candidate_recorded mercari/detail/title",
+        "category": "selector",
+        "event_type": "repair_candidate_recorded",
+        "severity": "warning",
+        "site": "mercari",
+        "page_type": "detail",
+        "field": "title",
+        "message": "Recorded a candidate after a successful heal.",
+        "details": {"candidate_id": 321, "score": 97},
+        "dedupe_key": "selector:repair_candidate_recorded:mercari:detail:title",
+        "timestamp": "2026-04-12T09:00:00+00:00",
+    }
+
+    outbound = AlertDispatcher._prepare_outbound_payload(
+        "https://discord.com/api/webhooks/123/abc",
+        payload,
+    )
+
+    assert outbound["content"] == payload["text"]
+    assert outbound["username"] == "ESP Alerts"
+    assert outbound["allowed_mentions"] == {"parse": []}
+    assert outbound["embeds"][0]["title"] == payload["text"][:256]
+    assert outbound["embeds"][0]["description"] == payload["message"]
+    assert outbound["embeds"][0]["timestamp"] == payload["timestamp"]
+    detail_field = next(field for field in outbound["embeds"][0]["fields"] if field["name"] == "Details")
+    assert "\"candidate_id\": 321" in detail_field["value"]
+    assert "\"score\": 97" in detail_field["value"]
+
+
+def test_prepare_outbound_payload_preserves_generic_webhooks():
+    payload = {"text": "plain payload", "details": {"foo": "bar"}}
+
+    outbound = AlertDispatcher._prepare_outbound_payload(
+        "https://alerts.example.test/hooks/selector",
+        payload,
+    )
+
+    assert outbound == payload

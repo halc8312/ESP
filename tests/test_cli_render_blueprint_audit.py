@@ -53,6 +53,7 @@ def test_run_render_blueprint_audit_current_blueprint_is_ready():
     assert "esp-worker" in snapshot["service_names"]
     assert "esp-keyvalue" in snapshot["service_names"]
     assert "esp-postgres" in snapshot["database_names"]
+    assert {"service": "esp-worker", "key": "SELECTOR_ALERT_WEBHOOK_URL", "required": False} in snapshot["manual_secret_envs"]
 
 
 def test_run_render_dashboard_inputs_current_blueprint_contains_manual_and_managed_envs():

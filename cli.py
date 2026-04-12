@@ -534,11 +534,12 @@ def run_render_blueprint_audit(path: str = "render.yaml") -> dict:
         if str((worker_env.get(key) or {}).get("sync", "")).lower() != "false":
             blockers.append(f"worker_selector_repair_canaries_must_be_manual:{key.lower()}")
 
-    if web_env.get("SELECTOR_ALERT_WEBHOOK_URL"):
-        if str(web_env["SELECTOR_ALERT_WEBHOOK_URL"].get("sync", "")).lower() != "false":
-            warnings.append("selector_alert_webhook_should_remain_manual")
-    else:
-        warnings.append("selector_alert_webhook_missing_from_blueprint")
+    for service_name, env_map in (("esp-web", web_env), ("esp-worker", worker_env)):
+        if env_map.get("SELECTOR_ALERT_WEBHOOK_URL"):
+            if str(env_map["SELECTOR_ALERT_WEBHOOK_URL"].get("sync", "")).lower() != "false":
+                warnings.append(f"selector_alert_webhook_should_remain_manual:{service_name}")
+        else:
+            warnings.append(f"selector_alert_webhook_missing_from_blueprint:{service_name}")
 
     if worker_env.get("OPERATIONAL_ALERT_WEBHOOK_URL"):
         if str(worker_env["OPERATIONAL_ALERT_WEBHOOK_URL"].get("sync", "")).lower() != "false":
@@ -555,6 +556,7 @@ def run_render_blueprint_audit(path: str = "render.yaml") -> dict:
         {"service": "esp-web", "key": "SECRET_KEY", "required": True},
         {"service": "esp-web", "key": "SELECTOR_ALERT_WEBHOOK_URL", "required": False},
         {"service": "esp-worker", "key": "SECRET_KEY", "required": True},
+        {"service": "esp-worker", "key": "SELECTOR_ALERT_WEBHOOK_URL", "required": False},
         {"service": "esp-worker", "key": "OPERATIONAL_ALERT_WEBHOOK_URL", "required": False},
     ]
 
@@ -1592,6 +1594,7 @@ def run_render_cutover_checklist(
         {"service": "esp-web", "key": "SECRET_KEY", "required": True},
         {"service": "esp-web", "key": "SELECTOR_ALERT_WEBHOOK_URL", "required": False},
         {"service": "esp-worker", "key": "SECRET_KEY", "required": True},
+        {"service": "esp-worker", "key": "SELECTOR_ALERT_WEBHOOK_URL", "required": False},
         {"service": "esp-worker", "key": "OPERATIONAL_ALERT_WEBHOOK_URL", "required": False},
     ]
 
