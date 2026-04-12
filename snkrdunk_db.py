@@ -10,6 +10,7 @@ from urllib.parse import urljoin
 
 from selector_config import get_selectors, get_valid_domains
 from services.detail_field_strategy_runner import DetailFieldStrategy, run_detail_field_strategies
+from services.scrape_alerts import report_detail_result
 from services.snkrdunk_browser_fetch import (
     fetch_snkrdunk_page_via_browser_pool_sync,
     should_use_snkrdunk_browser_pool_dynamic,
@@ -526,7 +527,9 @@ def scrape_item_detail(url_or_driver, maybe_url=None, **_kwargs):
     The legacy `(driver, url)` signature is accepted for backward compatibility.
     """
     url = _resolve_detail_url(url_or_driver, maybe_url)
-    return scrape_item_detail_light(url) or _empty_result(url)
+    result = scrape_item_detail_light(url) or _empty_result(url)
+    report_detail_result("snkrdunk", url, result, result.get("_scrape_meta"), page_type="detail")
+    return result
 
 
 def scrape_single_item(url: str, headless: bool = True):

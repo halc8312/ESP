@@ -8,6 +8,7 @@ import re
 from urllib.parse import urljoin
 
 from services.extraction_policy import attach_extraction_trace, pick_first
+from services.scrape_alerts import report_detail_result
 
 logger = logging.getLogger("offmall")
 
@@ -314,7 +315,9 @@ def scrape_item_detail(url_or_driver, maybe_url=None, **_kwargs) -> dict:
     The legacy `(driver, url)` signature is accepted for backward compatibility.
     """
     url = _resolve_detail_url(url_or_driver, maybe_url)
-    return scrape_item_detail_light(url) or _empty_result(url)
+    result = scrape_item_detail_light(url) or _empty_result(url)
+    report_detail_result("offmall", url, result, result.get("_scrape_meta"), page_type="detail")
+    return result
 
 
 def scrape_single_item(url: str, headless: bool = True) -> list:

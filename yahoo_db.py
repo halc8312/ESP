@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 from selector_config import get_selectors, get_valid_domains
 from scrape_metrics import check_scrape_health, get_metrics, log_scrape_result
 from services.extraction_policy import attach_extraction_trace, pick_first
+from services.scrape_alerts import report_detail_result
 from services.selector_healer import get_healer
 
 logger = logging.getLogger("yahoo")
@@ -259,7 +260,9 @@ def scrape_item_detail(url_or_driver, maybe_url=None, **_kwargs):
     The legacy `(driver, url)` signature is accepted for backward compatibility.
     """
     url = _resolve_detail_url(url_or_driver, maybe_url)
-    return scrape_item_detail_light(url) or _empty_result(url)
+    result = scrape_item_detail_light(url) or _empty_result(url)
+    report_detail_result("yahoo", url, result, result.get("_scrape_meta"), page_type="detail")
+    return result
 
 
 def _extract_search_urls(page, base_url: str, max_items: int) -> list:
