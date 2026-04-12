@@ -682,7 +682,7 @@ class SelectorHealer:
                     message="Selector healing succeeded in memory but could not be persisted.",
                     details={"reason": "selector_persist_failed", "new_selector": new_selector, "score": round(score, 2)},
                 )
-            record_repair_candidate(
+            self._record_repair_candidate(
                 site=site,
                 page_type=page_type,
                 field=field,
@@ -690,7 +690,6 @@ class SelectorHealer:
                 proposed_selector=new_selector,
                 source_selector=old_first,
                 score=score,
-                page_state="healthy",
                 details={
                     "persisted_to_json": persisted,
                     "page_url": str(getattr(page, "url", "") or ""),
@@ -814,7 +813,7 @@ class SelectorHealer:
                         message="Image healing succeeded in memory but could not be persisted.",
                         details={"reason": "selector_persist_failed", "new_selector": new_selector, "score": 100},
                     )
-                record_repair_candidate(
+                self._record_repair_candidate(
                     site=site,
                     page_type=page_type,
                     field="images",
@@ -822,7 +821,6 @@ class SelectorHealer:
                     proposed_selector=new_selector,
                     source_selector=old_first,
                     score=100,
-                    page_state="healthy",
                     details={
                         "persisted_to_json": persisted,
                         "page_url": str(getattr(page, "url", "") or ""),
@@ -873,6 +871,51 @@ class SelectorHealer:
             )
         except Exception as exc:
             logger.debug("Selector alert dispatch hook failed: %s", exc)
+
+    def _record_repair_candidate(
+        self,
+        *,
+        site: str,
+        page_type: str,
+        field: str,
+        parser: str,
+        proposed_selector: str,
+        source_selector: str,
+        score: float | int,
+        details: dict | None = None,
+    ) -> int | None:
+        candidate_id = record_repair_candidate(
+            site=site,
+            page_type=page_type,
+            field=field,
+            parser=parser,
+            proposed_selector=proposed_selector,
+            source_selector=source_selector,
+            score=score,
+            page_state="healthy",
+            details=details,
+        )
+        if candidate_id is not None:
+            numeric_score = None
+            if score is not None:
+                try:
+                    numeric_score = round(float(score), 2)
+                except (TypeError, ValueError):
+                    numeric_score = None
+            self._notify_selector_issue(
+                event_type="repair_candidate_recorded",
+                site=site,
+                page_type=page_type,
+                field=field,
+                severity="warning",
+                message="A selector repair candidate was recorded and is awaiting review.",
+                details={
+                    "candidate_id": candidate_id,
+                    "score": numeric_score,
+                    **(details or {}),
+                },
+            )
+        return candidate_id
 
     def _record_low_confidence_hit(
         self,

@@ -151,6 +151,70 @@ def inspect_repair_store_state() -> dict[str, Any]:
         session.close()
 
 
+def get_repair_queue_snapshot(sample_limit: int = 5) -> dict[str, Any]:
+    state = inspect_repair_store_state()
+    snapshot = {
+        "enabled": bool(state.get("enabled")),
+        "ready": bool(state.get("ready")),
+        "known_unavailable": bool(state.get("known_unavailable")),
+        "missing_tables": list(state.get("missing_tables") or []),
+        "blockers": list(state.get("blockers") or []),
+        "pending_count": 0,
+        "sample_candidate_ids": [],
+        "oldest_pending_created_at": None,
+    }
+    if snapshot["blockers"] or not snapshot["enabled"]:
+        return snapshot
+
+    safe_limit = max(0, int(sample_limit or 0))
+    session = SessionLocal()
+    try:
+        base_query = session.query(SelectorRepairCandidate).filter(
+            SelectorRepairCandidate.status == "pending",
+            SelectorRepairCandidate.page_state == "healthy",
+        )
+        snapshot["pending_count"] = int(base_query.count())
+        oldest_pending = (
+            base_query.order_by(SelectorRepairCandidate.created_at.asc(), SelectorRepairCandidate.id.asc()).first()
+        )
+        if oldest_pending is not None and getattr(oldest_pending, "created_at", None) is not None:
+            snapshot["oldest_pending_created_at"] = oldest_pending.created_at.isoformat()
+        if safe_limit > 0:
+            sample_candidates = (
+                base_query.order_by(SelectorRepairCandidate.created_at.asc(), SelectorRepairCandidate.id.asc())
+                .limit(safe_limit)
+                .all()
+            )
+            snapshot["sample_candidate_ids"] = [int(candidate.id) for candidate in sample_candidates]
+        _mark_store_available()
+        return snapshot
+    except (OperationalError, ProgrammingError) as exc:
+        session.rollback()
+        if _looks_like_missing_store_table(exc):
+            _mark_store_unavailable()
+            snapshot.update(
+                {
+                    "ready": False,
+                    "known_unavailable": True,
+                    "missing_tables": list(_REPAIR_STORE_TABLES),
+                    "blockers": ["repair_store_tables_missing"],
+                }
+            )
+            return snapshot
+        snapshot["ready"] = False
+        snapshot["blockers"] = ["repair_store_inspection_failed"]
+        snapshot["error"] = str(exc)
+        return snapshot
+    except Exception as exc:
+        session.rollback()
+        snapshot["ready"] = False
+        snapshot["blockers"] = ["repair_store_inspection_failed"]
+        snapshot["error"] = str(exc)
+        return snapshot
+    finally:
+        session.close()
+
+
 def _serialize_repair_candidate(record: SelectorRepairCandidate) -> dict[str, Any]:
     return {
         "id": int(record.id),

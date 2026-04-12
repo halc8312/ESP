@@ -668,8 +668,21 @@ def test_get_worker_health_snapshot_reports_rq_state(monkeypatch):
         lambda: {"runtimes": {}, "warm_sites": ["mercari"], "shared_runtime_default_enabled": True},
     )
     monkeypatch.setattr(
+        "services.worker_runtime.get_repair_queue_snapshot",
+        lambda: {
+            "ready": True,
+            "blockers": [],
+            "pending_count": 2,
+            "sample_candidate_ids": [11, 12],
+            "oldest_pending_created_at": "2026-04-12T00:00:00+00:00",
+        },
+    )
+    monkeypatch.setattr(
         "services.worker_runtime.get_alert_dispatcher",
-        lambda: SimpleNamespace(operational_webhook_url="https://alerts.example.test/ops"),
+        lambda: SimpleNamespace(
+            selector_webhook_url="https://alerts.example.test/selectors",
+            operational_webhook_url="https://alerts.example.test/ops",
+        ),
     )
 
     snapshot = get_worker_health_snapshot(app)
@@ -678,6 +691,9 @@ def test_get_worker_health_snapshot_reports_rq_state(monkeypatch):
     assert snapshot["redis_ok"] is True
     assert snapshot["queue_name"] == "worker-q"
     assert snapshot["backlog_issues"] == ["queued_count>=2", "oldest_queued_age_seconds>=300"]
+    assert snapshot["repair_issues"] == ["pending_selector_repairs=2"]
+    assert snapshot["selector_repairs"]["pending_count"] == 2
+    assert snapshot["selector_alert_enabled"] is True
     assert snapshot["operational_alert_enabled"] is True
 
 
@@ -709,3 +725,5 @@ def test_get_worker_health_snapshot_for_inmemory_skips_redis(monkeypatch):
     assert snapshot["queue_backend"] == "inmemory"
     assert snapshot["redis_ok"] is None
     assert snapshot["redis_error"] is None
+    assert snapshot["selector_repairs"] is None
+    assert snapshot["repair_issues"] == []

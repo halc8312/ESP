@@ -14,6 +14,7 @@ from database import ensure_additive_schema_ready
 from services.alerts import get_alert_dispatcher
 from services.rq_compat import import_rq_queue, import_rq_simple_worker
 from services.browser_pool import close_browser_pool, get_browser_pool_health, warm_browser_pool
+from services.repair_store import get_repair_queue_snapshot
 from services.repair_worker import process_pending_repair_candidates
 from services.scrape_job_store import get_job_backlog_snapshot, reconcile_stalled_jobs
 
@@ -133,6 +134,12 @@ def get_worker_health_snapshot(app: Flask) -> dict[str, Any]:
     backlog = get_job_backlog_snapshot()
     browser_pool_health = get_browser_pool_health()
     backlog_issues = evaluate_backlog_issues(backlog, settings)
+    selector_repairs = get_repair_queue_snapshot() if settings.queue_backend == "rq" else None
+    repair_issues: list[str] = []
+    if selector_repairs and not list(selector_repairs.get("blockers") or []):
+        pending_count = int(selector_repairs.get("pending_count") or 0)
+        if pending_count > 0:
+            repair_issues.append(f"pending_selector_repairs={pending_count}")
 
     snapshot: dict[str, Any] = {
         "runtime_role": str(app.config.get("ESP_RUNTIME_ROLE", "")),
@@ -148,7 +155,10 @@ def get_worker_health_snapshot(app: Flask) -> dict[str, Any]:
             "warn_age_seconds": settings.backlog_warn_age_seconds,
         },
         "browser_pool_health": browser_pool_health,
-        "operational_alert_enabled": bool(get_alert_dispatcher().operational_webhook_url),
+        "selector_repairs": selector_repairs,
+        "repair_issues": repair_issues,
+        "selector_alert_enabled": bool(getattr(get_alert_dispatcher(), "selector_webhook_url", "")),
+        "operational_alert_enabled": bool(getattr(get_alert_dispatcher(), "operational_webhook_url", "")),
         "worker_runtime_supported": settings.queue_backend == "rq",
     }
 

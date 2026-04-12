@@ -3026,7 +3026,7 @@ def register_cli_commands(app):
 
         if snapshot.get("queue_backend") == "rq" and snapshot.get("redis_ok") is False:
             raise SystemExit(1)
-        if fail_on_warning and snapshot.get("backlog_issues"):
+        if fail_on_warning and (snapshot.get("backlog_issues") or snapshot.get("repair_issues")):
             raise SystemExit(1)
 
     @app.cli.command("process-selector-repairs")

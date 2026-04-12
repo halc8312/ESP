@@ -441,6 +441,43 @@ class TestSelectorHealerAlerting:
         assert was_healed is True
         assert any(event["event_type"] == "persist_failed" for event in alerts.events)
 
+    def test_successful_heal_dispatches_repair_candidate_recorded_alert(self, healer_with_temp_config, monkeypatch):
+        healer, config_dir = healer_with_temp_config
+        alerts = _AlertCollector()
+
+        good_el = MockElement(
+            tag="h1",
+            text="Product Found via Healing",
+            attribs={"class": "new-product-title", "id": "healed-title"},
+        )
+        page = MockPage(
+            elements_map={
+                ".old-title-class": [],
+                "h1.legacy": [],
+                "h1": [good_el],
+                "h2": [],
+                "*": [good_el],
+            }
+        )
+
+        import selector_config
+        monkeypatch.setattr(
+            selector_config, "_selectors_cache",
+            json.load(open(os.path.join(config_dir, "scraping_selectors.json")))
+        )
+        monkeypatch.setattr("services.selector_healer.get_alert_dispatcher", lambda: alerts)
+        monkeypatch.setattr("services.selector_healer.record_repair_candidate", lambda **kwargs: 321)
+
+        value, was_healed = healer.extract_with_healing(
+            page, "testsite", "detail", "title", parser="scrapling"
+        )
+
+        assert value == "Product Found via Healing"
+        assert was_healed is True
+        repair_events = [event for event in alerts.events if event["event_type"] == "repair_candidate_recorded"]
+        assert len(repair_events) == 1
+        assert repair_events[0]["details"]["candidate_id"] == 321
+
     def test_repeated_low_confidence_healing_dispatches_alert(self, healer_with_temp_config, monkeypatch):
         healer, config_dir = healer_with_temp_config
         alerts = _AlertCollector()

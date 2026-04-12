@@ -8,6 +8,7 @@ from database import SessionLocal
 from models import SelectorActiveRuleSet, SelectorRepairCandidate
 from services.repair_store import (
     get_pending_repair_candidate,
+    get_repair_queue_snapshot,
     inspect_repair_store_state,
     load_active_selectors,
     promote_repair_candidate,
@@ -25,6 +26,7 @@ def test_load_active_selectors_returns_none_when_store_tables_are_missing(monkey
     previous_engine = database.engine
     test_engine = database.create_app_engine(database_url)
     monkeypatch.setenv("DATABASE_URL", database_url)
+    SessionLocal.remove()
     database.engine = test_engine
     SessionLocal.configure(bind=test_engine)
     reset_repair_store_cache()
@@ -41,6 +43,7 @@ def test_load_active_selectors_returns_none_when_store_tables_are_missing(monkey
             score=88,
         ) is None
     finally:
+        SessionLocal.remove()
         test_engine.dispose()
         database.engine = previous_engine
         SessionLocal.configure(bind=database.engine)
@@ -58,6 +61,7 @@ def test_inspect_repair_store_state_reports_missing_tables(monkeypatch):
     previous_engine = database.engine
     test_engine = database.create_app_engine(database_url)
     monkeypatch.setenv("DATABASE_URL", database_url)
+    SessionLocal.remove()
     database.engine = test_engine
     SessionLocal.configure(bind=test_engine)
     reset_repair_store_cache()
@@ -70,6 +74,7 @@ def test_inspect_repair_store_state_reports_missing_tables(monkeypatch):
         assert "selector_repair_candidates" in snapshot["missing_tables"]
         assert "selector_active_rule_sets" in snapshot["missing_tables"]
     finally:
+        SessionLocal.remove()
         test_engine.dispose()
         database.engine = previous_engine
         SessionLocal.configure(bind=database.engine)
@@ -126,6 +131,27 @@ def test_get_pending_repair_candidate_returns_serialized_candidate(app):
     assert candidate["id"] == candidate_id
     assert candidate["site"] == "mercari"
     assert candidate["details"]["persisted_to_json"] is True
+
+
+def test_get_repair_queue_snapshot_reports_pending_candidates(app):
+    reset_repair_store_cache()
+
+    candidate_id = record_repair_candidate(
+        site="mercari",
+        page_type="detail",
+        field="title",
+        parser="scrapling",
+        proposed_selector="#healed-title",
+        source_selector=".legacy-title",
+        score=92,
+    )
+
+    snapshot = get_repair_queue_snapshot()
+
+    assert snapshot["ready"] is True
+    assert snapshot["pending_count"] == 1
+    assert snapshot["sample_candidate_ids"] == [candidate_id]
+    assert snapshot["oldest_pending_created_at"] is not None
 
 
 def test_selector_config_prefers_db_active_selectors(app, monkeypatch):

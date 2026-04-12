@@ -51,3 +51,20 @@ def test_worker_health_cli_fail_on_warning_respects_backlog_issues(app, monkeypa
     result = runner.invoke(args=["worker-health", "--fail-on-warning"])
 
     assert result.exit_code == 1
+
+
+def test_worker_health_cli_fail_on_warning_respects_repair_issues(app, monkeypatch):
+    monkeypatch.setattr(
+        "cli.get_worker_health_snapshot",
+        lambda current_app: {
+            "queue_backend": "rq",
+            "redis_ok": True,
+            "backlog_issues": [],
+            "repair_issues": ["pending_selector_repairs=1"],
+        },
+    )
+
+    runner = app.test_cli_runner()
+    result = runner.invoke(args=["worker-health", "--fail-on-warning"])
+
+    assert result.exit_code == 1
