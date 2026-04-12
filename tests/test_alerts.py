@@ -86,3 +86,11 @@ def test_prepare_outbound_payload_preserves_generic_webhooks():
     )
 
     assert outbound == payload
+
+
+def test_build_request_headers_sets_explicit_user_agent():
+    headers = AlertDispatcher._build_request_headers()
+
+    assert headers["Content-Type"] == "application/json; charset=utf-8"
+    assert headers["Accept"] == "application/json, text/plain, */*"
+    assert headers["User-Agent"].startswith("ESP-Alerts/")

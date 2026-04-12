@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 logger = logging.getLogger("alerts")
 
 _DISCORD_USERNAME = "ESP Alerts"
+_DEFAULT_ALERT_USER_AGENT = "ESP-Alerts/1.0 (+https://github.com/halc8312/ESP)"
 _DISCORD_COLOR_BY_SEVERITY = {
     "info": 3447003,
     "warning": 16776960,
@@ -248,13 +249,21 @@ class AlertDispatcher:
         return payload
 
     @staticmethod
+    def _build_request_headers() -> dict[str, str]:
+        return {
+            "Content-Type": "application/json; charset=utf-8",
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": _DEFAULT_ALERT_USER_AGENT,
+        }
+
+    @staticmethod
     def _post_json(url: str, payload: dict[str, Any]) -> None:
         outbound_payload = AlertDispatcher._prepare_outbound_payload(url, payload)
         body = json.dumps(outbound_payload, ensure_ascii=False).encode("utf-8")
         req = request.Request(
             url,
             data=body,
-            headers={"Content-Type": "application/json; charset=utf-8"},
+            headers=AlertDispatcher._build_request_headers(),
             method="POST",
         )
         with request.urlopen(req, timeout=5):
