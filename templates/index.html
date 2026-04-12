@@ -654,6 +654,11 @@
                 const form = document.createElement('form');
                 form.method = 'POST';
                 form.action = '{{ url_for("archive.archive_products") }}';
+                const csrfField = document.createElement('input');
+                csrfField.type = 'hidden';
+                csrfField.name = 'csrf_token';
+                csrfField.value = document.querySelector('meta[name="csrf-token"]').content;
+                form.appendChild(csrfField);
                 selectedIds.forEach(id => {
                     const field = document.createElement('input');
                     field.type = 'hidden';
@@ -672,6 +677,11 @@
                 const form = document.createElement('form');
                 form.method = 'POST';
                 form.action = '{{ url_for("trash.trash_delete") }}';
+                const csrfField = document.createElement('input');
+                csrfField.type = 'hidden';
+                csrfField.name = 'csrf_token';
+                csrfField.value = document.querySelector('meta[name="csrf-token"]').content;
+                form.appendChild(csrfField);
                 selectedIds.forEach(id => {
                     const field = document.createElement('input');
                     field.type = 'hidden';
@@ -693,6 +703,11 @@
         form.method = 'POST';
         form.action = '{{ url_for("main.batch_edit") }}';
 
+        const csrfField = document.createElement('input');
+        csrfField.type = 'hidden';
+        csrfField.name = 'csrf_token';
+        csrfField.value = document.querySelector('meta[name="csrf-token"]').content;
+        form.appendChild(csrfField);
 
         const addHidden = (name, value) => {
             const field = document.createElement('input');
