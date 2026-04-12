@@ -31,12 +31,21 @@
 | `coverage_gaps.md` | 未実施項目、代替案、残存リスク |
 | `evidence/` | スクリーンショット等の補助証跡 |
 
+補助証跡:
+- `evidence/EVD-003_index_after_register.png`: 新規登録後に商品一覧へ到達した状態
+- `evidence/EVD-004_catalog_mobile.png`: 公開カタログをモバイル幅で表示した状態
+
 # 実施サマリー
 - 既存自動E2E: `python -m pytest tests/test_e2e_routes.py -x --tb=short` は 78/78 Pass。
+- 補助自動テスト: `python -m pytest tests/test_health_route.py -q` は 1/1 Pass。
 - CLIスモーク: `flask --app 'app:create_cli_app()' single-web-smoke --mode preview` は Fail。CSRF有効時に `/login` へトークンなしPOSTを行い 400 となる挙動を確認。
-- ブラウザE2E: 実施中。主要導線、異常系、権限制御、レスポンシブ、公開導線を中心に確認予定。
+- ブラウザE2E: 新規登録、ショップ作成/切替、商品手動登録/更新、価格表作成、公開カタログ、アクセス解析、保護画面リダイレクト、モバイル幅表示を実測。
+- Pass 主要例: 登録、ショップ切替、手動商品作成、一覧/詳細整合性、価格表公開、公開メモのサニタイズ、公開画面での内部URL非露出、アクセス解析の基本集計、モバイル幅での公開カタログ表示。
+- Fail 主要例: `single-web-smoke` の CSRF 失敗、`next` 付きログイン時の遷移先喪失、TinyMCE/CDN 依存による `tinymce is not defined` コンソールエラー。
 
 # 主要なリスク概要
 - スモークCLIと本番相当設定の乖離により、デプロイ前ゲートが実運用で機能しない恐れ。
+- 認証必須画面へ遷移した後のログインで `next` が無視され、元画面へ戻れないため業務導線が分断される恐れ。
+- TinyMCE/Chart.js の CDN 依存により、外部 CDN 到達不能時に編集画面・価格表画面でコンソールエラーが発生し、リッチテキスト編集や可視化品質が低下する恐れ。
 - スクレイプ/外部連携系はローカル代替確認が中心で、実サイト/メール/Webhook 連携は別環境確認が必要。
 - 権限分離・IDOR は単一ロール中心のローカル検証では取りこぼし余地があるため、追加データ準備が必要。
