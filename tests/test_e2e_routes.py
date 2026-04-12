@@ -489,6 +489,10 @@ class TestShopsRoutes:
         self._login_user(client, db_session)
         response = client.get('/shops')
         assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'name="name"' in html
+        assert 'placeholder="ショップ名 (例: 文具店A)"' in html
+        assert 'value="{{ csrf_token() }}"/> placeholder=' not in html
     
     def test_create_shop(self, client, db_session):
         """Test creating a new shop"""

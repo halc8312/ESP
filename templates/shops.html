@@ -24,7 +24,8 @@
     <div class="content-card-body">
         <form method="POST" enctype="multipart/form-data" class="shop-add-form"
             style="display:flex; gap:10px; flex-wrap: wrap;">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/> placeholder="ショップ名 (例: 文具店A)" required autocomplete="organization"
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <input type="text" name="name" placeholder="ショップ名 (例: 文具店A)" required autocomplete="organization"
                 style="flex: 1; min-width: 200px;">
             <input type="url" name="logo_url" placeholder="外部ロゴURL (任意)" style="flex: 2; min-width: 250px;">
             <input type="file" name="logo_file" accept="image/*" style="flex: 1; min-width: 220px;">
