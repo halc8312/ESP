@@ -8,28 +8,30 @@
 
 | ID | 優先度 | カテゴリ | 観点 | 目的 | 前提条件 | 手順 | 期待結果 | 追加確認 | バグになりやすい理由 | 関連機能 / 依存機能 | 証跡想定 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| TC-E2E-001 | Critical | 認証 | 初回登録 | 新規登録と自動ログインを確認 | ローカル起動済み | /registerで新規登録 | ダッシュボードへ遷移しセッション開始 | 再読み込み後もログイン維持 | セッション初期化漏れ | auth, main | EVD-001 |
-| TC-E2E-002 | Critical | 認証 | ログイン失敗 | 不正認証時のエラー制御確認 | ユーザー作成済み | 誤パスワードで5回以上試行 | 適切なエラー、レート制限 | 6回目以降の挙動 | レート制限境界 | auth | EVD-002 |
-| TC-E2E-003 | High | ショップ | CRUD | ショップ作成・編集・削除と商品参照影響確認 | ログイン済み | /shopsでCRUD | 一覧反映・重複防止・削除後整合 | current_shop, 商品のshop_id | 参照整合性崩れ | shops, main | EVD-003 |
-| TC-E2E-004 | Critical | 商品 | 手動作成 | 商品手動追加から詳細表示まで確認 | ショップ作成済み | /products/manual-addで登録 | 詳細画面へ遷移し値が保存 | 一覧、再読み込み、DB反映 | 保存表示とDB不一致 | main, products | EVD-004 |
-| TC-E2E-005 | High | 商品 | バリデーション | 必須・数値境界・重複URL制御確認 | ログイン済み | 未入力/負数/重複URLで送信 | エラー表示され保存されない | DBに作成されない | サーバ/クライアント差異 | main | EVD-005 |
-| TC-E2E-006 | Critical | 権限 | 直接URLアクセス | 他ユーザー商品の参照拒否確認 | 2ユーザー/2商品 | 他人product URLにアクセス | 404または拒否 | DB改変なし | IDOR化しやすい | products | EVD-006 |
-| TC-E2E-007 | High | 商品 | 更新整合性 | 詳細更新と再表示/一覧/公開系反映確認 | 商品作成済み | 商品詳細を編集して保存 | 再表示・一覧・DBが一致 | variant価格→selling_price同期 | 多モデル更新 | products, main | EVD-007 |
-| TC-E2E-008 | High | テンプレート | CRUD | 説明文テンプレートの作成削除確認 | ログイン済み | /templatesで作成/削除 | 一覧反映し削除可能 | グローバル作用確認 | 所有権漏れの恐れ | shops | EVD-008 |
-| TC-E2E-009 | High | 価格設定 | CRUD | Pricing Rule作成編集削除確認 | ログイン済み | /pricingでCRUD | 一覧反映、再読込で保持 | 数値境界 | 計算ロジック影響大 | pricing | EVD-009 |
-| TC-E2E-010 | Critical | 価格表 | 作成〜公開 | 価格表作成、商品追加、公開ページ表示確認 | 商品作成済み | /pricelistsで作成し公開URL確認 | 公開面に期待項目のみ表示 | source_url/site非露出 | 機密露出/公開事故 | pricelist, catalog | EVD-010 |
-| TC-E2E-011 | High | 価格表 | レイアウト・XSS | layout正規化とnotesサニタイズ確認 | 価格表あり | 不正layout/危険HTML入力 | 安全な値へ正規化/危険要素除去 | 公開HTMLの崩れ | XSS/回帰しやすい | pricelist, catalog | EVD-011 |
-| TC-E2E-012 | Medium | 公開分析 | アクセス記録 | 公開閲覧時のanalytics記録確認 | 価格表公開済み | 公開面へアクセス後analytics確認 | page view増加 | product detail viewも記録 | 非同期/匿名情報欠落 | catalog | EVD-012 |
-| TC-E2E-013 | Medium | 一覧 | 検索/フィルタ | 商品一覧検索結果の整合性確認 | 商品複数 | index検索利用 | 一覧/件数/対象一致 | 再読み込み保持 | キャッシュや絞り込み漏れ | main | EVD-013 |
-| TC-E2E-014 | Medium | 状態遷移 | アーカイブ/ゴミ箱 | archive/trash移動と復元確認 | 商品作成済み | archive/trash操作 | 一覧から消え対象画面へ移動 | 復元後整合性 | 状態遷移抜け漏れ | archive, trash | EVD-014 |
-| TC-E2E-015 | Medium | セキュリティ | ログアウト後戻る | ログアウト後の戻る・再表示制御確認 | ログイン済み | logout後に戻る/直接URL | 保護画面へ再入不可 | キャッシュ表示有無 | 情報露出 | auth | EVD-015 |
-| TC-E2E-016 | Medium | API | 認証・CSRF | 保護APIの認証/CSRF前提確認 | ログイン前後 | /api配下呼び出し | 未認証拒否、認証後正常 | 失敗時メッセージ | SPA/JS経由漏れ | api | EVD-016 |
-| TC-E2E-017 | Low | インポート/エクスポート | CSV | CSV処理の基本導線確認 | サンプルCSV | プレビュー/実行/ダウンロード | 処理成功または適切な失敗 | 文字化け | 形式差異/境界で壊れやすい | import/export | EVD-017 |
-| TC-E2E-018 | Low | 外部連携 | スクレイピング | 外部連携失敗時の崩れ確認 | ネットワーク/外部依存 | /scrapeで不正条件実行 | 見かけ成功せず失敗が可視化 | job status整合性 | 非同期失敗隠蔽 | scrape, api | EVD-018 |
+| TC-E2E-001 | Critical | 認証 | 初回登録 | 新規登録と自動ログインを確認 | 未ログイン | `/register` でユーザー登録 | `/` へ遷移しログイン状態になる | 再読み込み後も認証維持 | セッション初期化漏れ | auth, main | EVD-001 |
+| TC-E2E-002 | Critical | 認証 | レート制限 | 不正認証時の失敗表示と上限到達挙動を確認 | ユーザー存在 | 誤パスワードを6回送信 | 5回までは認証失敗、6回目で上限文言表示 | 以降のログイン影響 | IP単位境界が壊れやすい | auth | EVD-002 |
+| TC-E2E-003 | High | ショップ | 作成/重複 | ショップ追加と重複名防止確認 | ログイン済み | `/shops` で追加後、同名追加 | 一覧反映し重複は拒否 | current_shop 候補反映 | ユーザー分離と重複制御 | shops | EVD-003 |
+| TC-E2E-004 | Critical | 商品 | 手動作成 | 商品手動追加から編集画面遷移まで確認 | ショップ存在 | `/products/manual-add` で登録 | 詳細画面へ遷移し初期値が保持される | 変種/在庫/説明の初期値 | モデル複数生成 | main, products | EVD-004 |
+| TC-E2E-005 | High | 商品 | バリデーション | 重複 source_url と入力保持確認 | 既存商品あり | 同一元URLで再登録 | エラー表示、保存されない、入力保持 | DB件数維持 | サーバ側制御漏れ | main | EVD-005 |
+| TC-E2E-006 | Critical | 権限 | 直接URL | 他ユーザー商品の参照拒否確認 | ユーザーA/B作成済み | ユーザーBで `/product/1` へアクセス | 404/拒否される | DB改変なし | IDOR事故 | products | EVD-006 |
+| TC-E2E-007 | Critical | 商品 | 更新整合性 | 編集後に一覧/DB/公開面へ反映されるか確認 | 商品存在 | 商品名・EN名・variant価格/在庫/SKU を編集して保存 | 詳細・一覧・DBが一致 | `selling_price` 同期 | 複数モデル更新 | products, main | EVD-007 |
+| TC-E2E-008 | High | テンプレート | 作成/削除 | テンプレート作成削除とHTMLサニタイズを確認 | ログイン済み | `/templates` で script 含む内容を作成し削除 | 一覧反映、scriptは除去、削除成功 | WYSIWYG有無 | リッチテキスト系は壊れやすい | shops/manage_templates | EVD-008 |
+| TC-E2E-009 | High | 価格設定 | 作成/編集 | 価格ルールの作成/更新確認 | ログイン済み | `/pricing` で作成しモーダル編集 | 計算例と一覧が更新される | 再計算メッセージ | 数値変換・モーダル保存 | pricing | EVD-009 |
+| TC-E2E-010 | Critical | 価格表 | 作成〜公開 | 価格表作成、商品追加、公開URL確認 | 商品存在 | `/pricelists/create` → items → add-products | カタログ公開ページに商品が表示される | token URL | 公開導線は業務影響大 | pricelist, catalog | EVD-010 |
+| TC-E2E-011 | High | 価格表 | notes/layout | notesサニタイズと layout 反映確認 | 価格表作成可能 | script含む notes と list layout で作成 | 公開面で script除去、layout反映 | 内部情報非露出 | XSS/設定漏れ | pricelist, catalog | EVD-011 |
+| TC-E2E-012 | High | 公開分析 | page view | カタログ閲覧/Quick View が analytics に反映されるか確認 | 価格表公開済み | catalog閲覧 → Quick View → analytics確認 | PV/詳細表示が増える | referrer/ユニーク | 非同期記録漏れ | catalog | EVD-012 |
+| TC-E2E-013 | Medium | 一覧 | 検索/フィルタ | 商品一覧検索/フィルタ整合 | 複数商品 | indexで検索/絞込 | 一覧/件数一致 | 再読み込み保持 | 条件組合せで壊れやすい | main | EVD-013 |
+| TC-E2E-014 | Medium | 状態遷移 | アーカイブ/ゴミ箱 | archive/trash移動と復元確認 | 商品存在 | 一括操作で archive/trash/restore | 一覧間の移動が整合 | 復元後公開面 | 状態遷移抜け | archive, trash | EVD-014 |
+| TC-E2E-015 | Medium | セキュリティ | ログアウト後戻る | ログアウト後に保護画面へ戻れないことを確認 | ログイン済み | `/logout` 後にブラウザ戻る | loginへ遷移し再表示不可 | nextパラメータ | キャッシュ露出 | auth | EVD-015 |
+| TC-E2E-016 | High | API | 所有権 | 他ユーザーからの inline-update API を拒否するか確認 | ユーザーBログイン | `/api/products/1/inline-update` を PATCH | 404/拒否 | CSRF/JSONレスポンス | APIだけ抜けやすい | api | EVD-016 |
+| TC-E2E-017 | Medium | インポート/エクスポート | CSV | CSV導線と文字化け確認 | サンプルCSV | import preview/execute, export download | 成功または明確な失敗 | 列ズレ | 形式依存 | import/export | EVD-017 |
+| TC-E2E-018 | High | 外部連携 | scrape失敗 | 外部サイト/ネットワーク失敗時のジョブ状態確認 | scrape設定 | `/scrape` 実行し失敗条件を与える | 見かけ成功せず失敗が可視化 | tracker/API | 非同期失敗隠蔽 | scrape, api | EVD-018 |
+| TC-E2E-019 | High | 非機能入口 | 外部CDN断 | 編集系画面が CDN 不達でも致命的に崩れないことを確認 | CDN到達性を制限可能 | `/product/1`, `/templates`, `/pricelists/create` を開く | フォールバック表示で継続利用可能、JS例外なし | console error, WYSIWYG | 外部依存は環境差で顕在化 | product_detail, manage_templates, pricelist_edit | EVD-019 |
+| TC-E2E-020 | Medium | セキュリティ | 価格表直接URL | 他ユーザーの価格表管理画面に到達できないことを確認 | ユーザーA/B作成済み | ユーザーBで `/pricelists/1/items` へアクセス | 価格表一覧へ逃がす/拒否 | analytics/edit も同様 | owner check 漏れ | pricelist | EVD-020 |
 
 ## カテゴリ別整理
 - 認証: TC-E2E-001, 002, 015
 - ショップ/テンプレート/価格設定: TC-E2E-003, 008, 009
 - 商品/状態遷移: TC-E2E-004, 005, 006, 007, 013, 014
-- 価格表/公開: TC-E2E-010, 011, 012
-- API/外部連携/CSV: TC-E2E-016, 017, 018
+- 価格表/公開/分析: TC-E2E-010, 011, 012, 020
+- API/外部連携/非機能: TC-E2E-016, 017, 018, 019
