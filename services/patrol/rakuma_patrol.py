@@ -33,22 +33,22 @@ class RakumaPatrol(BasePatrol):
             body_text = extract_rakuma_page_text(page)
 
             if http_status == 404:
-                return PatrolResult(error="Rakuma item unavailable (404)")
+                return self._finalize_result("rakuma", url, PatrolResult(error="Rakuma item unavailable (404)"))
 
             if is_rakuma_missing_item_page(body_text):
-                return PatrolResult(error="Rakuma item unavailable")
+                return self._finalize_result("rakuma", url, PatrolResult(error="Rakuma item unavailable"))
 
             parsed = parse_rakuma_item_page(page, url, body_text=body_text)
             status = self._normalize_status(parsed.get("status"))
 
             if not parsed.get("title") and parsed.get("price") is None and status != "sold":
-                return PatrolResult(error="Rakuma page missing expected item data")
+                return self._finalize_result("rakuma", url, PatrolResult(error="Rakuma page missing expected item data"))
 
-            return PatrolResult(price=parsed.get("price"), status=status, variants=[])
+            return self._finalize_result("rakuma", url, PatrolResult(price=parsed.get("price"), status=status, variants=[]))
 
         except Exception as e:
             logger.error(f"Rakuma patrol error for {url}: {e}")
-            return PatrolResult(error=str(e))
+            return self._finalize_result("rakuma", url, PatrolResult(error=str(e)))
 
     @staticmethod
     def _extract_http_status(page) -> int:

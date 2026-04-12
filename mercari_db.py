@@ -28,6 +28,7 @@ from services.mercari_browser_fetch import (
     should_use_mercari_browser_pool_detail,
 )
 from services.scraping_client import fetch_dynamic, gather_with_concurrency, get_async_fetch_settings, run_coro_sync
+from services.scrape_alerts import report_detail_result
 
 # Import metrics logging
 try:
@@ -693,6 +694,7 @@ def scrape_item_detail(url: str, driver=None):
         meta["shadow_compare"] = shadow_compare
 
     item["_scrape_meta"] = meta
+    report_detail_result("mercari", url, item, meta, page_type="detail")
     return item
 
 

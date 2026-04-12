@@ -20,7 +20,7 @@ class YahuokuPatrol(BasePatrol):
 
     def fetch(self, url: str, driver=None) -> PatrolResult:
         """Fetch current bid price and auction status. The driver argument is ignored."""
-        return self._fetch_with_scrapling(url)
+        return self._finalize_result("yahuoku", url, self._fetch_with_scrapling(url))
 
     def _fetch_with_scrapling(self, url: str) -> PatrolResult:
         try:

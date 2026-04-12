@@ -46,6 +46,46 @@ def test_notify_operational_issue_respects_cooldown(monkeypatch):
     assert len(sent) == 1
 
 
+def test_notify_scrape_issue_falls_back_to_selector_webhook(monkeypatch):
+    sent = []
+    dispatcher = AlertDispatcher(sender=lambda url, payload: sent.append((url, payload)))
+
+    monkeypatch.setenv("SELECTOR_ALERT_WEBHOOK_URL", "https://alerts.example.test/selector")
+    monkeypatch.delenv("SCRAPE_ALERT_WEBHOOK_URL", raising=False)
+
+    delivered = dispatcher.notify_scrape_issue(
+        event_type="unknown_detail_result",
+        site="surugaya",
+        page_type="detail",
+        field="status",
+        message="Detail scrape could not classify the page.",
+    )
+
+    assert delivered is True
+    assert sent[0][0] == "https://alerts.example.test/selector"
+    assert sent[0][1]["category"] == "scrape"
+    assert sent[0][1]["event_type"] == "unknown_detail_result"
+
+
+def test_notify_scrape_issue_can_use_explicit_scrape_webhook(monkeypatch):
+    sent = []
+    dispatcher = AlertDispatcher(sender=lambda url, payload: sent.append((url, payload)))
+
+    monkeypatch.setenv("SCRAPE_ALERT_WEBHOOK_URL", "https://alerts.example.test/scrape")
+    monkeypatch.setenv("SELECTOR_ALERT_WEBHOOK_URL", "https://alerts.example.test/selector")
+
+    delivered = dispatcher.notify_scrape_issue(
+        event_type="patrol_error",
+        site="mercari",
+        page_type="patrol_detail",
+        field="status",
+        message="Patrol scrape returned an error.",
+    )
+
+    assert delivered is True
+    assert sent[0][0] == "https://alerts.example.test/scrape"
+
+
 def test_prepare_outbound_payload_for_discord_webhook_uses_discord_fields():
     payload = {
         "text": "[selector-healer][warning] repair_candidate_recorded mercari/detail/title",

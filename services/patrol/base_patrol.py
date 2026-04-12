@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from typing import Optional, List, Dict
 import logging
 
+from services.scrape_alerts import report_patrol_result
+
 logger = logging.getLogger("patrol")
 
 
@@ -71,3 +73,7 @@ class BasePatrol(ABC):
             return int(cleaned)
         except ValueError:
             return None
+
+    def _finalize_result(self, site: str, url: str, result: PatrolResult, *, page_type: str = "patrol_detail") -> PatrolResult:
+        report_patrol_result(site, url, result, page_type=page_type)
+        return result

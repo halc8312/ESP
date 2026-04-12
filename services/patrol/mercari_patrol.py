@@ -37,35 +37,35 @@ class MercariPatrol(BasePatrol):
             price_source = meta.get("price_source")
 
             if item.get("status") in {"unknown", "error"}:
-                return PatrolResult(
+                return self._finalize_result("mercari", url, PatrolResult(
                     error=reason or "Mercari page could not be classified",
                     status=status,
                     confidence=confidence,
                     reason=reason,
                     price_source=price_source,
-                )
+                ))
 
             if item.get("status") == "on_sale" and item.get("price") is None:
-                return PatrolResult(
+                return self._finalize_result("mercari", url, PatrolResult(
                     error=reason or "Active Mercari item missing price",
                     status=status,
                     confidence=confidence,
                     reason=reason,
                     price_source=price_source,
-                )
+                ))
 
-            return PatrolResult(
+            return self._finalize_result("mercari", url, PatrolResult(
                 price=item.get("price"),
                 status=status,
                 variants=item.get("variants") or [],
                 confidence=confidence,
                 reason=reason,
                 price_source=price_source,
-            )
+            ))
 
         except Exception as exc:
             logger.error("Patrol error for %s: %s", url, exc)
-            return PatrolResult(error=str(exc), confidence="low", reason=str(exc))
+            return self._finalize_result("mercari", url, PatrolResult(error=str(exc), confidence="low", reason=str(exc)))
 
     @staticmethod
     def _normalize_status(status: str | None) -> str:

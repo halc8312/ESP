@@ -21,7 +21,7 @@ class SurugayaPatrol(BasePatrol):
 
     def fetch(self, url: str, driver=None) -> PatrolResult:
         """Fetch price and stock status. The driver argument is ignored."""
-        return self._fetch_with_scrapling(url)
+        return self._finalize_result("surugaya", url, self._fetch_with_scrapling(url))
 
     def _fetch_with_scrapling(self, url: str) -> PatrolResult:
         try:

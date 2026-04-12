@@ -260,3 +260,40 @@ def test_surugaya_detail_tracks_mixed_provenance_and_invalid_primary_fallback_wi
     assert result["_scrape_meta"]["field_sources"]["price"] == "css"
     assert result["_scrape_meta"]["field_sources"]["description"] == "meta"
     assert result["_scrape_meta"]["field_sources"]["images"] == "meta"
+
+
+def test_surugaya_detail_marks_javascript_disabled_page_unknown_and_alerts(monkeypatch):
+    html = """
+    <html>
+      <head><title>JavaScript is disabled</title></head>
+      <body>
+        <p>JavaScript is disabled</p>
+        <p>Please enable JavaScript to continue.</p>
+      </body>
+    </html>
+    """
+
+    class FakeDispatcher:
+        def __init__(self):
+            self.events = []
+
+        def notify_scrape_issue(self, **payload):
+            self.events.append(payload)
+            return True
+
+    alerts = FakeDispatcher()
+    monkeypatch.setattr("services.scrape_alerts.get_alert_dispatcher", lambda: alerts)
+    monkeypatch.setattr(
+        surugaya_db,
+        "_fetch_with_retry",
+        lambda session, url, timeout=30, max_attempts=3: (MockResponse(html, url), None),
+    )
+
+    result = surugaya_db.scrape_item_detail(object(), "https://www.suruga-ya.jp/product/detail/1")
+
+    assert result["status"] == "unknown"
+    assert result["price"] is None
+    assert result["title"] == ""
+    assert result["_scrape_meta"]["strategy"] == "degraded"
+    assert "degraded-marker:javascript is disabled" in result["_scrape_meta"]["reasons"]
+    assert alerts.events[-1]["event_type"] == "unknown_detail_result"

@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urljoin, urlp
 
 from bs4 import BeautifulSoup
 from services.extraction_policy import attach_extraction_trace, pick_first_valid
+from services.scrape_alerts import report_detail_result
 
 logger = logging.getLogger("surugaya")
 
@@ -30,6 +31,11 @@ BLOCK_MARKERS = (
     "window._cf_chl_opt",
     "cf-challenge-running",
     "challenge-form",
+)
+DEGRADED_PAGE_MARKERS = (
+    "javascript is disabled",
+    "please enable javascript",
+    "enable javascript to continue",
 )
 
 # CSS Selectors
@@ -192,6 +198,31 @@ def _is_valid_product_page(result: dict, ld_product: dict) -> bool:
     if ld_product.get("name"):
         return True
     return False
+
+
+def _looks_like_degraded_detail_page(
+    soup: BeautifulSoup,
+    *,
+    ld_product: dict,
+) -> str:
+    page_title = soup.title.get_text(" ", strip=True).lower() if soup.title else ""
+    body_text = soup.get_text(" ", strip=True).lower()
+    marker = next((value for value in DEGRADED_PAGE_MARKERS if value in page_title or value in body_text), "")
+    if not marker:
+        return ""
+
+    has_product_signal = bool(
+        str(ld_product.get("name") or "").strip()
+        or ld_product.get("price") is not None
+        or ld_product.get("availability")
+        or ld_product.get("images")
+        or soup.select_one("h1")
+        or soup.select_one("meta[property='og:title']")
+        or soup.select_one("meta[property='og:image']")
+    )
+    if has_product_signal:
+        return ""
+    return marker
 
 
 def _is_usable_text(value) -> bool:
@@ -814,9 +845,26 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
             result["status"] = "error"
         else:
             result["status"] = "error"
+        meta = {"confidence": "low", "reasons": [result["status"]]}
+        attach_extraction_trace(result, strategy=result["status"], field_sources={})
+        report_detail_result("surugaya", url, result, dict(result.get("_scrape_meta") or {}) | meta, page_type="detail")
         return result
 
     ld_product = _extract_json_ld_product(soup)
+    degraded_marker = _looks_like_degraded_detail_page(soup, ld_product=ld_product)
+    if degraded_marker:
+        result["status"] = "unknown"
+        meta = {
+            "strategy": "degraded",
+            "confidence": "low",
+            "reasons": [f"degraded-marker:{degraded_marker}"],
+            "field_sources": {},
+        }
+        attach_extraction_trace(result, strategy="degraded", field_sources={})
+        result["_scrape_meta"] = dict(result.get("_scrape_meta") or {})
+        result["_scrape_meta"].update(meta)
+        report_detail_result("surugaya", url, result, result.get("_scrape_meta"), page_type="detail")
+        return result
 
     # Try self-healing first if available
     _healer = _get_healer() if _get_healer else None
@@ -993,7 +1041,9 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
         field_sources["variants"] = "derived"
         
     logger.info(f"Scraped: {result['title'][:30]}... - ¥{result['price']} ({result['status']})")
-    return attach_extraction_trace(result, strategy=_pick_strategy(field_sources), field_sources=field_sources)
+    result = attach_extraction_trace(result, strategy=_pick_strategy(field_sources), field_sources=field_sources)
+    report_detail_result("surugaya", url, result, result.get("_scrape_meta"), page_type="detail")
+    return result
 
 
 def scrape_single_item(url: str, headless: bool = True) -> list:

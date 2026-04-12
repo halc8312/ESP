@@ -70,6 +70,25 @@ class AlertDispatcher:
     def operational_window_seconds(self) -> int:
         return max(1, _env_int("OPERATIONAL_ALERT_WINDOW_SECONDS", 300))
 
+    @property
+    def scrape_webhook_url(self) -> str:
+        explicit = str(os.environ.get("SCRAPE_ALERT_WEBHOOK_URL", "") or "").strip()
+        if explicit:
+            return explicit
+        return self.selector_webhook_url or self.operational_webhook_url
+
+    @property
+    def scrape_cooldown_seconds(self) -> int:
+        return max(0, _env_int("SCRAPE_ALERT_COOLDOWN_SECONDS", self.selector_cooldown_seconds))
+
+    @property
+    def scrape_max_per_window(self) -> int:
+        return max(1, _env_int("SCRAPE_ALERT_MAX_PER_WINDOW", self.selector_max_per_window))
+
+    @property
+    def scrape_window_seconds(self) -> int:
+        return max(1, _env_int("SCRAPE_ALERT_WINDOW_SECONDS", self.selector_window_seconds))
+
     def _dispatch_rate_limited(
         self,
         *,
@@ -175,6 +194,42 @@ class AlertDispatcher:
             key=key,
             payload=payload,
             log_label="Operational",
+        )
+
+    def notify_scrape_issue(
+        self,
+        *,
+        event_type: str,
+        site: str,
+        page_type: str,
+        field: str = "",
+        severity: str = "warning",
+        message: str = "",
+        details: dict[str, Any] | None = None,
+        dedupe_key: str = "",
+    ) -> bool:
+        key = dedupe_key or f"scrape:{event_type}:{site}:{page_type}:{field or 'general'}"
+        payload = {
+            "text": f"[scrape][{severity}] {event_type} {site}/{page_type}/{field or 'general'}",
+            "category": "scrape",
+            "event_type": event_type,
+            "severity": severity,
+            "site": site,
+            "page_type": page_type,
+            "field": field,
+            "message": message,
+            "details": details or {},
+            "dedupe_key": key,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        return self._dispatch_rate_limited(
+            webhook_url=self.scrape_webhook_url,
+            cooldown_seconds=self.scrape_cooldown_seconds,
+            max_per_window=self.scrape_max_per_window,
+            window_seconds=self.scrape_window_seconds,
+            key=key,
+            payload=payload,
+            log_label="Scrape",
         )
 
     @staticmethod
