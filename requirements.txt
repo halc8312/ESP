@@ -11,6 +11,7 @@ pandas
 gunicorn
 Flask-Login
 pytest
+pytest-asyncio
 pytest-flask
 Flask-APScheduler
 beautifulsoup4

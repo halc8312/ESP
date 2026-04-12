@@ -192,7 +192,8 @@ def _register_media_route(app: Flask) -> None:
 
 def _register_health_route(app: Flask) -> None:
     @app.route("/healthz")
-    def healthz():
+    @app.route("/health")
+    def health_check():
         return {
             "status": "ok",
             "runtime_role": app.config.get("ESP_RUNTIME_ROLE", "base"),

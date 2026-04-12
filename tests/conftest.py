@@ -77,7 +77,14 @@ def app(monkeypatch):
     previous_engine = database.engine
     test_engine = database.create_app_engine(database_url)
     database.engine = test_engine
+    SessionLocal.remove()
     SessionLocal.configure(bind=test_engine)
+
+    # Reset the in-memory scrape queue singleton to prevent stale
+    # thread-local sessions in reused ThreadPoolExecutor threads
+    # from pointing at a disposed/deleted test database.
+    import services.scrape_queue as _sq
+    _sq._queue = None
 
     app = create_app(runtime_role="test", config_overrides={"TESTING": True, "WTF_CSRF_ENABLED": False})
     with app.app_context():
@@ -86,6 +93,7 @@ def app(monkeypatch):
         yield app
         _reset_sqlite_test_database_schema(test_engine)
 
+    SessionLocal.remove()
     test_engine.dispose()
     database.engine = previous_engine
     SessionLocal.configure(bind=database.engine)
