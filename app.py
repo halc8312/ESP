@@ -192,6 +192,7 @@ def _register_media_route(app: Flask) -> None:
 
 def _register_health_route(app: Flask) -> None:
     @app.route("/healthz")
+    @app.route("/health")
     def healthz():
         return {
             "status": "ok",

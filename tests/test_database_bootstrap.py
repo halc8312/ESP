@@ -59,7 +59,7 @@ def test_get_database_url_normalizes_legacy_postgres_scheme(monkeypatch):
 def test_create_app_engine_normalizes_legacy_postgres_scheme(monkeypatch):
     captured = {}
 
-    def fake_create_engine(url, echo=False):
+    def fake_create_engine(url, echo=False, **kwargs):
         captured["url"] = url
 
         class FakeEngine:
