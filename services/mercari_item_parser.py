@@ -353,6 +353,24 @@ def _extract_meta_image(page) -> list:
     return image_urls
 
 
+def _merge_image_sources(*sources: tuple[str, list]) -> tuple[list, str]:
+    merged_urls = []
+    contributing_sources = []
+
+    for source_name, urls in sources:
+        if not isinstance(urls, list):
+            continue
+
+        before_count = len(merged_urls)
+        for url in urls:
+            _append_unique_image_url(merged_urls, url)
+
+        if len(merged_urls) > before_count:
+            contributing_sources.append(source_name)
+
+    return merged_urls, "+".join(contributing_sources)
+
+
 def _extract_title(page, product_jsonld: Optional[dict]) -> str:
     selectors = get_selectors("mercari", "general", "title") or ["[data-testid='name']", "h1"]
     for selector in selectors:
@@ -401,19 +419,22 @@ def _extract_image_urls(page, product_jsonld: Optional[dict]) -> tuple[list, str
         if fallback_selector not in selectors:
             selectors.append(fallback_selector)
 
-    image_urls = []
+    dom_image_urls = []
     for selector in selectors:
         for image_node in _safe_css(page, selector):
             image_url = _extract_node_image_url(image_node)
-            if image_url and image_url not in image_urls:
-                image_urls.append(image_url)
-    return run_detail_field_strategies(
-        DetailFieldStrategy("dom", image_urls),
-        DetailFieldStrategy("jsonld", resolver=lambda: _collect_jsonld_images(product_jsonld)),
-        DetailFieldStrategy("meta", resolver=lambda: _extract_meta_image(page)),
-        validator=_has_image_urls,
-        default=[],
+            if image_url and image_url not in dom_image_urls:
+                dom_image_urls.append(image_url)
+
+    jsonld_image_urls = _collect_jsonld_images(product_jsonld)
+    meta_image_urls = _extract_meta_image(page)
+
+    merged_image_urls, image_source = _merge_image_sources(
+        ("dom", dom_image_urls),
+        ("jsonld", jsonld_image_urls),
+        ("meta", meta_image_urls),
     )
+    return merged_image_urls, image_source
 
 
 def _extract_variants(page, price: Optional[int]) -> list:

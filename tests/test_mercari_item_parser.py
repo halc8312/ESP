@@ -107,6 +107,34 @@ def test_parse_mercari_item_page_falls_back_to_meta_image():
     assert meta["field_sources"]["image_urls"] == "meta"
 
 
+def test_parse_mercari_item_page_merges_jsonld_images_when_dom_has_only_first_image():
+    dom_image_url = "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg"
+    extra_jsonld_image_url = "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg"
+    product_jsonld = json.dumps(
+        {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            "name": "Merged Image Mercari Item",
+            "image": [dom_image_url, extra_jsonld_image_url],
+            "offers": {"availability": "https://schema.org/InStock"},
+        },
+        ensure_ascii=False,
+    )
+    page = MockPage(
+        css_map={
+            "h1": [MockElement(text="Merged Image Mercari Item")],
+            "[data-testid^='image-'] img": [MockElement(attrib={"src": dom_image_url})],
+            "script[type='application/ld+json']": [MockElement(text=product_jsonld)],
+        },
+        all_text="購入手続きへ",
+    )
+
+    item, meta = parse_mercari_item_page(page, "https://jp.mercari.com/item/m123456789")
+
+    assert item["image_urls"] == [dom_image_url, extra_jsonld_image_url]
+    assert meta["field_sources"]["image_urls"] == "dom+jsonld"
+
+
 def test_parse_mercari_item_page_deleted_fixture_omits_broken_description():
     fixture_path = Path(__file__).resolve().parents[1] / "mercari_page_dump.html"
     page_url = "https://jp.mercari.com/item/m71383569733"
