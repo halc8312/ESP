@@ -199,15 +199,32 @@ def test_scrape_item_detail_prefers_meta_price_over_body_recommendations(_patch_
 
 
 def test_scrape_item_detail_sold_status(_patch_scrapling):
-    """scrape_item_detail が売り切れステータスを正しく検出することを確認"""
+    """SOLD selector は stale な InStock JSON-LD より優先される。"""
+    sold_el = MagicMock()
+    sold_el.text = "SOLDOUT"
+
+    jsonld_el = MagicMock()
+    jsonld_el.text = json.dumps(
+        {
+            "@context": "http://schema.org/",
+            "@type": "Product",
+            "name": "Rakuma Sold Item",
+            "offers": {"@type": "Offer", "price": 5840, "availability": "http://schema.org/InStock"},
+        }
+    )
+
     mock_page = MagicMock()
-    mock_page.get_text.return_value = "この商品はSOLD OUTです"
+    mock_page.get_text.return_value = "この商品は売り切れです"
 
-    def css_first_side_effect(selector):
-        return None
+    def css_side_effect(selector):
+        if selector == "span.soldout":
+            return [sold_el]
+        if selector == "script[type='application/ld+json']":
+            return [jsonld_el]
+        return []
 
-    mock_page.css_first.side_effect = css_first_side_effect
-    mock_page.css.return_value = []
+    mock_page.css.side_effect = css_side_effect
+    mock_page.css_first.return_value = None
 
     _patch_scrapling.Fetcher.get.return_value = mock_page
 
@@ -215,6 +232,53 @@ def test_scrape_item_detail_sold_status(_patch_scrapling):
     result = scrape_item_detail("https://item.fril.jp/sold")
 
     assert result["status"] == "sold"
+
+
+def test_scrape_item_detail_does_not_treat_description_sold_word_as_sold(_patch_scrapling):
+    """説明文の「売り切れ」で sold に倒さず、購入導線を優先する。"""
+    title_el = MagicMock()
+    title_el.text = "Rakuma Active Item"
+
+    buy_el = MagicMock()
+    buy_el.text = "購入に進む"
+
+    jsonld_el = MagicMock()
+    jsonld_el.text = json.dumps(
+        {
+            "@context": "http://schema.org/",
+            "@type": "Product",
+            "name": "Rakuma Active Item",
+            "offers": {"@type": "Offer", "price": 2681, "availability": "http://schema.org/InStock"},
+        }
+    )
+
+    mock_page = MagicMock()
+    mock_page.get_text.return_value = """
+        Rakuma Active Item
+        送料込 すぐに購入可
+        購入に進む
+        商品説明
+        他サイトでも販売しているため売り切れの可能性があります
+    """
+
+    def css_side_effect(selector):
+        if selector == "script[type='application/ld+json']":
+            return [jsonld_el]
+        if selector in {"h1.item__name", "h1"}:
+            return [title_el]
+        if selector in {"a.btn_buy", ".ga-item-buybutton", "a[href*='ref_action=btn_buy']"}:
+            return [buy_el]
+        return []
+
+    mock_page.css.side_effect = css_side_effect
+    mock_page.css_first.return_value = None
+
+    _patch_scrapling.Fetcher.get.return_value = mock_page
+
+    from rakuma_db import scrape_item_detail
+    result = scrape_item_detail("https://item.fril.jp/active")
+
+    assert result["status"] == "on_sale"
 
 
 def test_scrape_item_detail_image_extraction(_patch_scrapling):
@@ -372,10 +436,31 @@ def test_rakuma_patrol_price_extraction(_patch_scrapling):
 
 
 def test_rakuma_patrol_sold_status(_patch_scrapling):
-    """RakumaPatrol が売り切れステータスを正しく検出することを確認"""
+    """RakumaPatrol は sold selector を stale な InStock JSON-LD より優先する。"""
+    sold_el = MagicMock()
+    sold_el.text = "SOLDOUT"
+
+    jsonld_el = MagicMock()
+    jsonld_el.text = json.dumps(
+        {
+            "@context": "http://schema.org/",
+            "@type": "Product",
+            "name": "Rakuma Sold Item",
+            "offers": {"@type": "Offer", "price": 5840, "availability": "http://schema.org/InStock"},
+        }
+    )
+
     mock_page = MagicMock()
-    mock_page.get_text.return_value = "SOLD OUT 売り切れ"
-    mock_page.css.return_value = []
+    mock_page.get_text.return_value = "売り切れ"
+
+    def css_side_effect(selector):
+        if selector == "span.soldout":
+            return [sold_el]
+        if selector == "script[type='application/ld+json']":
+            return [jsonld_el]
+        return []
+
+    mock_page.css.side_effect = css_side_effect
     mock_page.css_first.return_value = None
 
     _patch_scrapling.Fetcher.get.return_value = mock_page
@@ -443,9 +528,20 @@ def test_rakuma_patrol_maps_on_sale_to_active(_patch_scrapling):
     mock_title_el = MagicMock()
     mock_title_el.text = "テスト商品"
 
+    buy_el = MagicMock()
+    buy_el.text = "購入に進む"
+
     mock_page = MagicMock()
     mock_page.get_text.return_value = "¥2,000 テスト商品"
-    mock_page.css.side_effect = lambda selector: [mock_title_el] if selector == "h1" else []
+
+    def css_side_effect(selector):
+        if selector == "h1":
+            return [mock_title_el]
+        if selector in {"a.btn_buy", ".ga-item-buybutton", "a[href*='ref_action=btn_buy']"}:
+            return [buy_el]
+        return []
+
+    mock_page.css.side_effect = css_side_effect
     mock_page.css_first.return_value = None
 
     _patch_scrapling.Fetcher.get.return_value = mock_page

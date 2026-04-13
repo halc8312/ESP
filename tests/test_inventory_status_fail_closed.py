@@ -1,12 +1,14 @@
 import json
 from unittest.mock import patch
 
+from services.patrol.offmall_patrol import OffmallPatrol
 from services.patrol.snkrdunk_patrol import SnkrdunkPatrol
 from services.patrol.surugaya_patrol import SurugayaPatrol
 from services.patrol.yahoo_patrol import YahooPatrol
 from services.patrol.yahuoku_patrol import YahuokuPatrol
 
 import mercari_db
+import offmall_db
 import snkrdunk_db
 import surugaya_db
 import yahoo_db
@@ -195,6 +197,33 @@ def test_mercari_shops_status_requires_purchase_flow_or_stock_count():
     assert mercari_db._infer_mercari_shops_status(body_text) == "unknown"
 
 
+def test_offmall_detail_marks_ambiguous_inventory_unknown(monkeypatch):
+    page = MockPage(
+        css_map={
+            "script[type='application/ld+json']": [
+                MockElement(
+                    text=json.dumps(
+                        {
+                            "@context": "https://schema.org",
+                            "@type": "Product",
+                            "name": "Offmall Camera",
+                            "offers": {"@type": "Offer", "price": "12000"},
+                        }
+                    )
+                )
+            ]
+        },
+        text="Offmall Camera 商品詳細のみ",
+    )
+
+    monkeypatch.setattr("services.scraping_client.fetch_static", lambda url: page)
+
+    result = offmall_db.scrape_item_detail_light("https://netmall.hardoff.co.jp/product/123/")
+
+    assert result["title"] == "Offmall Camera"
+    assert result["status"] == "unknown"
+
+
 def test_surugaya_patrol_marks_ambiguous_inventory_unknown():
     html = """
     <html>
@@ -211,6 +240,32 @@ def test_surugaya_patrol_marks_ambiguous_inventory_unknown():
         result = SurugayaPatrol().fetch("https://www.suruga-ya.jp/product/detail/1")
 
     assert result.price == 1980
+    assert result.status == "unknown"
+
+
+def test_offmall_patrol_marks_ambiguous_inventory_unknown():
+    page = MockPage(
+        css_map={
+            "script[type='application/ld+json']": [
+                MockElement(
+                    text=json.dumps(
+                        {
+                            "@context": "https://schema.org",
+                            "@type": "Product",
+                            "name": "Offmall Camera",
+                            "offers": {"@type": "Offer", "price": "12000"},
+                        }
+                    )
+                )
+            ]
+        },
+        text="Offmall Camera 商品詳細のみ",
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=page):
+        result = OffmallPatrol().fetch("https://netmall.hardoff.co.jp/product/123/")
+
+    assert result.price == 12000
     assert result.status == "unknown"
 
 

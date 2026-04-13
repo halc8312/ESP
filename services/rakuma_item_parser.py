@@ -20,6 +20,21 @@ _MISSING_ITEM_MARKERS = (
     "すでに削除されています",
 )
 
+_SOLD_STATUS_SELECTORS = (
+    "span.soldout",
+    ".soldout-section",
+    ".label-soldout",
+    ".item-sell-out-badge",
+    ".photo-box__soldout_ribbon",
+    ".type-modal__contents--button--sold",
+)
+
+_ACTIVE_PURCHASE_SELECTORS = (
+    "a.btn_buy",
+    ".ga-item-buybutton",
+    "a[href*='ref_action=btn_buy']",
+)
+
 
 def _clean_text(text) -> str:
     if not isinstance(text, str):
@@ -68,6 +83,13 @@ def first_node(page, selector: str):
         return page.css_first(selector)
     except Exception:
         return None
+
+
+def _has_any_selector(page, selectors) -> bool:
+    for selector in selectors:
+        if first_node(page, selector):
+            return True
+    return False
 
 
 def _extract_price_value(raw_value):
@@ -367,22 +389,16 @@ def parse_rakuma_item_page(page, url: str, body_text: str | None = None) -> dict
         image_urls = _collect_jsonld_images(product_jsonld)
 
     availability = _extract_jsonld_availability(product_jsonld.get("offers"))
-    status = "on_sale"
+    status = "unknown"
     if "outofstock" in availability or "soldout" in availability:
         status = "sold"
     elif "instock" in availability:
         status = "on_sale"
 
-    sold_markers = ("SOLDOUT", "SOLD OUT", "売り切れ")
-    if any(marker in body_text for marker in sold_markers):
+    if _has_any_selector(page, _SOLD_STATUS_SELECTORS):
         status = "sold"
-
-    sold_selectors = ["span.soldout", ".soldout-section", ".label-soldout", ".item-sell-out-badge"]
-    for selector in sold_selectors:
-        sold_el = first_node(page, selector)
-        if sold_el:
-            status = "sold"
-            break
+    elif status != "sold" and _has_any_selector(page, _ACTIVE_PURCHASE_SELECTORS):
+        status = "on_sale"
 
     return {
         "url": url,
