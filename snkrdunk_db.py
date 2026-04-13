@@ -23,6 +23,35 @@ from services.scraping_client import run_coro_sync
 logger = logging.getLogger("snkrdunk")
 
 
+_SNKRDUNK_SOLD_PAGE_MARKERS = (
+    "SOLD OUT",
+    "売り切れ",
+    "在庫なし",
+    "現在出品はありません",
+)
+_SNKRDUNK_ACTIVE_PAGE_MARKERS = (
+    "購入する",
+    "カートに入れる",
+    "今すぐ購入",
+)
+_SNKRDUNK_ACTIVE_STATUS_VALUES = {
+    "active",
+    "selling",
+    "open",
+    "available",
+    "instock",
+    "in_stock",
+    "on_sale",
+}
+_SNKRDUNK_SOLD_STATUS_VALUES = {
+    "sold",
+    "sold_out",
+    "soldout",
+    "outofstock",
+    "out_of_stock",
+}
+
+
 def _empty_result(url: str, status: str = "error") -> dict:
     return {
         "url": url,
@@ -204,6 +233,39 @@ def _extract_jsonld_price(offers):
     return None
 
 
+def _infer_snkrdunk_status(item: dict | None, page_text: str = "", availability: str = "") -> tuple[str, str]:
+    item = item or {}
+
+    raw_status = item.get("status")
+    normalized_status = str(raw_status or "").strip().lower()
+    if normalized_status in _SNKRDUNK_ACTIVE_STATUS_VALUES:
+        return "on_sale", "next_data"
+    if normalized_status in _SNKRDUNK_SOLD_STATUS_VALUES:
+        return "sold", "next_data"
+
+    sold_flag = item.get("soldOut")
+    if sold_flag in (True, "sold_out", "soldout", "SOLD_OUT"):
+        return "sold", "next_data"
+
+    if item.get("isSoldOut") is True:
+        return "sold", "next_data"
+    if item.get("isOnSale") is True:
+        return "on_sale", "next_data"
+
+    availability_lower = str(availability or "").strip().lower()
+    if "outofstock" in availability_lower:
+        return "sold", "json_ld"
+    if "instock" in availability_lower:
+        return "on_sale", "json_ld"
+
+    if any(marker in page_text for marker in _SNKRDUNK_SOLD_PAGE_MARKERS):
+        return "sold", "css"
+    if any(marker in page_text for marker in _SNKRDUNK_ACTIVE_PAGE_MARKERS):
+        return "on_sale", "css"
+
+    return "unknown", ""
+
+
 def _normalize_snkrdunk_title(text: str) -> str:
     normalized = str(text or "").strip()
     if not normalized:
@@ -214,8 +276,9 @@ def _normalize_snkrdunk_title(text: str) -> str:
 
 
 def _parse_detail_page(page, url: str) -> dict:
-    result = _empty_result(url, status="on_sale")
+    result = _empty_result(url, status="unknown")
     field_sources = {}
+    page_text = str(page.get_all_text() or "")
     script_el = page.find("#__NEXT_DATA__")
     data = None
 
@@ -306,15 +369,10 @@ def _parse_detail_page(page, url: str) -> dict:
             if image_source:
                 field_sources["images"] = image_source
 
-            status_flag = item.get("status") or item.get("soldOut") or item.get("isSoldOut")
-            if status_flag in (True, "sold_out", "soldout", "SOLD_OUT"):
-                result["status"] = "sold"
-                field_sources["status"] = "next_data"
-            else:
-                page_text = str(page.get_all_text() or "")
-                if "SOLD OUT" in page_text or "売り切れ" in page_text or "在庫なし" in page_text:
-                    result["status"] = "sold"
-                    field_sources["status"] = "css"
+            status, status_source = _infer_snkrdunk_status(item, page_text)
+            result["status"] = status
+            if status_source:
+                field_sources["status"] = status_source
 
             if result.get("title"):
                 return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
@@ -367,13 +425,10 @@ def _parse_detail_page(page, url: str) -> dict:
             field_sources["images"] = image_source
 
         availability = _extract_jsonld_availability(product_jsonld.get("offers"))
-        if availability:
-            availability_lower = availability.lower()
-            if "outofstock" in availability_lower:
-                result["status"] = "sold"
-            elif "instock" in availability_lower:
-                result["status"] = "on_sale"
-            field_sources["status"] = "json_ld"
+        status, status_source = _infer_snkrdunk_status({}, page_text, availability)
+        result["status"] = status
+        if status_source:
+            field_sources["status"] = status_source
 
         if result.get("title"):
             return attach_extraction_trace(result, strategy="json_ld", field_sources=field_sources)
@@ -444,10 +499,10 @@ def _parse_detail_page(page, url: str) -> dict:
     if image_source:
         field_sources["images"] = image_source
 
-    page_text = str(page.get_all_text() or "")
-    if "SOLD OUT" in page_text or "売り切れ" in page_text or "在庫なし" in page_text:
-        result["status"] = "sold"
-        field_sources["status"] = "css"
+    status, status_source = _infer_snkrdunk_status({}, page_text)
+    result["status"] = status
+    if status_source:
+        field_sources["status"] = status_source
 
     strategy = "meta" if any(source == "meta" for source in field_sources.values()) else "css"
     return attach_extraction_trace(result, strategy=strategy, field_sources=field_sources)

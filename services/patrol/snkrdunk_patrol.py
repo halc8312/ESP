@@ -7,6 +7,7 @@ import logging
 import re
 
 from services.patrol.base_patrol import BasePatrol, PatrolResult
+from snkrdunk_db import _extract_jsonld_availability, _extract_product_jsonld, _infer_snkrdunk_status
 
 logger = logging.getLogger("patrol.snkrdunk")
 
@@ -24,7 +25,9 @@ class SnkrdunkPatrol(BasePatrol):
 
             page = fetch_static(url)
             price = None
-            status = "active"
+            status = "unknown"
+            item = {}
+            jsonld_availability = ""
 
             script_el = page.find("#__NEXT_DATA__")
             if script_el:
@@ -48,9 +51,6 @@ class SnkrdunkPatrol(BasePatrol):
                                     price = int(price_raw)
                                 except (ValueError, TypeError):
                                     pass
-                            status_flag = item.get("status") or item.get("soldOut") or item.get("isSoldOut")
-                            if status_flag in (True, "sold_out", "soldout", "SOLD_OUT"):
-                                status = "sold"
                     except (json.JSONDecodeError, Exception) as exc:
                         logger.debug("SNKRDUNK __NEXT_DATA__ parse error: %s", exc)
 
@@ -70,11 +70,20 @@ class SnkrdunkPatrol(BasePatrol):
                             if raw is not None:
                                 try:
                                     price = int(float(str(raw)))
+                                    jsonld_availability = _extract_jsonld_availability(offers)
                                     break
                                 except (ValueError, TypeError):
                                     pass
                 except Exception as exc:
                     logger.debug("SNKRDUNK ld+json parse error: %s", exc)
+
+            if not jsonld_availability:
+                try:
+                    product_jsonld = _extract_product_jsonld(page)
+                    if product_jsonld:
+                        jsonld_availability = _extract_jsonld_availability(product_jsonld.get("offers"))
+                except Exception as exc:
+                    logger.debug("SNKRDUNK product jsonld availability parse error: %s", exc)
 
             if price is None:
                 css_price_selectors = [
@@ -94,8 +103,8 @@ class SnkrdunkPatrol(BasePatrol):
                         break
 
             page_text = str(page.get_all_text())
-            if "SOLD OUT" in page_text or "売り切れ" in page_text or "在庫なし" in page_text:
-                status = "sold"
+            detail_status, _ = _infer_snkrdunk_status(item, page_text, jsonld_availability)
+            status = "active" if detail_status == "on_sale" else detail_status
 
             if price is None and status == "active":
                 return PatrolResult(error="No price extracted")

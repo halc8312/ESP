@@ -33,6 +33,11 @@ _CLOSED_PAGE_MARKERS = (
     "落札されました",
     "落札価格",
 )
+_OPEN_PAGE_MARKERS = (
+    "入札する",
+    "今すぐ落札",
+    "購入手続きへ",
+)
 
 
 def _empty_result(url: str, status: str = "error") -> dict:
@@ -174,8 +179,10 @@ def _infer_auction_status(item_detail: dict, page_text: str = "") -> str:
 
     if any(marker in page_text for marker in _CLOSED_PAGE_MARKERS):
         return "sold"
+    if any(marker in page_text for marker in _OPEN_PAGE_MARKERS):
+        return "active"
 
-    return "active"
+    return "unknown"
 
 
 def scrape_item_detail_light(url: str) -> dict:
@@ -188,7 +195,7 @@ def scrape_item_detail_light(url: str) -> dict:
         if not item_detail:
             return {}
 
-        result = _empty_result(url, status="active")
+        result = _empty_result(url, status="unknown")
         field_sources = {}
         meta_title = next(
             (str(el.attrib.get("content", "") or "") for el in page.css("meta[property='og:title']")),

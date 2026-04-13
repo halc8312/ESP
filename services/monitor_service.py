@@ -118,9 +118,14 @@ class MonitorService:
                         and result.price is None
                         and str(result.confidence or "").lower() == "low"
                     )
+                    unknown_status = normalized_status == "unknown"
 
-                    if not result.success or active_missing_price:
-                        failure_reason = result.error or result.reason or "low-confidence active result"
+                    if not result.success or active_missing_price or unknown_status:
+                        failure_reason = (
+                            result.error
+                            or result.reason
+                            or ("unknown patrol status" if unknown_status else "low-confidence active result")
+                        )
                         logger.warning(f"Patrol failed: {failure_reason}")
                         MonitorService._apply_backoff(product, session_db)
                         error_count += 1

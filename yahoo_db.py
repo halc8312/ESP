@@ -15,6 +15,21 @@ from services.selector_healer import get_healer
 logger = logging.getLogger("yahoo")
 
 
+_YAHOO_ACTIVE_PAGE_MARKERS = (
+    "カートに入れる",
+    "注文する",
+    "購入手続き",
+    "今すぐ購入",
+)
+_YAHOO_SOLD_PAGE_MARKERS = (
+    "在庫切れ",
+    "売り切れ",
+    "販売終了",
+    "在庫がありません",
+    "現在ご購入いただけません",
+)
+
+
 def _empty_result(url: str, status: str = "error") -> dict:
     return {
         "url": url,
@@ -54,12 +69,100 @@ def _extract_item_from_page(page) -> dict:
     )
 
 
+def _get_page_text(page) -> str:
+    for attr_name in ("get_all_text", "get_text"):
+        extractor = getattr(page, attr_name, None)
+        if not callable(extractor):
+            continue
+        try:
+            text = extractor() or ""
+        except Exception:
+            continue
+        if isinstance(text, str) and text.strip():
+            return text
+    return ""
+
+
+def _iter_variant_stocks(item: dict):
+    if isinstance(item.get("stockTableTwoAxis"), dict):
+        two_axis = item["stockTableTwoAxis"]
+        first_opt = two_axis.get("firstOption", {})
+        for opt1 in first_opt.get("choiceList", []):
+            second_opt = opt1.get("secondOption", {})
+            for opt2 in second_opt.get("choiceList", []):
+                stock = opt2.get("stock", {})
+                if isinstance(stock, dict):
+                    yield stock
+
+    if isinstance(item.get("stockTableOneAxis"), dict):
+        one_axis = item["stockTableOneAxis"]
+        first_opt = one_axis.get("firstOption", {})
+        for opt1 in first_opt.get("choiceList", []):
+            stock = opt1.get("stock", {})
+            if isinstance(stock, dict):
+                yield stock
+
+
+def _stock_entry_is_available(stock: dict) -> bool:
+    if not isinstance(stock, dict):
+        return False
+
+    quantity = stock.get("quantity")
+    try:
+        if quantity is not None and int(quantity) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+
+    return stock.get("isAvailable") is True
+
+
+def _stock_entry_is_unavailable(stock: dict) -> bool:
+    if not isinstance(stock, dict):
+        return False
+
+    quantity = stock.get("quantity")
+    try:
+        if quantity is not None and int(quantity) <= 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+
+    return stock.get("isSoldOut") is True or stock.get("isAvailable") is False
+
+
+def _infer_detail_status(item: dict, page_text: str = "") -> tuple[str, str]:
+    variant_stocks = list(_iter_variant_stocks(item))
+    if any(_stock_entry_is_available(stock) for stock in variant_stocks):
+        return "on_sale", "next_data"
+    if variant_stocks and all(_stock_entry_is_unavailable(stock) for stock in variant_stocks):
+        return "sold", "next_data"
+
+    stock = item.get("stock", {})
+    if _stock_entry_is_available(stock):
+        return "on_sale", "next_data"
+    if _stock_entry_is_unavailable(stock):
+        return "sold", "next_data"
+
+    if item.get("isOnSale") is True:
+        return "on_sale", "next_data"
+    if item.get("isOnSale") is False:
+        return "sold", "next_data"
+
+    if any(marker in page_text for marker in _YAHOO_ACTIVE_PAGE_MARKERS):
+        return "on_sale", "css"
+    if any(marker in page_text for marker in _YAHOO_SOLD_PAGE_MARKERS):
+        return "sold", "css"
+
+    return "unknown", ""
+
+
 def scrape_item_detail_light(url: str) -> dict:
     """
     HTTP-only Yahoo Shopping detail scrape.
     Returns an empty dict when the page structure cannot be parsed.
     """
-    result = _empty_result(url, status="on_sale")
+    result = _empty_result(url, status="unknown")
     try:
         from services.scraping_client import fetch_static
 
@@ -69,6 +172,7 @@ def scrape_item_detail_light(url: str) -> dict:
             logger.debug("No JSON item data found, falling back to CSS selectors with self-healing")
             healer = get_healer()
             field_sources = {}
+            page_text = _get_page_text(page)
 
             # Title (with healing)
             title_val, title_healed = healer.extract_with_healing(page, 'yahoo', 'detail', 'title', parser='scrapling')
@@ -117,6 +221,11 @@ def scrape_item_detail_light(url: str) -> dict:
             result["image_urls"] = image_urls
             if image_urls:
                 field_sources["images"] = "css"
+
+            status, status_source = _infer_detail_status({}, page_text)
+            result["status"] = status
+            if status_source:
+                field_sources["status"] = status_source
 
             return attach_extraction_trace(result, strategy="css", field_sources=field_sources)
 
@@ -241,12 +350,10 @@ def scrape_item_detail_light(url: str) -> dict:
             result["description"] = description
             field_sources["description"] = description_source
 
-        stock = item.get("stock", {})
-        if isinstance(stock, dict):
-            qty = stock.get("quantity")
-            if stock.get("isSoldOut") or (qty is not None and qty <= 0):
-                result["status"] = "sold"
-                field_sources["status"] = "next_data"
+        status, status_source = _infer_detail_status(item, _get_page_text(page))
+        result["status"] = status
+        if status_source:
+            field_sources["status"] = status_source
 
         return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
     except Exception as exc:

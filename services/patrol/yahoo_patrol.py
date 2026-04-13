@@ -7,6 +7,7 @@ import logging
 from typing import Optional
 
 from services.patrol.base_patrol import BasePatrol, PatrolResult
+from yahoo_db import _get_page_text, _infer_detail_status
 
 logger = logging.getLogger("patrol.yahoo")
 
@@ -54,12 +55,8 @@ class YahooPatrol(BasePatrol):
                 except (ValueError, TypeError):
                     pass
 
-            status = "active"
-            stock = item.get("stock")
-            if isinstance(stock, dict):
-                quantity = stock.get("quantity")
-                if stock.get("isSoldOut") or (quantity is not None and quantity <= 0):
-                    status = "sold"
+            detail_status, _ = _infer_detail_status(item, _get_page_text(page))
+            status = "active" if detail_status == "on_sale" else detail_status
 
             variants = self._extract_variants_from_json(item, price)
             return PatrolResult(price=price, status=status, variants=variants)

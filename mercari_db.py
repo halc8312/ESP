@@ -361,18 +361,21 @@ def _extract_mercari_shops_title_from_body(body_text: str) -> str:
 
 def _infer_mercari_shops_status(body_text: str) -> str:
     if not body_text:
-        return "on_sale"
+        return "unknown"
 
     purchase_markers = ("購入手続きへ", "カートに入れる", "今すぐ購入")
     sold_markers = ("この商品は売り切れです", "在庫なし", "現在在庫がありません")
+    positive_stock_pattern = r"残り\s*\d+\s*点"
 
     if any(marker in body_text for marker in purchase_markers):
+        return "on_sale"
+    if re.search(positive_stock_pattern, body_text):
         return "on_sale"
     if any(marker in body_text for marker in sold_markers):
         return "sold"
     if "売り切れ" in body_text and "残り" not in body_text:
         return "sold"
-    return "on_sale"
+    return "unknown"
 
 
 async def _extract_first_non_empty_text_async(page, selectors: list) -> str:
@@ -585,6 +588,9 @@ async def _scrape_shops_product_async(url: str) -> dict:
 
             # ---- ステータス ----
             status = _infer_mercari_shops_status(body_text)
+            default_inventory_qty = 1 if status == "on_sale" else 0
+            for variant in variants:
+                variant["inventory_qty"] = default_inventory_qty
 
             # Update item_data with found option names
             item_data = {
@@ -597,6 +603,13 @@ async def _scrape_shops_product_async(url: str) -> dict:
                 "variants": variants
             }
             item_data.update(item_data_update)
+            item_data["_scrape_meta"] = {
+                "strategy": "browser",
+                "page_type": "shops_detail",
+                "confidence": "high",
+                "field_sources": {},
+                "reasons": [],
+            }
             return item_data
 
     return await run_browser_page_task(
@@ -609,7 +622,10 @@ async def _scrape_shops_product_async(url: str) -> dict:
 
 def scrape_shops_product(url: str, driver=None) -> dict:
     """メルカリShops商品ページ用スクレイピング（同期ラッパー）"""
-    return run_coro_sync(_scrape_shops_product_async(url))
+    item = run_coro_sync(_scrape_shops_product_async(url))
+    meta = dict(item.get("_scrape_meta") or {})
+    report_detail_result("mercari", url, item, meta, page_type="shops_detail")
+    return item
 
 
 

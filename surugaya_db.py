@@ -382,13 +382,13 @@ def _extract_image_urls(soup: BeautifulSoup, page_url: str, ld_product: dict) ->
 
 
 def _extract_status(soup: BeautifulSoup, ld_product: dict) -> str:
-    for selector in SELECTORS["stock_available"]:
-        if soup.select(selector):
-            return "active"
-
     for selector in SELECTORS["stock_sold"]:
         if soup.select(selector):
             return "sold"
+
+    for selector in SELECTORS["stock_available"]:
+        if soup.select(selector):
+            return "active"
 
     text = soup.get_text(" ", strip=True)
     sold_keywords = ("売り切れ", "在庫なし", "品切れ", "販売終了")
@@ -405,7 +405,7 @@ def _extract_status(soup: BeautifulSoup, ld_product: dict) -> str:
     if "instock" in availability:
         return "active"
 
-    return "active"
+    return "unknown"
 
 
 def _extract_condition(soup: BeautifulSoup) -> str:

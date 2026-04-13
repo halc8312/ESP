@@ -273,6 +273,41 @@ def test_low_confidence_active_without_price_triggers_backoff(client, db_session
     assert refreshed.last_status == 'on_sale'
 
 
+def test_unknown_patrol_status_triggers_backoff(client, db_session, monkeypatch):
+    user = _create_user(db_session, 'monitor_unknown_status_user')
+    old_time = utc_now() - timedelta(days=1)
+
+    product = Product(
+        user_id=user.id,
+        site='yahoo',
+        source_url='https://store.shopping.yahoo.co.jp/example-store/item123.html',
+        last_title='Uncertain Yahoo Item',
+        last_price=5000,
+        last_status='on_sale',
+        archived=False,
+        deleted_at=None,
+        patrol_fail_count=0,
+        created_at=old_time,
+        updated_at=old_time,
+    )
+    db_session.add(product)
+    db_session.commit()
+
+    uncertain_patrol = FakePatrol(
+        PatrolResult(price=5000, status='unknown', variants=[], confidence='high', reason='ambiguous-stock-state')
+    )
+    monkeypatch.setattr(MonitorService, '_patrols', {'yahoo': uncertain_patrol})
+
+    MonitorService.check_stale_products(limit=10)
+
+    db_session.expire_all()
+    refreshed = db_session.query(Product).filter_by(id=product.id).one()
+
+    assert refreshed.patrol_fail_count == 1
+    assert refreshed.last_price == 5000
+    assert refreshed.last_status == 'on_sale'
+
+
 # ---------------------------------------------------------------------------
 # Unit tests for is_valid_detail_url
 # ---------------------------------------------------------------------------
