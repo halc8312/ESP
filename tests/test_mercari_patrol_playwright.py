@@ -152,6 +152,33 @@ def test_fetch_can_use_browser_pool(monkeypatch):
     assert result.price == 1000
 
 
+def test_fetch_mercari_shops_uses_shops_scraper():
+    shops_item = {
+        "url": "https://jp.mercari.com/shops/product/test",
+        "title": "Shops Item",
+        "price": 4090,
+        "status": "on_sale",
+        "description": "",
+        "image_urls": [],
+        "variants": [{"name": "Default Title", "stock": 1, "price": 4090}],
+        "_scrape_meta": {"confidence": "high", "reasons": ["purchase-flow"], "price_source": "dom"},
+    }
+
+    with patch("services.patrol.mercari_patrol.scrape_shops_product", return_value=shops_item) as mock_scrape_shops, patch(
+        "services.patrol.mercari_patrol.fetch_dynamic"
+    ) as mock_fetch_dynamic:
+        from services.patrol.mercari_patrol import MercariPatrol
+
+        patrol = MercariPatrol()
+        result = patrol.fetch("https://jp.mercari.com/shops/product/test")
+
+    mock_scrape_shops.assert_called_once_with("https://jp.mercari.com/shops/product/test")
+    mock_fetch_dynamic.assert_not_called()
+    assert result.success
+    assert result.price == 4090
+    assert result.status == "active"
+
+
 def test_monitor_service_no_driver():
     from services.monitor_service import _BROWSER_SITES
 
