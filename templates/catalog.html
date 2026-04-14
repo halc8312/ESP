@@ -882,7 +882,9 @@
     </style>
 </head>
 
-<body class="catalog-layout-{{ pricelist.layout or 'grid' }}">
+<body
+    class="catalog-layout-{{ pricelist.layout or 'grid' }}{% if (pricelist.theme or 'dark') == 'light' %} light-mode{% endif %}"
+    data-default-theme="{{ pricelist.theme or 'dark' }}">
 
     <header class="catalog-header">
         <div class="header-inner">
@@ -936,6 +938,7 @@
         </div>
         <div class="stat-badge"><strong>{{ {'editorial': 'Editorial', 'list': 'List', 'grid': 'Grid'}.get(pricelist.layout, 'Grid') }}</strong> layout
         </div>
+        <div class="stat-badge"><strong>{{ 'Light' if (pricelist.theme or 'dark') == 'light' else 'Dark' }}</strong> theme</div>
         <div class="stat-badge" id="rateDisplay">⏳ Loading live rates...</div>
         <div class="stat-badge" id="rateSource" style="font-size: 11px; opacity: 0.7;">Powered by open.er-api.com</div>
     </div>
@@ -1018,23 +1021,21 @@
         let RATES_FROM_JPY = {};
         let ratesReady = false;
 
-        // Theme Toggle Logic
-        function toggleTheme() {
-            const isLight = document.body.classList.toggle('light-mode');
-            localStorage.setItem('esp_theme', isLight ? 'light' : 'dark');
-            document.getElementById('themeToggleBtn').textContent = isLight ? '🌙' : '☀️';
-            document.getElementById('themeToggleBtn').title = isLight ? 'Switch to Dark Mode' : 'Switch to Light Mode';
+        function syncThemeToggle() {
+            const toggleBtn = document.getElementById('themeToggleBtn');
+            if (!toggleBtn) {
+                return;
+            }
+
+            const isLight = document.body.classList.contains('light-mode');
+            toggleBtn.textContent = isLight ? '🌙' : '☀️';
+            toggleBtn.title = isLight ? 'Switch to Dark Mode' : 'Switch to Light Mode';
         }
 
-        // Initialize Theme
-        const savedTheme = localStorage.getItem('esp_theme');
-        if (savedTheme === 'light' || (!savedTheme && window.matchMedia('(prefers-color-scheme: light)').matches)) {
-            document.body.classList.add('light-mode');
-            const toggleBtn = document.getElementById('themeToggleBtn');
-            if (toggleBtn) {
-                toggleBtn.textContent = '🌙';
-                toggleBtn.title = 'Switch to Dark Mode';
-            }
+        // Theme Toggle Logic
+        function toggleTheme() {
+            document.body.classList.toggle('light-mode');
+            syncThemeToggle();
         }
 
         // Filtering Logic (search only, no source site filter)
@@ -1325,6 +1326,7 @@
         }
 
         document.addEventListener('DOMContentLoaded', function () {
+            syncThemeToggle();
             fetchLiveRates();
             document.addEventListener('keydown', function (event) {
                 if (event.key === 'Escape') {

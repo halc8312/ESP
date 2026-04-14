@@ -191,6 +191,7 @@ class PriceList(Base):
     is_active = Column(Boolean, default=True)            # 有効/無効
     currency_rate = Column(Integer, default=150)         # JPY→USD換算レート
     layout = Column(String, default="grid")              # grid / editorial
+    theme = Column(String, default="dark")               # dark / light
     notes = Column(Text)                                 # 備考（顧客へのメッセージ等）
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now)

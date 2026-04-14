@@ -11,7 +11,14 @@
     <h1>商品編集</h1>
 </div>
 
-<form method="POST" class="product-edit-form">
+{% if error %}
+<div
+    style="background: #fce4ec; border: 1px solid #ef9a9a; padding: 12px; border-radius: 6px; margin-bottom: 16px; color: #c62828;">
+    {{ error }}
+</div>
+{% endif %}
+
+<form method="POST" enctype="multipart/form-data" class="product-edit-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <input type="hidden" name="delete_v_ids" id="delete_v_ids" value="">
     <input type="hidden" name="image_urls_json" id="image_urls_json" value='{{ images|tojson|safe }}'>
@@ -33,7 +40,7 @@
                 </summary>
                 <div class="content-card-body">
                     <div class="product-image-manager">
-                        <p class="product-image-note">ドラッグで並べ替え、不要な画像は削除できます。追加は画像 URL のみ対応しています。</p>
+                        <p class="product-image-note">ドラッグで並べ替え、不要な画像は削除できます。URL追加と画像アップロードに対応しています。</p>
 
                         <div id="imageSortGrid" class="image-sort-grid">
                             {% for url in images %}
@@ -61,7 +68,13 @@
                                 <input type="url" id="image_url_input" placeholder="https://example.com/image.jpg">
                                 <button type="button" class="btn-secondary" onclick="addImageUrl()">URLを追加</button>
                             </div>
-                            <p class="text-small text-muted mb-0">バイナリアップロードはまだ実装していません。http(s) または `/media/...` 形式を追加してください。</p>
+                            <p class="text-small text-muted mb-0">http(s) または `/media/...` 形式の画像URLを追加できます。</p>
+                        </div>
+
+                        <div class="form-group image-add-group">
+                            <label for="image_file_input">画像をアップロード</label>
+                            <input type="file" id="image_file_input" name="image_files" accept="image/*" multiple>
+                            <p id="imageUploadHint" class="text-small text-muted mb-0">選択した画像は保存時に現在の一覧の末尾へ追加されます。</p>
                         </div>
                     </div>
                 </div>
@@ -373,6 +386,8 @@
     var imageCountBadge = null;
     var imageEmptyState = null;
     var imageUrlInput = null;
+    var imageFileInput = null;
+    var imageUploadHint = null;
 
     document.addEventListener('DOMContentLoaded', function () {
         tinymce.init({
@@ -396,6 +411,8 @@
         imageCountBadge = document.getElementById('imageCountBadge');
         imageEmptyState = document.getElementById('imageEmptyState');
         imageUrlInput = document.getElementById('image_url_input');
+        imageFileInput = document.getElementById('image_file_input');
+        imageUploadHint = document.getElementById('imageUploadHint');
 
         imageUrls = safeParseImageUrls(imageHiddenInput ? imageHiddenInput.value : '[]');
         renderImageList();
@@ -423,6 +440,21 @@
                     event.preventDefault();
                     addImageUrl();
                 }
+            });
+        }
+
+        if (imageFileInput) {
+            imageFileInput.addEventListener('change', function () {
+                if (!imageUploadHint) {
+                    return;
+                }
+
+                if (!imageFileInput.files || imageFileInput.files.length === 0) {
+                    imageUploadHint.textContent = '選択した画像は保存時に現在の一覧の末尾へ追加されます。';
+                    return;
+                }
+
+                imageUploadHint.textContent = imageFileInput.files.length + '件の画像を選択中です。保存すると追加されます。';
             });
         }
     });

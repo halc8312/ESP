@@ -2,7 +2,11 @@
 Comprehensive E2E Tests for the refactored Flask application.
 Tests all routes after the app.py split to ensure functionality is preserved.
 """
+import io
 import re
+import shutil
+import uuid
+from pathlib import Path
 
 import pytest
 from datetime import datetime
@@ -614,7 +618,7 @@ class TestPriceListRoutes:
         })
         return user
 
-    def _create_catalog_fixture(self, db_session, username='catalogfixture', layout='editorial'):
+    def _create_catalog_fixture(self, db_session, username='catalogfixture', layout='editorial', theme='dark'):
         user = User(username=username)
         user.set_password('testpassword')
         db_session.add(user)
@@ -659,6 +663,7 @@ class TestPriceListRoutes:
             name='Editorial Catalog',
             token=f'{username}-token',
             layout=layout,
+            theme=theme,
             currency_rate=150,
             is_active=True
         )
@@ -693,6 +698,23 @@ class TestPriceListRoutes:
         pricelist = db_session.query(PriceList).filter_by(user_id=user.id, name='Editorial List').one()
         assert pricelist.layout == 'editorial'
 
+    def test_pricelist_create_saves_theme(self, client, db_session):
+        """Test creating a price list persists selected theme"""
+        user = self._login_user(client, db_session, 'pricelistcreatethemetest')
+
+        response = client.post('/pricelists/create', data={
+            'name': 'Light Theme List',
+            'notes': 'Theme notes',
+            'currency_rate': '150',
+            'layout': 'grid',
+            'theme': 'light',
+        }, follow_redirects=False)
+
+        assert response.status_code == 302
+
+        pricelist = db_session.query(PriceList).filter_by(user_id=user.id, name='Light Theme List').one()
+        assert pricelist.theme == 'light'
+
     def test_pricelist_edit_updates_layout(self, client, db_session):
         """Test editing a price list can switch layout"""
         user = self._login_user(client, db_session, 'pricelistedittest')
@@ -720,6 +742,35 @@ class TestPriceListRoutes:
         db_session.refresh(pricelist)
         assert pricelist.layout == 'editorial'
 
+    def test_pricelist_edit_updates_theme(self, client, db_session):
+        """Test editing a price list can switch theme"""
+        user = self._login_user(client, db_session, 'pricelisteditthemetest')
+
+        pricelist = PriceList(
+            user_id=user.id,
+            name='Dark Theme List',
+            token='dark-theme-token',
+            layout='grid',
+            theme='dark',
+            currency_rate=150,
+            is_active=True
+        )
+        db_session.add(pricelist)
+        db_session.commit()
+
+        response = client.post(f'/pricelists/{pricelist.id}/edit', data={
+            'name': 'Dark Theme List',
+            'notes': 'Updated notes',
+            'currency_rate': '150',
+            'layout': 'grid',
+            'theme': 'light',
+            'is_active': 'on'
+        }, follow_redirects=False)
+
+        assert response.status_code == 302
+        db_session.refresh(pricelist)
+        assert pricelist.theme == 'light'
+
     def test_catalog_view_uses_pricelist_layout(self, client, db_session):
         """Test public catalog renders the selected layout class"""
         user, product, pricelist, item = self._create_catalog_fixture(
@@ -733,6 +784,20 @@ class TestPriceListRoutes:
         assert b'catalog-layout-editorial' in response.data
         assert b'Editorial' in response.data
         assert b'Catalog Layout Product' in response.data
+
+    def test_catalog_view_uses_pricelist_theme(self, client, db_session):
+        """Test public catalog renders the selected base theme"""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogthemetest',
+            layout='grid',
+            theme='light'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+        assert response.status_code == 200
+        assert b'light-mode' in response.data
+        assert b'<strong>Light</strong> theme' in response.data
 
     def test_catalog_view_renders_product_modal_shell(self, client, db_session):
         """Test public catalog includes quick-view modal markup"""
@@ -1210,6 +1275,63 @@ class TestProductRoutes:
         assert snapshot.title == 'Manual Image Product'
         assert snapshot.description == 'Manual image description'
         assert snapshot.image_urls == 'https://img.example.com/manual-1.jpg|/media/manual-2.jpg'
+
+    def test_product_detail_update_uploads_images(self, client, db_session, monkeypatch):
+        """Test uploaded product images are saved and appended to the latest snapshot"""
+        import routes.products as products_routes
+
+        storage_dir = Path(__file__).resolve().parent / '.tmp_media' / uuid.uuid4().hex
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(products_routes, 'IMAGE_STORAGE_PATH', str(storage_dir))
+
+        user, product, variant = self._setup_user_with_product(client, db_session, 'productuploadimagetest')
+
+        try:
+            response = client.post(
+                f'/product/{product.id}',
+                data={
+                    'title': 'Uploaded Image Product',
+                    'description': 'Uploaded image description',
+                    'status': 'active',
+                    'vendor': 'Test Vendor',
+                    'tags': 'tag1,tag2',
+                    'handle': 'custom-handle',
+                    'image_urls_json': '["https://img.example.com/existing.jpg"]',
+                    'image_files': [
+                        (io.BytesIO(b'first image bytes'), 'upload-one.png'),
+                        (io.BytesIO(b'second image bytes'), 'upload-two.jpg'),
+                    ],
+                    'v_ids': [str(variant.id)],
+                    f'v_opt1_{variant.id}': 'Size M',
+                    f'v_price_{variant.id}': '2000',
+                    f'v_sku_{variant.id}': 'UPDATED-SKU',
+                    f'v_qty_{variant.id}': '5',
+                },
+                content_type='multipart/form-data',
+                follow_redirects=True,
+            )
+
+            assert response.status_code == 200
+
+            snapshot = (
+                db_session.query(ProductSnapshot)
+                .filter_by(product_id=product.id)
+                .order_by(ProductSnapshot.scraped_at.desc(), ProductSnapshot.id.desc())
+                .first()
+            )
+            assert snapshot is not None
+
+            image_urls = snapshot.image_urls.split('|')
+            assert image_urls[0] == 'https://img.example.com/existing.jpg'
+            assert len(image_urls) == 3
+            assert image_urls[1].startswith('/media/product_images/')
+            assert image_urls[2].startswith('/media/product_images/')
+
+            for image_url in image_urls[1:]:
+                filename = image_url.split('/media/product_images/', 1)[1]
+                assert (storage_dir / 'product_images' / filename).exists()
+        finally:
+            shutil.rmtree(storage_dir, ignore_errors=True)
 
     def test_inline_update_custom_title_en(self, client, db_session):
         """Test inline PATCH updates English title"""

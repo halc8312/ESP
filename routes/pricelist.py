@@ -14,6 +14,7 @@ from time_utils import utc_now
 pricelist_bp = Blueprint('pricelist', __name__)
 
 PRICE_LIST_LAYOUTS = {"grid", "editorial", "list"}
+PRICE_LIST_THEMES = {"dark", "light"}
 
 
 def _sanitize_notes(raw_html: str) -> str:
@@ -26,6 +27,13 @@ def _normalize_layout(value):
     if layout in PRICE_LIST_LAYOUTS:
         return layout
     return "grid"
+
+
+def _normalize_theme(value):
+    theme = (value or "").strip().lower()
+    if theme in PRICE_LIST_THEMES:
+        return theme
+    return "dark"
 
 
 @pricelist_bp.route("/pricelists")
@@ -75,6 +83,7 @@ def pricelist_create():
             notes = _sanitize_notes(request.form.get("notes", "").strip())
             currency_rate = int(request.form.get("currency_rate", 150))
             layout = _normalize_layout(request.form.get("layout"))
+            theme = _normalize_theme(request.form.get("theme"))
 
             if not name:
                 all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
@@ -84,6 +93,7 @@ def pricelist_create():
                     pricelist=None,
                     error="名前を入力してください",
                     selected_layout=layout,
+                    selected_theme=theme,
                     all_shops=all_shops,
                     current_shop_id=current_shop_id,
                 )
@@ -95,6 +105,7 @@ def pricelist_create():
                 notes=notes,
                 currency_rate=currency_rate,
                 layout=layout,
+                theme=theme,
             )
             session_db.add(new_pl)
             session_db.commit()
@@ -106,6 +117,7 @@ def pricelist_create():
             "pricelist_edit.html",
             pricelist=None,
             selected_layout="grid",
+            selected_theme="dark",
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
@@ -135,6 +147,7 @@ def pricelist_edit(pricelist_id):
             pl.notes = _sanitize_notes(request.form.get("notes", "").strip())
             pl.currency_rate = int(request.form.get("currency_rate", 150))
             pl.layout = _normalize_layout(request.form.get("layout"))
+            pl.theme = _normalize_theme(request.form.get("theme"))
             pl.is_active = "is_active" in request.form
             pl.updated_at = utc_now()
             session_db.commit()
@@ -146,6 +159,7 @@ def pricelist_edit(pricelist_id):
             "pricelist_edit.html",
             pricelist=pl,
             selected_layout=pl.layout or "grid",
+            selected_theme=pl.theme or "dark",
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )

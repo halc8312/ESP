@@ -23,6 +23,7 @@
     <div class="content-card-body">
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            {% set theme_value = selected_theme or (pricelist.theme if pricelist and pricelist.theme else 'dark') %}
             <div class="form-group">
                 <label for="name">価格表名 *</label>
                 <input type="text" id="name" name="name" value="{{ pricelist.name if pricelist else '' }}"
@@ -36,6 +37,24 @@
             </div>
 
             <input type="hidden" name="currency_rate" value="{{ pricelist.currency_rate if pricelist else 150 }}">
+
+            <div class="form-group">
+                <label>ベースカラー</label>
+                <div style="display: grid; gap: 12px;">
+                    <label
+                        style="display: block; border: 1px solid {% if theme_value == 'dark' %}#f4b183{% else %}#d9dde3{% endif %}; background: {% if theme_value == 'dark' %}#1f2430{% else %}#fff{% endif %}; color: {% if theme_value == 'dark' %}#fff{% else %}inherit{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
+                        <input type="radio" name="theme" value="dark" {% if theme_value == 'dark' %}checked{% endif %}>
+                        <strong style="display: block; margin-top: 6px;">ダークモード</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: {% if theme_value == 'dark' %}#d7dde8{% else %}#51606f{% endif %};">黒背景ベースで高級感を出す見せ方です。</span>
+                    </label>
+                    <label
+                        style="display: block; border: 1px solid {% if theme_value == 'light' %}#90caf9{% else %}#d9dde3{% endif %}; background: {% if theme_value == 'light' %}#f8fbff{% else %}#fff{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
+                        <input type="radio" name="theme" value="light" {% if theme_value == 'light' %}checked{% endif %}>
+                        <strong style="display: block; margin-top: 6px;">ライトモード</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">白背景ベースで見やすさを優先した見せ方です。</span>
+                    </label>
+                </div>
+            </div>
 
             <div class="form-group">
                 <label>公開レイアウト</label>

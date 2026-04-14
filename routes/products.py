@@ -2,15 +2,23 @@
 Product detail routes.
 """
 import json
+import os
+import uuid
 from flask import Blueprint, render_template, request, redirect, url_for, session
 from flask_login import login_required, current_user
+from werkzeug.utils import secure_filename
 
 from database import SessionLocal
 from models import Shop, Product, Variant, ProductSnapshot, DescriptionTemplate
+from services.image_service import IMAGE_STORAGE_PATH
 from services.rich_text import normalize_rich_text
 from time_utils import utc_now
 
 products_bp = Blueprint('products', __name__)
+
+PRODUCT_IMAGE_SUBDIR = "product_images"
+PRODUCT_IMAGE_URL_PREFIX = f"/media/{PRODUCT_IMAGE_SUBDIR}/"
+ALLOWED_PRODUCT_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 
 def _latest_snapshot_for_product(session_db, product_id):
@@ -31,6 +39,57 @@ def _split_snapshot_images(snapshot):
 def _is_allowed_image_url(url):
     lower_url = url.lower()
     return lower_url.startswith("http://") or lower_url.startswith("https://") or url.startswith("/")
+
+
+def _product_image_upload_dir():
+    path = os.path.join(IMAGE_STORAGE_PATH, PRODUCT_IMAGE_SUBDIR)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _save_uploaded_product_image(file_storage, *, product_id):
+    if not file_storage or not file_storage.filename:
+        return None, None
+
+    safe_name = secure_filename(file_storage.filename)
+    ext = os.path.splitext(safe_name)[1].lower()
+    if ext not in ALLOWED_PRODUCT_IMAGE_EXTENSIONS:
+        return None, "商品画像は PNG / JPG / GIF / WEBP のみアップロードできます"
+
+    content_type = (file_storage.mimetype or "").lower()
+    if content_type and not content_type.startswith("image/"):
+        return None, "画像ファイルのみアップロードできます"
+
+    filename = f"product_{current_user.id}_{product_id}_{uuid.uuid4().hex}{ext}"
+    upload_path = os.path.join(_product_image_upload_dir(), filename)
+    file_storage.save(upload_path)
+    return f"{PRODUCT_IMAGE_URL_PREFIX}{filename}", None
+
+
+def _managed_product_image_path(image_url):
+    if not image_url or not image_url.startswith(PRODUCT_IMAGE_URL_PREFIX):
+        return None
+
+    relative_path = image_url[len("/media/"):]
+    candidate = os.path.abspath(os.path.join(IMAGE_STORAGE_PATH, relative_path))
+    storage_root = os.path.abspath(IMAGE_STORAGE_PATH)
+
+    try:
+        if os.path.commonpath([candidate, storage_root]) != storage_root:
+            return None
+    except ValueError:
+        return None
+
+    return candidate
+
+
+def _remove_managed_product_image_file(image_url):
+    path = _managed_product_image_path(image_url)
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def _parse_image_urls_json(raw_value, fallback_urls):
@@ -95,10 +154,30 @@ def _build_image_snapshot(product, base_snapshot, image_urls):
     )
 
 
+def _render_product_detail(session_db, product, snapshot, images, *, error=None, status_code=200):
+    templates = session_db.query(DescriptionTemplate).order_by(DescriptionTemplate.name).all()
+    all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
+    current_shop_id = session.get('current_shop_id')
+    variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
+
+    return render_template(
+        "product_detail.html",
+        product=product,
+        snapshot=snapshot,
+        images=images,
+        templates=templates,
+        all_shops=all_shops,
+        current_shop_id=current_shop_id,
+        variants=variants,
+        error=error,
+    ), status_code
+
+
 @products_bp.route("/product/<int:product_id>", methods=["GET", "POST"])
 @login_required
 def product_detail(product_id):
     session_db = SessionLocal()
+    uploaded_image_urls = []
     try:
         # User constraint
         product = session_db.query(Product).filter_by(id=product_id, user_id=current_user.id).one_or_none()
@@ -143,6 +222,34 @@ def product_detail(product_id):
                 request.form.get("image_urls_json"),
                 current_images,
             )
+            upload_error = None
+            for file_storage in request.files.getlist("image_files"):
+                uploaded_image_url, upload_error = _save_uploaded_product_image(
+                    file_storage,
+                    product_id=product.id,
+                )
+                if upload_error:
+                    break
+                if uploaded_image_url:
+                    uploaded_image_urls.append(uploaded_image_url)
+
+            if upload_error:
+                for image_url in uploaded_image_urls:
+                    _remove_managed_product_image_file(image_url)
+                uploaded_image_urls = []
+                return _render_product_detail(
+                    session_db,
+                    product,
+                    snapshot,
+                    current_images,
+                    error=upload_error,
+                    status_code=400,
+                )
+
+            for uploaded_image_url in uploaded_image_urls:
+                if uploaded_image_url not in submitted_images:
+                    submitted_images.append(uploaded_image_url)
+
             if submitted_images != current_images:
                 next_snapshot = _build_image_snapshot(product, snapshot, submitted_images)
                 if next_snapshot is not None:
@@ -231,29 +338,15 @@ def product_detail(product_id):
 
             product.updated_at = utc_now()
             session_db.commit()
+            uploaded_image_urls = []
             return redirect(url_for('products.product_detail', product_id=product.id))
 
-        templates = session_db.query(DescriptionTemplate).order_by(DescriptionTemplate.name).all()
-
         images = _split_snapshot_images(snapshot)
-            
-        all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
-        current_shop_id = session.get('current_shop_id')
-        
-        variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
-
-        return render_template(
-            "product_detail.html", 
-            product=product, 
-            snapshot=snapshot, 
-            images=images, 
-            templates=templates,
-            all_shops=all_shops,
-            current_shop_id=current_shop_id,
-            variants=variants
-        )
+        return _render_product_detail(session_db, product, snapshot, images)
     except Exception:
         session_db.rollback()
+        for image_url in uploaded_image_urls:
+            _remove_managed_product_image_file(image_url)
         raise
     finally:
         session_db.close()
