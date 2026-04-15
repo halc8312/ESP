@@ -24,10 +24,26 @@
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             {% set theme_value = selected_theme or (pricelist.theme if pricelist and pricelist.theme else 'dark') %}
+            {% set shop_value = selected_shop_id if selected_shop_id is defined else (pricelist.shop_id if pricelist and pricelist.shop_id else '') %}
             <div class="form-group">
                 <label for="name">価格表名 *</label>
                 <input type="text" id="name" name="name" value="{{ pricelist.name if pricelist else '' }}"
                     placeholder="例: Customer A Price List" required>
+            </div>
+
+            <div class="form-group">
+                <label for="shop_id">表示ショップ / ロゴ</label>
+                <select id="shop_id" name="shop_id">
+                    <option value="">価格表内の商品から自動判定</option>
+                    {% for s in all_shops %}
+                    <option value="{{ s.id }}" {% if shop_value|string == s.id|string %}selected{% endif %}>
+                        {{ s.name }}{% if s.logo_url %} (ロゴ登録済み){% endif %}
+                    </option>
+                    {% endfor %}
+                </select>
+                <p class="text-small text-muted mb-0" style="margin-top: 6px;">
+                    指定した場合、公開ページのヘッダーではこのショップのロゴを優先して表示します。
+                </p>
             </div>
 
             <div class="form-group">

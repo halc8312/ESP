@@ -1,7 +1,5 @@
-# Dormant Blueprint for the future paid Render split.
-# This file does nothing until it is explicitly imported/synced in Render.
-# Service names are intentionally new so the current single-web production
-# service is not mutated by accident.
+# Active Render split topology reference.
+# Keep this file aligned with the live Render services and env contract.
 
 previews:
   generation: off

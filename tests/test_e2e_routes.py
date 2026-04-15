@@ -618,15 +618,34 @@ class TestPriceListRoutes:
         })
         return user
 
-    def _create_catalog_fixture(self, db_session, username='catalogfixture', layout='editorial', theme='dark'):
+    def _create_catalog_fixture(
+        self,
+        db_session,
+        username='catalogfixture',
+        layout='editorial',
+        theme='dark',
+        shop_logo_url=None,
+        explicit_pricelist_shop=False,
+    ):
         user = User(username=username)
         user.set_password('testpassword')
         db_session.add(user)
         db_session.commit()
 
+        shop = None
+        if shop_logo_url:
+            shop = Shop(
+                user_id=user.id,
+                name=f'{username}-shop',
+                logo_url=shop_logo_url,
+            )
+            db_session.add(shop)
+            db_session.commit()
+
         product = Product(
             user_id=user.id,
             site='manual',
+            shop_id=shop.id if shop else None,
             source_url='https://example.com/manual-product',
             last_title='Catalog Layout Product',
             last_price=3200,
@@ -660,6 +679,7 @@ class TestPriceListRoutes:
 
         pricelist = PriceList(
             user_id=user.id,
+            shop_id=shop.id if explicit_pricelist_shop and shop else None,
             name='Editorial Catalog',
             token=f'{username}-token',
             layout=layout,
@@ -714,6 +734,31 @@ class TestPriceListRoutes:
 
         pricelist = db_session.query(PriceList).filter_by(user_id=user.id, name='Light Theme List').one()
         assert pricelist.theme == 'light'
+
+    def test_pricelist_create_saves_selected_shop(self, client, db_session):
+        """Test creating a price list persists the selected shop for logo display."""
+        user = self._login_user(client, db_session, 'pricelistcreateshoptest')
+        shop = Shop(
+            user_id=user.id,
+            name='Logo Shop',
+            logo_url='https://img.example.com/logo-shop.png',
+        )
+        db_session.add(shop)
+        db_session.commit()
+
+        response = client.post('/pricelists/create', data={
+            'name': 'Shop Bound List',
+            'notes': '',
+            'currency_rate': '150',
+            'layout': 'grid',
+            'theme': 'dark',
+            'shop_id': str(shop.id),
+        }, follow_redirects=False)
+
+        assert response.status_code == 302
+
+        pricelist = db_session.query(PriceList).filter_by(user_id=user.id, name='Shop Bound List').one()
+        assert pricelist.shop_id == shop.id
 
     def test_pricelist_edit_updates_layout(self, client, db_session):
         """Test editing a price list can switch layout"""
@@ -771,6 +816,43 @@ class TestPriceListRoutes:
         db_session.refresh(pricelist)
         assert pricelist.theme == 'light'
 
+    def test_pricelist_edit_updates_selected_shop(self, client, db_session):
+        """Test editing a price list can bind it to a specific shop."""
+        user = self._login_user(client, db_session, 'pricelisteditshoptest')
+        shop = Shop(
+            user_id=user.id,
+            name='Edited Shop',
+            logo_url='https://img.example.com/edited-shop.png',
+        )
+        db_session.add(shop)
+        db_session.commit()
+
+        pricelist = PriceList(
+            user_id=user.id,
+            name='Shopless List',
+            token='shopless-list-token',
+            layout='grid',
+            theme='dark',
+            currency_rate=150,
+            is_active=True
+        )
+        db_session.add(pricelist)
+        db_session.commit()
+
+        response = client.post(f'/pricelists/{pricelist.id}/edit', data={
+            'name': 'Shopless List',
+            'notes': 'Updated notes',
+            'currency_rate': '150',
+            'layout': 'grid',
+            'theme': 'dark',
+            'shop_id': str(shop.id),
+            'is_active': 'on'
+        }, follow_redirects=False)
+
+        assert response.status_code == 302
+        db_session.refresh(pricelist)
+        assert pricelist.shop_id == shop.id
+
     def test_catalog_view_uses_pricelist_layout(self, client, db_session):
         """Test public catalog renders the selected layout class"""
         user, product, pricelist, item = self._create_catalog_fixture(
@@ -798,6 +880,23 @@ class TestPriceListRoutes:
         assert response.status_code == 200
         assert b'light-mode' in response.data
         assert b'<strong>Light</strong> theme' in response.data
+
+    def test_catalog_view_prefers_pricelist_shop_logo(self, client, db_session):
+        """Test public catalog uses the explicit pricelist shop logo when configured."""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='cataloglogotest',
+            layout='grid',
+            theme='dark',
+            shop_logo_url='https://img.example.com/shop-logo.png',
+            explicit_pricelist_shop=True,
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+        assert response.status_code == 200
+        html = response.data.decode('utf-8')
+        assert 'https://img.example.com/shop-logo.png' in html
+        assert 'cataloglogotest-shop' in html
 
     def test_catalog_view_renders_product_modal_shell(self, client, db_session):
         """Test public catalog includes quick-view modal markup"""

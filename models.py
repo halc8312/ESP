@@ -186,17 +186,19 @@ class PriceList(Base):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    shop_id = Column(Integer, ForeignKey("shops.id"), nullable=True)
     name = Column(String, nullable=False)                # 例: "Customer A Price List"
     token = Column(String, unique=True, nullable=False)  # UUID公開アクセス用
     is_active = Column(Boolean, default=True)            # 有効/無効
     currency_rate = Column(Integer, default=150)         # JPY→USD換算レート
-    layout = Column(String, default="grid")              # grid / editorial
+    layout = Column(String, default="grid")              # grid / editorial / list
     theme = Column(String, default="dark")               # dark / light
     notes = Column(Text)                                 # 備考（顧客へのメッセージ等）
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now)
 
     user = relationship("User")
+    shop = relationship("Shop")
     items = relationship("PriceListItem", back_populates="price_list", cascade="all, delete-orphan")
     page_views = relationship("CatalogPageView", back_populates="price_list", cascade="all, delete-orphan")
 

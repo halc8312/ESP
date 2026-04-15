@@ -9,17 +9,17 @@ This repository is primarily edited by AI coding agents such as Claude Code and 
 
 ## Current deployment contract
 
-- Current production shape is `single-web + SCRAPE_QUEUE_BACKEND=inmemory`.
-- Current live Render topology is one Web Service; there is no dedicated background worker in that path.
-- `render.yaml` describes a future split deployment (`web + worker + postgres + key value`) but it is not the default production path.
-- In that future split, `esp-web` is the web service, `esp-worker` is the background worker, `esp-keyvalue` is Redis, and `esp-postgres` is PostgreSQL.
+- Current live Render topology includes `esp-web`, `esp-worker`, `esp-keyvalue`, and `esp-postgres`.
+- Do not assume production is single-web only. Treat single-web commands and runbooks as compatibility tooling unless the user explicitly says otherwise.
+- `render.yaml` should stay aligned with the live split deployment contract.
+- In the split topology, `esp-web` is the web service, `esp-worker` is the background worker, `esp-keyvalue` is Redis/Valkey, and `esp-postgres` is PostgreSQL.
 - `worker.py` is the dedicated RQ/split-worker entrypoint.
 
 ## High-risk invariants
 
 - Never expose `source_url`, `site`, or other internal sourcing details in the public catalog.
 - Preserve user/shop/pricelist isolation.
-- Do not silently convert current single-web assumptions into RQ/worker assumptions.
+- Do not silently change the web/worker/database/queue contract on Render.
 - In production, `SECRET_KEY` must be explicitly set and shared between `esp-web` and `esp-worker`.
 
 ## Key files
@@ -41,19 +41,19 @@ pytest tests/test_e2e_routes.py -q
 # worker / runtime changes
 pytest tests/test_worker_entrypoint.py tests/test_worker_runtime.py -q
 
-# current production (single-web) safety gate
+# legacy single-web compatibility gate
 flask single-web-redeploy-readiness
 
-# future split-render safety gate
+# current split-render safety gate
 flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict
 ```
 
 ## Current feature reality
 
-- Implemented: compacted list/edit/extract UI, public pricelist layouts, Quick View, search, theme persistence, product image upload.
+- Implemented: compacted list/edit/extract UI, public pricelist layouts, Quick View, search, theme persistence, shop-bound logo display, product image upload.
 - Not yet implemented or still pending specification: translation workflow, image background removal, pricelist category filter, PayPal/simple EC.
 
 ## More context
 
 - Start with `README.md`.
-- For operator workflows, read `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` and `docs/RENDER_CUTOVER_RUNBOOK.md`.
+- For operator workflows, read `docs/RENDER_CUTOVER_RUNBOOK.md` first and use `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` only for legacy single-web compatibility checks.

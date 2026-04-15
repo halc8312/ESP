@@ -11,18 +11,18 @@
 
 ### 現在の前提
 
-- 現本番は **single-web + `SCRAPE_QUEUE_BACKEND=inmemory`** が既定です
-- `render.yaml` の **split-render (`web + worker + postgres + key value`) は準備済みだが未本番化** です
+- 現在の live Render は **split topology (`esp-web` + `esp-worker` + `esp-postgres` + `esp-keyvalue`)** を前提にします
+- `single-web` 系のコマンドと runbook は **互換確認 / legacy 運用向け** に残っています
 - `worker.py` は RQ / split worker 用の dedicated entrypoint です
 - 公開カタログでは **`source_url` / `site` などの内部仕入れ情報を出さない** のが必須です
 - `llama.cpp/` は同梱コードです。**明示指示がない限り触らない** でください
 
 ### Render 上のサービス構成
 
-- **現在の live 構成**: Render 上では基本的に **Web Service 1台** を前提にします
-- **現在の live 構成**: この経路では専用の background worker は立てず、web プロセスが `inmemory` queue を扱います
-- **将来の split 構成**: `render.yaml` には `esp-web`（web service）, `esp-worker`（background worker）, `esp-keyvalue`（Redis）, `esp-postgres`（PostgreSQL）が定義されています
-- **将来の split 構成**: scheduler owner は `esp-worker` 側を前提にしています
+- **現在の live 構成**: `esp-web`（web service）, `esp-worker`（background worker）, `esp-keyvalue`（Valkey/Redis）, `esp-postgres`（PostgreSQL）
+- **現在の live 構成**: scheduler owner は `esp-worker` 側を前提にします
+- **single-web 構成**: ローカル互換確認や legacy runbook のためにコマンド群は残しています
+- `render.yaml` は上記 split 構成の参照元として扱い、Dashboard 側の実設定と齟齬を作らないでください
 
 ### 最初に見るべきファイル
 
@@ -36,11 +36,11 @@
 
 ### 変更時の禁止事項
 
-- 現本番の single-web 前提を、明示指示なしに `rq` 前提へ切り替えない
+- live Render を single-web 前提だと決めつけない
 - 公開カタログに内部仕入れ情報を復活させない
 - ユーザー分離、ショップ分離、価格表分離を壊さない
 - `SECRET_KEY` の未設定本番起動を正当化しない
-- Render split 向けの env / scheduler / worker 前提を current single-web に混ぜない
+- Render の web / worker / postgres / keyvalue 間の env 契約を崩さない
 
 ### まず使う検証コマンド
 
@@ -51,19 +51,19 @@ pytest tests/test_e2e_routes.py -q
 # worker / runtime 変更
 pytest tests/test_worker_entrypoint.py tests/test_worker_runtime.py -q
 
-# 現本番 single-web の再デプロイ前提確認
+# legacy single-web 互換 path の再確認
 flask single-web-redeploy-readiness
 
-# 将来の split-render 前提確認
+# 現行 split-render 前提確認
 flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict
 ```
 
 ### 現時点で実装済み / 未実装
 
-- 実装済み: 商品一覧 / 商品編集 / 商品抽出 UI の整理、公開価格表の複数レイアウト、Quick View、検索、テーマ固定、商品画像アップロード
+- 実装済み: 商品一覧 / 商品編集 / 商品抽出 UI の整理、公開価格表の複数レイアウト、Quick View、検索、テーマ固定、ショップ紐づけロゴ表示、商品画像アップロード
 - 未実装 / 要仕様確認: 翻訳機能、画像白抜き、価格表カテゴリ絞り込み、PayPal 連携
 
-詳細な運用手順は `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` と `docs/RENDER_CUTOVER_RUNBOOK.md` を参照してください。
+詳細な運用手順は `docs/RENDER_CUTOVER_RUNBOOK.md` を優先し、legacy single-web 確認が必要な場合だけ `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` を参照してください。
 
 ---
 
@@ -370,19 +370,19 @@ py -3 worker.py
 flask worker-health
 # backlog warning も失敗扱いにしたい時:
 flask worker-health --fail-on-warning
-# 現在の単一 Web 本番へ安全に再デプロイできるかを見る:
+# legacy single-web 互換 path を安全に再デプロイできるかを見る:
 flask predeploy-check --target single-web
-# 単一 Web 本番向けの local gate を一本で回す:
+# legacy single-web 向けの local gate を一本で回す:
 flask single-web-redeploy-readiness
-# 現在の単一 Web 本番向けの operator 手順をまとめて出す:
+# legacy single-web 向けの operator 手順をまとめて出す:
 flask single-web-redeploy-checklist --base-url https://<current-web-url> --username <smoke-user> --password <smoke-password>
-# 単一 Web 本番の post-deploy smoke を current 期待値で流す:
+# legacy single-web path の post-deploy smoke を流す:
 flask single-web-postdeploy-smoke --base-url https://<current-web-url>
-# paid split worker の post-deploy 確認ポイントを出す:
+# 現行 split worker の post-deploy 確認ポイントを出す:
 flask render-worker-postdeploy-checklist --blueprint-path render.yaml
-# 現本番と同じ single-web + inmemory 経路を実際に流す:
+# single-web + inmemory の互換経路を実際に流す:
 flask single-web-smoke --mode preview
-# 将来の paid split (`web + worker + postgres + key value`) 向け readiness:
+# 現行 split (`web + worker + postgres + key value`) 向け readiness:
 flask predeploy-check --target split-render --strict
 # paid split の local rehearsal 前提を出す:
 flask render-local-split-checklist --blueprint-path render.yaml
@@ -410,12 +410,12 @@ flask stack-smoke --require-backend postgresql --apply-migrations --mode persist
 py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 ```
 
-### Render Blueprint（準備済み・未適用）
+### Render Blueprint / Live Topology
 
-リポジトリ直下の `render.yaml` は、将来の初回有料構成向け Blueprint です。これは Render に import / sync するまで何も起こりません。さらに、service 名は現在の単一 Web 本番と意図的に分けてあり、`autoDeployTrigger: off` なので、ファイルを commit しただけで現本番へ影響しないようにしています。
+リポジトリ直下の `render.yaml` は、現在の split Render 構成（`esp-web` / `esp-worker` / `esp-keyvalue` / `esp-postgres`）の参照元として扱います。Render Dashboard 上の実設定と齟齬が出ると AI エージェントが誤った前提で変更しやすくなるので、コメントや env 契約は live 実態に合わせて維持してください。
 
-- 現本番を維持する間は、Render 側の単一 Web Service を従来どおり `SCRAPE_QUEUE_BACKEND=inmemory` のまま使う
-- `render.yaml` を sync するのは、`rq + worker + postgres + key value` の paid split を実際に確認したい段階になってから
+- live では `esp-web` と `esp-worker` が同じ `DATABASE_URL` / `REDIS_URL` / `SECRET_KEY` 契約を共有する
+- `SCRAPE_QUEUE_BACKEND` を含む queue 契約は web / worker / keyvalue の3者で揃える
 - Blueprint の web は `/healthz` を health check に使い、worker は `python worker.py` で起動する
 - `SECRET_KEY` は `esp-web` / `esp-worker` の両方に同じ値を手動設定する。開発用デフォルト値のまま本番起動しない
 - `SCHEMA_BOOTSTRAP_MODE=auto` を維持し、初回起動時に web / worker のどちらが先に立っても schema を揃えられる状態にしておく
@@ -482,15 +482,15 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 
 shared browser runtime を有効にした worker は、起動時の durable backlog 要約、browser warm・restart・close 前 health snapshot を worker log に出します。backlog warning がしきい値を超えたままなら、`OPERATIONAL_ALERT_WEBHOOK_URL` が設定されている場合だけ silent alert も送れます。`{SITE}_BROWSER_POOL_MAX_CONTEXTS`、`{SITE}_BROWSER_POOL_MAX_TASKS_BEFORE_RESTART`、`{SITE}_BROWSER_POOL_MAX_RUNTIME_SECONDS` を使うと site 別に上限を上書きできます。
 
-`flask predeploy-check` は deploy 前の安全確認用です。`--target single-web` は現在の単一 Render Web Service 互換を、`--target split-render` は将来の `$61/month` 想定構成を前提に、queue / schema bootstrap / scheduler / storage の blocker と warning を JSON で返します。CLI 実行時には current DB に対する `schema-drift-check` も併せて走るので、軽い再デプロイ前確認でも additive drift を見落としにくくしています。
+`flask predeploy-check` は deploy 前の安全確認用です。`--target split-render` は現在の Render live 構成を、`--target single-web` は legacy 互換 path を前提に、queue / schema bootstrap / scheduler / storage の blocker と warning を JSON で返します。CLI 実行時には current DB に対する `schema-drift-check` も併せて走るので、軽い再デプロイ前確認でも additive drift を見落としにくくしています。
 
-`flask single-web-redeploy-readiness` は、現在の Render 単一 Web 本番を再デプロイしてよいかをローカルで判定する gate です。`predeploy-check --target single-web` と `local-verify --profile parser` を一つに束ねるので、routine redeploy 前の確認を一発で回せます。手順全体は `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` にまとめています。
+`flask single-web-redeploy-readiness` は、legacy single-web 互換 path を再デプロイしてよいかをローカルで判定する gate です。`predeploy-check --target single-web` と `local-verify --profile parser` を一つに束ねるので、互換確認を一発で回せます。手順全体は `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` にまとめています。
 
-`flask single-web-redeploy-checklist` は、現在の Render 単一 Web 本番を安全に再デプロイするための operator 向け JSON checklist です。local gate、Dashboard 上で崩してはいけない env 前提、post-deploy smoke、rollback を一つにまとめます。日々の DOM/UI 修正に伴う再デプロイでは、まずこれを出して順番どおりに確認する運用が安全です。post-deploy smoke のコマンド列には cautious default として `--retries 4 --retry-delay-seconds 2` を含めています。手順全体は `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` にまとめています。
+`flask single-web-redeploy-checklist` は、legacy single-web 互換 path を安全に再デプロイするための operator 向け JSON checklist です。local gate、Dashboard 上で崩してはいけない env 前提、post-deploy smoke、rollback を一つにまとめます。post-deploy smoke のコマンド列には cautious default として `--retries 4 --retry-delay-seconds 2` を含めています。手順全体は `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` にまとめています。
 
-`flask single-web-postdeploy-smoke --base-url https://...` は、現在の Render 単一 Web 本番向け post-deploy smoke です。`render-postdeploy-smoke` の current single-web 版で、`queue_backend=inmemory`、`runtime_role=web`、`scheduler_enabled=true` を前提に `/healthz`、`/login`、`/scrape`、`/api/scrape/jobs` を確認します。`--username` と `--password` を付けると authenticated route も見られ、`--ensure-user` を付けると必要時だけ `/register` を試します。deploy 直後の cold start や一時的な 502/503 を吸収したい時は `--retries` と `--retry-delay-seconds` で再試行回数を上げられます。
+`flask single-web-postdeploy-smoke --base-url https://...` は、legacy single-web path 向け post-deploy smoke です。`render-postdeploy-smoke` の single-web 版で、`queue_backend=inmemory`、`runtime_role=web`、`scheduler_enabled=true` を前提に `/healthz`、`/login`、`/scrape`、`/api/scrape/jobs` を確認します。`--username` と `--password` を付けると authenticated route も見られ、`--ensure-user` を付けると必要時だけ `/register` を試します。deploy 直後の cold start や一時的な 502/503 を吸収したい時は `--retries` と `--retry-delay-seconds` で再試行回数を上げられます。
 
-`flask single-web-smoke` は、現本番と同じ `single-web + SCRAPE_QUEUE_BACKEND=inmemory` の互換 path を live site なしで end-to-end に確認するコマンドです。内部 smoke payload を使って job enqueue、`/api/scrape/status/<job_id>`、`/api/scrape/jobs`、`/scrape/result/<job_id>` まで確認します。`--mode preview` では DB に商品が保存されないこと、`--mode persist` では保存経路まで確認できます。
+`flask single-web-smoke` は、`single-web + SCRAPE_QUEUE_BACKEND=inmemory` の互換 path を live site なしで end-to-end に確認するコマンドです。内部 smoke payload を使って job enqueue、`/api/scrape/status/<job_id>`、`/api/scrape/jobs`、`/scrape/result/<job_id>` まで確認します。`--mode preview` では DB に商品が保存されないこと、`--mode persist` では保存経路まで確認できます。
 
 `flask db-smoke` は `DATABASE_URL` に対する明示的な DB smoke です。`--apply-migrations` を付けると Alembic/legacy 設定に従って schema を適用したうえで、接続・簡易 write/read・主要テーブル存在確認を行います。local PostgreSQL を立てた段階で、まずこれを通してから web/worker の end-to-end に進めるのが安全です。
 
@@ -502,7 +502,7 @@ shared browser runtime を有効にした worker は、起動時の durable back
 
 `flask local-verify` は、いま積み上げた local-first 検証を順序つきでまとめて回すコマンドです。すべての profile で current DB に対する `schema-drift-check` を先に走らせるので、既存 SQLite や local PostgreSQL に additive drift が残っている状態を日常の再デプロイ前に拾えます。`--profile parser` は single-web predeploy と schema drift 監査に続いて `single-web-smoke --mode preview` を実行し、その後に detail fixture 群と、`search_dump.html` があれば Mercari search fixture 判定も advisory step として含みます。`--profile stack` は split-render を含む advisory predeploy + db-smoke + fixture-backed stack smoke、`--profile full` はその両方に加えて `single-web-smoke --mode persist --fixture-site mercari ...` と `single-web-smoke --mode persist --fixture-site snkrdunk ...` も含みます。predeploy/search 系の advisory step は「今ある dump の質」や「切替準備の不足」を見える化するために出し、suite 全体の成否は schema drift / single-web / parser / db / stack の実動作で判定します。daily の DOM 修正後は `parser`、しっかり確認する時は `full` を流す運用を想定しています。
 
-`flask render-cutover-readiness` は、最初の paid Render split に入ってよいかをローカルで判定する C4 用 gate です。current single-web predeploy は advisory として残しつつ、persistent DB の `schema-drift-check`、split-render predeploy、split worker health、`local-verify --profile full` を一つに束ねます。paid activation 前は `flask render-local-split-checklist` で local PostgreSQL/Redis/RQ の前提と順序を確認したうえで、`flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict` を通してから進めてください。手順全体は `docs/RENDER_CUTOVER_RUNBOOK.md` にまとめています。
+`flask render-cutover-readiness` は、現在の Render split 構成に対するローカル判定 gate です。single-web predeploy は advisory として残しつつ、persistent DB の `schema-drift-check`、split-render predeploy、split worker health、`local-verify --profile full` を一つに束ねます。手順全体は `docs/RENDER_CUTOVER_RUNBOOK.md` にまとめています。
 
 `flask render-blueprint-audit` は `render.yaml` の静的監査です。`esp-web` / `esp-worker` / `esp-keyvalue` / `esp-postgres` の service 名、`autoDeployTrigger: off`、`/healthz`、`python worker.py`、managed `DATABASE_URL` / `REDIS_URL`、manual secret env の棚卸しを確認します。Render Dashboard に入る前の secret/env チェックとして使えます。
 

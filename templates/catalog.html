@@ -890,7 +890,7 @@
         <div class="header-inner">
             <h1 class="catalog-title" style="display: flex; align-items: center; gap: 8px;">
                 {% if shop_logo %}
-                <img src="{{ shop_logo }}" alt="Shop Logo"
+                <img src="{{ shop_logo }}" alt="{{ shop_name or 'Shop Logo' }}"
                     style="height: 32px; border-radius: 4px; object-fit: contain;">
                 {% else %}
                 <span>●</span>

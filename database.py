@@ -67,6 +67,7 @@ ADDITIVE_STARTUP_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("products", "deleted_at", "ALTER TABLE products ADD COLUMN deleted_at TIMESTAMP"),
     ("price_lists", "layout", "ALTER TABLE price_lists ADD COLUMN layout VARCHAR DEFAULT 'grid'"),
     ("price_lists", "theme", "ALTER TABLE price_lists ADD COLUMN theme VARCHAR DEFAULT 'dark'"),
+    ("price_lists", "shop_id", "ALTER TABLE price_lists ADD COLUMN shop_id INTEGER"),
     ("shops", "logo_url", "ALTER TABLE shops ADD COLUMN logo_url VARCHAR"),
     ("products", "patrol_fail_count", "ALTER TABLE products ADD COLUMN patrol_fail_count INTEGER DEFAULT 0"),
     ("scrape_jobs", "logical_job_id", "ALTER TABLE scrape_jobs ADD COLUMN logical_job_id VARCHAR(64)"),

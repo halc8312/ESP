@@ -36,6 +36,23 @@ def _normalize_theme(value):
     return "dark"
 
 
+def _resolve_owned_shop(session_db, raw_shop_id):
+    shop_id_raw = (raw_shop_id or "").strip()
+    if not shop_id_raw:
+        return None, None
+
+    try:
+        shop_id = int(shop_id_raw)
+    except (TypeError, ValueError):
+        return None, "ショップを正しく選択してください"
+
+    shop = session_db.query(Shop).filter_by(id=shop_id, user_id=current_user.id).first()
+    if not shop:
+        return None, "選択したショップが見つかりません"
+
+    return shop, None
+
+
 @pricelist_bp.route("/pricelists")
 @login_required
 def pricelist_list():
@@ -84,22 +101,26 @@ def pricelist_create():
             currency_rate = int(request.form.get("currency_rate", 150))
             layout = _normalize_layout(request.form.get("layout"))
             theme = _normalize_theme(request.form.get("theme"))
+            selected_shop_id = (request.form.get("shop_id") or "").strip()
+            shop, shop_error = _resolve_owned_shop(session_db, selected_shop_id)
 
-            if not name:
+            if not name or shop_error:
                 all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
                 current_shop_id = session.get('current_shop_id')
                 return render_template(
                     "pricelist_edit.html",
                     pricelist=None,
-                    error="名前を入力してください",
+                    error="名前を入力してください" if not name else shop_error,
                     selected_layout=layout,
                     selected_theme=theme,
+                    selected_shop_id=selected_shop_id,
                     all_shops=all_shops,
                     current_shop_id=current_shop_id,
                 )
 
             new_pl = PriceList(
                 user_id=current_user.id,
+                shop_id=shop.id if shop else None,
                 name=name,
                 token=str(uuid.uuid4()),
                 notes=notes,
@@ -118,6 +139,7 @@ def pricelist_create():
             pricelist=None,
             selected_layout="grid",
             selected_theme="dark",
+            selected_shop_id=str(current_shop_id) if current_shop_id else "",
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
@@ -143,11 +165,28 @@ def pricelist_edit(pricelist_id):
             return redirect(url_for("pricelist.pricelist_list"))
 
         if request.method == "POST":
+            selected_shop_id = (request.form.get("shop_id") or "").strip()
+            shop, shop_error = _resolve_owned_shop(session_db, selected_shop_id)
+            if shop_error:
+                all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
+                current_shop_id = session.get('current_shop_id')
+                return render_template(
+                    "pricelist_edit.html",
+                    pricelist=pl,
+                    error=shop_error,
+                    selected_layout=_normalize_layout(request.form.get("layout")),
+                    selected_theme=_normalize_theme(request.form.get("theme")),
+                    selected_shop_id=selected_shop_id,
+                    all_shops=all_shops,
+                    current_shop_id=current_shop_id,
+                )
+
             pl.name = request.form.get("name", pl.name).strip()
             pl.notes = _sanitize_notes(request.form.get("notes", "").strip())
             pl.currency_rate = int(request.form.get("currency_rate", 150))
             pl.layout = _normalize_layout(request.form.get("layout"))
             pl.theme = _normalize_theme(request.form.get("theme"))
+            pl.shop_id = shop.id if shop else None
             pl.is_active = "is_active" in request.form
             pl.updated_at = utc_now()
             session_db.commit()
@@ -160,6 +199,7 @@ def pricelist_edit(pricelist_id):
             pricelist=pl,
             selected_layout=pl.layout or "grid",
             selected_theme=pl.theme or "dark",
+            selected_shop_id=str(pl.shop_id) if pl.shop_id else "",
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )

@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 from flask import Blueprint, render_template, abort, jsonify, request, session
 from flask_login import login_required, current_user
-from sqlalchemy.orm import subqueryload
+from sqlalchemy.orm import joinedload, subqueryload
 
 from database import SessionLocal, _session_factory
 from models import Shop, PriceList, PriceListItem, Product, CatalogPageView
@@ -31,9 +31,26 @@ def _latest_snapshot(product):
 def _pricelist_by_token(session_db, token):
     return (
         session_db.query(PriceList)
+        .options(joinedload(PriceList.shop))
         .filter(PriceList.token == token, PriceList.is_active == True)
         .first()
     )
+
+
+def _resolve_catalog_shop_branding(pricelist, items):
+    explicit_shop = getattr(pricelist, "shop", None)
+    if explicit_shop and explicit_shop.logo_url:
+        return explicit_shop.logo_url, explicit_shop.name
+
+    for item in items:
+        product = getattr(item, "product", None)
+        shop = getattr(product, "shop", None)
+        if shop and shop.logo_url:
+            return shop.logo_url, shop.name
+
+    if explicit_shop:
+        return None, explicit_shop.name
+    return None, None
 
 
 def _build_catalog_item(item):
@@ -150,21 +167,18 @@ def catalog_view(token):
             .join(Product)
             .options(subqueryload(PriceListItem.product).subqueryload(Product.snapshots))
             .options(subqueryload(PriceListItem.product).subqueryload(Product.variants))
+            .options(subqueryload(PriceListItem.product).joinedload(Product.shop))
             .order_by(PriceListItem.sort_order)
             .all()
         )
 
         # Process items for display
         catalog_items = []
-        shop_logo = None
         for item in items:
             catalog_item = _build_catalog_item(item)
             if catalog_item is not None:
                 catalog_items.append(catalog_item)
-            
-            # Find the first available shop logo
-            if shop_logo is None and item.product and item.product.shop and item.product.shop.logo_url:
-                shop_logo = item.product.shop.logo_url
+        shop_logo, shop_name = _resolve_catalog_shop_branding(pl, items)
 
         return render_template(
             "catalog.html",
@@ -172,6 +186,7 @@ def catalog_view(token):
             items=catalog_items,
             currency_rate=pl.currency_rate,
             shop_logo=shop_logo,
+            shop_name=shop_name,
         )
     except Exception:
         session_db.rollback()
