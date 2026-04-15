@@ -156,14 +156,50 @@ def _extract_page_title(page) -> str:
 
 
 def _extract_body_text(page) -> str:
-    body_parts = []
-    for node in _safe_css(page, "body *"):
-        text = _node_text(node)
-        if text:
-            body_parts.append(text)
-    if body_parts:
-        return " ".join(body_parts)
+    """Extract body text, preferring narrow product-detail containers first.
 
+    The old implementation concatenated *every* element under ``body *`` which
+    pulled in unrelated UI chrome, hidden elements, and footer text — a major
+    source of false-positive "sold" signals.  We now try progressively wider
+    scopes so that product-area text is checked first.
+    """
+    # --- Narrow scopes: product detail containers and CTA regions ---
+    _NARROW_SELECTORS = (
+        "main",
+        "article",
+        "[data-testid='item-info']",
+        "[data-testid='product-info']",
+        "[id='item-info']",
+        "section",
+    )
+    for selector in _NARROW_SELECTORS:
+        parts = []
+        for node in _safe_css(page, selector):
+            # Skip hidden elements that may contain stale sold badges
+            aria_hidden = _node_attr(node, "aria-hidden").lower()
+            if aria_hidden == "true":
+                continue
+            text = _node_text(node)
+            if text:
+                parts.append(text)
+        if parts:
+            return " ".join(parts)
+
+    # --- Fallback: direct children of body only (avoids deep hidden nodes) ---
+    body_children = _safe_css(page, "body > *")
+    if body_children:
+        parts = []
+        for node in body_children:
+            aria_hidden = _node_attr(node, "aria-hidden").lower()
+            if aria_hidden == "true":
+                continue
+            text = _node_text(node)
+            if text:
+                parts.append(text)
+        if parts:
+            return " ".join(parts)
+
+    # --- Last resort: helper methods on the page object ---
     for attr_name in ("get_all_text", "get_text"):
         extractor = getattr(page, attr_name, None)
         if not callable(extractor):
@@ -680,62 +716,119 @@ def _extract_scoped_text_price(page) -> Optional[int]:
     return next(iter(unique_prices)) if len(unique_prices) == 1 else None
 
 
-def _extract_status(page, body_text: str, availability: str, deleted: bool) -> tuple[str, list[str]]:
-    reasons = []
+def _extract_status(page, body_text: str, availability: str, deleted: bool) -> tuple[str, list[str], str]:
+    """Aggregate multiple pieces of evidence before deciding status.
+
+    Returns ``(status, reasons, evidence_strength)`` where
+    *evidence_strength* is one of ``"hard"``, ``"soft"``, or ``"none"``.
+
+    Evidence classification:
+      hard_positive  – strong proof the item is on sale (jsonld InStock,
+                       enabled purchase/checkout button)
+      hard_negative  – strong proof the item is sold (jsonld OutOfStock,
+                       *visible* sold-out badge with actual text)
+      soft_negative  – weak sold signal that must NOT override a hard positive
+                       (disabled checkout button alone, body-text "sold" markers)
+    """
+    hard_positives: list[str] = []
+    hard_negatives: list[str] = []
+    soft_negatives: list[str] = []
+    reasons: list[str] = []
+
+    # ── 0. Deleted pages are always authoritative ──────────────────────
     if deleted:
         reasons.append("deleted-marker")
-        return "deleted", reasons
+        return "deleted", reasons, "hard"
 
+    # ── 1. JSON-LD availability (structured data = high trust) ─────────
     if "outofstock" in availability or "soldout" in availability:
-        reasons.append("jsonld-out-of-stock")
-        return "sold", reasons
+        hard_negatives.append("jsonld-out-of-stock")
     if "instock" in availability:
-        reasons.append("jsonld-in-stock")
-        return "on_sale", reasons
+        hard_positives.append("jsonld-in-stock")
 
-    badges = get_selectors("mercari", "general", "status_badges") or ["[data-testid='sold-out-badge']"]
-    for badge in badges:
-        if _safe_css(page, badge):
-            reasons.append("sold-badge")
-            return "sold", reasons
+    # ── 2. Sold-out badges — only count if *visible* and has text ──────
+    badges = get_selectors("mercari", "general", "status_badges") or [
+        "[data-testid='sold-out-badge']",
+    ]
+    for badge_sel in badges:
+        for badge_node in _safe_css(page, badge_sel):
+            aria_hidden = _node_attr(badge_node, "aria-hidden").lower()
+            if aria_hidden == "true":
+                reasons.append("sold-badge-hidden-skipped")
+                continue
+            badge_text = _node_text(badge_node)
+            if badge_text and any(m in badge_text for m in ("SOLD", "売り切れ", "sold")):
+                hard_negatives.append("sold-badge-visible")
+            elif badge_text:
+                # Badge present with unexpected text — treat as soft signal
+                soft_negatives.append(f"sold-badge-text:{badge_text[:30]}")
+            else:
+                # Empty badge DOM node — could be hydration leftover
+                soft_negatives.append("sold-badge-empty")
 
-    button_selectors = get_selectors("mercari", "general", "checkout_button") or ["[data-testid='checkout-button']"]
+    # ── 3. Checkout / purchase buttons ────────────────────────────────
+    button_selectors = get_selectors("mercari", "general", "checkout_button") or [
+        "[data-testid='checkout-button']",
+    ]
     for sel in button_selectors:
         for button in _safe_css(page, sel):
             button_text = _node_text(button)
             disabled = _node_attr(button, "disabled")
             aria_disabled = _node_attr(button, "aria-disabled").lower()
-            if disabled or aria_disabled == "true" or "売り切れ" in button_text:
-                reasons.append("checkout-button-disabled")
-                return "sold", reasons
-            if any(marker in button_text for marker in _ACTIVE_BUTTON_MARKERS) or "購入" in button_text:
-                reasons.append("checkout-button-enabled")
-                return "on_sale", reasons
+            is_disabled = bool(disabled) or aria_disabled == "true" or "売り切れ" in button_text
+            if is_disabled:
+                soft_negatives.append("checkout-button-disabled")
+            elif any(m in button_text for m in _ACTIVE_BUTTON_MARKERS) or "購入" in button_text:
+                hard_positives.append("checkout-button-enabled")
 
+    # Generic <button> elements
     for button in _safe_css(page, "button"):
         button_text = _node_text(button)
         if not button_text:
             continue
-        if any(marker in button_text for marker in _ACTIVE_BUTTON_MARKERS):
+        if any(m in button_text for m in _ACTIVE_BUTTON_MARKERS):
             disabled = _node_attr(button, "disabled")
             aria_disabled = _node_attr(button, "aria-disabled").lower()
             if not disabled and aria_disabled != "true":
-                reasons.append("purchase-button-enabled")
-                return "on_sale", reasons
-            reasons.append("purchase-button-disabled")
-            return "sold", reasons
-        if "売り切れ" in button_text:
-            reasons.append("sold-button")
-            return "sold", reasons
+                hard_positives.append("purchase-button-enabled")
+            else:
+                soft_negatives.append("purchase-button-disabled")
+        elif "売り切れ" in button_text:
+            soft_negatives.append("sold-button-text")
 
-    if any(marker in body_text for marker in _SOLD_MARKERS):
-        reasons.append("sold-marker")
-        return "sold", reasons
-    if any(marker in body_text for marker in _ACTIVE_BUTTON_MARKERS):
-        reasons.append("purchase-marker")
-        return "on_sale", reasons
+    # ── 4. Body text markers (weakest signal) ─────────────────────────
+    if any(m in body_text for m in _SOLD_MARKERS):
+        soft_negatives.append("body-sold-marker")
+    if any(m in body_text for m in _ACTIVE_BUTTON_MARKERS):
+        hard_positives.append("body-purchase-marker")
 
-    return "unknown", reasons
+    # ── Aggregate and decide ──────────────────────────────────────────
+    reasons.extend(hard_positives)
+    reasons.extend(hard_negatives)
+    reasons.extend(soft_negatives)
+
+    has_hard_positive = bool(hard_positives)
+    has_hard_negative = bool(hard_negatives)
+    has_soft_negative = bool(soft_negatives)
+
+    # Hard positive beats soft negative — protect active items
+    if has_hard_positive and not has_hard_negative:
+        return "on_sale", reasons, "hard"
+
+    # Hard negative with no hard positive → sold
+    if has_hard_negative and not has_hard_positive:
+        return "sold", reasons, "hard"
+
+    # Both hard positive AND hard negative → trust positive (e.g. stale badge)
+    if has_hard_positive and has_hard_negative:
+        reasons.append("conflict-positive-wins")
+        return "on_sale", reasons, "hard"
+
+    # Only soft negatives, no hard evidence either way → do NOT confirm sold
+    if has_soft_negative and not has_hard_positive:
+        return "sold", reasons, "soft"
+
+    return "unknown", reasons, "none"
 
 
 def _classify_page(
@@ -787,7 +880,7 @@ def parse_mercari_item_page(page, url: str) -> tuple[dict, dict]:
     availability = _extract_jsonld_availability(product_jsonld)
     deleted = any(marker in body_text for marker in _MISSING_PAGE_MARKERS)
 
-    status, status_reasons = _extract_status(page, body_text, availability, deleted=deleted)
+    status, status_reasons, evidence_strength = _extract_status(page, body_text, availability, deleted=deleted)
     page_type, page_reasons = _classify_page(
         title=title,
         page_title=page_title,
@@ -863,6 +956,7 @@ def parse_mercari_item_page(page, url: str) -> tuple[dict, dict]:
         "page_type": page_type,
         "price_source": price_source,
         "confidence": confidence,
+        "evidence_strength": evidence_strength,
         "reasons": status_reasons + page_reasons,
         "strategy": strategy,
         "field_sources": {field: source for field, source in field_sources.items() if source},

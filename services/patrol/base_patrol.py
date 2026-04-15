@@ -23,6 +23,7 @@ class PatrolResult:
         confidence: str = "high",
         reason: Optional[str] = None,
         price_source: Optional[str] = None,
+        evidence_strength: str = "none",
     ):
         self.price = price
         self.status = status  # "active", "sold", "deleted", "unknown"
@@ -31,6 +32,7 @@ class PatrolResult:
         self.confidence = confidence
         self.reason = reason
         self.price_source = price_source
+        self.evidence_strength = evidence_strength  # "hard", "soft", "none"
         self.success = error is None
     
     def __repr__(self):

@@ -50,6 +50,15 @@ class MonitorService:
         'yahuoku': YahuokuPatrol(),
         'snkrdunk': SnkrdunkPatrol(),
     }
+
+    # Mercari-specific: track consecutive soft-sold counts per product to
+    # implement hysteresis.  Only stored in memory — resets on restart,
+    # which is the safe default (never persisting a stale count).
+    _mercari_soft_sold_counts: dict[int, int] = {}
+
+    # Number of consecutive soft-sold patrol results required before
+    # the status is actually persisted as ``sold``.
+    _MERCARI_SOFT_SOLD_THRESHOLD = 2
     
     @staticmethod
     def _apply_backoff(product, session_db):
@@ -133,6 +142,42 @@ class MonitorService:
                     
                     # ---- Success: reset fail counter ----
                     product.patrol_fail_count = 0
+
+                    # ── Mercari sold-hysteresis ──────────────────────────
+                    # Soft-evidence "sold" from Mercari is not persisted
+                    # until seen N consecutive times, preventing transient
+                    # hydration glitches from flipping active items to sold.
+                    if (
+                        product.site == "mercari"
+                        and normalized_status == "sold"
+                        and getattr(result, "evidence_strength", "hard") == "soft"
+                    ):
+                        prev_count = MonitorService._mercari_soft_sold_counts.get(product.id, 0)
+                        new_count = prev_count + 1
+                        MonitorService._mercari_soft_sold_counts[product.id] = new_count
+                        if new_count < MonitorService._MERCARI_SOFT_SOLD_THRESHOLD:
+                            logger.info(
+                                "Mercari soft-sold deferred for product %s "
+                                "(%d/%d): %s",
+                                product.id,
+                                new_count,
+                                MonitorService._MERCARI_SOFT_SOLD_THRESHOLD,
+                                result.reason or "",
+                            )
+                            # Treat as unknown for this cycle — do not persist
+                            product.updated_at = utc_now()
+                            session_db.commit()
+                            continue
+                        else:
+                            logger.info(
+                                "Mercari soft-sold confirmed for product %s "
+                                "after %d consecutive observations",
+                                product.id,
+                                new_count,
+                            )
+                    else:
+                        # Any non-soft-sold result resets the counter
+                        MonitorService._mercari_soft_sold_counts.pop(product.id, None)
 
                     # Update product with new data
                     changes = MonitorService._apply_patrol_result(
