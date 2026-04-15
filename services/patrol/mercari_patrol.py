@@ -21,6 +21,12 @@ logger = logging.getLogger("patrol.mercari")
 class MercariPatrol(BasePatrol):
     """Lightweight Mercari price/stock scraper using the shared parser."""
 
+    # Mercari's SPA hydrates product detail after initial DOM render.
+    # ``network_idle=True`` + a selector wait ensures the checkout button
+    # and JSON-LD have been injected before we parse, reducing false-sold
+    # misclassifications caused by reading half-hydrated pages.
+    _WAIT_SELECTOR = "h1, [data-testid='price'], [data-testid='checkout-button']"
+
     def fetch(self, url: str, driver=None) -> PatrolResult:
         try:
             if "/shops/product/" in url:
@@ -28,18 +34,25 @@ class MercariPatrol(BasePatrol):
                 meta = dict(item.get("_scrape_meta") or {})
             else:
                 if should_use_mercari_browser_pool_patrol():
-                    page = fetch_mercari_page_via_browser_pool_sync(url, network_idle=False)
+                    page = fetch_mercari_page_via_browser_pool_sync(
+                        url,
+                        network_idle=True,
+                        wait_selector=self._WAIT_SELECTOR,
+                    )
                 else:
                     page = fetch_dynamic(
                         url,
                         headless=True,
-                        network_idle=False,
+                        # Changed from False → True so the page is more likely
+                        # to have finished hydration before we scrape.
+                        network_idle=True,
                     )
                 item, meta = parse_mercari_item_page(page, url)
             status = self._normalize_status(item.get("status"))
             reason = "; ".join(str(value) for value in meta.get("reasons", []) if value)
             confidence = meta.get("confidence", "low")
             price_source = meta.get("price_source")
+            evidence_strength = meta.get("evidence_strength", "none")
 
             if item.get("status") in {"unknown", "error"}:
                 return self._finalize_result("mercari", url, PatrolResult(
@@ -48,6 +61,7 @@ class MercariPatrol(BasePatrol):
                     confidence=confidence,
                     reason=reason,
                     price_source=price_source,
+                    evidence_strength=evidence_strength,
                 ))
 
             if item.get("status") == "on_sale" and item.get("price") is None:
@@ -57,6 +71,7 @@ class MercariPatrol(BasePatrol):
                     confidence=confidence,
                     reason=reason,
                     price_source=price_source,
+                    evidence_strength=evidence_strength,
                 ))
 
             return self._finalize_result("mercari", url, PatrolResult(
@@ -66,6 +81,7 @@ class MercariPatrol(BasePatrol):
                 confidence=confidence,
                 reason=reason,
                 price_source=price_source,
+                evidence_strength=evidence_strength,
             ))
 
         except Exception as exc:
