@@ -27,6 +27,8 @@ _HOME_TITLES = {
 }
 _ACTIVE_BUTTON_MARKERS = ("購入手続きへ", "購入する", "Buy this item")
 _SOLD_MARKERS = ("売り切れ", "売り切れました", "SOLD")
+_DEFAULT_CHECKOUT_BUTTON_SELECTORS = ["[data-testid='checkout-button']"]
+_DEFAULT_STATUS_BADGE_SELECTORS = ["[data-testid='sold-out-badge']"]
 _PRODUCT_IMAGE_FALLBACK = [
     "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']",
     "img[data-src*='static.mercdn.net'][data-src*='/item/'][data-src*='/photos/']",
@@ -747,9 +749,7 @@ def _extract_status(page, body_text: str, availability: str, deleted: bool) -> t
         hard_positives.append("jsonld-in-stock")
 
     # ── 2. Sold-out badges — only count if *visible* and has text ──────
-    badges = get_selectors("mercari", "general", "status_badges") or [
-        "[data-testid='sold-out-badge']",
-    ]
+    badges = get_selectors("mercari", "general", "status_badges") or _DEFAULT_STATUS_BADGE_SELECTORS
     for badge_sel in badges:
         for badge_node in _safe_css(page, badge_sel):
             aria_hidden = _node_attr(badge_node, "aria-hidden").lower()
@@ -767,9 +767,7 @@ def _extract_status(page, body_text: str, availability: str, deleted: bool) -> t
                 soft_negatives.append("sold-badge-empty")
 
     # ── 3. Checkout / purchase buttons ────────────────────────────────
-    button_selectors = get_selectors("mercari", "general", "checkout_button") or [
-        "[data-testid='checkout-button']",
-    ]
+    button_selectors = get_selectors("mercari", "general", "checkout_button") or _DEFAULT_CHECKOUT_BUTTON_SELECTORS
     for sel in button_selectors:
         for button in _safe_css(page, sel):
             button_text = _node_text(button)

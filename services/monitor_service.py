@@ -54,6 +54,8 @@ class MonitorService:
     # Mercari-specific: track consecutive soft-sold counts per product to
     # implement hysteresis.  Only stored in memory — resets on restart,
     # which is the safe default (never persisting a stale count).
+    # NOTE: Not thread-safe; relies on the single-threaded RQ worker model
+    # used in production.  If concurrency is introduced, wrap with a Lock.
     _mercari_soft_sold_counts: dict[int, int] = {}
 
     # Number of consecutive soft-sold patrol results required before

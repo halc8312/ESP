@@ -11,6 +11,7 @@ Covers the required scenarios:
 
 import json
 
+from services.html_page_adapter import HtmlPageAdapter
 from services.mercari_item_parser import (
     _extract_status,
     _extract_body_text,
@@ -346,8 +347,6 @@ def test_conflict_instock_vs_sold_badge_prefers_instock():
 
 def test_body_text_prefers_main_over_all():
     """Narrowed body text should prefer <main> content."""
-    from services.html_page_adapter import HtmlPageAdapter
-
     html = """<html><body>
         <header>ヘッダー 売り切れ</header>
         <main><p>商品説明 購入手続きへ</p></main>
