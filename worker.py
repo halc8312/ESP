@@ -35,6 +35,10 @@ def main() -> int:
             "SCRAPE_QUEUE_BACKEND": os.environ.get("SCRAPE_QUEUE_BACKEND", "rq"),
             "RQ_BURST": os.environ.get("RQ_BURST", ""),
             "RQ_WITH_SCHEDULER": os.environ.get("RQ_WITH_SCHEDULER", ""),
+            "RUN_SCHEMA_BOOTSTRAP_ON_STARTUP": True,
+            "SCHEMA_BOOTSTRAP_MODE": os.environ.get("SCHEMA_BOOTSTRAP_MODE", "auto"),
+            "ENABLE_LEGACY_SCHEMA_PATCHSET": True,
+            "VERIFY_SCHEMA_DRIFT_ON_STARTUP": True,
             "ENABLE_SCHEDULER": _env_to_bool_text("WORKER_ENABLE_SCHEDULER"),
             "WARM_BROWSER_POOL": os.environ.get("WARM_BROWSER_POOL", "1"),
             "WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP": os.environ.get(

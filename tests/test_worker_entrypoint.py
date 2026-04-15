@@ -22,6 +22,10 @@ def test_worker_main_builds_worker_app_and_runs_runtime(monkeypatch):
     assert worker.main() == 0
     assert captured["app"] is sentinel_app
     assert captured["config_overrides"]["SCRAPE_QUEUE_BACKEND"] == "rq"
+    assert captured["config_overrides"]["RUN_SCHEMA_BOOTSTRAP_ON_STARTUP"] is True
+    assert captured["config_overrides"]["SCHEMA_BOOTSTRAP_MODE"] == "auto"
+    assert captured["config_overrides"]["ENABLE_LEGACY_SCHEMA_PATCHSET"] is True
+    assert captured["config_overrides"]["VERIFY_SCHEMA_DRIFT_ON_STARTUP"] is True
     assert captured["config_overrides"]["WARM_BROWSER_POOL"] == "1"
     assert captured["config_overrides"]["WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP"] == "0"
     assert captured["config_overrides"]["WORKER_SELECTOR_REPAIR_LIMIT"] == "1"
@@ -46,8 +50,10 @@ def test_worker_main_passes_scheduler_flag(monkeypatch):
     monkeypatch.setenv("WORKER_ENABLE_SCHEDULER", "1")
     monkeypatch.setenv("WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP", "0")
     monkeypatch.setenv("WORKER_SELECTOR_REPAIR_LIMIT", "3")
+    monkeypatch.setenv("SCHEMA_BOOTSTRAP_MODE", "alembic")
 
     assert worker.main() == 0
     assert captured["config_overrides"]["ENABLE_SCHEDULER"] == "1"
+    assert captured["config_overrides"]["SCHEMA_BOOTSTRAP_MODE"] == "alembic"
     assert captured["config_overrides"]["WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP"] == "0"
     assert captured["config_overrides"]["WORKER_SELECTOR_REPAIR_LIMIT"] == "3"

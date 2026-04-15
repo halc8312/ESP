@@ -5,6 +5,68 @@
 
 ---
 
+## AI Agent Quick Start
+
+このリポジトリは、Claude Code / Codex などの AI エージェントがユーザー指示を受けて継続的に編集する前提です。まず以下を押さえてください。
+
+### 現在の前提
+
+- 現本番は **single-web + `SCRAPE_QUEUE_BACKEND=inmemory`** が既定です
+- `render.yaml` の **split-render (`web + worker + postgres + key value`) は準備済みだが未本番化** です
+- `worker.py` は RQ / split worker 用の dedicated entrypoint です
+- 公開カタログでは **`source_url` / `site` などの内部仕入れ情報を出さない** のが必須です
+- `llama.cpp/` は同梱コードです。**明示指示がない限り触らない** でください
+
+### Render 上のサービス構成
+
+- **現在の live 構成**: Render 上では基本的に **Web Service 1台** を前提にします
+- **現在の live 構成**: この経路では専用の background worker は立てず、web プロセスが `inmemory` queue を扱います
+- **将来の split 構成**: `render.yaml` には `esp-web`（web service）, `esp-worker`（background worker）, `esp-keyvalue`（Redis）, `esp-postgres`（PostgreSQL）が定義されています
+- **将来の split 構成**: scheduler owner は `esp-worker` 側を前提にしています
+
+### 最初に見るべきファイル
+
+- 商品一覧: `routes/main.py`, `routes/api.py`, `templates/index.html`
+- 商品編集: `routes/products.py`, `templates/product_detail.html`
+- 商品抽出: `routes/scrape.py`, `templates/scrape_form.html`, `static/js/scrape_form.js`
+- 価格表管理: `routes/pricelist.py`, `templates/pricelist_edit.html`
+- 公開カタログ: `routes/catalog.py`, `templates/catalog.html`
+- worker / deploy: `worker.py`, `services/worker_runtime.py`, `app.py`, `render.yaml`
+- 主要 E2E: `tests/test_e2e_routes.py`, `tests/test_worker_runtime.py`, `tests/test_worker_entrypoint.py`
+
+### 変更時の禁止事項
+
+- 現本番の single-web 前提を、明示指示なしに `rq` 前提へ切り替えない
+- 公開カタログに内部仕入れ情報を復活させない
+- ユーザー分離、ショップ分離、価格表分離を壊さない
+- `SECRET_KEY` の未設定本番起動を正当化しない
+- Render split 向けの env / scheduler / worker 前提を current single-web に混ぜない
+
+### まず使う検証コマンド
+
+```bash
+# UI / ルート変更
+pytest tests/test_e2e_routes.py -q
+
+# worker / runtime 変更
+pytest tests/test_worker_entrypoint.py tests/test_worker_runtime.py -q
+
+# 現本番 single-web の再デプロイ前提確認
+flask single-web-redeploy-readiness
+
+# 将来の split-render 前提確認
+flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict
+```
+
+### 現時点で実装済み / 未実装
+
+- 実装済み: 商品一覧 / 商品編集 / 商品抽出 UI の整理、公開価格表の複数レイアウト、Quick View、検索、テーマ固定、商品画像アップロード
+- 未実装 / 要仕様確認: 翻訳機能、画像白抜き、価格表カテゴリ絞り込み、PayPal 連携
+
+詳細な運用手順は `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` と `docs/RENDER_CUTOVER_RUNBOOK.md` を参照してください。
+
+---
+
 ## 目次
 
 1. [プロジェクト概要](#1-プロジェクト概要)
@@ -46,15 +108,18 @@ Shopify 用 CSV を生成して一括出品
 
 ## 2. 主要機能
 
-### スクレイピング・商品登録
-- **キーワード検索スクレイピング** — サイトと検索条件（キーワード、価格帯、件数）を指定して一括取得
-- **単品 URL スクレイピング** — 商品 URL を直接指定して詳細情報を取得
-- **非同期キューシステム** — 複数の取得ジョブを並列処理（HTTP 最大 10 並列、ブラウザ 2 並列）
-- **手動商品登録** — スクレイピングを使わずに直接登録
+### 商品抽出・商品登録
+- **キーワード商品抽出** — サイトと検索条件（キーワード、価格帯、件数）を指定して一括取得
+- **単品 URL 商品抽出** — 商品 URL を直接指定して詳細情報を取得
+- **同画面プレビュー + 選択登録** — 抽出結果をサムネイルで確認し、必要な商品だけ登録
+- **非同期キューシステム** — `inmemory` / `rq` の両対応。複数の取得ジョブを並列処理（HTTP 最大 10 並列、ブラウザ 2 並列）
+- **手動商品登録** — 商品抽出を使わずに直接登録
 - **CSV インポート** — 一括商品インポート
 
 ### 商品データ管理
-- タイトル・説明文・タグ・Vendor・SEO 設定の編集
+- 日本語 / 英語のタイトル・説明文・タグ・Vendor・SEO 設定の編集
+- 商品一覧からの英語名・販売価格インライン編集
+- 商品画像の URL 追加 / アップロード / 並び替え / 削除
 - **バリエーション（カラー・サイズ等）** の CRUD および一括生成ウィザード
 - **説明文テンプレート** 機能（複数テンプレートの使い回し・一括適用）
 - ソフトデリート（ゴミ箱）＆アーカイブ（SOLD 管理）
@@ -75,7 +140,10 @@ Shopify 用 CSV を生成して一括出品
 
 ### 公開カタログ
 - トークンベースの公開価格表（仕入れ先バイヤー向け）
-- レイアウト選択（グリッド / エディトリアル）
+- レイアウト選択（グリッド / エディトリアル / リスト）
+- 価格表ごとのベーステーマ固定（ダーク / ライト）
+- 商品検索、Quick View、ショップロゴ表示
+- 公開ページでは `source_url` / `site` などの内部仕入れ情報を非表示
 - ページビュー解析（IP ハッシュ・リファラー・UA）
 - 通貨変換（JPY → USD）
 
@@ -295,6 +363,9 @@ flask run --port 5000
 py -3 worker.py
 # 旧 `run_rq_worker.py` も互換ラッパとして残してある。
 # `worker.py` は既定で shared browser runtime を有効化し、Mercari browser を warm する。
+# また、worker 起動時にも schema bootstrap / additive patchset / drift verify を走らせる。
+# 初回 deploy や再deploy 時は web / worker が同じ DATABASE_URL を参照し、
+# DB ユーザーが migration を適用できることを前提にする。
 # worker/RQ の現在状態を JSON で確認:
 flask worker-health
 # backlog warning も失敗扱いにしたい時:
@@ -346,6 +417,8 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 - 現本番を維持する間は、Render 側の単一 Web Service を従来どおり `SCRAPE_QUEUE_BACKEND=inmemory` のまま使う
 - `render.yaml` を sync するのは、`rq + worker + postgres + key value` の paid split を実際に確認したい段階になってから
 - Blueprint の web は `/healthz` を health check に使い、worker は `python worker.py` で起動する
+- `SECRET_KEY` は `esp-web` / `esp-worker` の両方に同じ値を手動設定する。開発用デフォルト値のまま本番起動しない
+- `SCHEMA_BOOTSTRAP_MODE=auto` を維持し、初回起動時に web / worker のどちらが先に立っても schema を揃えられる状態にしておく
 - 画像とショップロゴの永続化がまだ filesystem 前提なので、Blueprint では web に小さい persistent disk を付け、`IMAGE_STORAGE_PATH=/var/data/images` を使う
 
 ---
@@ -354,7 +427,7 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 
 | 変数名 | デフォルト | 説明 |
 |--------|----------|------|
-| `SECRET_KEY` | なし（必須） | Flask セッション署名キー |
+| `SECRET_KEY` | `dev-secret-key-change-this` | Flask セッション署名キー。本番では必ず明示設定し、web / worker で同じ値を使う |
 | `DATABASE_URL` | `sqlite:///mercari.db` | DB 接続文字列 |
 | `SCHEMA_BOOTSTRAP_MODE` | `auto` (`web`/`cli`) | `alembic` 優先で schema を適用。Alembic 未導入時は `legacy` にフォールバック |
 | `SCRAPE_QUEUE_BACKEND` | `inmemory` | `inmemory` または `rq`。`rq` はローカル Redis で先行検証可能 |
@@ -391,7 +464,7 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 | `SNKRDUNK_USE_BROWSER_POOL_DYNAMIC` | `false` (`worker.py` では `true` 既定) | SNKRDUNK search と dynamic detail fallback を browser pool 経由にする |
 | `LOG_LEVEL` | `INFO` (`worker.py`) | worker/browser pool instrumentation の出力レベル |
 | `PORT` | `10000` | Gunicorn バインドポート |
-| `IMAGE_STORAGE_PATH` | `static/images` | ダウンロード画像の保存先。Render disk を付ける場合は `/var/data/images` を推奨 |
+| `IMAGE_STORAGE_PATH` | `static/images` | ダウンロード画像、ショップロゴ、商品アップロード画像の保存先。Render disk を付ける場合は `/var/data/images` を推奨 |
 | `MERCARI_USE_NETWORK_PAYLOAD` | `false` | メルカリ API インターセプト有効化 |
 | `{SITE}_DETAIL_CONCURRENCY` | サイト依存 | 詳細ページの並列取得数 |
 | `{SITE}_DETAIL_TIMEOUT` | サイト依存 | タイムアウト秒数 |
@@ -399,6 +472,13 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 | `{SITE}_DETAIL_BACKOFF` | サイト依存 | リトライ間隔（秒） |
 
 `{SITE}` には `MERCARI`, `RAKUMA`, `YAHOO`, `YAHUOKU`, `SURUGAYA`, `OFFMALL`, `SNKRDUNK` が入ります。
+
+本番では最低でも以下を明示設定してください。
+
+- `SECRET_KEY` を十分長いランダム文字列で設定する
+- split 構成では `esp-web` / `esp-worker` の `SECRET_KEY` を一致させる
+- `SCHEMA_BOOTSTRAP_MODE=auto` を維持する
+- 画像アップロードを保持したい環境では永続ストレージ付きの `IMAGE_STORAGE_PATH` を使う
 
 shared browser runtime を有効にした worker は、起動時の durable backlog 要約、browser warm・restart・close 前 health snapshot を worker log に出します。backlog warning がしきい値を超えたままなら、`OPERATIONAL_ALERT_WEBHOOK_URL` が設定されている場合だけ silent alert も送れます。`{SITE}_BROWSER_POOL_MAX_CONTEXTS`、`{SITE}_BROWSER_POOL_MAX_TASKS_BEFORE_RESTART`、`{SITE}_BROWSER_POOL_MAX_RUNTIME_SECONDS` を使うと site 別に上限を上書きできます。
 
@@ -471,8 +551,10 @@ shared browser runtime を有効にした worker は、起動時の durable back
 ### 公開カタログの作成
 
 1. `/pricelist` でカタログを作成
-2. 商品を追加・並び替え・価格カスタマイズ
-3. 発行されたトークン URL（`/catalog/<token>`）をバイヤーへ共有
+2. レイアウトとベーステーマ（ダーク / ライト）を選択
+3. 商品を追加・並び替え・価格カスタマイズ
+4. 発行されたトークン URL（`/catalog/<token>`）をバイヤーへ共有
+5. 公開側では検索と Quick View を使って商品を確認できる
 
 ---
 
@@ -620,11 +702,16 @@ ESP/
 - ✅ 7 サイトスクレイパー + 7 軽量パトロールスクレイパー稼働中
 - ✅ セルフヒーリング CSS セレクターシステム実装済み（ベータ）
 - ✅ マルチユーザー・マルチショップ対応
+- ✅ 商品一覧 / 商品編集 / 商品抽出 UI のコンパクト化を反映済み
+- ✅ 公開価格表の複数レイアウト、テーマ固定、Quick View、検索、アクセス解析を実装済み
+- ✅ 商品編集での画像アップロードを実装済み
 
 ### 今後の予定課題
 
-- UI 改善（商品一覧・編集・抽出ページのコンパクト化）
-- 価格表管理ページの強化
+- 翻訳機能（自動翻訳 / 翻訳ボタン）の仕様確定と実装
+- 商品画像の白抜き / 背景処理
+- 価格表のカテゴリ絞り込み設計
+- PayPal 連携を含む簡易 EC 化の仕様検討
 - ジョブキューの DB 永続化（複数ワーカー対応化）
 
 詳細は [`docs/UNIFIED_ROADMAP.md`](docs/UNIFIED_ROADMAP.md) を参照してください。
@@ -655,6 +742,13 @@ root ユーザーと実行ユーザー（myuser）で Playwright ブラウザを
 
 - デフォルトは SQLite（`mercari.db`）で WAL モードが有効です
 - 本番環境では `DATABASE_URL` 環境変数で PostgreSQL / MySQL を指定することを推奨します
+
+### Render / split worker 運用
+
+- `worker.py` は起動時に schema bootstrap / additive patchset / drift verify を実行します
+- Render の worker が web より先に起動しても self-heal できる想定ですが、初回 deploy では DB ユーザーに schema 変更権限が必要です
+- `SECRET_KEY` を未設定のままにすると開発用デフォルト値で起動し、警告が出ます。本番では必ず web / worker の両方に同じ値を設定してください
+- `price_lists.theme` など additive column を含む deploy では、worker crash-loop の有無を post-deploy で必ず確認してください
 
 ---
 
