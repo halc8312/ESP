@@ -425,6 +425,26 @@
             flex-wrap: wrap;
         }
 
+        .tag-display {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .tag-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 5px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            background: rgba(217, 119, 6, 0.14);
+            color: var(--accent-light);
+            border: 1px solid rgba(217, 119, 6, 0.24);
+        }
+
         .meta-pill {
             display: inline-flex;
             align-items: center;
@@ -857,11 +877,38 @@
         }
 
         .filters-bar {
-            display: flex;
+            display: grid;
+            grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(140px, auto));
             gap: 12px;
             margin-right: auto;
-            flex-wrap: wrap;
+            align-items: end;
+            flex: 1 1 680px;
+        }
+
+        .filter-control {
+            display: grid;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .filter-control label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+        }
+
+        .price-range-inputs {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+            gap: 8px;
             align-items: center;
+        }
+
+        .price-range-separator {
+            color: var(--text-muted);
+            font-size: 12px;
         }
 
         .filters-bar input,
@@ -869,15 +916,90 @@
             background: var(--bg-card);
             color: var(--text-primary);
             border: 1px solid var(--border);
-            padding: 6px 12px;
+            padding: 10px 12px;
             border-radius: var(--radius-sm);
             font-size: 13px;
             outline: none;
+            width: 100%;
         }
 
         .filters-bar input:focus,
         .filters-bar select:focus {
             border-color: var(--accent);
+        }
+
+        .catalog-toolbar {
+            max-width: 1280px;
+            margin: 18px auto 0;
+            padding: 0 20px;
+        }
+
+        .catalog-toolbar-shell {
+            display: flex;
+            gap: 14px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+            padding: 16px 18px;
+            border-radius: var(--radius);
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+        }
+
+        .catalog-toolbar-side {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            margin-left: auto;
+            flex-wrap: wrap;
+        }
+
+        .results-summary {
+            font-size: 12px;
+            color: var(--text-secondary);
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        body.light-mode .tag-pill {
+            background: rgba(217, 119, 6, 0.1);
+            border-color: rgba(217, 119, 6, 0.18);
+            color: #a16207;
+        }
+
+        body.light-mode .catalog-toolbar-shell,
+        body.light-mode .results-summary {
+            background: rgba(255, 255, 255, 0.88);
+        }
+
+        @media (max-width: 980px) {
+            .filters-bar {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                flex-basis: 100%;
+            }
+
+            .catalog-toolbar-side {
+                margin-left: 0;
+                width: 100%;
+                justify-content: space-between;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .filters-bar {
+                grid-template-columns: 1fr;
+            }
+
+            .catalog-toolbar-side {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .results-summary {
+                text-align: center;
+            }
         }
     </style>
 </head>
@@ -897,10 +1019,6 @@
                 {% endif %}
                 {{ pricelist.name }}
             </h1>
-
-            <div class="filters-bar">
-                <input type="text" id="searchInput" placeholder="Search products..." onkeyup="filterProducts()">
-            </div>
 
             <div style="display: flex; gap: 12px; align-items: center;">
                 <button type="button" id="themeToggleBtn" onclick="toggleTheme()"
@@ -922,6 +1040,46 @@
             </div>
         </div>
     </header>
+
+    <div class="catalog-toolbar">
+        <div class="catalog-toolbar-shell">
+            <div class="filters-bar">
+                <div class="filter-control">
+                    <label for="searchInput">Search</label>
+                    <input type="text" id="searchInput" placeholder="Search products..." onkeyup="filterProducts()">
+                </div>
+                <div class="filter-control">
+                    <label for="tagSelect">Tags</label>
+                    <select id="tagSelect" onchange="filterProducts()">
+                        <option value="">All Tags</option>
+                        {% for tag in available_tags %}
+                        <option value="{{ tag|lower }}">{{ tag }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="filter-control">
+                    <label>Price</label>
+                    <div class="price-range-inputs">
+                        <input type="number" id="priceMin" placeholder="Min" oninput="filterProducts()">
+                        <span class="price-range-separator">-</span>
+                        <input type="number" id="priceMax" placeholder="Max" oninput="filterProducts()">
+                    </div>
+                </div>
+                <div class="filter-control">
+                    <label for="sortSelect">Sort</label>
+                    <select id="sortSelect" onchange="applySort()">
+                        <option value="default">Default</option>
+                        <option value="price-asc">Price: Low to High</option>
+                        <option value="price-desc">Price: High to Low</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="catalog-toolbar-side">
+                <div class="results-summary" id="resultsSummary">{{ items|length }} items</div>
+            </div>
+        </div>
+    </div>
 
     {% if pricelist.notes %}
     <div class="catalog-notes">
@@ -946,7 +1104,9 @@
     <section class="catalog-grid">
         {% for item in items %}
         <article class="product-card" data-product-id="{{ item.product_id }}"
-            data-title="{{ item.title|lower }} {{ item.title_en|lower }}">
+            data-title="{{ item.title|lower }} {{ item.title_en|lower }}"
+            data-tags="{{ item.tags|join(',')|lower }}"
+            data-jpy-price="{{ item.price }}">
             <div class="product-card-media">
                 {% if item.thumb_url %}
                 <img src="{{ item.thumb_url }}" alt="{{ item.title }}" class="product-card-image" loading="lazy">
@@ -959,6 +1119,13 @@
                 <div class="product-card-meta">
                     <span class="meta-pill">{{ item.image_urls|length }} images</span>
                     <span class="meta-pill">{{ 'Available' if item.in_stock else 'Unavailable' }}</span>
+                </div>
+                {% endif %}
+                {% if item.tags %}
+                <div class="tag-display">
+                    {% for tag in item.tags[:3] %}
+                    <span class="tag-pill">{{ tag }}</span>
+                    {% endfor %}
                 </div>
                 {% endif %}
                 <div class="product-card-title">{{ item.title_en or item.title }}</div>
@@ -1038,21 +1205,71 @@
             syncThemeToggle();
         }
 
-        // Filtering Logic (search only, no source site filter)
+        function updateResultsSummary() {
+            const cards = Array.from(document.querySelectorAll('.product-card'));
+            const visibleCount = cards.filter(card => card.style.display !== 'none').length;
+            const summary = document.getElementById('resultsSummary');
+            if (summary) {
+                summary.textContent = `${visibleCount} items`;
+            }
+        }
+
+        // Filtering Logic (customer-safe only; never filter by source site)
         function filterProducts() {
             const query = document.getElementById('searchInput').value.toLowerCase();
+            const selectedTag = (document.getElementById('tagSelect').value || '').toLowerCase();
+            const minPrice = parseFloat(document.getElementById('priceMin').value) || 0;
+            const maxPrice = parseFloat(document.getElementById('priceMax').value) || Infinity;
             const cards = document.querySelectorAll('.product-card');
 
             cards.forEach(card => {
                 const title = card.getAttribute('data-title') || '';
+                const tags = card.getAttribute('data-tags') || '';
+                const price = parseFloat(card.getAttribute('data-jpy-price')) || 0;
                 const matchesQuery = !query || title.includes(query);
+                const matchesTag = !selectedTag || tags.split(',').filter(Boolean).includes(selectedTag);
+                const matchesPrice = price >= minPrice && price <= maxPrice;
 
-                if (matchesQuery) {
+                if (matchesQuery && matchesTag && matchesPrice) {
                     card.style.display = '';
                 } else {
                     card.style.display = 'none';
                 }
             });
+
+            updateResultsSummary();
+        }
+
+        function applySort() {
+            const sortValue = document.getElementById('sortSelect').value;
+            const grid = document.querySelector('.catalog-grid');
+            if (!grid) {
+                return;
+            }
+
+            const cards = Array.from(grid.querySelectorAll('.product-card'));
+            const withIndex = cards.map((card, index) => ({ card, index }));
+
+            withIndex.sort((left, right) => {
+                const leftPrice = parseFloat(left.card.getAttribute('data-jpy-price')) || 0;
+                const rightPrice = parseFloat(right.card.getAttribute('data-jpy-price')) || 0;
+
+                if (sortValue === 'price-asc') {
+                    return leftPrice - rightPrice || left.index - right.index;
+                }
+
+                if (sortValue === 'price-desc') {
+                    return rightPrice - leftPrice || left.index - right.index;
+                }
+
+                return left.index - right.index;
+            });
+
+            withIndex.forEach(entry => {
+                grid.appendChild(entry.card);
+            });
+
+            filterProducts();
         }
 
         const SYMBOLS = {
@@ -1328,6 +1545,7 @@
         document.addEventListener('DOMContentLoaded', function () {
             syncThemeToggle();
             fetchLiveRates();
+            applySort();
             document.addEventListener('keydown', function (event) {
                 if (event.key === 'Escape') {
                     closeProductModal();

@@ -651,6 +651,7 @@ class TestPriceListRoutes:
             last_price=3200,
             last_status='on_sale',
             status='active',
+            tags='PSA10,ONEPIECE,Rare',
             created_at=utc_now(),
             updated_at=utc_now()
         )
@@ -911,6 +912,26 @@ class TestPriceListRoutes:
         assert b'Quick View' in response.data
         assert b'productModal' in response.data
         assert str(product.id).encode('utf-8') in response.data
+
+    def test_catalog_view_renders_mock_filter_controls(self, client, db_session):
+        """Public catalog renders the 3/22-style search, tag, price, and sort controls."""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogfiltertest',
+            layout='grid'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+        assert response.status_code == 200
+        html = response.data.decode('utf-8')
+
+        assert 'searchInput' in html
+        assert 'tagSelect' in html
+        assert 'priceMin' in html
+        assert 'priceMax' in html
+        assert 'sortSelect' in html
+        assert 'All Tags' in html
+        assert 'PSA10' in html
 
     def test_catalog_product_detail_endpoint_returns_json(self, client, db_session):
         """Test catalog detail endpoint returns customer-safe modal payload.
@@ -1208,6 +1229,11 @@ class TestProductRoutes:
         
         response = client.get(f'/product/{product.id}')
         assert response.status_code == 200
+        html = response.data.decode('utf-8')
+        assert 'まとめて白抜き' in html
+        assert '自動翻訳' in html
+        assert '全文翻訳' in html
+        assert 'URLから追加' in html
     
     def test_product_detail_403_for_other_user(self, client, db_session):
         """Test product detail returns 404 for products owned by other user"""

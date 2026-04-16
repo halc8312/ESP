@@ -3,6 +3,241 @@
 {% block title %}商品編集 - {{ product.last_title }}{% endblock %}
 {% block header_title %}商品編集{% endblock %}
 {% block body_class %}has-bottom-nav has-sticky-save product-edit-page{% endblock %}
+{% block head %}
+{{ super() }}
+<style>
+    .product-edit-mock-note {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 0.82rem;
+        line-height: 1.6;
+    }
+
+    .product-edit-mock-note strong {
+        color: #1d4ed8;
+    }
+
+    .image-manager-toolbar {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        align-items: flex-start;
+    }
+
+    .image-toolbar-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .mock-feature-btn[disabled] {
+        opacity: 0.7;
+        cursor: not-allowed;
+    }
+
+    .image-entry-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+    }
+
+    .image-upload-tile {
+        min-height: 196px;
+        display: grid;
+        place-items: center;
+        border: 1px dashed var(--border-color);
+        border-radius: 12px;
+        background: #f8fbff;
+        color: #475467;
+        cursor: pointer;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+    }
+
+    .image-upload-tile:hover {
+        border-color: #60a5fa;
+        color: #1d4ed8;
+        background: #eef6ff;
+    }
+
+    .image-upload-tile-copy {
+        display: grid;
+        gap: 6px;
+        text-align: center;
+        justify-items: center;
+    }
+
+    .image-upload-tile-icon {
+        font-size: 1.5rem;
+    }
+
+    .product-image-card {
+        position: relative;
+    }
+
+    .product-image-card-actions {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        display: flex;
+        gap: 8px;
+        z-index: 1;
+    }
+
+    .product-image-action-btn {
+        width: 36px;
+        height: 36px;
+        border: none;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+        font-size: 0.78rem;
+    }
+
+    .product-image-action-btn.remove-bg {
+        background: #2563eb;
+        color: white;
+    }
+
+    .product-image-action-btn.delete {
+        background: #ef4444;
+        color: white;
+        cursor: pointer;
+    }
+
+    .product-image-card-body {
+        gap: 10px;
+    }
+
+    .product-locale-meta-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 18px;
+    }
+
+    .product-template-card {
+        grid-column: 1 / -1;
+        padding: 14px;
+        border-radius: 12px;
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+    }
+
+    .product-template-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: end;
+    }
+
+    .locale-editor-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+    }
+
+    .locale-editor-column {
+        padding: 16px;
+        border-radius: 14px;
+        border: 1px solid var(--border-color);
+        background: white;
+        display: grid;
+        gap: 14px;
+        min-width: 0;
+    }
+
+    .locale-editor-column.locale-editor-column-en {
+        background: #f8fbff;
+        border-color: #bfdbfe;
+    }
+
+    .locale-editor-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .locale-editor-heading {
+        display: grid;
+        gap: 4px;
+    }
+
+    .locale-editor-heading h3 {
+        margin: 0;
+        font-size: 1rem;
+    }
+
+    .locale-editor-heading p {
+        margin: 0;
+        font-size: 0.8rem;
+        color: var(--text-muted);
+    }
+
+    .locale-editor-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .translate-trigger {
+        border: 1px solid #bfdbfe;
+        background: #eff6ff;
+        color: #1d4ed8;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 0.75rem;
+        font-weight: 700;
+    }
+
+    .translate-trigger[disabled] {
+        opacity: 0.72;
+        cursor: not-allowed;
+    }
+
+    .sync-pill-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .sync-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 0.74rem;
+        font-weight: 700;
+        background: #eff6ff;
+        color: #1d4ed8;
+        border: 1px solid #bfdbfe;
+    }
+
+    .editor-helper-text {
+        margin: -4px 0 0;
+        font-size: 0.78rem;
+        color: var(--text-muted);
+        line-height: 1.5;
+    }
+
+    @media (max-width: 1023px) {
+        .image-entry-grid,
+        .product-locale-meta-grid,
+        .locale-editor-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .product-template-row {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{% endblock %}
 
 {% block content %}
 <a href="{{ url_for('index') }}" class="back-link">&laquo; 一覧に戻る</a>
@@ -30,8 +265,8 @@
             <details class="content-card product-edit-panel" open>
                 <summary class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
-                        <h2>Product Images</h2>
-                        <p>Manage images for the public catalog</p>
+                        <h2>商品画像</h2>
+                        <p>ドラッグ並び替え・削除・追加をまとめて扱います</p>
                     </div>
                     <span class="product-edit-summary-side">
                         <span class="product-edit-summary-meta" id="imageCountBadge">{{ images|length }}枚</span>
@@ -40,11 +275,24 @@
                 </summary>
                 <div class="content-card-body">
                     <div class="product-image-manager">
-                        <p class="product-image-note">ドラッグで並べ替え、不要な画像は削除できます。URL追加と画像アップロードに対応しています。</p>
+                        <div class="image-manager-toolbar">
+                            <div style="display: grid; gap: 6px;">
+                                <p class="product-image-note">ドラッグで並べ替え、不要な画像は削除できます。URL追加と画像アップロードに対応しています。</p>
+                                <p class="product-edit-mock-note"><strong>白背景化ボタンは先に配置</strong>しています。処理自体は後続で連携します。</p>
+                            </div>
+                            <div class="image-toolbar-actions">
+                                <button type="button" class="btn-secondary mock-feature-btn" disabled title="白背景化は後続対応です">まとめて白抜き</button>
+                                <button type="button" class="btn-secondary" onclick="focusImageUrlInput()">URLから追加</button>
+                            </div>
+                        </div>
 
                         <div id="imageSortGrid" class="image-sort-grid">
                             {% for url in images %}
                             <article class="product-image-card" data-image-url="{{ url }}">
+                                <div class="product-image-card-actions">
+                                    <button type="button" class="product-image-action-btn remove-bg" disabled title="白背景化は後続対応です">BG</button>
+                                    <button type="button" class="product-image-action-btn delete image-delete-btn-icon" title="削除">✕</button>
+                                </div>
                                 <img src="{{ url }}" alt="image {{ loop.index }}" class="product-image-thumb">
                                 <div class="product-image-card-body">
                                     <div class="product-image-card-top">
@@ -52,7 +300,6 @@
                                         <button type="button" class="image-sort-handle">並べ替え</button>
                                     </div>
                                     <div class="product-image-url">{{ url }}</div>
-                                    <button type="button" class="btn-muted image-delete-btn">この画像を削除</button>
                                 </div>
                             </article>
                             {% endfor %}
@@ -62,30 +309,32 @@
                             画像はまだ登録されていません。
                         </div>
 
-                        <div class="form-group image-add-group">
-                            <label for="image_url_input">画像 URL を追加</label>
-                            <div class="image-add-row">
-                                <input type="url" id="image_url_input" placeholder="https://example.com/image.jpg">
-                                <button type="button" class="btn-secondary" onclick="addImageUrl()">URLを追加</button>
+                        <div class="image-entry-grid">
+                            <div class="form-group image-add-group">
+                                <label for="image_url_input">画像 URL を追加</label>
+                                <div class="image-add-row">
+                                    <input type="url" id="image_url_input" placeholder="https://example.com/image.jpg">
+                                    <button type="button" class="btn-secondary" onclick="addImageUrl()">URLを追加</button>
+                                </div>
+                                <p class="text-small text-muted mb-0">http(s) または `/media/...` 形式の画像URLを追加できます。</p>
                             </div>
-                            <p class="text-small text-muted mb-0">http(s) または `/media/...` 形式の画像URLを追加できます。</p>
-                        </div>
 
-                        <div class="form-group image-add-group">
-                            <label for="image_file_input">画像をアップロード</label>
-                            <input type="file" id="image_file_input" name="image_files" accept="image/*" multiple>
-                            <p id="imageUploadHint" class="text-small text-muted mb-0">選択した画像は保存時に現在の一覧の末尾へ追加されます。</p>
+                            <div class="form-group image-add-group">
+                                <label for="image_file_input">画像をアップロード</label>
+                                <input type="file" id="image_file_input" name="image_files" accept="image/*" multiple>
+                                <p id="imageUploadHint" class="text-small text-muted mb-0">選択した画像は保存時に現在の一覧の末尾へ追加されます。</p>
+                            </div>
                         </div>
                     </div>
                 </div>
             </details>
 
-            <!-- ② Public Title & Description -->
+            <!-- ② Public Title / Description / English -->
             <details class="content-card product-edit-panel" open>
                 <summary class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
-                        <h2>Public Title &amp; Description</h2>
-                        <p>Customer-facing product name and description for the public catalog</p>
+                        <h2>商品説明</h2>
+                        <p>日本語と英語を並べて、スクロールを抑えて編集します</p>
                     </div>
                     <span class="product-edit-summary-side">
                         <span class="product-edit-summary-meta">必須</span>
@@ -93,75 +342,100 @@
                     </span>
                 </summary>
                 <div class="content-card-body">
-                    <div class="form-group">
-                        <label for="shop_id">所属ショップ</label>
-                        <select id="shop_id" name="shop_id">
-                            <option value="">(共通 / 未所属)</option>
-                            {% for s in all_shops %}
-                            <option value="{{ s.id }}" {% if product.shop_id==s.id %}selected{% endif %}>{{ s.name }}</option>
-                            {% endfor %}
-                        </select>
+                    <div class="product-locale-meta-grid">
+                        <div class="form-group">
+                            <label for="shop_id">所属ショップ</label>
+                            <select id="shop_id" name="shop_id">
+                                <option value="">(共通 / 未所属)</option>
+                                {% for s in all_shops %}
+                                <option value="{{ s.id }}" {% if product.shop_id==s.id %}selected{% endif %}>{{ s.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="status">ステータス</label>
+                            <select id="status" name="status">
+                                <option value="active" {% if product.status=='active' %}selected{% endif %}>有効 (Active)</option>
+                                <option value="draft" {% if product.status=='draft' %}selected{% endif %}>下書き (Draft)</option>
+                            </select>
+                        </div>
+
+                        <div class="sync-pill-row">
+                            <span class="sync-pill">JP → EN 同期UI</span>
+                            <span class="sync-pill">英語欄は手動修正可</span>
+                        </div>
+
+                        <div class="product-template-card">
+                            <div class="product-template-row">
+                                <div class="form-group image-add-group">
+                                    <label for="template">説明文テンプレート</label>
+                                    <select id="template" onchange="applyTemplate()">
+                                        <option value="">(テンプレートを選択)</option>
+                                        {% for t in templates %}
+                                        <option value="{{ t.content | e }}">{{ t.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <button type="button" class="btn-secondary" onclick="applyTemplate()">適用する</button>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="form-group">
-                        <label for="title">商品名 / Public Title</label>
-                        <input type="text" id="title" name="title"
-                            value="{{ product.custom_title or product.last_title or '' }}">
-                    </div>
+                    <div class="locale-editor-grid">
+                        <section class="locale-editor-column">
+                            <div class="locale-editor-header">
+                                <div class="locale-editor-heading">
+                                    <h3>日本語</h3>
+                                    <p>公開用のタイトルと説明文</p>
+                                </div>
+                            </div>
 
-                    <div class="form-group">
-                        <label for="status">ステータス (Status)</label>
-                        <select id="status" name="status">
-                            <option value="active" {% if product.status=='active' %}selected{% endif %}>有効 (Active)</option>
-                            <option value="draft" {% if product.status=='draft' %}selected{% endif %}>下書き (Draft)</option>
-                        </select>
-                    </div>
+                            <div class="form-group">
+                                <label for="title">商品名 (日本語)</label>
+                                <input type="text" id="title" name="title"
+                                    value="{{ product.custom_title or product.last_title or '' }}">
+                            </div>
 
-                    <div class="form-group">
-                        <label for="template">説明文テンプレート</label>
-                        <select id="template" onchange="applyTemplate()">
-                            <option value="">(テンプレートを選択)</option>
-                            {% for t in templates %}
-                            <option value="{{ t.content | e }}">{{ t.name }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
+                            <div class="form-group">
+                                <label for="description">説明文 (日本語 / HTML可)</label>
+                                <textarea id="description" name="description"
+                                    rows="8">{{ product.custom_description or (snapshot.description if snapshot else '') }}</textarea>
+                            </div>
+                        </section>
 
-                    <div class="form-group">
-                        <label for="description">商品説明 / Public Description (Body HTML)</label>
-                        <textarea id="description" name="description"
-                            rows="6">{{ product.custom_description or (snapshot.description if snapshot else '') }}</textarea>
+                        <section class="locale-editor-column locale-editor-column-en">
+                            <div class="locale-editor-header">
+                                <div class="locale-editor-heading">
+                                    <h3>英語</h3>
+                                    <p>国際顧客向け。手動修正も可能です。</p>
+                                </div>
+                                <div class="locale-editor-actions">
+                                    <button type="button" class="translate-trigger" disabled title="翻訳API連携後に有効化します">自動翻訳</button>
+                                    <button type="button" class="translate-trigger" disabled title="翻訳API連携後に有効化します">全文翻訳</button>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="title_en">商品名 (英語)</label>
+                                <input type="text" id="title_en" name="title_en" value="{{ product.custom_title_en or '' }}"
+                                    placeholder="e.g. Vintage Camera Body">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="description_en">説明文 (英語 / HTML可)</label>
+                                <textarea id="description_en" name="description_en"
+                                    rows="8">{{ product.custom_description_en or '' }}</textarea>
+                            </div>
+
+                            <p class="editor-helper-text">翻訳の自動同期と本文翻訳は、外部API連携の仕様確定後に有効化します。</p>
+                        </section>
                     </div>
+                    <p class="editor-helper-text">3/22 モックに合わせて入力レイアウトを先に調整しています。翻訳ボタンと白背景化の処理は後続連携です。</p>
                 </div>
             </details>
-
-            <!-- ③ English Title & Description -->
-            <details class="content-card product-edit-panel" open>
-                <summary class="content-card-header product-edit-summary">
-                    <div class="product-edit-summary-copy">
-                        <h2>English Title &amp; Description</h2>
-                        <p>English content for international public customers</p>
-                    </div>
-                    <span class="product-edit-summary-side">
-                        <span class="product-edit-summary-meta">EN</span>
-                        <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
-                    </span>
-                </summary>
-                <div class="content-card-body">
-                    <div class="form-group">
-                        <label for="title_en">英語タイトル (Title EN)</label>
-                        <input type="text" id="title_en" name="title_en" value="{{ product.custom_title_en or '' }}"
-                            placeholder="e.g. Vintage Camera Body">
-                    </div>
-                    <div class="form-group">
-                        <label for="description_en">英語説明 (Description EN)</label>
-                        <textarea id="description_en" name="description_en"
-                            rows="5">{{ product.custom_description_en or '' }}</textarea>
-                    </div>
-                </div>
-            </details>
-
-            <!-- ④ Price & Stock (Variants) -->
+ 
+            <!-- ③ Price & Stock (Variants) -->
             <details class="content-card product-edit-panel" open>
                 <summary class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
@@ -391,7 +665,7 @@
 
     document.addEventListener('DOMContentLoaded', function () {
         tinymce.init({
-            selector: '#description',
+            selector: '#description, #description_en',
             menubar: false,
             plugins: 'lists link',
             toolbar: 'bold italic | bullist numlist | link | removeformat',
@@ -416,6 +690,15 @@
 
         imageUrls = safeParseImageUrls(imageHiddenInput ? imageHiddenInput.value : '[]');
         renderImageList();
+
+        var form = document.querySelector('.product-edit-form');
+        if (form) {
+            form.addEventListener('submit', function () {
+                if (typeof tinymce !== 'undefined') {
+                    tinymce.triggerSave();
+                }
+            });
+        }
 
         if (imageGrid && typeof Sortable !== 'undefined') {
             Sortable.create(imageGrid, {
@@ -458,6 +741,19 @@
             });
         }
     });
+
+    function focusImageUpload() {
+        if (imageFileInput) {
+            imageFileInput.click();
+        }
+    }
+
+    function focusImageUrlInput() {
+        if (imageUrlInput) {
+            imageUrlInput.focus();
+            imageUrlInput.select();
+        }
+    }
 
     function safeParseImageUrls(rawValue) {
         try {
@@ -520,6 +816,30 @@
             var card = document.createElement('article');
             card.className = 'product-image-card';
 
+            var actions = document.createElement('div');
+            actions.className = 'product-image-card-actions';
+
+            var backgroundButton = document.createElement('button');
+            backgroundButton.type = 'button';
+            backgroundButton.className = 'product-image-action-btn remove-bg';
+            backgroundButton.textContent = 'BG';
+            backgroundButton.disabled = true;
+            backgroundButton.title = '白背景化は後続対応です';
+            actions.appendChild(backgroundButton);
+
+            var iconDeleteButton = document.createElement('button');
+            iconDeleteButton.type = 'button';
+            iconDeleteButton.className = 'product-image-action-btn delete';
+            iconDeleteButton.textContent = '✕';
+            iconDeleteButton.title = 'この画像を削除';
+            iconDeleteButton.addEventListener('click', function () {
+                imageUrls.splice(index, 1);
+                renderImageList();
+            });
+            actions.appendChild(iconDeleteButton);
+
+            card.appendChild(actions);
+
             var thumb = document.createElement('img');
             thumb.className = 'product-image-thumb';
             thumb.src = url;
@@ -550,19 +870,16 @@
             urlText.textContent = url;
             body.appendChild(urlText);
 
-            var deleteButton = document.createElement('button');
-            deleteButton.type = 'button';
-            deleteButton.className = 'btn-muted image-delete-btn';
-            deleteButton.textContent = 'この画像を削除';
-            deleteButton.addEventListener('click', function () {
-                imageUrls.splice(index, 1);
-                renderImageList();
-            });
-            body.appendChild(deleteButton);
-
             card.appendChild(body);
             imageGrid.appendChild(card);
         });
+
+        var addTile = document.createElement('button');
+        addTile.type = 'button';
+        addTile.className = 'image-upload-tile';
+        addTile.addEventListener('click', focusImageUpload);
+        addTile.innerHTML = '<span class="image-upload-tile-copy"><span class="image-upload-tile-icon">+</span><strong>追加</strong><span>アップロード</span></span>';
+        imageGrid.appendChild(addTile);
 
         syncImageUrls();
     }

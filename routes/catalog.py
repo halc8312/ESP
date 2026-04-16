@@ -53,6 +53,27 @@ def _resolve_catalog_shop_branding(pricelist, items):
     return None, None
 
 
+def _split_catalog_tags(raw_tags):
+    if not raw_tags:
+        return []
+
+    normalized = []
+    seen = set()
+    for part in raw_tags.split(","):
+        candidate = (part or "").strip()
+        if not candidate:
+            continue
+
+        key = candidate.lower()
+        if key in seen:
+            continue
+
+        seen.add(key)
+        normalized.append(candidate)
+
+    return normalized
+
+
 def _build_catalog_item(item):
     p = item.product
     if p.archived or p.deleted_at:
@@ -77,6 +98,7 @@ def _build_catalog_item(item):
     description_en_html = normalize_rich_text(description_en)
     description_text = rich_text_to_plain_text(description)
     description_en_text = rich_text_to_plain_text(description_en)
+    tags = _split_catalog_tags(p.tags)
 
     return {
         "product_id": p.id,
@@ -92,6 +114,7 @@ def _build_catalog_item(item):
         "description_text": description_text,
         "description_en_text": description_en_text,
         "description_snippet": build_rich_text_excerpt(description_en or description, limit=80),
+        "tags": tags,
     }
 
 
@@ -178,12 +201,17 @@ def catalog_view(token):
             catalog_item = _build_catalog_item(item)
             if catalog_item is not None:
                 catalog_items.append(catalog_item)
+        available_tags = sorted(
+            {tag for catalog_item in catalog_items for tag in catalog_item["tags"]},
+            key=str.lower,
+        )
         shop_logo, shop_name = _resolve_catalog_shop_branding(pl, items)
 
         return render_template(
             "catalog.html",
             pricelist=pl,
             items=catalog_items,
+            available_tags=available_tags,
             currency_rate=pl.currency_rate,
             shop_logo=shop_logo,
             shop_name=shop_name,
