@@ -16,14 +16,38 @@ def normalize_status_for_persistence(status: Optional[str]) -> str:
     return "unknown"
 
 
-def normalize_item_for_persistence(item: Optional[dict]) -> dict:
+def _can_promote_unknown_status_for_manual_selection(item: Optional[dict]) -> bool:
+    candidate = dict(item or {})
+    title = str(candidate.get("title") or "").strip()
+    if not title:
+        return False
+
+    price = candidate.get("price")
+    try:
+        numeric_price = int(price) if price is not None else None
+    except (TypeError, ValueError):
+        numeric_price = None
+    return numeric_price is not None and numeric_price > 0
+
+
+def normalize_item_for_persistence(item: Optional[dict], *, manual_selection: bool = False) -> dict:
     normalized = dict(item or {})
     normalized["status"] = normalize_status_for_persistence(normalized.get("status"))
+    if manual_selection and normalized["status"] == "unknown" and _can_promote_unknown_status_for_manual_selection(normalized):
+        normalized["status"] = "on_sale"
+        normalized["_manual_status_override"] = True
     return normalized
 
 
-def evaluate_persistence(site: str, item: dict, meta: Optional[dict], existing_product) -> str:
-    normalized = normalize_item_for_persistence(item)
+def evaluate_persistence(
+    site: str,
+    item: dict,
+    meta: Optional[dict],
+    existing_product,
+    *,
+    manual_selection: bool = False,
+) -> str:
+    normalized = normalize_item_for_persistence(item, manual_selection=manual_selection)
     status = normalized.get("status") or "unknown"
     title = str(normalized.get("title") or "").strip()
     confidence = str((meta or {}).get("confidence") or "high").lower()
@@ -34,8 +58,10 @@ def evaluate_persistence(site: str, item: dict, meta: Optional[dict], existing_p
     except (TypeError, ValueError):
         numeric_price = None
 
-    if status in {"blocked", "error", "unknown"}:
+    if status in {"blocked", "error"}:
         return "reject"
+    if status == "unknown":
+        return "allow_full" if manual_selection and numeric_price is not None and numeric_price > 0 and title else "reject"
 
     if status == "deleted":
         return "allow_status_only" if existing_product is not None else "reject"

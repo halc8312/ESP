@@ -15,7 +15,13 @@ from time_utils import utc_now
 from utils import normalize_url
 
 
-def save_scraped_items_to_db(items, user_id: int, site: str = "mercari", shop_id=None):
+def save_scraped_items_to_db(
+    items,
+    user_id: int,
+    site: str = "mercari",
+    shop_id=None,
+    manual_selection: bool = False,
+):
     """
     mercari_db.scrape_search_result() が返した items(list[dict]) を
     Product / ProductSnapshot に保存する。
@@ -40,7 +46,7 @@ def save_scraped_items_to_db(items, user_id: int, site: str = "mercari", shop_id
                 continue
 
             url = normalize_url(raw_url)
-            normalized_item = normalize_item_for_persistence(item)
+            normalized_item = normalize_item_for_persistence(item, manual_selection=manual_selection)
             scrape_meta = item.get("_scrape_meta") or {}
 
             title = normalized_item.get("title") or ""
@@ -51,7 +57,13 @@ def save_scraped_items_to_db(items, user_id: int, site: str = "mercari", shop_id
             image_urls_str = "|".join(image_urls)
 
             product = session_db.query(Product).filter_by(source_url=url, user_id=user_id).one_or_none()
-            persistence_action = evaluate_persistence(site, normalized_item, scrape_meta, product)
+            persistence_action = evaluate_persistence(
+                site,
+                normalized_item,
+                scrape_meta,
+                product,
+                manual_selection=manual_selection,
+            )
             if persistence_action == "reject":
                 continue
 

@@ -282,6 +282,51 @@ def test_register_selected_uses_job_shop_id_over_current_session_shop(client, db
     assert product.shop_id == source_shop.id
 
 
+def test_register_selected_allows_unknown_status_when_user_explicitly_selected(client, db_session, monkeypatch):
+    user = login_user(client, db_session, 'register_selected_unknown_user')
+    fake_queue = FakeQueue()
+    fake_queue.jobs['job-1'] = {
+        'job_id': 'job-1',
+        'status': 'completed',
+        'result': {
+            'items': [
+                {
+                    'url': 'https://jp.mercari.com/item/m-preview-unknown',
+                    'title': 'Preview Unknown Item',
+                    'price': 2800,
+                    'status': 'unknown',
+                    'description': 'preview unknown',
+                    'image_urls': ['https://img.example.com/unknown.jpg'],
+                    '_scrape_meta': {
+                        'page_type': 'unknown_detail',
+                        'confidence': 'medium',
+                        'reasons': ['product-signals-without-status'],
+                    },
+                },
+            ],
+            'site': 'mercari',
+        },
+        'error': None,
+        'elapsed_seconds': 0.1,
+        'queue_position': None,
+        'user_id': user.id,
+    }
+
+    monkeypatch.setattr('routes.scrape.get_queue', lambda: fake_queue)
+
+    response = client.post('/scrape/register-selected', json={
+        'job_id': 'job-1',
+        'selected_indices': [0]
+    })
+
+    assert response.status_code == 200
+    assert response.json['ok'] is True
+    db_session.expire_all()
+    product = db_session.query(Product).filter_by(user_id=user.id).one()
+    assert product.last_title == 'Preview Unknown Item'
+    assert product.last_status == 'on_sale'
+
+
 def test_register_selected_requires_csrf_header_when_enabled(app, client, db_session, monkeypatch):
     user = login_user(client, db_session, 'register_selected_csrf_user')
     app.config['WTF_CSRF_ENABLED'] = True

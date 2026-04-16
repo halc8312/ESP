@@ -287,6 +287,7 @@ def register_selected():
         user_id=current_user.id,
         site=result.get("site", "mercari"),
         shop_id=result.get("shop_id"),
+        manual_selection=True,
     )
 
     return jsonify(

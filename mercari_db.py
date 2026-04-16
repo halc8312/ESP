@@ -363,7 +363,7 @@ def _infer_mercari_shops_status(body_text: str) -> str:
     if not body_text:
         return "unknown"
 
-    purchase_markers = ("購入手続きへ", "カートに入れる", "今すぐ購入")
+    purchase_markers = ("購入手続きへ", "購入する", "カートに入れる", "今すぐ購入", "Buy this item")
     sold_markers = ("この商品は売り切れです", "在庫なし", "現在在庫がありません")
     positive_stock_pattern = r"残り\s*\d+\s*点"
 

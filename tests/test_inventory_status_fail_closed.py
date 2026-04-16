@@ -197,6 +197,16 @@ def test_mercari_shops_status_requires_purchase_flow_or_stock_count():
     assert mercari_db._infer_mercari_shops_status(body_text) == "unknown"
 
 
+def test_mercari_shops_status_treats_purchase_button_as_on_sale():
+    body_text = """
+    テスト商品
+    ¥2,980
+    購入する
+    """
+
+    assert mercari_db._infer_mercari_shops_status(body_text) == "on_sale"
+
+
 def test_offmall_detail_marks_ambiguous_inventory_unknown(monkeypatch):
     page = MockPage(
         css_map={
