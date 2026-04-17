@@ -218,6 +218,57 @@ def _normalize_mercari_detail_page(page, url: str):
     return page
 
 
+def _count_image_urls(values) -> int:
+    return len(_dedupe_str_list(values))
+
+
+def _should_refetch_mercari_detail_via_browser_pool(item: dict, meta: dict) -> bool:
+    page_type = str((meta or {}).get("page_type") or "").strip().lower()
+    status = str((item or {}).get("status") or "").strip().lower()
+    if page_type == "deleted_detail" or status == "deleted":
+        return False
+    return _count_image_urls((item or {}).get("image_urls")) <= 1
+
+
+def _score_mercari_dom_result(item: dict, meta: dict) -> int:
+    page_type = str((meta or {}).get("page_type") or "").strip().lower()
+    status = str((item or {}).get("status") or "").strip().lower()
+
+    score = _count_image_urls((item or {}).get("image_urls")) * 10
+    if page_type in {"active_detail", "sold_detail"}:
+        score += 6
+    elif page_type == "unknown_detail":
+        score += 2
+
+    if status in {"on_sale", "sold", "deleted"}:
+        score += 4
+    if _is_nonempty_text((item or {}).get("title")):
+        score += 2
+    if _is_positive_price((item or {}).get("price")):
+        score += 2
+    return score
+
+
+def _maybe_refetch_mercari_detail_with_browser_pool(url: str, item: dict, meta: dict) -> tuple[dict, dict]:
+    if not _should_refetch_mercari_detail_via_browser_pool(item, meta):
+        return item, meta
+
+    try:
+        refetched_page = fetch_mercari_page_via_browser_pool_sync(url, network_idle=True)
+    except Exception as exc:
+        logger.warning("Mercari browser-pool detail refetch failed for %s: %s", url, exc)
+        return item, meta
+
+    refetched_page = _normalize_mercari_detail_page(refetched_page, url)
+    refetched_item, refetched_meta = parse_mercari_item_page(refetched_page, url)
+    if _score_mercari_dom_result(refetched_item, refetched_meta) <= _score_mercari_dom_result(item, meta):
+        return item, meta
+
+    merged_meta = dict(refetched_meta or {})
+    merged_meta["dom_refetch"] = "browser_pool"
+    return refetched_item, merged_meta
+
+
 def _merge_mercari_results(payload_item: dict, payload_meta: dict, dom_item: dict, dom_meta: dict) -> tuple[dict, dict]:
     dom_meta = _build_mercari_dom_meta(dom_item, dom_meta)
     payload_meta = dict(payload_meta or {})
@@ -742,8 +793,10 @@ def scrape_item_detail(url: str, driver=None):
             network_capture["capture_error"] = str(exc)
             logger.warning("Mercari payload capture failed for %s: %s", url, exc)
 
+    used_browser_pool_detail = should_use_mercari_browser_pool_detail()
+
     try:
-        if should_use_mercari_browser_pool_detail():
+        if used_browser_pool_detail:
             page = fetch_mercari_page_via_browser_pool_sync(url, network_idle=True)
         else:
             page = fetch_dynamic(url, headless=True, network_idle=True)
@@ -772,6 +825,8 @@ def scrape_item_detail(url: str, driver=None):
         }
     page = _normalize_mercari_detail_page(page, url)
     dom_item, dom_meta = parse_mercari_item_page(page, url)
+    if not used_browser_pool_detail:
+        dom_item, dom_meta = _maybe_refetch_mercari_detail_with_browser_pool(url, dom_item, dom_meta)
     shadow_compare = _build_shadow_compare(payload_item, dom_item) if capture_enabled else {}
     if shadow_compare.get("mismatch_fields"):
         logger.info(

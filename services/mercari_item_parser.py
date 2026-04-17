@@ -40,7 +40,7 @@ _PRODUCT_IMAGE_FALLBACK = [
 ]
 _PLACEHOLDER_IMAGE_MARKERS = ("data:image", "placeholder", "blank", "transparent", "pixel")
 _PRODUCT_IMAGE_URL_PATTERN = re.compile(
-    r"https?://static\.mercdn\.net/item/[^\"'\s<>]*?/photos/[^\"'\s<>]+",
+    r"https?://static\.mercdn\.net/item/[^\"'\s<>\\]*?/photos/[^\"'\s<>\\]+",
     re.IGNORECASE,
 )
 
@@ -89,6 +89,8 @@ def _node_attr(node, attr: str) -> str:
 
 def _normalize_image_url(url: str) -> str:
     normalized = url.strip().strip("'\"") if isinstance(url, str) else ""
+    normalized = normalized.replace("\\/", "/").replace("\\u002F", "/").replace("\\u002f", "/")
+    normalized = normalized.rstrip("\\")
     if normalized.startswith("//"):
         normalized = f"https:{normalized}"
     return normalized

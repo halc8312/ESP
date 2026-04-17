@@ -338,6 +338,64 @@ def test_scrape_item_detail_can_use_browser_pool_dom_fetch(monkeypatch):
     assert data["title"] == "DOM Title"
 
 
+def test_scrape_item_detail_refetches_via_browser_pool_when_initial_dom_has_only_one_image(monkeypatch):
+    url = "https://jp.mercari.com/item/m123456789"
+    monkeypatch.delenv("MERCARI_USE_BROWSER_POOL_DETAIL", raising=False)
+    monkeypatch.delenv("MERCARI_CAPTURE_NETWORK_PAYLOAD", raising=False)
+    monkeypatch.delenv("MERCARI_USE_NETWORK_PAYLOAD", raising=False)
+
+    initial_item = _dom_item(url)
+    initial_item["status"] = "unknown"
+    initial_item["image_urls"] = ["https://example.com/dom-1.jpg"]
+    initial_meta = {
+        "strategy": "meta",
+        "page_type": "unknown_detail",
+        "field_sources": {
+            "title": "dom",
+            "price": "meta",
+            "status": "dom",
+            "description": "dom",
+            "image_urls": "html",
+            "variants": "dom",
+        },
+    }
+
+    refetched_item = _dom_item(url)
+    refetched_item["image_urls"] = [
+        "https://example.com/dom-1.jpg",
+        "https://example.com/dom-2.jpg",
+    ]
+    refetched_meta = {
+        "strategy": "meta",
+        "page_type": "active_detail",
+        "field_sources": {
+            "title": "jsonld",
+            "price": "meta",
+            "status": "jsonld",
+            "description": "dom",
+            "image_urls": "dom+jsonld",
+            "variants": "dom",
+        },
+    }
+
+    with patch("mercari_db.fetch_dynamic", return_value=MagicMock()) as mock_fetch_dynamic, patch(
+        "mercari_db.fetch_mercari_page_via_browser_pool_sync", return_value=MagicMock()
+    ) as mock_pool_fetch, patch(
+        "mercari_db.parse_mercari_item_page",
+        side_effect=[(initial_item, initial_meta), (refetched_item, refetched_meta)],
+    ):
+        data = scrape_item_detail(url)
+
+    mock_fetch_dynamic.assert_called_once_with(url, headless=True, network_idle=True)
+    mock_pool_fetch.assert_called_once_with(url, network_idle=True)
+    assert data["image_urls"] == [
+        "https://example.com/dom-1.jpg",
+        "https://example.com/dom-2.jpg",
+    ]
+    assert data["status"] == "on_sale"
+    assert data["_scrape_meta"]["dom_refetch"] == "browser_pool"
+
+
 def test_scrape_item_detail_normalizes_dynamic_page_to_html_adapter_before_parse(monkeypatch):
     url = "https://jp.mercari.com/item/m123456789"
     monkeypatch.delenv("MERCARI_CAPTURE_NETWORK_PAYLOAD", raising=False)

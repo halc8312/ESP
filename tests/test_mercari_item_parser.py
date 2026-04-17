@@ -160,6 +160,27 @@ def test_parse_mercari_item_page_recovers_images_from_embedded_html():
     assert meta["field_sources"]["image_urls"] == "html"
 
 
+def test_parse_mercari_item_page_normalizes_embedded_html_urls_with_escaped_trailing_backslashes():
+    image_url_1 = "https://static.mercdn.net/item/detail/orig/photos/m123456789_7.jpg?1776430877"
+    image_url_2 = "https://static.mercdn.net/item/detail/orig/photos/m123456789_8.jpg?1776430877"
+    page = MockPage(
+        css_map={
+            "h1": [MockElement(text="Escaped Embedded Mercari Item")],
+        },
+        all_text="購入手続きへ",
+    )
+    page.body = (
+        "<html><body><script>"
+        f"\"{image_url_1}\\\\\",\"{image_url_2}\\\\\",\"{image_url_1}\""
+        "</script></body></html>"
+    )
+
+    item, meta = parse_mercari_item_page(page, "https://jp.mercari.com/item/m123456789")
+
+    assert item["image_urls"] == [image_url_1, image_url_2]
+    assert meta["field_sources"]["image_urls"] == "html"
+
+
 def test_parse_mercari_item_page_deleted_fixture_omits_broken_description():
     fixture_path = Path(__file__).resolve().parents[1] / "mercari_page_dump.html"
     page_url = "https://jp.mercari.com/item/m71383569733"
