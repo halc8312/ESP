@@ -553,8 +553,17 @@ def test_rakuma_patrol_maps_on_sale_to_active(_patch_scrapling):
     assert result.status == "active"
 
 
-def test_rakuma_patrol_returns_error_on_404(_patch_scrapling):
-    """RakumaPatrol が HTTP 404 を unavailable エラーとして扱うことを確認"""
+def test_rakuma_patrol_returns_deleted_on_404_without_alert(_patch_scrapling, monkeypatch):
+    """RakumaPatrol は HTTP 404 を deleted に正規化し、patrol_error を出さない。"""
+    events = []
+
+    class FakeDispatcher:
+        def notify_scrape_issue(self, **payload):
+            events.append(payload)
+            return True
+
+    monkeypatch.setattr("services.scrape_alerts.get_alert_dispatcher", lambda: FakeDispatcher())
+
     mock_page = MagicMock()
     mock_page.status = 404
     mock_page.get_text.return_value = "ページが見つかりません"
@@ -566,12 +575,24 @@ def test_rakuma_patrol_returns_error_on_404(_patch_scrapling):
     patrol = RakumaPatrol()
     result = patrol.fetch("https://item.fril.jp/missing")
 
-    assert not result.success
-    assert result.error == "Rakuma item unavailable (404)"
+    assert result.success
+    assert result.status == "deleted"
+    assert result.error is None
+    assert result.reason == "http-404"
+    assert events == []
 
 
-def test_rakuma_patrol_returns_error_on_missing_item_marker(_patch_scrapling):
-    """RakumaPatrol が not-found 文言を unavailable エラーとして扱うことを確認"""
+def test_rakuma_patrol_returns_deleted_on_missing_item_marker_without_alert(_patch_scrapling, monkeypatch):
+    """RakumaPatrol は missing marker を deleted に正規化し、patrol_error を出さない。"""
+    events = []
+
+    class FakeDispatcher:
+        def notify_scrape_issue(self, **payload):
+            events.append(payload)
+            return True
+
+    monkeypatch.setattr("services.scrape_alerts.get_alert_dispatcher", lambda: FakeDispatcher())
+
     mock_page = MagicMock()
     mock_page.get_text.return_value = "お探しの商品は見つかりません"
     mock_page.css.return_value = []
@@ -582,8 +603,11 @@ def test_rakuma_patrol_returns_error_on_missing_item_marker(_patch_scrapling):
     patrol = RakumaPatrol()
     result = patrol.fetch("https://item.fril.jp/missing")
 
-    assert not result.success
-    assert result.error == "Rakuma item unavailable"
+    assert result.success
+    assert result.status == "deleted"
+    assert result.error is None
+    assert result.reason == "missing-item-marker"
+    assert events == []
 
 
 # ---------------------------------------------------------------------------
