@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from mercari_db import scrape_item_detail
+from services.html_page_adapter import HtmlPageAdapter
 from services.mercari_item_parser import parse_mercari_network_payload
 
 
@@ -335,3 +336,60 @@ def test_scrape_item_detail_can_use_browser_pool_dom_fetch(monkeypatch):
     mock_pool_fetch.assert_called_once_with(url, network_idle=True)
     mock_fetch_dynamic.assert_not_called()
     assert data["title"] == "DOM Title"
+
+
+def test_scrape_item_detail_normalizes_dynamic_page_to_html_adapter_before_parse(monkeypatch):
+    url = "https://jp.mercari.com/item/m123456789"
+    monkeypatch.delenv("MERCARI_CAPTURE_NETWORK_PAYLOAD", raising=False)
+    monkeypatch.delenv("MERCARI_USE_NETWORK_PAYLOAD", raising=False)
+
+    html = """
+    <html>
+      <head>
+        <meta name="product:price:amount" content="2980" />
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            "name": "Payload Sneakers",
+            "image": [
+              "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg",
+              "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg"
+            ],
+            "offers": {"availability": "https://schema.org/InStock"}
+          }
+        </script>
+      </head>
+      <body>
+        <h1>Payload Sneakers</h1>
+      </body>
+    </html>
+    """
+
+    class FakeDynamicPage:
+        def __init__(self):
+            self.url = url
+            self.status = 200
+            self.body = html
+
+        def css(self, selector):
+            if selector == "h1":
+                node = MagicMock()
+                node.text = "Payload Sneakers"
+                node.attrib = {}
+                return [node]
+            return []
+
+    seen = {}
+
+    def _capturing_parse(page, parse_url):
+        seen["page"] = page
+        return _dom_item(parse_url), _dom_meta()
+
+    with patch("mercari_db.fetch_dynamic", return_value=FakeDynamicPage()), patch(
+        "mercari_db.parse_mercari_item_page", side_effect=_capturing_parse
+    ):
+        scrape_item_detail(url)
+
+    assert isinstance(seen["page"], HtmlPageAdapter)
+    assert seen["page"].url == url
