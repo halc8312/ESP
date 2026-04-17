@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import MagicMock
 
 from models import Product, User, Variant
 from services.monitor_service import MonitorService
@@ -236,6 +237,70 @@ def test_patrol_deleted_status_only_preserves_price_and_zeroes_inventory(client,
     assert refreshed.last_price == 4200
     assert refreshed.last_status == 'deleted'
     assert refreshed_variant.inventory_qty == 0
+
+
+def test_rakuma_404_marks_product_deleted_without_backoff(client, db_session, monkeypatch):
+    user = _create_user(db_session, 'monitor_rakuma_deleted_user')
+    old_time = utc_now() - timedelta(days=1)
+
+    product = Product(
+        user_id=user.id,
+        site='rakuma',
+        source_url='https://item.fril.jp/4c9cbe23f444f98740ea830f5f6a8eee',
+        last_title='Rakuma Item',
+        last_price=4200,
+        last_status='on_sale',
+        archived=False,
+        deleted_at=None,
+        patrol_fail_count=2,
+        created_at=old_time,
+        updated_at=old_time,
+    )
+    db_session.add(product)
+    db_session.commit()
+
+    variant = Variant(
+        product_id=product.id,
+        option1_value='Default Title',
+        sku='RAK-MON-404',
+        price=4200,
+        inventory_qty=1,
+        position=1,
+    )
+    db_session.add(variant)
+    db_session.commit()
+
+    events = []
+
+    class FakeDispatcher:
+        def notify_scrape_issue(self, **payload):
+            events.append(payload)
+            return True
+
+    monkeypatch.setattr("services.scrape_alerts.get_alert_dispatcher", lambda: FakeDispatcher())
+
+    mock_page = MagicMock()
+    mock_page.status = 404
+    mock_page.get_text.return_value = "ページが見つかりません"
+    mock_page.css.return_value = []
+
+    import services.patrol.rakuma_patrol as rakuma_patrol
+
+    monkeypatch.setattr(rakuma_patrol, "fetch_static", lambda url, follow_redirects=True: mock_page)
+    monkeypatch.setattr(MonitorService, '_patrols', {'rakuma': rakuma_patrol.RakumaPatrol()})
+
+    MonitorService.check_stale_products(limit=10)
+
+    db_session.expire_all()
+    refreshed = db_session.query(Product).filter_by(id=product.id).one()
+    refreshed_variant = db_session.query(Variant).filter_by(product_id=product.id).one()
+
+    assert refreshed.patrol_fail_count == 0
+    assert refreshed.last_price == 4200
+    assert refreshed.last_status == 'deleted'
+    assert refreshed_variant.inventory_qty == 0
+    assert refreshed.updated_at <= utc_now() + timedelta(seconds=10)
+    assert events == []
 
 
 def test_low_confidence_active_without_price_triggers_backoff(client, db_session, monkeypatch):

@@ -33,15 +33,23 @@ class RakumaPatrol(BasePatrol):
             body_text = extract_rakuma_page_text(page)
 
             if http_status == 404:
-                return self._finalize_result("rakuma", url, PatrolResult(error="Rakuma item unavailable (404)"))
+                return self._finalize_result(
+                    "rakuma",
+                    url,
+                    PatrolResult(status="deleted", confidence="high", reason="http-404"),
+                )
 
             if is_rakuma_missing_item_page(body_text):
-                return self._finalize_result("rakuma", url, PatrolResult(error="Rakuma item unavailable"))
+                return self._finalize_result(
+                    "rakuma",
+                    url,
+                    PatrolResult(status="deleted", confidence="high", reason="missing-item-marker"),
+                )
 
             parsed = parse_rakuma_item_page(page, url, body_text=body_text)
             status = self._normalize_status(parsed.get("status"))
 
-            if not parsed.get("title") and parsed.get("price") is None and status != "sold":
+            if not parsed.get("title") and parsed.get("price") is None and status not in {"sold", "deleted"}:
                 return self._finalize_result("rakuma", url, PatrolResult(error="Rakuma page missing expected item data"))
 
             return self._finalize_result("rakuma", url, PatrolResult(price=parsed.get("price"), status=status, variants=[]))
@@ -64,8 +72,8 @@ class RakumaPatrol(BasePatrol):
 
     @staticmethod
     def _normalize_status(status: str | None) -> str:
-        if status == "sold":
-            return "sold"
+        if status in {"sold", "deleted"}:
+            return status
         if status in {"on_sale", "active"}:
             return "active"
         return "unknown"
