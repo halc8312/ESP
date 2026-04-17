@@ -184,7 +184,10 @@ def test_parse_mercari_item_page_live_fixture_preserves_price_source_and_strateg
     assert meta["page_type"] == "active_detail"
     assert item["status"] == "on_sale"
     assert item["price"] == 4999
-    assert item["image_urls"]
+    assert item["image_urls"] == [
+        "https://static.mercdn.net/item/detail/orig/photos/m56789324689_1.jpg?1772957892",
+        "https://static.mercdn.net/item/detail/orig/photos/m56789324689_2.jpg?1772957892",
+    ]
     assert meta["price_source"] == "meta"
     assert meta["strategy"] == "meta"
     assert meta["field_sources"]["price"] == "meta"

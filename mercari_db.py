@@ -23,6 +23,7 @@ from services.mercari_item_parser import parse_mercari_item_page
 from services.mercari_item_parser import parse_mercari_network_payload
 from services.extraction_policy import attach_extraction_trace, pick_first_valid
 from services.browser_pool import run_browser_page_task
+from services.html_page_adapter import HtmlPageAdapter
 from services.mercari_browser_fetch import (
     fetch_mercari_page_via_browser_pool_sync,
     should_use_mercari_browser_pool_detail,
@@ -198,6 +199,23 @@ def _build_mercari_dom_meta(item: dict, meta: dict) -> dict:
     if item.get("status"):
         merged_meta["field_sources"].setdefault("status", merged_meta["field_sources"].get("status") or "dom")
     return merged_meta
+
+
+def _normalize_mercari_detail_page(page, url: str):
+    if isinstance(page, HtmlPageAdapter):
+        return page
+
+    raw_html = getattr(page, "body", "")
+    if isinstance(raw_html, bytes):
+        raw_html = raw_html.decode("utf-8", errors="ignore")
+    if isinstance(raw_html, str) and raw_html.strip():
+        return HtmlPageAdapter(
+            raw_html,
+            url=str(getattr(page, "url", "") or url),
+            status=int(getattr(page, "status", 200) or 200),
+        )
+
+    return page
 
 
 def _merge_mercari_results(payload_item: dict, payload_meta: dict, dom_item: dict, dom_meta: dict) -> tuple[dict, dict]:
@@ -752,6 +770,7 @@ def scrape_item_detail(url: str, driver=None):
             "url": url, "title": "", "price": None, "status": "error",
             "description": "", "image_urls": [], "variants": []
         }
+    page = _normalize_mercari_detail_page(page, url)
     dom_item, dom_meta = parse_mercari_item_page(page, url)
     shadow_compare = _build_shadow_compare(payload_item, dom_item) if capture_enabled else {}
     if shadow_compare.get("mismatch_fields"):
