@@ -7,6 +7,7 @@ cannot be mistaken for product price data.
 import json
 import logging
 import re
+from html import unescape
 from typing import Optional
 
 from services.detail_field_strategy_runner import DetailFieldStrategy, run_detail_field_strategies
@@ -38,6 +39,10 @@ _PRODUCT_IMAGE_FALLBACK = [
     "source[srcset*='static.mercdn.net'][srcset*='/item/'][srcset*='/photos/']",
 ]
 _PLACEHOLDER_IMAGE_MARKERS = ("data:image", "placeholder", "blank", "transparent", "pixel")
+_PRODUCT_IMAGE_URL_PATTERN = re.compile(
+    r"https?://static\.mercdn\.net/item/[^\"'\s<>]*?/photos/[^\"'\s<>]+",
+    re.IGNORECASE,
+)
 
 
 def _is_nonempty_text(value) -> bool:
@@ -391,6 +396,27 @@ def _extract_meta_image(page) -> list:
     return image_urls
 
 
+def _extract_raw_html(page) -> str:
+    raw_html = getattr(page, "body", "")
+    if isinstance(raw_html, bytes):
+        return raw_html.decode("utf-8", errors="ignore")
+    if isinstance(raw_html, str):
+        return raw_html
+    return ""
+
+
+def _extract_embedded_html_images(page) -> list:
+    raw_html = _extract_raw_html(page)
+    if not raw_html:
+        return []
+
+    normalized_html = unescape(raw_html).replace("\\/", "/")
+    image_urls = []
+    for match in _PRODUCT_IMAGE_URL_PATTERN.findall(normalized_html):
+        _append_unique_image_url(image_urls, match)
+    return image_urls
+
+
 def _merge_image_sources(*sources: tuple[str, list]) -> tuple[list, str]:
     merged_urls = []
     contributing_sources = []
@@ -465,11 +491,13 @@ def _extract_image_urls(page, product_jsonld: Optional[dict]) -> tuple[list, str
                 dom_image_urls.append(image_url)
 
     jsonld_image_urls = _collect_jsonld_images(product_jsonld)
+    html_image_urls = _extract_embedded_html_images(page)
     meta_image_urls = _extract_meta_image(page)
 
     merged_image_urls, image_source = _merge_image_sources(
         ("dom", dom_image_urls),
         ("jsonld", jsonld_image_urls),
+        ("html", html_image_urls),
         ("meta", meta_image_urls),
     )
     return merged_image_urls, image_source
@@ -579,25 +607,35 @@ def _extract_payload_price(candidate: dict) -> Optional[int]:
 
 def _extract_payload_images(candidate: dict) -> list:
     image_urls = []
-    for key in ("photos", "images", "image", "thumbnails"):
-        raw = candidate.get(key)
-        if isinstance(raw, str):
-            image_urls.append(raw)
-        elif isinstance(raw, dict):
-            for nested_key in ("url", "originalUrl", "src", "imageUrl"):
-                if raw.get(nested_key):
-                    image_urls.append(str(raw[nested_key]))
-                    break
-        elif isinstance(raw, list):
-            for item in raw:
-                if isinstance(item, str):
-                    image_urls.append(item)
-                elif isinstance(item, dict):
-                    for nested_key in ("url", "originalUrl", "src", "imageUrl"):
-                        if item.get(nested_key):
-                            image_urls.append(str(item[nested_key]))
-                            break
-    return [url for url in _dedupe_urls(image_urls) if url.startswith("http")]
+    image_field_names = {"photos", "photo", "images", "image", "thumbnails", "imageurls", "image_urls"}
+    url_field_names = {"url", "originalurl", "src", "imageurl", "image_url"}
+
+    def _append_from_value(value, *, image_context: bool = False):
+        if isinstance(value, str):
+            if not image_context:
+                return
+            _append_unique_image_url(image_urls, value)
+            return
+
+        if isinstance(value, dict):
+            for nested_key, nested_value in value.items():
+                normalized_key = str(nested_key or "").strip().lower()
+                if normalized_key in url_field_names:
+                    _append_from_value(nested_value, image_context=True)
+                    continue
+                _append_from_value(
+                    nested_value,
+                    image_context=image_context or normalized_key in image_field_names,
+                )
+            return
+
+        if isinstance(value, list):
+            for item in value:
+                _append_from_value(item, image_context=image_context)
+
+    _append_from_value(candidate)
+
+    return image_urls
 
 
 def _extract_payload_status(candidate: dict) -> tuple[str, list[str]]:
@@ -655,6 +693,9 @@ def parse_mercari_network_payload(payload: dict, url: str) -> tuple[dict, dict]:
         field_sources["description"] = description_source
 
     image_urls = _extract_payload_images(candidate)
+    if payload is not candidate:
+        for payload_image_url in _extract_payload_images(payload):
+            _append_unique_image_url(image_urls, payload_image_url)
     if image_urls:
         item["image_urls"] = image_urls
         field_sources["image_urls"] = "payload"

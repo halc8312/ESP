@@ -49,6 +49,36 @@ def test_parse_mercari_network_payload_extracts_expected_fields():
     assert meta["field_sources"]["price"] == "payload"
 
 
+def test_parse_mercari_network_payload_collects_images_from_full_payload_when_best_candidate_is_partial():
+    payload = {
+        "data": {
+            "item": {
+                "id": "m123456789",
+                "name": "Payload Sneakers",
+                "price": "2980",
+                "description": "Payload description from API",
+                "status": "on_sale",
+            },
+            "gallery": {
+                "photos": [
+                    {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg"},
+                    {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg"},
+                ]
+            },
+        }
+    }
+
+    item, meta = parse_mercari_network_payload(payload, "https://jp.mercari.com/item/m123456789")
+
+    assert item["title"] == "Payload Sneakers"
+    assert item["price"] == 2980
+    assert item["image_urls"] == [
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg",
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg",
+    ]
+    assert meta["field_sources"]["image_urls"] == "payload"
+
+
 def test_scrape_item_detail_capture_only_keeps_dom_result_but_records_shadow_compare(monkeypatch):
     url = "https://jp.mercari.com/item/m123456789"
     monkeypatch.setenv("MERCARI_CAPTURE_NETWORK_PAYLOAD", "true")
@@ -156,6 +186,51 @@ def test_scrape_item_detail_uses_payload_first_with_dom_field_fallback(monkeypat
     assert data["_scrape_meta"]["field_sources"]["description"] == "dom"
     assert data["_scrape_meta"]["network_capture"]["enabled"] is True
     assert data["_scrape_meta"]["network_capture"]["used_payload"] is True
+
+
+def test_scrape_item_detail_prefers_richer_dom_image_list_when_payload_only_has_first_image(monkeypatch):
+    url = "https://jp.mercari.com/item/m123456789"
+    monkeypatch.setenv("MERCARI_USE_NETWORK_PAYLOAD", "true")
+
+    payload_bundle = {
+        "item": {
+            "url": url,
+            "title": "Payload Title",
+            "price": 3200,
+            "status": "on_sale",
+            "description": "Payload description",
+            "image_urls": ["https://example.com/dom-1.jpg"],
+            "variants": [],
+        },
+        "meta": {
+            "strategy": "payload",
+            "field_sources": {
+                "title": "payload",
+                "price": "payload",
+                "status": "payload",
+                "description": "payload",
+                "image_urls": "payload",
+            },
+        },
+        "response_url": "https://api.mercari.example/items/m123456789",
+        "responses_seen": 1,
+    }
+    dom_item = _dom_item(url)
+    dom_item["image_urls"] = [
+        "https://example.com/dom-1.jpg",
+        "https://example.com/dom-2.jpg",
+    ]
+
+    with patch("mercari_db._capture_mercari_network_payload", return_value=payload_bundle), patch(
+        "mercari_db.fetch_dynamic", return_value=MagicMock()
+    ), patch("mercari_db.parse_mercari_item_page", return_value=(dom_item, _dom_meta())):
+        data = scrape_item_detail(url)
+
+    assert data["image_urls"] == [
+        "https://example.com/dom-1.jpg",
+        "https://example.com/dom-2.jpg",
+    ]
+    assert data["_scrape_meta"]["field_sources"]["image_urls"] == "dom"
 
 
 def test_scrape_item_detail_falls_back_to_dom_when_payload_missing(monkeypatch):
