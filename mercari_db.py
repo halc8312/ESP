@@ -77,6 +77,60 @@ def _is_useful_status(value) -> bool:
     return value in {"on_sale", "sold", "deleted"}
 
 
+def _dedupe_str_list(values) -> list[str]:
+    urls = []
+    if not isinstance(values, list):
+        return urls
+
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        candidate = value.strip()
+        if candidate and candidate not in urls:
+            urls.append(candidate)
+    return urls
+
+
+def _merge_source_labels(*labels: str) -> str:
+    parts = []
+    seen = set()
+    for label in labels:
+        for part in str(label or "").split("+"):
+            normalized = part.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            parts.append(normalized)
+    return "+".join(parts)
+
+
+def _merge_image_lists(payload_urls, payload_source: str, dom_urls, dom_source: str) -> tuple[list, str]:
+    payload_list = _dedupe_str_list(payload_urls)
+    dom_list = _dedupe_str_list(dom_urls)
+
+    if not payload_list:
+        return dom_list, dom_source
+    if not dom_list:
+        return payload_list, payload_source
+
+    if len(payload_list) >= len(dom_list):
+        primary_urls, primary_source = payload_list, payload_source
+        secondary_urls, secondary_source = dom_list, dom_source
+    else:
+        primary_urls, primary_source = dom_list, dom_source
+        secondary_urls, secondary_source = payload_list, payload_source
+
+    merged_urls = list(primary_urls)
+    for url in secondary_urls:
+        if url not in merged_urls:
+            merged_urls.append(url)
+
+    if len(merged_urls) == len(primary_urls):
+        return primary_urls, primary_source
+
+    return merged_urls, _merge_source_labels(primary_source, secondary_source)
+
+
 def _normalize_shadow_value(field: str, value):
     if field == "description" and isinstance(value, str):
         return " ".join(value.split())
@@ -167,7 +221,6 @@ def _merge_mercari_results(payload_item: dict, payload_meta: dict, dom_item: dic
         ("title", _is_nonempty_text),
         ("price", _is_positive_price),
         ("description", _is_nonempty_text),
-        ("image_urls", _is_nonempty_list),
         ("variants", _is_nonempty_list),
         ("status", _is_useful_status),
     ):
@@ -182,6 +235,16 @@ def _merge_mercari_results(payload_item: dict, payload_meta: dict, dom_item: dic
             merged_sources[field] = payload_sources.get(field, "payload")
         elif source == "dom":
             merged_sources[field] = dom_sources.get(field, "dom")
+
+    merged_images, merged_image_source = _merge_image_lists(
+        payload_item.get("image_urls"),
+        payload_sources.get("image_urls", "payload"),
+        dom_item.get("image_urls"),
+        dom_sources.get("image_urls", "dom"),
+    )
+    merged["image_urls"] = merged_images
+    if merged_image_source:
+        merged_sources["image_urls"] = merged_image_source
 
     merged_meta = dict(dom_meta)
     merged_meta["strategy"] = "payload" if any(source == "payload" for source in merged_sources.values()) else dom_meta.get("strategy", "dom")

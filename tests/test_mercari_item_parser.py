@@ -135,6 +135,31 @@ def test_parse_mercari_item_page_merges_jsonld_images_when_dom_has_only_first_im
     assert meta["field_sources"]["image_urls"] == "dom+jsonld"
 
 
+def test_parse_mercari_item_page_recovers_images_from_embedded_html():
+    image_url_1 = "https://static.mercdn.net/item/detail/orig/photos/m123456789_5.jpg"
+    image_url_2 = "https://static.mercdn.net/item/detail/orig/photos/m123456789_6.jpg"
+    page = MockPage(
+        css_map={
+            "h1": [MockElement(text="Embedded Mercari Item")],
+        },
+        all_text="購入手続きへ",
+    )
+    page.body = (
+        "<html><body>"
+        "<script>"
+        "window.__NEXT_DATA__={\"props\":{\"pageProps\":{\"item\":{\"photos\":["
+        f"\"{image_url_1}\",\"{image_url_2}\""
+        "]}}}};"
+        "</script>"
+        "</body></html>"
+    )
+
+    item, meta = parse_mercari_item_page(page, "https://jp.mercari.com/item/m123456789")
+
+    assert item["image_urls"] == [image_url_1, image_url_2]
+    assert meta["field_sources"]["image_urls"] == "html"
+
+
 def test_parse_mercari_item_page_deleted_fixture_omits_broken_description():
     fixture_path = Path(__file__).resolve().parents[1] / "mercari_page_dump.html"
     page_url = "https://jp.mercari.com/item/m71383569733"
