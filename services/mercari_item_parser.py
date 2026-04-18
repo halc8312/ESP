@@ -40,7 +40,7 @@ _PRODUCT_IMAGE_FALLBACK = [
 ]
 _PLACEHOLDER_IMAGE_MARKERS = ("data:image", "placeholder", "blank", "transparent", "pixel")
 _PRODUCT_IMAGE_URL_PATTERN = re.compile(
-    r"https?://static\.mercdn\.net/item/[^\"'\s<>]*?/photos/[^\"'\s<>]+",
+    r"https?://static\.mercdn\.net/item/[^\"'\s<>\\]*?/photos/[^\"'\s<>\\]+",
     re.IGNORECASE,
 )
 
@@ -89,6 +89,8 @@ def _node_attr(node, attr: str) -> str:
 
 def _normalize_image_url(url: str) -> str:
     normalized = url.strip().strip("'\"") if isinstance(url, str) else ""
+    normalized = normalized.replace("\\/", "/").replace("\\u002F", "/").replace("\\u002f", "/")
+    normalized = normalized.rstrip("\\")
     if normalized.startswith("//"):
         normalized = f"https:{normalized}"
     return normalized
@@ -641,11 +643,39 @@ def _extract_payload_images(candidate: dict) -> list:
 def _extract_payload_status(candidate: dict) -> tuple[str, list[str]]:
     status_value = candidate.get("status") or candidate.get("itemStatus")
     if isinstance(status_value, str):
-        normalized = status_value.strip().lower()
-        if normalized in {"on_sale", "onsale", "active", "selling", "available"}:
+        normalized = status_value.strip().lower().replace("-", "_")
+        if normalized in {
+            "on_sale",
+            "onsale",
+            "active",
+            "selling",
+            "available",
+            "item_status_on_sale",
+            "sale_status_on_sale",
+        }:
             return "on_sale", [f"payload-status:{normalized}"]
-        if normalized in {"sold_out", "soldout", "sold", "inactive"}:
+        if normalized in {
+            "sold_out",
+            "soldout",
+            "sold",
+            "inactive",
+            "trading",
+            "item_status_trading",
+            "item_status_sold_out",
+            "sale_status_sold_out",
+        }:
             return "sold", [f"payload-status:{normalized}"]
+        if normalized in {
+            "deleted",
+            "removed",
+            "stop",
+            "stopped",
+            "admin_cancel",
+            "item_status_stop",
+            "item_status_admin_cancel",
+            "sale_status_stop",
+        }:
+            return "deleted", [f"payload-status:{normalized}"]
 
     for key in ("soldOut", "isSoldOut"):
         value = candidate.get(key)

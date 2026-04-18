@@ -459,7 +459,7 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 | `BROWSER_POOL_MAX_TASKS_BEFORE_RESTART` | `0` | 0 より大きい時、同一 browser を使うジョブ回数の上限。超えたら次ジョブ開始前に計画的 recycle |
 | `BROWSER_POOL_MAX_RUNTIME_SECONDS` | `0` | 0 より大きい時、browser 生存時間の上限。超えたら次ジョブ開始前に計画的 recycle |
 | `BROWSER_POOL_STARTUP_TIMEOUT_SECONDS` | `60` | shared browser 起動タイムアウト |
-| `MERCARI_USE_BROWSER_POOL_DETAIL` | `false` (`worker.py` では `true` 既定) | Mercari detail DOM fetch を browser pool 経由にする |
+| `MERCARI_USE_BROWSER_POOL_DETAIL` | `false` (`worker.py` では `true` 既定) | Mercari detail DOM fetch を browser pool 経由にする。split worker では `true` を維持し、web/CLI/test は必要時のみ有効化する想定 |
 | `MERCARI_PATROL_USE_BROWSER_POOL` | `false` (`worker.py` では `true` 既定) | Mercari patrol DOM fetch を browser pool 経由にする |
 | `SNKRDUNK_USE_BROWSER_POOL_DYNAMIC` | `false` (`worker.py` では `true` 既定) | SNKRDUNK search と dynamic detail fallback を browser pool 経由にする |
 | `LOG_LEVEL` | `INFO` (`worker.py`) | worker/browser pool instrumentation の出力レベル |

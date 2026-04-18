@@ -138,15 +138,19 @@ def test_fetch_can_use_browser_pool(monkeypatch):
     monkeypatch.setenv("MERCARI_PATROL_USE_BROWSER_POOL", "true")
 
     with patch(
-        "services.patrol.mercari_patrol.fetch_mercari_page_via_browser_pool_sync",
-        return_value=mock_page,
+        "services.patrol.mercari_patrol.fetch_mercari_page_and_payloads_via_browser_pool_sync",
+        return_value=(mock_page, []),
     ) as mock_pool_fetch, patch("services.patrol.mercari_patrol.fetch_dynamic") as mock_fetch_dynamic:
         from services.patrol.mercari_patrol import MercariPatrol
 
         patrol = MercariPatrol()
         result = patrol.fetch("https://jp.mercari.com/item/xxx")
 
-    mock_pool_fetch.assert_called_once_with("https://jp.mercari.com/item/xxx", network_idle=False)
+    mock_pool_fetch.assert_called_once_with(
+        "https://jp.mercari.com/item/xxx",
+        network_idle=True,
+        wait_selector="h1, [data-testid='price'], [data-testid='checkout-button']",
+    )
     mock_fetch_dynamic.assert_not_called()
     assert result.success
     assert result.price == 1000
@@ -183,3 +187,78 @@ def test_monitor_service_no_driver():
     from services.monitor_service import _BROWSER_SITES
 
     assert "mercari" not in _BROWSER_SITES
+
+
+def test_fetch_browser_pool_payload_can_override_false_sold_dom(monkeypatch):
+    mock_page = _make_mock_page(
+        body_text="売り切れ ¥1,000",
+        button_text="購入手続きへ",
+        button_attrib={"aria-disabled": "true"},
+    )
+    payloads = [
+        {
+            "url": "https://api.mercari.jp/items/get?id=m123",
+            "payload": {
+                "data": {
+                    "id": "m123",
+                    "name": "Payload Item",
+                    "price": 2500,
+                    "status": "on_sale",
+                }
+            },
+        }
+    ]
+    monkeypatch.setenv("MERCARI_PATROL_USE_BROWSER_POOL", "true")
+
+    with patch(
+        "services.patrol.mercari_patrol.fetch_mercari_page_and_payloads_via_browser_pool_sync",
+        return_value=(mock_page, payloads),
+    ), patch("services.patrol.mercari_patrol.fetch_dynamic") as mock_fetch_dynamic:
+        from services.patrol.mercari_patrol import MercariPatrol
+
+        patrol = MercariPatrol()
+        result = patrol.fetch("https://jp.mercari.com/item/xxx")
+
+    mock_fetch_dynamic.assert_not_called()
+    assert result.success
+    assert result.status == "active"
+    assert result.price == 2500
+    assert result.price_source == "payload"
+    assert result.evidence_strength == "hard"
+
+
+def test_fetch_browser_pool_payload_can_mark_trading_as_sold(monkeypatch):
+    mock_page = _make_mock_page(
+        meta_price=1000,
+        price_text="¥1,000",
+        body_text="¥1,000 テスト商品 購入手続きへ",
+        button_text="購入手続きへ",
+        button_attrib={"aria-disabled": "false"},
+    )
+    payloads = [
+        {
+            "url": "https://api.mercari.jp/items/get?id=m123",
+            "payload": {
+                "data": {
+                    "id": "m123",
+                    "name": "Payload Item",
+                    "price": 1000,
+                    "status": "ITEM_STATUS_TRADING",
+                }
+            },
+        }
+    ]
+    monkeypatch.setenv("MERCARI_PATROL_USE_BROWSER_POOL", "true")
+
+    with patch(
+        "services.patrol.mercari_patrol.fetch_mercari_page_and_payloads_via_browser_pool_sync",
+        return_value=(mock_page, payloads),
+    ):
+        from services.patrol.mercari_patrol import MercariPatrol
+
+        patrol = MercariPatrol()
+        result = patrol.fetch("https://jp.mercari.com/item/xxx")
+
+    assert result.success
+    assert result.status == "sold"
+    assert result.evidence_strength == "hard"
