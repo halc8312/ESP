@@ -876,7 +876,10 @@ def scrape_item_detail(url: str, driver=None):
             )
             network_capture["captured"] = True
 
-    shadow_compare = _build_shadow_compare(payload_item, dom_item) if capture_enabled or _has_usable_payload_item(payload_item) else {}
+    has_usable_payload_item = _has_usable_payload_item(payload_item)
+    # Keep shadow-compare enabled whenever we have a usable payload item,
+    # including payloads sourced from browser-pool detail fetch.
+    shadow_compare = _build_shadow_compare(payload_item, dom_item) if capture_enabled or has_usable_payload_item else {}
     if shadow_compare.get("mismatch_fields"):
         logger.info(
             "Mercari payload/dom mismatch for %s: %s",
@@ -884,7 +887,7 @@ def scrape_item_detail(url: str, driver=None):
             ",".join(shadow_compare["mismatch_fields"]),
         )
 
-    if (use_payload or browser_pool_payloads) and _has_usable_payload_item(payload_item):
+    if (use_payload or bool(browser_pool_payloads)) and has_usable_payload_item:
         item, meta = _merge_mercari_results(payload_item, payload_meta, dom_item, dom_meta)
         network_capture["used_payload"] = True
     else:
