@@ -19,7 +19,7 @@ try:
 except ImportError:
     get_healer = None
 
-from services.mercari_item_parser import parse_mercari_item_page
+from services.mercari_item_parser import parse_mercari_item_page, _append_unique_image_url
 from services.mercari_item_parser import parse_mercari_network_payload
 from services.extraction_policy import attach_extraction_trace, pick_first_valid
 from services.browser_pool import run_browser_page_task
@@ -270,7 +270,6 @@ def _maybe_refetch_mercari_detail_with_browser_pool(url: str, item: dict, meta: 
         bp_result = _select_best_mercari_payload(refetch_payloads, url)
         bp_item = dict(bp_result.get("item") or {})
         if _is_nonempty_list(bp_item.get("image_urls")):
-            from services.mercari_item_parser import _append_unique_image_url
             merged_imgs = list(refetched_item.get("image_urls") or [])
             for img_url in bp_item["image_urls"]:
                 _append_unique_image_url(merged_imgs, img_url)

@@ -52,6 +52,10 @@ def should_use_mercari_browser_pool_patrol() -> bool:
     return _env_flag("MERCARI_PATROL_USE_BROWSER_POOL", default=False)
 
 
+_CAROUSEL_CLICK_TIMEOUT_MS = 1000
+_MAX_CAROUSEL_NEXT_CLICKS = 10
+
+
 async def _click_through_image_carousel(page) -> None:
     """Click through Mercari's image carousel to render all lazy-loaded images.
 
@@ -67,14 +71,14 @@ async def _click_through_image_carousel(page) -> None:
         )
         for thumb in thumbnails:
             try:
-                await thumb.click(timeout=1000)
+                await thumb.click(timeout=_CAROUSEL_CLICK_TIMEOUT_MS)
                 await page.wait_for_timeout(300)
             except Exception:
                 continue
 
         # Strategy 2: click the carousel next-button repeatedly
         # (covers pages whose thumbnails are off-screen)
-        for _ in range(10):
+        for _ in range(_MAX_CAROUSEL_NEXT_CLICKS):
             next_btn = await page.query_selector(
                 "[data-testid='carousel'] button[aria-label*='次'], "
                 "[data-testid='carousel'] button[aria-label*='next'], "
@@ -86,7 +90,7 @@ async def _click_through_image_carousel(page) -> None:
             if is_disabled is not None:
                 break
             try:
-                await next_btn.click(timeout=1000)
+                await next_btn.click(timeout=_CAROUSEL_CLICK_TIMEOUT_MS)
                 await page.wait_for_timeout(300)
             except Exception:
                 break
