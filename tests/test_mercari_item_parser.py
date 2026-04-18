@@ -135,6 +135,28 @@ def test_parse_mercari_item_page_merges_jsonld_images_when_dom_has_only_first_im
     assert meta["field_sources"]["image_urls"] == "dom+jsonld"
 
 
+def test_parse_mercari_item_page_keeps_multiple_thumb_item_images_for_same_item():
+    image_url_1 = "https://static.mercdn.net/thumb/item/webp/m123456789_1.jpg?1772957892"
+    image_url_2 = "https://static.mercdn.net/thumb/item/webp/m123456789_2.jpg?1772957892"
+    other_item_image = "https://static.mercdn.net/thumb/item/webp/m999999999_1.jpg?1772957892"
+    page = MockPage(
+        css_map={
+            "h1": [MockElement(text="Thumb Mercari Item")],
+            "[data-testid^='image-'] img": [
+                MockElement(attrib={"src": image_url_1}),
+                MockElement(attrib={"src": image_url_2}),
+                MockElement(attrib={"src": other_item_image}),
+            ],
+        },
+        all_text="購入手続きへ",
+    )
+
+    item, meta = parse_mercari_item_page(page, "https://jp.mercari.com/item/m123456789")
+
+    assert item["image_urls"] == [image_url_1, image_url_2]
+    assert meta["field_sources"]["image_urls"] == "dom"
+
+
 def test_parse_mercari_item_page_recovers_images_from_embedded_html():
     image_url_1 = "https://static.mercdn.net/item/detail/orig/photos/m123456789_5.jpg"
     image_url_2 = "https://static.mercdn.net/item/detail/orig/photos/m123456789_6.jpg"

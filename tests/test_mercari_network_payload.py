@@ -80,6 +80,35 @@ def test_parse_mercari_network_payload_collects_images_from_full_payload_when_be
     assert meta["field_sources"]["image_urls"] == "payload"
 
 
+def test_parse_mercari_network_payload_keeps_thumb_item_images_for_target_item_only():
+    payload = {
+        "data": {
+            "item": {
+                "id": "m123456789",
+                "name": "Payload Sneakers",
+                "price": "2980",
+                "description": "Payload description from API",
+                "status": "on_sale",
+            },
+            "gallery": {
+                "images": [
+                    {"url": "https://static.mercdn.net/thumb/item/webp/m123456789_1.jpg?1772957892"},
+                    {"url": "https://static.mercdn.net/thumb/item/webp/m123456789_2.jpg?1772957892"},
+                    {"url": "https://static.mercdn.net/thumb/item/webp/m999999999_1.jpg?1772957892"},
+                ]
+            },
+        }
+    }
+
+    item, meta = parse_mercari_network_payload(payload, "https://jp.mercari.com/item/m123456789")
+
+    assert item["image_urls"] == [
+        "https://static.mercdn.net/thumb/item/webp/m123456789_1.jpg?1772957892",
+        "https://static.mercdn.net/thumb/item/webp/m123456789_2.jpg?1772957892",
+    ]
+    assert meta["field_sources"]["image_urls"] == "payload"
+
+
 def test_parse_mercari_network_payload_maps_item_status_trading_to_sold():
     payload = {
         "items": [

@@ -37,12 +37,23 @@ _PRODUCT_IMAGE_FALLBACK = [
     "img[data-lazy-src*='static.mercdn.net'][data-lazy-src*='/item/'][data-lazy-src*='/photos/']",
     "img[srcset*='static.mercdn.net'][srcset*='/item/'][srcset*='/photos/']",
     "source[srcset*='static.mercdn.net'][srcset*='/item/'][srcset*='/photos/']",
+    "img[src*='static.mercdn.net'][src*='/thumb/item/']",
+    "img[data-src*='static.mercdn.net'][data-src*='/thumb/item/']",
+    "img[data-lazy*='static.mercdn.net'][data-lazy*='/thumb/item/']",
+    "img[data-lazy-src*='static.mercdn.net'][data-lazy-src*='/thumb/item/']",
+    "img[srcset*='static.mercdn.net'][srcset*='/thumb/item/']",
+    "source[srcset*='static.mercdn.net'][srcset*='/thumb/item/']",
 ]
 _PLACEHOLDER_IMAGE_MARKERS = ("data:image", "placeholder", "blank", "transparent", "pixel")
 _PRODUCT_IMAGE_URL_PATTERN = re.compile(
-    r"https?://static\.mercdn\.net/item/[^\"'\s<>\\]*?/photos/[^\"'\s<>\\]+",
+    r"https?://static\.mercdn\.net/(?:item/[^\"'\s<>\\]*?/photos/[^\"'\s<>\\]+|thumb/item/(?:webp|jpg|jpeg|png)/m\d+_\d+\.(?:jpg|jpeg|png|webp)(?:\?[^\"'\s<>\\]*)?)",
     re.IGNORECASE,
 )
+_MERCARI_ITEM_IMAGE_FILENAME_PATTERN = re.compile(
+    r"/m\d+_\d+\.(?:jpg|jpeg|png|webp)(?:\?|$)",
+    re.IGNORECASE,
+)
+_MERCARI_ITEM_ID_PATTERN = re.compile(r"/item/(m\d+)", re.IGNORECASE)
 
 
 def _is_nonempty_text(value) -> bool:
@@ -105,12 +116,15 @@ def _is_placeholder_image_url(url: str) -> bool:
 
 def _is_mercari_product_image_url(url: str) -> bool:
     normalized = (url or "").lower()
-    return (
-        normalized.startswith("http")
-        and "mercdn.net" in normalized
-        and "/item/" in normalized
-        and "/photos/" in normalized
-    )
+    if not normalized.startswith("http") or "mercdn.net" not in normalized:
+        return False
+    if "/item/" in normalized and "/photos/" in normalized:
+        return True
+    if "/thumb/item/" in normalized and _MERCARI_ITEM_IMAGE_FILENAME_PATTERN.search(normalized):
+        return True
+    if "/item/detail/" in normalized and _MERCARI_ITEM_IMAGE_FILENAME_PATTERN.search(normalized):
+        return True
+    return False
 
 
 def _append_unique_image_url(image_urls: list, url: str) -> None:
@@ -121,6 +135,35 @@ def _append_unique_image_url(image_urls: list, url: str) -> None:
         return
     if normalized not in image_urls:
         image_urls.append(normalized)
+
+
+def _extract_item_id_from_url(url: str) -> str:
+    if not isinstance(url, str):
+        return ""
+    match = _MERCARI_ITEM_ID_PATTERN.search(url)
+    return str(match.group(1) or "").lower() if match else ""
+
+
+def _image_matches_item_id(image_url: str, item_id: str) -> bool:
+    normalized = str(image_url or "").lower()
+    target = str(item_id or "").lower()
+    if not normalized or not target:
+        return False
+    return (
+        f"/{target}_" in normalized
+        or f"/{target}." in normalized
+        or f"{target}_" in normalized
+        or f"{target}." in normalized
+    )
+
+
+def _filter_images_for_item(image_urls: list, item_url: str) -> list:
+    item_id = _extract_item_id_from_url(item_url)
+    if not item_id:
+        return list(image_urls or [])
+
+    filtered = [image_url for image_url in image_urls or [] if _image_matches_item_id(image_url, item_id)]
+    return filtered or list(image_urls or [])
 
 
 def _parse_srcset_urls(raw_value: str) -> list:
@@ -726,6 +769,7 @@ def parse_mercari_network_payload(payload: dict, url: str) -> tuple[dict, dict]:
     if payload is not candidate:
         for payload_image_url in _extract_payload_images(payload):
             _append_unique_image_url(image_urls, payload_image_url)
+    image_urls = _filter_images_for_item(image_urls, url)
     if image_urls:
         item["image_urls"] = image_urls
         field_sources["image_urls"] = "payload"
@@ -997,6 +1041,7 @@ def parse_mercari_item_page(page, url: str) -> tuple[dict, dict]:
     if page_type not in {"deleted_detail", "unknown_page"} and status != "deleted":
         description = _extract_description(page, body_text)
     image_urls, image_source = _extract_image_urls(page, product_jsonld)
+    image_urls = _filter_images_for_item(image_urls, url)
     variants = _extract_variants(page, price)
 
     item.update(
