@@ -19,12 +19,13 @@ try:
 except ImportError:
     get_healer = None
 
-from services.mercari_item_parser import parse_mercari_item_page
+from services.mercari_item_parser import parse_mercari_item_page, _append_unique_image_url
 from services.mercari_item_parser import parse_mercari_network_payload
 from services.extraction_policy import attach_extraction_trace, pick_first_valid
 from services.browser_pool import run_browser_page_task
 from services.html_page_adapter import HtmlPageAdapter
 from services.mercari_browser_fetch import (
+    fetch_mercari_page_and_payloads_via_browser_pool_sync,
     fetch_mercari_page_via_browser_pool_sync,
     should_use_mercari_browser_pool_detail,
 )
@@ -254,13 +255,30 @@ def _maybe_refetch_mercari_detail_with_browser_pool(url: str, item: dict, meta: 
         return item, meta
 
     try:
-        refetched_page = fetch_mercari_page_via_browser_pool_sync(url, network_idle=True)
+        refetched_page, refetch_payloads = fetch_mercari_page_and_payloads_via_browser_pool_sync(
+            url, network_idle=True,
+        )
     except Exception as exc:
         logger.warning("Mercari browser-pool detail refetch failed for %s: %s", url, exc)
         return item, meta
 
     refetched_page = _normalize_mercari_detail_page(refetched_page, url)
     refetched_item, refetched_meta = parse_mercari_item_page(refetched_page, url)
+
+    # Merge any payload images captured during the refetch
+    if refetch_payloads:
+        bp_result = _select_best_mercari_payload(refetch_payloads, url)
+        bp_item = dict(bp_result.get("item") or {})
+        if _is_nonempty_list(bp_item.get("image_urls")):
+            merged_imgs = list(refetched_item.get("image_urls") or [])
+            for img_url in bp_item["image_urls"]:
+                _append_unique_image_url(merged_imgs, img_url)
+            if len(merged_imgs) > len(refetched_item.get("image_urls") or []):
+                refetched_item["image_urls"] = merged_imgs
+                refetched_meta.setdefault("field_sources", {})
+                old_src = refetched_meta["field_sources"].get("image_urls", "dom")
+                refetched_meta["field_sources"]["image_urls"] = _merge_source_labels(old_src, "payload")
+
     if _score_mercari_dom_result(refetched_item, refetched_meta) <= _score_mercari_dom_result(item, meta):
         return item, meta
 
@@ -773,6 +791,7 @@ def scrape_item_detail(url: str, driver=None):
     payload_result = {}
     payload_item = {}
     payload_meta = {}
+    browser_pool_payloads = []
     network_capture = {
         "enabled": capture_enabled,
         "captured": False,
@@ -797,7 +816,12 @@ def scrape_item_detail(url: str, driver=None):
 
     try:
         if used_browser_pool_detail:
-            page = fetch_mercari_page_via_browser_pool_sync(url, network_idle=True)
+            # Use combined page + payload fetcher so we get both DOM
+            # and network payloads (including all image URLs) in a
+            # single browser session with carousel interaction.
+            page, browser_pool_payloads = fetch_mercari_page_and_payloads_via_browser_pool_sync(
+                url, network_idle=True,
+            )
         else:
             page = fetch_dynamic(url, headless=True, network_idle=True)
     except Exception as e:
@@ -827,7 +851,24 @@ def scrape_item_detail(url: str, driver=None):
     dom_item, dom_meta = parse_mercari_item_page(page, url)
     if not used_browser_pool_detail:
         dom_item, dom_meta = _maybe_refetch_mercari_detail_with_browser_pool(url, dom_item, dom_meta)
-    shadow_compare = _build_shadow_compare(payload_item, dom_item) if capture_enabled else {}
+
+    # When browser pool captured network payloads, merge their images
+    # into dom_item so all available images are included even if the
+    # DOM carousel only rendered a subset.
+    if browser_pool_payloads and not _has_usable_payload_item(payload_item):
+        bp_result = _select_best_mercari_payload(browser_pool_payloads, url)
+        bp_item = dict(bp_result.get("item") or {})
+        bp_meta = dict(bp_result.get("meta") or {})
+        if _has_usable_payload_item(bp_item):
+            payload_item = bp_item
+            payload_meta = bp_meta
+            network_capture["responses_seen"] = max(
+                network_capture["responses_seen"],
+                int(bp_result.get("responses_seen") or 0),
+            )
+            network_capture["captured"] = True
+
+    shadow_compare = _build_shadow_compare(payload_item, dom_item) if capture_enabled or _has_usable_payload_item(payload_item) else {}
     if shadow_compare.get("mismatch_fields"):
         logger.info(
             "Mercari payload/dom mismatch for %s: %s",
@@ -835,7 +876,7 @@ def scrape_item_detail(url: str, driver=None):
             ",".join(shadow_compare["mismatch_fields"]),
         )
 
-    if use_payload and _has_usable_payload_item(payload_item):
+    if (use_payload or browser_pool_payloads) and _has_usable_payload_item(payload_item):
         item, meta = _merge_mercari_results(payload_item, payload_meta, dom_item, dom_meta)
         network_capture["used_payload"] = True
     else:
@@ -843,7 +884,7 @@ def scrape_item_detail(url: str, driver=None):
 
     meta = dict(meta or {})
     meta["network_capture"] = network_capture
-    if capture_enabled:
+    if shadow_compare:
         meta["shadow_compare"] = shadow_compare
 
     item["_scrape_meta"] = meta
