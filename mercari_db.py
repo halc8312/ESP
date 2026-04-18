@@ -25,6 +25,7 @@ from services.extraction_policy import attach_extraction_trace, pick_first_valid
 from services.browser_pool import run_browser_page_task
 from services.html_page_adapter import HtmlPageAdapter
 from services.mercari_browser_fetch import (
+    fetch_mercari_page_and_payloads_via_browser_pool_sync,
     fetch_mercari_page_via_browser_pool_sync,
     should_use_mercari_browser_pool_detail,
 )
@@ -340,9 +341,12 @@ def _select_best_mercari_payload(captured_payloads: list[dict], item_url: str) -
                 4 if _is_nonempty_text(item.get("title")) else 0,
                 3 if _is_positive_price(item.get("price")) else 0,
                 2 if _is_nonempty_list(item.get("image_urls")) else 0,
+                2 if _is_useful_status(item.get("status")) else 0,
                 1 if _is_nonempty_text(item.get("description")) else 0,
             )
         )
+        if score <= 0:
+            continue
         if score > best_score:
             best_score = score
             best = {
@@ -780,8 +784,9 @@ def scrape_item_detail(url: str, driver=None):
         "response_url": "",
         "used_payload": False,
     }
+    used_browser_pool_detail = should_use_mercari_browser_pool_detail()
 
-    if capture_enabled:
+    if capture_enabled and not used_browser_pool_detail:
         try:
             payload_result = _capture_mercari_network_payload(url) or {}
             payload_item = dict(payload_result.get("item") or {})
@@ -793,11 +798,21 @@ def scrape_item_detail(url: str, driver=None):
             network_capture["capture_error"] = str(exc)
             logger.warning("Mercari payload capture failed for %s: %s", url, exc)
 
-    used_browser_pool_detail = should_use_mercari_browser_pool_detail()
-
     try:
         if used_browser_pool_detail:
-            page = fetch_mercari_page_via_browser_pool_sync(url, network_idle=True)
+            if capture_enabled:
+                page, captured_payloads = fetch_mercari_page_and_payloads_via_browser_pool_sync(
+                    url,
+                    network_idle=True,
+                )
+                payload_result = _select_best_mercari_payload(captured_payloads, url)
+                payload_item = dict(payload_result.get("item") or {})
+                payload_meta = dict(payload_result.get("meta") or {})
+                network_capture["responses_seen"] = int(payload_result.get("responses_seen") or 0)
+                network_capture["response_url"] = str(payload_result.get("response_url") or "")
+                network_capture["captured"] = _has_usable_payload_item(payload_item)
+            else:
+                page = fetch_mercari_page_via_browser_pool_sync(url, network_idle=True)
         else:
             page = fetch_dynamic(url, headless=True, network_idle=True)
     except Exception as e:

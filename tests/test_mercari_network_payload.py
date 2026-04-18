@@ -374,6 +374,84 @@ def test_scrape_item_detail_can_use_browser_pool_dom_fetch(monkeypatch):
     assert data["title"] == "DOM Title"
 
 
+def test_scrape_item_detail_browser_pool_capture_uses_payload_first(monkeypatch):
+    url = "https://jp.mercari.com/item/m123456789"
+    monkeypatch.setenv("MERCARI_USE_BROWSER_POOL_DETAIL", "true")
+    monkeypatch.setenv("MERCARI_USE_NETWORK_PAYLOAD", "true")
+
+    payloads = [
+        {
+            "url": "https://api.mercari.jp/items/get?id=m123456789",
+            "payload": {
+                "data": {
+                    "item": {
+                        "id": "m123456789",
+                        "name": "Payload Title",
+                        "price": "3200",
+                        "status": "on_sale",
+                        "photos": [
+                            {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg"},
+                            {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg"},
+                        ],
+                    }
+                }
+            },
+        }
+    ]
+    dom_item = _dom_item(url)
+    dom_item["description"] = "DOM description"
+    dom_item["image_urls"] = ["https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg"]
+
+    with patch(
+        "mercari_db.fetch_mercari_page_and_payloads_via_browser_pool_sync",
+        return_value=(MagicMock(), payloads),
+    ) as mock_pool_capture, patch("mercari_db.fetch_dynamic") as mock_fetch_dynamic, patch(
+        "mercari_db._capture_mercari_network_payload"
+    ) as mock_capture, patch(
+        "mercari_db.parse_mercari_item_page", return_value=(dom_item, _dom_meta())
+    ):
+        data = scrape_item_detail(url)
+
+    mock_pool_capture.assert_called_once_with(url, network_idle=True)
+    mock_fetch_dynamic.assert_not_called()
+    mock_capture.assert_not_called()
+    assert data["title"] == "Payload Title"
+    assert data["price"] == 3200
+    assert data["status"] == "on_sale"
+    assert data["image_urls"] == [
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg",
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg",
+    ]
+    assert data["description"] == "DOM description"
+    assert data["_scrape_meta"]["network_capture"]["captured"] is True
+    assert data["_scrape_meta"]["network_capture"]["used_payload"] is True
+    assert data["_scrape_meta"]["network_capture"]["response_url"] == "https://api.mercari.jp/items/get?id=m123456789"
+
+
+def test_scrape_item_detail_browser_pool_capture_ignores_zero_score_payloads(monkeypatch):
+    url = "https://jp.mercari.com/item/m123456789"
+    monkeypatch.setenv("MERCARI_USE_BROWSER_POOL_DETAIL", "true")
+    monkeypatch.setenv("MERCARI_USE_NETWORK_PAYLOAD", "true")
+
+    payloads = [
+        {
+            "url": "https://api.mercari.jp/client_events/v2/event",
+            "payload": {"data": {}},
+        }
+    ]
+
+    with patch(
+        "mercari_db.fetch_mercari_page_and_payloads_via_browser_pool_sync",
+        return_value=(MagicMock(), payloads),
+    ), patch("mercari_db.parse_mercari_item_page", return_value=(_dom_item(url), _dom_meta())):
+        data = scrape_item_detail(url)
+
+    assert data["title"] == "DOM Title"
+    assert data["_scrape_meta"]["network_capture"]["captured"] is False
+    assert data["_scrape_meta"]["network_capture"]["response_url"] == ""
+    assert data["_scrape_meta"]["network_capture"]["used_payload"] is False
+
+
 def test_scrape_item_detail_refetches_via_browser_pool_when_initial_dom_has_only_one_image(monkeypatch):
     url = "https://jp.mercari.com/item/m123456789"
     monkeypatch.delenv("MERCARI_USE_BROWSER_POOL_DETAIL", raising=False)
