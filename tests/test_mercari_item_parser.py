@@ -212,3 +212,125 @@ def test_parse_mercari_item_page_live_fixture_preserves_price_source_and_strateg
     assert meta["price_source"] == "meta"
     assert meta["strategy"] == "meta"
     assert meta["field_sources"]["price"] == "meta"
+
+
+def test_parse_mercari_item_page_extracts_images_from_next_data():
+    """__NEXT_DATA__ JSON contains product photos; parser should extract them."""
+    page = MockPage(
+        css_map={
+            "h1": [MockElement(text="NEXT_DATA Image Test")],
+            "script#__NEXT_DATA__": [
+                MockElement(
+                    text=json.dumps(
+                        {
+                            "props": {
+                                "pageProps": {
+                                    "item": {
+                                        "photos": [
+                                            {"url": "https://static.mercdn.net/item/detail/orig/photos/m55555_1.jpg"},
+                                            {"url": "https://static.mercdn.net/item/detail/orig/photos/m55555_2.jpg"},
+                                            {"url": "https://static.mercdn.net/item/detail/orig/photos/m55555_3.jpg"},
+                                        ]
+                                    }
+                                }
+                            }
+                        },
+                        ensure_ascii=False,
+                    ),
+                    attrib={"id": "__NEXT_DATA__", "type": "application/json"},
+                )
+            ],
+        },
+        all_text="購入手続きへ",
+    )
+
+    item, meta = parse_mercari_item_page(page, "https://jp.mercari.com/item/m55555")
+
+    assert item["image_urls"] == [
+        "https://static.mercdn.net/item/detail/orig/photos/m55555_1.jpg",
+        "https://static.mercdn.net/item/detail/orig/photos/m55555_2.jpg",
+        "https://static.mercdn.net/item/detail/orig/photos/m55555_3.jpg",
+    ]
+    assert "next_data" in meta["field_sources"]["image_urls"]
+
+
+def test_parse_mercari_item_page_extracts_images_from_thumbnail_testid():
+    """imageThumbnail-N containers should be used as DOM image source."""
+    img1 = "https://static.mercdn.net/item/detail/orig/photos/m66666_1.jpg"
+    img2 = "https://static.mercdn.net/item/detail/orig/photos/m66666_2.jpg"
+    img3 = "https://static.mercdn.net/item/detail/orig/photos/m66666_3.jpg"
+    page = MockPage(
+        css_map={
+            "h1": [MockElement(text="Thumbnail Test")],
+            "[data-testid^='imageThumbnail-'] img": [
+                MockElement(attrib={"src": img1}),
+                MockElement(attrib={"src": img2}),
+                MockElement(attrib={"src": img3}),
+            ],
+        },
+        all_text="購入手続きへ",
+    )
+
+    item, meta = parse_mercari_item_page(page, "https://jp.mercari.com/item/m66666")
+
+    assert item["image_urls"] == [img1, img2, img3]
+    assert meta["field_sources"]["image_urls"] == "dom"
+
+
+def test_parse_mercari_item_page_merges_all_image_sources():
+    """DOM, JSON-LD, __NEXT_DATA__, and embedded HTML images should all be merged."""
+    dom_img = "https://static.mercdn.net/item/detail/orig/photos/m77777_1.jpg"
+    jsonld_img = "https://static.mercdn.net/item/detail/orig/photos/m77777_2.jpg"
+    next_data_img = "https://static.mercdn.net/item/detail/orig/photos/m77777_3.jpg"
+    html_img = "https://static.mercdn.net/item/detail/orig/photos/m77777_4.jpg"
+
+    product_jsonld = json.dumps(
+        {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            "name": "Merge Test",
+            "image": [dom_img, jsonld_img],
+            "offers": {"availability": "https://schema.org/InStock"},
+        },
+        ensure_ascii=False,
+    )
+
+    page = MockPage(
+        css_map={
+            "h1": [MockElement(text="Merge Test")],
+            "[data-testid^='image-'] img": [MockElement(attrib={"src": dom_img})],
+            "script[type='application/ld+json']": [MockElement(text=product_jsonld)],
+            "script#__NEXT_DATA__": [
+                MockElement(
+                    text=json.dumps(
+                        {
+                            "props": {
+                                "pageProps": {
+                                    "item": {
+                                        "photos": [
+                                            {"url": next_data_img},
+                                        ]
+                                    }
+                                }
+                            }
+                        },
+                    ),
+                    attrib={"id": "__NEXT_DATA__"},
+                )
+            ],
+        },
+        all_text="購入手続きへ",
+    )
+    page.body = (
+        "<html><body>"
+        f'<script>"url":"{html_img}"</script>'
+        "</body></html>"
+    )
+
+    item, meta = parse_mercari_item_page(page, "https://jp.mercari.com/item/m77777")
+
+    assert dom_img in item["image_urls"]
+    assert jsonld_img in item["image_urls"]
+    assert next_data_img in item["image_urls"]
+    assert html_img in item["image_urls"]
+    assert len(item["image_urls"]) == 4

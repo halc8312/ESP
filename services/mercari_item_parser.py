@@ -31,12 +31,14 @@ _SOLD_MARKERS = ("売り切れ", "売り切れました", "SOLD")
 _DEFAULT_CHECKOUT_BUTTON_SELECTORS = ["[data-testid='checkout-button']"]
 _DEFAULT_STATUS_BADGE_SELECTORS = ["[data-testid='sold-out-badge']"]
 _PRODUCT_IMAGE_FALLBACK = [
+    "[data-testid^='imageThumbnail-'] img",
     "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']",
     "img[data-src*='static.mercdn.net'][data-src*='/item/'][data-src*='/photos/']",
     "img[data-lazy*='static.mercdn.net'][data-lazy*='/item/'][data-lazy*='/photos/']",
     "img[data-lazy-src*='static.mercdn.net'][data-lazy-src*='/item/'][data-lazy-src*='/photos/']",
     "img[srcset*='static.mercdn.net'][srcset*='/item/'][srcset*='/photos/']",
     "source[srcset*='static.mercdn.net'][srcset*='/item/'][srcset*='/photos/']",
+    "picture img[src*='static.mercdn.net']",
 ]
 _PLACEHOLDER_IMAGE_MARKERS = ("data:image", "placeholder", "blank", "transparent", "pixel")
 _PRODUCT_IMAGE_URL_PATTERN = re.compile(
@@ -419,6 +421,50 @@ def _extract_embedded_html_images(page) -> list:
     return image_urls
 
 
+def _extract_next_data_images(page) -> list:
+    """Extract product image URLs from __NEXT_DATA__ JSON embedded in the page.
+
+    Mercari (Next.js) sometimes embeds all image URLs inside
+    ``<script id="__NEXT_DATA__">`` before the carousel is interacted with.
+    Parsing this JSON gives us the complete set of product photos.
+    """
+    image_urls: list[str] = []
+    for node in _safe_css(page, "script#__NEXT_DATA__"):
+        raw = _node_text(node)
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+
+        # Walk the payload looking for image URL lists
+        _walk_next_data_for_images(payload, image_urls)
+    return image_urls
+
+
+def _walk_next_data_for_images(node, image_urls: list) -> None:
+    """Recursively walk a JSON tree looking for Mercari product photo URLs."""
+    if isinstance(node, dict):
+        # Check common keys that hold image URLs
+        for key in ("photos", "images", "itemPhotos", "productPhotos"):
+            value = node.get(key)
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str):
+                        _append_unique_image_url(image_urls, item)
+                    elif isinstance(item, dict):
+                        for url_key in ("url", "originalUrl", "src", "imageUrl"):
+                            candidate = item.get(url_key)
+                            if isinstance(candidate, str):
+                                _append_unique_image_url(image_urls, candidate)
+        for value in node.values():
+            _walk_next_data_for_images(value, image_urls)
+    elif isinstance(node, list):
+        for item in node:
+            _walk_next_data_for_images(item, image_urls)
+
+
 def _merge_image_sources(*sources: tuple[str, list]) -> tuple[list, str]:
     merged_urls = []
     contributing_sources = []
@@ -493,12 +539,14 @@ def _extract_image_urls(page, product_jsonld: Optional[dict]) -> tuple[list, str
                 dom_image_urls.append(image_url)
 
     jsonld_image_urls = _collect_jsonld_images(product_jsonld)
+    next_data_image_urls = _extract_next_data_images(page)
     html_image_urls = _extract_embedded_html_images(page)
     meta_image_urls = _extract_meta_image(page)
 
     merged_image_urls, image_source = _merge_image_sources(
         ("dom", dom_image_urls),
         ("jsonld", jsonld_image_urls),
+        ("next_data", next_data_image_urls),
         ("html", html_image_urls),
         ("meta", meta_image_urls),
     )

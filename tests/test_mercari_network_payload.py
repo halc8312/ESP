@@ -362,7 +362,10 @@ def test_scrape_item_detail_can_use_browser_pool_dom_fetch(monkeypatch):
     monkeypatch.setenv("MERCARI_USE_BROWSER_POOL_DETAIL", "true")
     monkeypatch.delenv("MERCARI_USE_NETWORK_PAYLOAD", raising=False)
 
-    with patch("mercari_db.fetch_mercari_page_via_browser_pool_sync", return_value=MagicMock()) as mock_pool_fetch, patch(
+    with patch(
+        "mercari_db.fetch_mercari_page_and_payloads_via_browser_pool_sync",
+        return_value=(MagicMock(), []),
+    ) as mock_pool_fetch, patch(
         "mercari_db.fetch_dynamic"
     ) as mock_fetch_dynamic, patch(
         "mercari_db.parse_mercari_item_page", return_value=(_dom_item(url), _dom_meta())
@@ -493,7 +496,7 @@ def test_scrape_item_detail_refetches_via_browser_pool_when_initial_dom_has_only
     }
 
     with patch("mercari_db.fetch_dynamic", return_value=MagicMock()) as mock_fetch_dynamic, patch(
-        "mercari_db.fetch_mercari_page_via_browser_pool_sync", return_value=MagicMock()
+        "mercari_db.fetch_mercari_page_and_payloads_via_browser_pool_sync", return_value=(MagicMock(), [])
     ) as mock_pool_fetch, patch(
         "mercari_db.parse_mercari_item_page",
         side_effect=[(initial_item, initial_meta), (refetched_item, refetched_meta)],
@@ -565,3 +568,52 @@ def test_scrape_item_detail_normalizes_dynamic_page_to_html_adapter_before_parse
 
     assert isinstance(seen["page"], HtmlPageAdapter)
     assert seen["page"].url == url
+
+
+def test_scrape_item_detail_browser_pool_merges_payload_images(monkeypatch):
+    """When browser pool captures network payloads, their images are merged into the result."""
+    url = "https://jp.mercari.com/item/m123456789"
+    monkeypatch.setenv("MERCARI_USE_BROWSER_POOL_DETAIL", "true")
+    monkeypatch.delenv("MERCARI_CAPTURE_NETWORK_PAYLOAD", raising=False)
+    monkeypatch.delenv("MERCARI_USE_NETWORK_PAYLOAD", raising=False)
+
+    dom_item = _dom_item(url)
+    dom_item["image_urls"] = ["https://static.mercdn.net/item/detail/orig/photos/m1_1.jpg"]
+    dom_meta_result = _dom_meta()
+    dom_meta_result["field_sources"]["image_urls"] = "dom"
+
+    # Simulate network payload captured by browser pool with more images
+    bp_payloads = [
+        {
+            "url": "https://api.mercari.jp/items/get",
+            "payload": {
+                "data": {
+                    "name": "DOM Title",
+                    "price": 2500,
+                    "status": "on_sale",
+                    "description": "DOM description",
+                    "photos": [
+                        "https://static.mercdn.net/item/detail/orig/photos/m1_1.jpg",
+                        "https://static.mercdn.net/item/detail/orig/photos/m1_2.jpg",
+                        "https://static.mercdn.net/item/detail/orig/photos/m1_3.jpg",
+                    ],
+                }
+            },
+        }
+    ]
+
+    with patch(
+        "mercari_db.fetch_mercari_page_and_payloads_via_browser_pool_sync",
+        return_value=(MagicMock(), bp_payloads),
+    ), patch(
+        "mercari_db.parse_mercari_item_page",
+        return_value=(dom_item, dom_meta_result),
+    ):
+        data = scrape_item_detail(url)
+
+    # The payload images should be merged into the result
+    assert len(data["image_urls"]) >= 3
+    assert "https://static.mercdn.net/item/detail/orig/photos/m1_1.jpg" in data["image_urls"]
+    assert "https://static.mercdn.net/item/detail/orig/photos/m1_2.jpg" in data["image_urls"]
+    assert "https://static.mercdn.net/item/detail/orig/photos/m1_3.jpg" in data["image_urls"]
+    assert data["_scrape_meta"]["network_capture"]["used_payload"] is True
