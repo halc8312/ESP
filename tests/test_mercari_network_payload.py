@@ -80,6 +80,42 @@ def test_parse_mercari_network_payload_collects_images_from_full_payload_when_be
     assert meta["field_sources"]["image_urls"] == "payload"
 
 
+def test_parse_mercari_network_payload_maps_item_status_trading_to_sold():
+    payload = {
+        "items": [
+            {
+                "id": "m123456789",
+                "name": "Payload Sneakers",
+                "price": "2980",
+                "status": "ITEM_STATUS_TRADING",
+            }
+        ]
+    }
+
+    item, meta = parse_mercari_network_payload(payload, "https://jp.mercari.com/item/m123456789")
+
+    assert item["status"] == "sold"
+    assert "payload-status:item_status_trading" in meta["reasons"]
+
+
+def test_parse_mercari_network_payload_maps_item_status_stop_to_deleted():
+    payload = {
+        "data": {
+            "item": {
+                "id": "m123456789",
+                "name": "Payload Sneakers",
+                "price": "2980",
+                "status": "ITEM_STATUS_STOP",
+            }
+        }
+    }
+
+    item, meta = parse_mercari_network_payload(payload, "https://jp.mercari.com/item/m123456789")
+
+    assert item["status"] == "deleted"
+    assert "payload-status:item_status_stop" in meta["reasons"]
+
+
 def test_scrape_item_detail_capture_only_keeps_dom_result_but_records_shadow_compare(monkeypatch):
     url = "https://jp.mercari.com/item/m123456789"
     monkeypatch.setenv("MERCARI_CAPTURE_NETWORK_PAYLOAD", "true")

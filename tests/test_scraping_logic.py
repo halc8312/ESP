@@ -196,18 +196,17 @@ def test_scrape_item_detail_tolerates_invalid_price_text():
         mock_price = MagicMock()
         mock_price.text = ",,,"
 
-        mock_body_node = MagicMock()
-        mock_body_node.text = "購入手続きへ"
+        checkout_button = MagicMock()
+        checkout_button.text = "購入手続きへ"
+        checkout_button.attrib = {"aria-disabled": "false"}
 
         def mock_css(selector):
             if selector == "h1":
                 return [mock_title]
             if selector == "[data-testid='price']":
                 return [mock_price]
-            if selector == "body *":
-                return [mock_body_node]
-            if selector == "button":
-                return []
+            if selector in {"[data-testid='checkout-button']", "button"}:
+                return [checkout_button]
             return []
 
         mock_page.css.side_effect = mock_css

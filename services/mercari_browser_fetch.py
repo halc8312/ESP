@@ -3,6 +3,7 @@ Mercari browser-pool DOM fetch helpers.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 
 from services.browser_pool import run_browser_page_task
@@ -51,15 +52,42 @@ def should_use_mercari_browser_pool_patrol() -> bool:
     return _env_flag("MERCARI_PATROL_USE_BROWSER_POOL", default=False)
 
 
-async def fetch_mercari_page_via_browser_pool_async(
+async def fetch_mercari_page_and_payloads_via_browser_pool_async(
     url: str,
     *,
     network_idle: bool = True,
     wait_selector: str = "h1, [data-testid='price']",
-) -> HtmlPageAdapter:
+) -> tuple[HtmlPageAdapter, list[dict]]:
     page_state: dict[str, object] = {}
+    captured_payloads: list[dict] = []
+    response_tasks: list[asyncio.Task] = []
 
     async def _task(page, context):
+        async def _capture_response(response) -> None:
+            try:
+                headers = await response.all_headers()
+            except Exception:
+                headers = {}
+
+            response_url = str(getattr(response, "url", "") or "")
+            content_type = str(headers.get("content-type", "") or "").lower()
+            if "mercari" not in response_url.lower():
+                return
+            if "json" not in content_type and not response_url.lower().endswith(".json"):
+                return
+
+            try:
+                payload = await response.json()
+            except Exception:
+                return
+
+            captured_payloads.append({"url": response_url, "payload": payload})
+
+        page.on(
+            "response",
+            lambda response: response_tasks.append(asyncio.create_task(_capture_response(response))),
+        )
+
         response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         if network_idle:
             try:
@@ -71,6 +99,9 @@ async def fetch_mercari_page_via_browser_pool_async(
                 await page.wait_for_selector(wait_selector, timeout=5000)
             except Exception:
                 pass
+
+        if response_tasks:
+            await asyncio.gather(*response_tasks, return_exceptions=True)
 
         page_state["html"] = await page.content()
         page_state["url"] = page.url
@@ -85,11 +116,41 @@ async def fetch_mercari_page_via_browser_pool_async(
         init_scripts=_MERCARI_INIT_SCRIPTS,
     )
 
-    return HtmlPageAdapter(
+    page = HtmlPageAdapter(
         str(page_state.get("html") or ""),
         url=str(page_state.get("url") or url),
         status=int(page_state.get("status") or 200),
     )
+    return page, captured_payloads
+
+
+def fetch_mercari_page_and_payloads_via_browser_pool_sync(
+    url: str,
+    *,
+    network_idle: bool = True,
+    wait_selector: str = "h1, [data-testid='price']",
+) -> tuple[HtmlPageAdapter, list[dict]]:
+    return run_coro_sync(
+        fetch_mercari_page_and_payloads_via_browser_pool_async(
+            url,
+            network_idle=network_idle,
+            wait_selector=wait_selector,
+        )
+    )
+
+
+async def fetch_mercari_page_via_browser_pool_async(
+    url: str,
+    *,
+    network_idle: bool = True,
+    wait_selector: str = "h1, [data-testid='price']",
+) -> HtmlPageAdapter:
+    page, _ = await fetch_mercari_page_and_payloads_via_browser_pool_async(
+        url,
+        network_idle=network_idle,
+        wait_selector=wait_selector,
+    )
+    return page
 
 
 def fetch_mercari_page_via_browser_pool_sync(

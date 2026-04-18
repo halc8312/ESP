@@ -643,11 +643,39 @@ def _extract_payload_images(candidate: dict) -> list:
 def _extract_payload_status(candidate: dict) -> tuple[str, list[str]]:
     status_value = candidate.get("status") or candidate.get("itemStatus")
     if isinstance(status_value, str):
-        normalized = status_value.strip().lower()
-        if normalized in {"on_sale", "onsale", "active", "selling", "available"}:
+        normalized = status_value.strip().lower().replace("-", "_")
+        if normalized in {
+            "on_sale",
+            "onsale",
+            "active",
+            "selling",
+            "available",
+            "item_status_on_sale",
+            "sale_status_on_sale",
+        }:
             return "on_sale", [f"payload-status:{normalized}"]
-        if normalized in {"sold_out", "soldout", "sold", "inactive"}:
+        if normalized in {
+            "sold_out",
+            "soldout",
+            "sold",
+            "inactive",
+            "trading",
+            "item_status_trading",
+            "item_status_sold_out",
+            "sale_status_sold_out",
+        }:
             return "sold", [f"payload-status:{normalized}"]
+        if normalized in {
+            "deleted",
+            "removed",
+            "stop",
+            "stopped",
+            "admin_cancel",
+            "item_status_stop",
+            "item_status_admin_cancel",
+            "sale_status_stop",
+        }:
+            return "deleted", [f"payload-status:{normalized}"]
 
     for key in ("soldOut", "isSoldOut"):
         value = candidate.get(key)
