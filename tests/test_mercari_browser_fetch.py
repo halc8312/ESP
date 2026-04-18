@@ -14,6 +14,9 @@ def test_fetch_mercari_page_via_browser_pool_sync_builds_html_adapter(monkeypatc
         class FakePage:
             url = "https://jp.mercari.com/item/m123"
 
+            def on(self, event, handler):
+                pass
+
             async def goto(self, url, wait_until, timeout):
                 captured["goto"] = {
                     "url": url,
@@ -33,6 +36,15 @@ def test_fetch_mercari_page_via_browser_pool_sync_builds_html_adapter(monkeypatc
                     "selector": selector,
                     "timeout": timeout,
                 }
+
+            async def query_selector_all(self, selector):
+                return []
+
+            async def query_selector(self, selector):
+                return None
+
+            async def wait_for_timeout(self, ms):
+                pass
 
             async def content(self):
                 return """

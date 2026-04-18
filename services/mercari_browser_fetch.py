@@ -52,6 +52,51 @@ def should_use_mercari_browser_pool_patrol() -> bool:
     return _env_flag("MERCARI_PATROL_USE_BROWSER_POOL", default=False)
 
 
+async def _click_through_image_carousel(page) -> None:
+    """Click through Mercari's image carousel to render all lazy-loaded images.
+
+    Mercari's SPA only renders the first 1-2 images initially.  By clicking
+    each thumbnail (``[data-testid^='imageThumbnail-']``) or pressing the
+    carousel's next-arrow, we force the framework to mount the remaining
+    ``<img>`` elements so that ``page.content()`` includes every image URL.
+    """
+    try:
+        # Strategy 1: click each thumbnail to reveal every image
+        thumbnails = await page.query_selector_all(
+            "[data-testid^='imageThumbnail-']"
+        )
+        for thumb in thumbnails:
+            try:
+                await thumb.click(timeout=1000)
+                await page.wait_for_timeout(300)
+            except Exception:
+                continue
+
+        # Strategy 2: click the carousel next-button repeatedly
+        # (covers pages whose thumbnails are off-screen)
+        for _ in range(10):
+            next_btn = await page.query_selector(
+                "[data-testid='carousel'] button[aria-label*='次'], "
+                "[data-testid='carousel'] button[aria-label*='next'], "
+                "[data-testid='carousel'] button:last-child"
+            )
+            if not next_btn:
+                break
+            is_disabled = await next_btn.get_attribute("disabled")
+            if is_disabled is not None:
+                break
+            try:
+                await next_btn.click(timeout=1000)
+                await page.wait_for_timeout(300)
+            except Exception:
+                break
+
+        # Wait briefly for any lazy images triggered by the carousel clicks
+        await page.wait_for_timeout(500)
+    except Exception:
+        pass
+
+
 async def fetch_mercari_page_and_payloads_via_browser_pool_async(
     url: str,
     *,
@@ -99,6 +144,9 @@ async def fetch_mercari_page_and_payloads_via_browser_pool_async(
                 await page.wait_for_selector(wait_selector, timeout=5000)
             except Exception:
                 pass
+
+        # Click through the image carousel to render all lazy-loaded images
+        await _click_through_image_carousel(page)
 
         if response_tasks:
             await asyncio.gather(*response_tasks, return_exceptions=True)
