@@ -229,55 +229,68 @@ def test_select_best_mercari_payload_ignores_similar_and_related_items():
     )
 
 
-def test_select_best_mercari_payload_merges_photos_across_primary_responses():
-    """When the canonical item is returned by more than one primary response
-    (e.g. the ``items/get`` endpoint plus an item-attributes endpoint), the
-    full union of photos must be preserved."""
-    from mercari_db import _select_best_mercari_payload
+def test_collect_mercari_photo_urls_for_item_unions_across_blobs():
+    """The url-regex photo union must assemble the full photo list across
+    every captured response plus the page HTML, deduplicate, and return
+    photos in ascending photo-index order regardless of source ordering."""
+    from services.mercari_item_parser import collect_mercari_photo_urls_for_item
 
-    url = "https://jp.mercari.com/item/m123456789"
-
-    captured_payloads = [
+    # Simulate three separate captured API response payloads plus some page
+    # HTML, where the target photos are scattered across them and mixed in
+    # with photos from unrelated (related/similar/seller-other) items.
+    blobs = [
         {
-            "url": "https://api.mercari.jp/items/get?id=m123456789",
-            "payload": {
-                "data": {
-                    "id": "m123456789",
-                    "name": "Actual Target Item",
-                    "price": "2980",
-                    "status": "on_sale",
-                    "photos": [
-                        {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg"},
-                        {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg"},
-                    ],
-                }
-            },
+            "data": {
+                "id": "m123456789",
+                "photos": [
+                    {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_3.jpg?111"},
+                ],
+            }
         },
         {
-            "url": "https://api.mercari.jp/items/get?id=m123456789&include_item_attributes=true",
-            "payload": {
-                "data": {
-                    "id": "m123456789",
-                    "name": "Actual Target Item",
-                    "price": "2980",
+            "items": [
+                {
+                    "id": "m999999999",
                     "photos": [
-                        {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_3.jpg"},
-                        {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_4.jpg"},
-                        {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_5.jpg"},
+                        {"url": "https://static.mercdn.net/item/detail/orig/photos/m999999999_1.jpg"},
                     ],
                 }
-            },
+            ]
         },
+        {
+            "data": {
+                "id": "m123456789",
+                "photos": [
+                    {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg?222"},
+                    {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg?222"},
+                    {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_5.jpg?222"},
+                ],
+            }
+        },
+        '<html><img src="https://static.mercdn.net/item/detail/thumb/photos/m123456789_4.jpg?333"></html>',
     ]
 
-    best = _select_best_mercari_payload(captured_payloads, url)
-    assert best["item"]["image_urls"] == [
-        "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg",
-        "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg",
-        "https://static.mercdn.net/item/detail/orig/photos/m123456789_3.jpg",
-        "https://static.mercdn.net/item/detail/orig/photos/m123456789_4.jpg",
-        "https://static.mercdn.net/item/detail/orig/photos/m123456789_5.jpg",
+    urls = collect_mercari_photo_urls_for_item(blobs, "m123456789")
+
+    # Photos are returned in ascending index order, photos for other items
+    # are filtered out, and each photo appears exactly once.
+    assert [u.rsplit("/", 1)[-1].split("?")[0] for u in urls] == [
+        "m123456789_1.jpg",
+        "m123456789_2.jpg",
+        "m123456789_3.jpg",
+        "m123456789_4.jpg",
+        "m123456789_5.jpg",
     ]
+
+
+def test_collect_mercari_photo_urls_for_item_returns_empty_when_no_target_id():
+    from services.mercari_item_parser import collect_mercari_photo_urls_for_item
+
+    blobs = [
+        {"photos": [{"url": "https://static.mercdn.net/item/detail/orig/photos/m1_1.jpg"}]},
+    ]
+    assert collect_mercari_photo_urls_for_item(blobs, "") == []
+    assert collect_mercari_photo_urls_for_item(blobs, None) == []
 
 
 def test_parse_mercari_network_payload_filters_photos_with_different_item_id():

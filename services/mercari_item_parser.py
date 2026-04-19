@@ -48,6 +48,17 @@ _PRODUCT_IMAGE_URL_PATTERN = re.compile(
 
 _MERCARI_ITEM_ID_PATTERN = re.compile(r"/item/(m\d+)", re.IGNORECASE)
 
+# A Mercari product photo URL always encodes the owning item's id and the
+# photo index in the path, e.g.
+#   https://static.mercdn.net/item/detail/orig/photos/m12345678901_3.jpg?1234
+# This lets us (a) identify which item a photo belongs to and (b) order
+# photos by their original index even when they appear in arbitrary JSON
+# responses.
+_MERCARI_PHOTO_URL_PATTERN = re.compile(
+    r"https?://static\.mercdn\.net/item/[^\"'\s<>\\]*?/photos/(m\d+)_(\d+)\.[a-z0-9]+(?:\?[^\"'\s<>\\]*)?",
+    re.IGNORECASE,
+)
+
 
 def extract_mercari_item_id(url: str) -> str:
     """Return the ``m\\d+`` item id embedded in a Mercari product URL.
@@ -66,6 +77,61 @@ def extract_mercari_item_id(url: str) -> str:
     if trimmed.startswith("m") and trimmed[1:].isdigit():
         return trimmed
     return ""
+
+
+def collect_mercari_photo_urls_for_item(blobs, target_item_id: str) -> list[str]:
+    """Return every Mercari photo URL that belongs to ``target_item_id``.
+
+    Scans arbitrary blobs (captured API-response JSON dicts and page HTML
+    strings) for ``/photos/m<ID>_<INDEX>.<ext>`` URLs and keeps the ones whose
+    ``<ID>`` matches ``target_item_id``.  Results are deduplicated and
+    returned in ascending photo-index order so photo ``_1`` comes before
+    ``_2`` etc., regardless of the order they appeared in the source blobs.
+
+    This is the authoritative source of truth for "which photos belong to
+    this item": Mercari guarantees the id/index convention in photo paths,
+    so URL-based matching is immune to cross-item contamination from
+    related/similar/seller-other-items endpoints.
+    """
+    if not target_item_id or not isinstance(target_item_id, str):
+        return []
+    target = target_item_id.lower()
+    by_index: dict[int, str] = {}
+    fallback: list[str] = []
+
+    for blob in blobs or []:
+        if blob is None:
+            continue
+        if isinstance(blob, (bytes, bytearray)):
+            try:
+                text = blob.decode("utf-8", errors="ignore")
+            except Exception:
+                continue
+        elif isinstance(blob, str):
+            text = blob
+        else:
+            try:
+                text = json.dumps(blob, ensure_ascii=False)
+            except (TypeError, ValueError):
+                continue
+        if not text or "/photos/" not in text:
+            continue
+        for match in _MERCARI_PHOTO_URL_PATTERN.finditer(text):
+            if match.group(1).lower() != target:
+                continue
+            url = match.group(0)
+            try:
+                idx = int(match.group(2))
+            except (TypeError, ValueError):
+                fallback.append(url)
+                continue
+            by_index.setdefault(idx, url)
+
+    ordered = [by_index[i] for i in sorted(by_index)]
+    for url in fallback:
+        if url not in ordered:
+            ordered.append(url)
+    return ordered
 
 
 def _is_nonempty_text(value) -> bool:
