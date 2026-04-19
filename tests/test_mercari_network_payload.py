@@ -80,6 +80,230 @@ def test_parse_mercari_network_payload_collects_images_from_full_payload_when_be
     assert meta["field_sources"]["image_urls"] == "payload"
 
 
+def test_parse_mercari_network_payload_ignores_different_item_in_response():
+    """A payload whose only item candidate identifies itself as a different
+    Mercari item must not leak that item's title / price / photos into the
+    parsed result for the requested URL."""
+    payload = {
+        "items": [
+            {
+                "id": "m999999999",
+                "name": "Totally different product",
+                "price": "4980",
+                "description": "Seller's other listing",
+                "status": "on_sale",
+                "photos": [
+                    {"url": "https://static.mercdn.net/item/detail/orig/photos/m999999999_1.jpg"},
+                    {"url": "https://static.mercdn.net/item/detail/orig/photos/m999999999_2.jpg"},
+                ],
+            }
+        ]
+    }
+
+    item, _meta = parse_mercari_network_payload(payload, "https://jp.mercari.com/item/m123456789")
+
+    assert item["title"] == ""
+    assert item["price"] is None
+    assert item["image_urls"] == []
+
+
+def test_parse_mercari_network_payload_prefers_candidate_with_matching_id():
+    """When multiple item-like dicts are present, the one whose id matches
+    the requested URL must be preferred even if another scores higher."""
+    payload = {
+        "related": [
+            {
+                "id": "m999999999",
+                "name": "Related with lots of detail",
+                "price": "8888",
+                "description": "This one has everything and would normally win the score race",
+                "status": "on_sale",
+                "photos": [
+                    {"url": "https://static.mercdn.net/item/detail/orig/photos/m999999999_1.jpg"},
+                ],
+            }
+        ],
+        "data": {
+            "id": "m123456789",
+            "name": "Actual Target Item",
+            "price": "2980",
+            "status": "on_sale",
+            "photos": [
+                {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg"},
+                {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg"},
+            ],
+        },
+    }
+
+    item, meta = parse_mercari_network_payload(payload, "https://jp.mercari.com/item/m123456789")
+
+    assert item["title"] == "Actual Target Item"
+    assert item["price"] == 2980
+    assert item["image_urls"] == [
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg",
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg",
+    ]
+    assert meta.get("candidate_id_matches_target") is True
+
+
+def test_select_best_mercari_payload_ignores_similar_and_related_items():
+    """Regression: Mercari's production API responses include similar/related/
+    seller-other-items alongside the primary item.  The payload selector must
+    not pick one of those as the source of truth — otherwise photos from a
+    completely different product show up on the scraped item."""
+    from mercari_db import _select_best_mercari_payload
+
+    url = "https://jp.mercari.com/item/m123456789"
+
+    captured_payloads = [
+        # Rich "similar items" response with a title, price, description and
+        # photos — all for some other product.  Under the old scoring this
+        # used to be able to win.
+        {
+            "url": "https://api.mercari.jp/v2/relateditems/list-similar-items",
+            "payload": {
+                "items": [
+                    {
+                        "id": "m999999999",
+                        "name": "Totally different product",
+                        "price": "8888",
+                        "description": "Unrelated description full of detail",
+                        "status": "on_sale",
+                        "photos": [
+                            {"url": "https://static.mercdn.net/item/detail/orig/photos/m999999999_1.jpg"},
+                            {"url": "https://static.mercdn.net/item/detail/orig/photos/m999999999_2.jpg"},
+                        ],
+                    }
+                ]
+            },
+        },
+        # Seller's other listings: also rich, also wrong.
+        {
+            "url": "https://api.mercari.jp/items/get_items?seller_id=1&status=on_sale",
+            "payload": {
+                "items": [
+                    {
+                        "id": "m888888888",
+                        "name": "Seller's other item",
+                        "price": "7777",
+                        "photos": [
+                            {"url": "https://static.mercdn.net/item/detail/orig/photos/m888888888_1.jpg"},
+                        ],
+                    }
+                ]
+            },
+        },
+        # The real item — but responding only with title/price (no photos) to
+        # simulate the production regression where photos live in a split
+        # response.
+        {
+            "url": "https://api.mercari.jp/items/get?id=m123456789&include_item_attributes=true",
+            "payload": {
+                "data": {
+                    "id": "m123456789",
+                    "name": "Actual Target Item",
+                    "price": "2980",
+                    "status": "on_sale",
+                    "photos": [
+                        {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg"},
+                        {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg"},
+                        {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_3.jpg"},
+                    ],
+                }
+            },
+        },
+    ]
+
+    best = _select_best_mercari_payload(captured_payloads, url)
+    best_item = best["item"]
+
+    assert best_item["title"] == "Actual Target Item"
+    assert best_item["price"] == 2980
+    assert best_item["image_urls"] == [
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg",
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg",
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_3.jpg",
+    ]
+    assert best["response_url"].startswith(
+        "https://api.mercari.jp/items/get?id=m123456789"
+    )
+
+
+def test_select_best_mercari_payload_merges_photos_across_primary_responses():
+    """When the canonical item is returned by more than one primary response
+    (e.g. the ``items/get`` endpoint plus an item-attributes endpoint), the
+    full union of photos must be preserved."""
+    from mercari_db import _select_best_mercari_payload
+
+    url = "https://jp.mercari.com/item/m123456789"
+
+    captured_payloads = [
+        {
+            "url": "https://api.mercari.jp/items/get?id=m123456789",
+            "payload": {
+                "data": {
+                    "id": "m123456789",
+                    "name": "Actual Target Item",
+                    "price": "2980",
+                    "status": "on_sale",
+                    "photos": [
+                        {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg"},
+                        {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg"},
+                    ],
+                }
+            },
+        },
+        {
+            "url": "https://api.mercari.jp/items/get?id=m123456789&include_item_attributes=true",
+            "payload": {
+                "data": {
+                    "id": "m123456789",
+                    "name": "Actual Target Item",
+                    "price": "2980",
+                    "photos": [
+                        {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_3.jpg"},
+                        {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_4.jpg"},
+                        {"url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_5.jpg"},
+                    ],
+                }
+            },
+        },
+    ]
+
+    best = _select_best_mercari_payload(captured_payloads, url)
+    assert best["item"]["image_urls"] == [
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg",
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg",
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_3.jpg",
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_4.jpg",
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_5.jpg",
+    ]
+
+
+def test_parse_mercari_network_payload_filters_photos_with_different_item_id():
+    """Even if a candidate lacks an explicit id but happens to contain photos
+    for a different Mercari item, those photos must be filtered out."""
+    payload = {
+        "data": {
+            "name": "Actual Target Item",
+            "price": "2980",
+            "status": "on_sale",
+            "photos": [
+                "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg",
+                "https://static.mercdn.net/item/detail/orig/photos/m999999999_1.jpg",
+                "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg",
+            ],
+        }
+    }
+
+    item, _meta = parse_mercari_network_payload(payload, "https://jp.mercari.com/item/m123456789")
+
+    assert item["image_urls"] == [
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg",
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg",
+    ]
+
+
 def test_parse_mercari_network_payload_maps_item_status_trading_to_sold():
     payload = {
         "items": [
@@ -578,24 +802,25 @@ def test_scrape_item_detail_browser_pool_merges_payload_images(monkeypatch):
     monkeypatch.delenv("MERCARI_USE_NETWORK_PAYLOAD", raising=False)
 
     dom_item = _dom_item(url)
-    dom_item["image_urls"] = ["https://static.mercdn.net/item/detail/orig/photos/m1_1.jpg"]
+    dom_item["image_urls"] = ["https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg"]
     dom_meta_result = _dom_meta()
     dom_meta_result["field_sources"]["image_urls"] = "dom"
 
     # Simulate network payload captured by browser pool with more images
     bp_payloads = [
         {
-            "url": "https://api.mercari.jp/items/get",
+            "url": "https://api.mercari.jp/items/get?id=m123456789",
             "payload": {
                 "data": {
+                    "id": "m123456789",
                     "name": "DOM Title",
                     "price": 2500,
                     "status": "on_sale",
                     "description": "DOM description",
                     "photos": [
-                        "https://static.mercdn.net/item/detail/orig/photos/m1_1.jpg",
-                        "https://static.mercdn.net/item/detail/orig/photos/m1_2.jpg",
-                        "https://static.mercdn.net/item/detail/orig/photos/m1_3.jpg",
+                        "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg",
+                        "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg",
+                        "https://static.mercdn.net/item/detail/orig/photos/m123456789_3.jpg",
                     ],
                 }
             },
@@ -613,7 +838,7 @@ def test_scrape_item_detail_browser_pool_merges_payload_images(monkeypatch):
 
     # The payload images should be merged into the result
     assert len(data["image_urls"]) >= 3
-    assert "https://static.mercdn.net/item/detail/orig/photos/m1_1.jpg" in data["image_urls"]
-    assert "https://static.mercdn.net/item/detail/orig/photos/m1_2.jpg" in data["image_urls"]
-    assert "https://static.mercdn.net/item/detail/orig/photos/m1_3.jpg" in data["image_urls"]
+    assert "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg" in data["image_urls"]
+    assert "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg" in data["image_urls"]
+    assert "https://static.mercdn.net/item/detail/orig/photos/m123456789_3.jpg" in data["image_urls"]
     assert data["_scrape_meta"]["network_capture"]["used_payload"] is True
