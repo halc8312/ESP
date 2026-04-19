@@ -429,6 +429,9 @@ def test_scrape_item_detail_browser_pool_capture_uses_payload_first(monkeypatch)
     assert data["_scrape_meta"]["network_capture"]["captured"] is True
     assert data["_scrape_meta"]["network_capture"]["used_payload"] is True
     assert data["_scrape_meta"]["network_capture"]["response_url"] == "https://api.mercari.jp/items/get?id=m123456789"
+    assert data["_scrape_meta"]["network_capture"]["observed_response_urls"] == [
+        "https://api.mercari.jp/items/get?id=m123456789"
+    ]
 
 
 def test_scrape_item_detail_browser_pool_capture_ignores_zero_score_payloads(monkeypatch):
@@ -452,6 +455,9 @@ def test_scrape_item_detail_browser_pool_capture_ignores_zero_score_payloads(mon
     assert data["title"] == "DOM Title"
     assert data["_scrape_meta"]["network_capture"]["captured"] is False
     assert data["_scrape_meta"]["network_capture"]["response_url"] == ""
+    assert data["_scrape_meta"]["network_capture"]["observed_response_urls"] == [
+        "https://api.mercari.jp/client_events/v2/event"
+    ]
     assert data["_scrape_meta"]["network_capture"]["used_payload"] is False
 
 
