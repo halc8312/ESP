@@ -46,6 +46,27 @@ _PRODUCT_IMAGE_URL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_MERCARI_ITEM_ID_PATTERN = re.compile(r"/item/(m\d+)", re.IGNORECASE)
+
+
+def extract_mercari_item_id(url: str) -> str:
+    """Return the ``m\\d+`` item id embedded in a Mercari product URL.
+
+    Mercari product URLs look like ``https://jp.mercari.com/item/m12345678901``.
+    The id is also embedded in API responses such as ``/items/get?id=m...`` and
+    ``/items/{id}`` so we can use it to validate that a captured payload really
+    describes the requested product rather than a related or similar item.
+    """
+    if not isinstance(url, str):
+        return ""
+    match = _MERCARI_ITEM_ID_PATTERN.search(url)
+    if match:
+        return match.group(1).lower()
+    trimmed = url.strip().lower()
+    if trimmed.startswith("m") and trimmed[1:].isdigit():
+        return trimmed
+    return ""
+
 
 def _is_nonempty_text(value) -> bool:
     return isinstance(value, str) and bool(value.strip())
@@ -598,10 +619,45 @@ def _dedupe_urls(values) -> list:
     return out
 
 
-def _find_network_payload_candidate(node):
+def _candidate_matches_item_id(candidate: dict, target_item_id: str) -> bool:
+    """Return True if a dict candidate explicitly identifies ``target_item_id``.
+
+    Mercari responses often embed item-like dicts for related / similar / seller
+    items alongside the requested product.  When we have a target item id, only
+    candidates that positively identify themselves as that item should be
+    considered a safe source for title / price / photos.
+    """
+    if not target_item_id:
+        return False
+    for key in ("id", "itemId", "item_id"):
+        value = candidate.get(key)
+        if isinstance(value, str) and value.strip().lower() == target_item_id:
+            return True
+    return False
+
+
+def _candidate_claims_different_item(candidate: dict, target_item_id: str) -> bool:
+    """Return True if the candidate is clearly about a different item.
+
+    This lets us actively reject related/similar items that would otherwise
+    look like attractive payload candidates (they have title/price/photos).
+    """
+    if not target_item_id:
+        return False
+    for key in ("id", "itemId", "item_id"):
+        value = candidate.get(key)
+        if not isinstance(value, str):
+            continue
+        normalized = value.strip().lower()
+        if normalized and re.match(r"^m\d+$", normalized) and normalized != target_item_id:
+            return True
+    return False
+
+
+def _find_network_payload_candidate(node, target_item_id: str = ""):
     candidates = []
 
-    def _score(candidate):
+    def _score(candidate: dict) -> int:
         score = 0
         title = candidate.get("name") or candidate.get("title")
         if isinstance(title, str) and title.strip():
@@ -624,7 +680,38 @@ def _find_network_payload_candidate(node):
                 _walk(item)
 
     _walk(node)
-    scored = sorted(((_score(candidate), candidate) for candidate in candidates), key=lambda item: item[0], reverse=True)
+
+    if target_item_id:
+        # Prefer candidates that positively identify themselves as the
+        # requested item.  This prevents Mercari's "similar items" and
+        # "seller's other items" payloads from polluting the result with
+        # data (including photos) from a completely different product.
+        matching = [c for c in candidates if _candidate_matches_item_id(c, target_item_id)]
+        if matching:
+            scored_matching = sorted(
+                ((_score(c), c) for c in matching),
+                key=lambda entry: entry[0],
+                reverse=True,
+            )
+            if scored_matching and scored_matching[0][0] > 0:
+                return scored_matching[0][1]
+            # Even if the score is 0, the id match is authoritative — fall
+            # through to return the first matching candidate rather than a
+            # high-scoring but unrelated one.
+            return matching[0]
+
+        # Drop candidates that explicitly identify themselves as some *other*
+        # Mercari item.  A top-level response that has no id at all (e.g. a
+        # payload wrapper) is still eligible.
+        filtered = [c for c in candidates if not _candidate_claims_different_item(c, target_item_id)]
+        if filtered:
+            candidates = filtered
+
+    scored = sorted(
+        ((_score(candidate), candidate) for candidate in candidates),
+        key=lambda entry: entry[0],
+        reverse=True,
+    )
     if scored and scored[0][0] > 0:
         return scored[0][1]
     return {}
@@ -737,13 +824,25 @@ def _extract_payload_status(candidate: dict) -> tuple[str, list[str]]:
 
 def parse_mercari_network_payload(payload: dict, url: str) -> tuple[dict, dict]:
     item = _empty_item(url)
-    candidate = _find_network_payload_candidate(payload)
+    target_item_id = extract_mercari_item_id(url)
+    candidate = _find_network_payload_candidate(payload, target_item_id=target_item_id)
     if not candidate:
         return item, {
             "strategy": "payload",
             "confidence": "low",
             "reasons": ["payload-candidate-missing"],
             "field_sources": {},
+            "target_item_id": target_item_id,
+        }
+    candidate_id_matches_target = bool(target_item_id) and _candidate_matches_item_id(candidate, target_item_id)
+    candidate_claims_other = bool(target_item_id) and _candidate_claims_different_item(candidate, target_item_id)
+    if candidate_claims_other:
+        return _empty_item(url), {
+            "strategy": "payload",
+            "confidence": "low",
+            "reasons": ["payload-candidate-mismatched-item"],
+            "field_sources": {},
+            "target_item_id": target_item_id,
         }
 
     field_sources = {}
@@ -771,9 +870,40 @@ def parse_mercari_network_payload(payload: dict, url: str) -> tuple[dict, dict]:
         field_sources["description"] = description_source
 
     image_urls = _extract_payload_images(candidate)
-    if payload is not candidate:
+    # Only merge images from the outer payload when we're *confident* the
+    # payload describes the requested item.  Otherwise we risk pulling in
+    # photos from related / similar / seller-other items that share the same
+    # response envelope.
+    if payload is not candidate and candidate_id_matches_target:
         for payload_image_url in _extract_payload_images(payload):
             _append_unique_image_url(image_urls, payload_image_url)
+    elif payload is not candidate and not target_item_id:
+        # Legacy behaviour for payloads whose URL does not contain an item id
+        # (e.g. synthetic test fixtures): preserve the older merge.
+        for payload_image_url in _extract_payload_images(payload):
+            _append_unique_image_url(image_urls, payload_image_url)
+    # Drop photo URLs that explicitly encode a *different* Mercari item id in
+    # their path (e.g. ``/photos/m987654321_1.jpg`` when we asked for
+    # ``m123456789``).  URLs that do not embed any ``m\d+`` id are kept as-is
+    # to preserve compatibility with synthetic fixtures and alternate URL
+    # shapes.
+    if target_item_id and image_urls:
+        filtered_image_urls = []
+        had_any_explicit_id = False
+        for image_url in image_urls:
+            match = re.search(r"/photos/(m\d+)", image_url, re.IGNORECASE)
+            if match:
+                had_any_explicit_id = True
+                if match.group(1).lower() != target_item_id:
+                    continue
+            filtered_image_urls.append(image_url)
+        if filtered_image_urls:
+            image_urls = filtered_image_urls
+        elif had_any_explicit_id:
+            # Every photo URL mentioned a different Mercari item — none of
+            # them belong to the requested product.  Return an empty list
+            # rather than silently returning the wrong images.
+            image_urls = []
     if image_urls:
         item["image_urls"] = image_urls
         field_sources["image_urls"] = "payload"
@@ -789,6 +919,8 @@ def parse_mercari_network_payload(payload: dict, url: str) -> tuple[dict, dict]:
         "confidence": "high" if item["title"] and item["price"] is not None else "medium",
         "reasons": ["payload-candidate-found"] + status_reasons,
         "field_sources": field_sources,
+        "target_item_id": target_item_id,
+        "candidate_id_matches_target": candidate_id_matches_target,
     }
     return item, meta
 

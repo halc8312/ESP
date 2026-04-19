@@ -20,7 +20,7 @@ except ImportError:
     get_healer = None
 
 from services.mercari_item_parser import parse_mercari_item_page, _append_unique_image_url
-from services.mercari_item_parser import parse_mercari_network_payload
+from services.mercari_item_parser import parse_mercari_network_payload, extract_mercari_item_id
 from services.extraction_policy import attach_extraction_trace, pick_first_valid
 from services.browser_pool import run_browser_page_task
 from services.html_page_adapter import HtmlPageAdapter
@@ -340,7 +340,88 @@ def _merge_mercari_results(payload_item: dict, payload_meta: dict, dom_item: dic
     return merged, merged_meta
 
 
+# Mercari API endpoints that return data for a *different* product than the one
+# being scraped (related items, similar items, seller's other listings, user
+# profiles, etc.).  Payloads from these endpoints can look attractive to the
+# payload-candidate picker because they contain full item dicts with title /
+# price / photos, but those photos belong to unrelated products.  Treat them
+# as low-trust sources.
+_MERCARI_OTHER_ITEM_URL_MARKERS = (
+    "/relateditems/",
+    "/related_items/",
+    "list-similar-items",
+    "get_items",  # seller's other listings: /items/get_items?seller_id=...
+    "users/get_profile",
+    "/users/",
+    "services/affiliate",
+    "services/usersocialjp",
+    "services/notification",
+    "client_events",
+    "products:search",
+    "facets:suggest",
+    "item_category_groups",
+    "itemsizes",
+    "services/exp/parameters",
+    "services/pacman",
+    "services/master",
+    "services/item_watch",
+    "xb-inhouse",
+    "xblistings",
+    "xb-banners",
+    "desiredpriceitems",
+    "shippingservices",
+    "getcurrencyconversionrate",
+    "/v2/relateditems",
+    "/query-suggestions",
+)
+
+
+_MERCARI_PRIMARY_ITEM_URL_PATTERN = re.compile(
+    r"/items/get(\?|$|&|/)|/items/m\d+(\?|$|&|/)",
+    re.IGNORECASE,
+)
+
+
+def _is_primary_mercari_item_response(response_url: str, item_id: str) -> bool:
+    """Return True when ``response_url`` is the canonical ``items/get`` or
+    ``/items/{id}`` endpoint for the requested item.
+
+    We also accept the bare ``/items/get`` endpoint (no ``?id=...``) because
+    some captured responses elide the query string and because unit-test
+    fixtures exercise that shape.  ``/items/get_items`` (seller's other
+    listings) is explicitly *not* treated as primary.
+    """
+    url_lower = str(response_url or "").lower()
+    if not url_lower:
+        return False
+    if "/items/get_items" in url_lower:
+        return False
+    if item_id and f"/items/get?id={item_id}" in url_lower:
+        return True
+    if item_id and f"&id={item_id}" in url_lower and "/items/get" in url_lower:
+        return True
+    if item_id and f"/items/{item_id}" in url_lower:
+        return True
+    if _MERCARI_PRIMARY_ITEM_URL_PATTERN.search(url_lower):
+        return True
+    return False
+
+
+def _is_unrelated_mercari_item_response(response_url: str, item_id: str) -> bool:
+    """Return True when the response is known to describe *other* items."""
+    url_lower = str(response_url or "").lower()
+    if not url_lower:
+        return False
+    if _is_primary_mercari_item_response(response_url, item_id):
+        return False
+    for marker in _MERCARI_OTHER_ITEM_URL_MARKERS:
+        if marker in url_lower:
+            return True
+    return False
+
+
 def _select_best_mercari_payload(captured_payloads: list[dict], item_url: str) -> dict:
+    target_item_id = extract_mercari_item_id(item_url)
     best = {
         "item": {},
         "meta": {"strategy": "payload", "field_sources": {}, "reasons": ["payload-candidate-missing"]},
@@ -349,9 +430,29 @@ def _select_best_mercari_payload(captured_payloads: list[dict], item_url: str) -
         "raw_payload": None,
     }
     best_score = -1
+    # Aggregate images from every response whose candidate id positively
+    # matches the target item — this lets us assemble a complete photo list
+    # even when the images are split across multiple API responses.
+    trusted_image_urls: list[str] = []
 
     for response_payload in captured_payloads:
+        response_url = str(response_payload.get("url", "") or "")
+        if _is_unrelated_mercari_item_response(response_url, target_item_id):
+            continue
         item, meta = parse_mercari_network_payload(response_payload.get("payload") or {}, item_url)
+        candidate_id_matches_target = bool(meta.get("candidate_id_matches_target"))
+
+        if target_item_id and not candidate_id_matches_target and not _is_primary_mercari_item_response(response_url, target_item_id):
+            # Response neither comes from the primary endpoint nor contains a
+            # dict that identifies itself as the target item — skip it to
+            # avoid cross-item contamination.
+            continue
+
+        if candidate_id_matches_target and _is_nonempty_list(item.get("image_urls")):
+            for image_url in item["image_urls"]:
+                if image_url not in trusted_image_urls:
+                    trusted_image_urls.append(image_url)
+
         score = sum(
             (
                 4 if _is_nonempty_text(item.get("title")) else 0,
@@ -361,6 +462,11 @@ def _select_best_mercari_payload(captured_payloads: list[dict], item_url: str) -
                 1 if _is_nonempty_text(item.get("description")) else 0,
             )
         )
+        if candidate_id_matches_target:
+            score += 20
+        elif _is_primary_mercari_item_response(response_url, target_item_id):
+            score += 10
+
         if score <= 0:
             continue
         if score > best_score:
@@ -368,10 +474,27 @@ def _select_best_mercari_payload(captured_payloads: list[dict], item_url: str) -
             best = {
                 "item": item,
                 "meta": meta,
-                "response_url": response_payload.get("url", ""),
+                "response_url": response_url,
                 "responses_seen": len(captured_payloads),
                 "raw_payload": response_payload.get("payload"),
             }
+
+    # If we aggregated a trusted photo list across multiple primary payloads,
+    # promote it onto the best item so we don't lose any photos.
+    if trusted_image_urls:
+        best_item = dict(best.get("item") or {})
+        existing = list(best_item.get("image_urls") or [])
+        for image_url in trusted_image_urls:
+            if image_url not in existing:
+                existing.append(image_url)
+        if existing:
+            best_item["image_urls"] = existing
+            best["item"] = best_item
+            meta = dict(best.get("meta") or {})
+            field_sources = dict(meta.get("field_sources") or {})
+            field_sources["image_urls"] = "payload"
+            meta["field_sources"] = field_sources
+            best["meta"] = meta
 
     return best
 
