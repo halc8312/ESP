@@ -39,6 +39,10 @@ services:
         value: auto
       - key: IMAGE_STORAGE_PATH
         value: /var/data/images
+      - key: MEDIA_QUEUE_NAME
+        value: media
+      - key: TRANSLATOR_BACKEND
+        value: argos
       - key: SELECTOR_ALERT_WEBHOOK_URL
         sync: false
 
@@ -66,6 +70,10 @@ services:
           property: connectionString
       - key: SCRAPE_QUEUE_BACKEND
         value: rq
+      - key: MEDIA_QUEUE_NAME
+        value: media
+      - key: TRANSLATOR_BACKEND
+        value: argos
       - key: WORKER_ENABLE_SCHEDULER
         value: "1"
       - key: WARM_BROWSER_POOL

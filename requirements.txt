@@ -22,3 +22,4 @@ browserforge
 patchright
 msgspec
 nh3
+argostranslate

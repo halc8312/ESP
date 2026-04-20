@@ -155,10 +155,33 @@ def _build_image_snapshot(product, base_snapshot, image_urls):
 
 
 def _render_product_detail(session_db, product, snapshot, images, *, error=None, status_code=200):
+    from services.translator import compute_source_hash
+
     templates = session_db.query(DescriptionTemplate).order_by(DescriptionTemplate.name).all()
     all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
     current_shop_id = session.get('current_shop_id')
     variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
+
+    current_title_hash = compute_source_hash(product.custom_title or product.last_title or "")
+    current_description_hash = compute_source_hash(
+        product.custom_description
+        or (snapshot.description if snapshot is not None else "")
+        or ""
+    )
+    translation_state = {
+        "title_stale": bool(
+            product.custom_title_en
+            and product.custom_title_en_source_hash
+            and product.custom_title_en_source_hash != current_title_hash
+        ),
+        "description_stale": bool(
+            product.custom_description_en
+            and product.custom_description_en_source_hash
+            and product.custom_description_en_source_hash != current_description_hash
+        ),
+        "title_has_translation": bool(product.custom_title_en),
+        "description_has_translation": bool(product.custom_description_en),
+    }
 
     return render_template(
         "product_detail.html",
@@ -170,6 +193,7 @@ def _render_product_detail(session_db, product, snapshot, images, *, error=None,
         current_shop_id=current_shop_id,
         variants=variants,
         error=error,
+        translation_state=translation_state,
     ), status_code
 
 
