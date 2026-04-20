@@ -72,4 +72,11 @@ USER myuser
 
 # ScrapeQueue はプロセス内シングルトンのため worker は 1 を維持する
 # シェル形式を使用して ${PORT} 変数を展開する
-CMD gunicorn --worker-class gthread --workers 1 --threads 8 --max-requests 0 --timeout 600 --bind 0.0.0.0:${PORT:-10000} wsgi:app
+#
+# ``PORT`` is Render's public port (10000) — the external HTTPS load balancer
+# only terminates to this port. Render's private network explicitly *blocks*
+# port 10000, 18012, 18013, and 19099, so the esp-worker cannot reach
+# esp-web on ``http://esp-web:10000``. We therefore bind a second port
+# (``INTERNAL_PORT``, default 8080) that is exposed only on the private
+# network, and point the worker's ``WEB_INTERNAL_URL`` at it.
+CMD gunicorn --worker-class gthread --workers 1 --threads 8 --max-requests 0 --timeout 600 --bind 0.0.0.0:${PORT:-10000} --bind 0.0.0.0:${INTERNAL_PORT:-8080} wsgi:app
