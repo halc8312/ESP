@@ -50,7 +50,23 @@ DEFAULT_UPLOAD_TIMEOUT_SECONDS = 60
 
 
 def _resolve_web_base_url() -> str:
-    """Return the base URL the worker should use to reach esp-web."""
+    """Return the base URL the worker should use to reach esp-web.
+
+    Resolution order:
+
+    1. Explicit full URL via ``ESP_WEB_INTERNAL_URL`` / ``WEB_INTERNAL_URL`` /
+       ``WEB_PUBLIC_URL`` (useful for local dev + one-off overrides).
+    2. Host + port composition via ``WEB_INTERNAL_HOST`` and ``WEB_INTERNAL_PORT``.
+       In Render's split deployment, ``WEB_INTERNAL_HOST`` is injected from the
+       esp-web service's ``host`` property (e.g. ``esp-web-ne5j``). The bare
+       service name ``esp-web`` does **not** resolve on Render's private
+       network — the real hostname includes an auto-generated suffix.
+       ``WEB_INTERNAL_PORT`` defaults to 8080 because Render's private network
+       explicitly blocks port 10000 (the public HTTPS port) and
+       18012/18013/19099 for internal communication.
+    3. A last-resort default kept only so local unit tests / ad-hoc single-web
+       deployments don't crash. It is intentionally not ``esp-web:10000``.
+    """
     configured = (
         os.environ.get("ESP_WEB_INTERNAL_URL")
         or os.environ.get("WEB_INTERNAL_URL")
@@ -60,11 +76,15 @@ def _resolve_web_base_url() -> str:
     if configured:
         return configured.rstrip("/")
 
-    # Render's private network explicitly blocks port 10000 (the public
-    # HTTPS port) and 18012/18013/19099 for internal communication, so the
-    # esp-web service must listen on a *second* port for worker traffic.
-    # The default matches render.yaml's ``INTERNAL_PORT=8080``; operators
-    # should still set ``WEB_INTERNAL_URL`` explicitly when deploying.
+    host = (os.environ.get("WEB_INTERNAL_HOST") or "").strip()
+    if host:
+        port = (os.environ.get("WEB_INTERNAL_PORT") or "8080").strip() or "8080"
+        return f"http://{host}:{port}"
+
+    # Fallback: bare ``esp-web`` will not resolve on Render's private network
+    # (services get an auto-suffixed hostname like ``esp-web-ne5j``), but this
+    # keeps local/dev behaviour unchanged and avoids port 10000 which is
+    # always blocked.
     return "http://esp-web:8080"
 
 

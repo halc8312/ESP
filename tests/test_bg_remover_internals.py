@@ -106,7 +106,13 @@ def test_resolve_web_base_url_default_avoids_render_blocked_port(monkeypatch):
     the previous default caused NameResolutionError in production."""
     from jobs import bg_removal_tasks
 
-    for var in ("ESP_WEB_INTERNAL_URL", "WEB_INTERNAL_URL", "WEB_PUBLIC_URL"):
+    for var in (
+        "ESP_WEB_INTERNAL_URL",
+        "WEB_INTERNAL_URL",
+        "WEB_PUBLIC_URL",
+        "WEB_INTERNAL_HOST",
+        "WEB_INTERNAL_PORT",
+    ):
         monkeypatch.delenv(var, raising=False)
 
     base = bg_removal_tasks._resolve_web_base_url()
@@ -125,3 +131,36 @@ def test_resolve_web_base_url_respects_explicit_env(monkeypatch):
 
     monkeypatch.setenv("ESP_WEB_INTERNAL_URL", "http://alt-web:7000")
     assert bg_removal_tasks._resolve_web_base_url() == "http://alt-web:7000"
+
+
+def test_resolve_web_base_url_uses_internal_host_env(monkeypatch):
+    """When Render injects ``WEB_INTERNAL_HOST`` via ``fromService``, the
+    worker must build ``http://<host>:<port>`` using it — not the bare
+    service name, which does not resolve on Render's private network."""
+    from jobs import bg_removal_tasks
+
+    for var in ("ESP_WEB_INTERNAL_URL", "WEB_INTERNAL_URL", "WEB_PUBLIC_URL"):
+        monkeypatch.delenv(var, raising=False)
+
+    monkeypatch.setenv("WEB_INTERNAL_HOST", "esp-web-ne5j")
+    monkeypatch.setenv("WEB_INTERNAL_PORT", "8080")
+    assert (
+        bg_removal_tasks._resolve_web_base_url() == "http://esp-web-ne5j:8080"
+    )
+
+    # Port defaults to 8080 when only the host is set.
+    monkeypatch.delenv("WEB_INTERNAL_PORT", raising=False)
+    assert (
+        bg_removal_tasks._resolve_web_base_url() == "http://esp-web-ne5j:8080"
+    )
+
+
+def test_resolve_web_base_url_explicit_url_wins_over_host(monkeypatch):
+    """An explicit full URL must win over host+port composition so operators
+    can override the Render-injected hostname for debugging."""
+    from jobs import bg_removal_tasks
+
+    monkeypatch.setenv("WEB_INTERNAL_HOST", "esp-web-ne5j")
+    monkeypatch.setenv("WEB_INTERNAL_PORT", "8080")
+    monkeypatch.setenv("WEB_INTERNAL_URL", "http://debug-host:7777")
+    assert bg_removal_tasks._resolve_web_base_url() == "http://debug-host:7777"
