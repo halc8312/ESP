@@ -42,10 +42,15 @@ RUN scrapling install \
 ENV ARGOS_PACKAGES_DIR=/opt/argos/packages \
     ARGOS_TRANSLATE_PACKAGE_DIR=/opt/argos/translate \
     ARGOS_PACKAGE_INDEX_CACHE=/opt/argos/index
+
+# Copy the preload helper first so we can bake the model without having to
+# invalidate the requirements layer when application code changes.
+COPY services/translator/preload.py /tmp/argos_preload.py
 RUN mkdir -p "$ARGOS_PACKAGES_DIR" "$ARGOS_TRANSLATE_PACKAGE_DIR" "$ARGOS_PACKAGE_INDEX_CACHE" \
     && TRANSLATOR_PRELOAD_SOURCE_LANG=ja TRANSLATOR_PRELOAD_TARGET_LANG=en \
-        python -m services.translator.preload \
-    && chmod -R 755 /opt/argos
+        python /tmp/argos_preload.py \
+    && chmod -R 755 /opt/argos \
+    && rm -f /tmp/argos_preload.py
 
 COPY . .
 
