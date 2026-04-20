@@ -1006,6 +1006,24 @@
         }
     }
 
+    // Bridge for product_bg_removal.js: when the user applies a bg-removal
+    // result, swap the original URL for the processed URL in the page-level
+    // imageUrls array so the hidden image_urls_json field (and therefore the
+    // next form save) carries the new URL instead of silently reverting to
+    // the original.
+    window.replaceImageUrl = function (oldUrl, newUrl) {
+        if (!oldUrl || !newUrl || oldUrl === newUrl) {
+            return false;
+        }
+        var idx = imageUrls.indexOf(oldUrl);
+        if (idx === -1) {
+            return false;
+        }
+        imageUrls[idx] = newUrl;
+        syncImageUrls();
+        return true;
+    };
+
     function renderImageList() {
         if (!imageGrid) {
             return;
