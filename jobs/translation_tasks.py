@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from services.rich_text import normalize_rich_text
 from services.translator import get_translator_backend
 from services.translator.base import TranslationError
 from services.translator.suggestion_store import (
@@ -71,9 +72,16 @@ def execute_translation_job(job_id: str) -> dict[str, Any]:
             translated_title = backend.translate_plain(source_title).strip() or None
 
         if scope in {"description", "full"} and source_description.strip():
-            translated_description = (
-                backend.translate_html(source_description).strip() or None
-            )
+            # Sanitise the source first so the translator never operates on
+            # attacker-controlled HTML (the source can come from a scraped
+            # marketplace snapshot). normalize_rich_text enforces the same
+            # allowlist as the editor via nh3.
+            safe_source = normalize_rich_text(source_description)
+            if safe_source:
+                translated_raw = backend.translate_html(safe_source).strip()
+                # Belt-and-braces: sanitise the output too before it gets
+                # stored and rendered in the review UI.
+                translated_description = normalize_rich_text(translated_raw) or None
 
         mark_succeeded(
             job_id,

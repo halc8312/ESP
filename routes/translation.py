@@ -270,9 +270,17 @@ def apply_translation_suggestion(job_id: str):
             changes["custom_title_en"] = suggestion.translated_title
 
         if apply_description and suggestion.translated_description:
-            product.custom_description_en = suggestion.translated_description
-            product.custom_description_en_source_hash = suggestion.source_description_hash
-            changes["custom_description_en"] = suggestion.translated_description
+            from services.rich_text import normalize_rich_text
+
+            sanitised_description = (
+                normalize_rich_text(suggestion.translated_description) or None
+            )
+            if sanitised_description:
+                product.custom_description_en = sanitised_description
+                product.custom_description_en_source_hash = (
+                    suggestion.source_description_hash
+                )
+                changes["custom_description_en"] = sanitised_description
 
         if not changes:
             return (

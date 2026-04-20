@@ -231,6 +231,40 @@ def test_reject_marks_suggestion_rejected(client, db_session):
     assert suggestion.status == "rejected"
 
 
+def test_translation_pipeline_strips_malicious_html_before_storing(client, db_session):
+    """Script/onerror payloads in scraped source must never survive translation."""
+    user = _login(client, db_session, "xss_guard_tester")
+    product = _create_product(
+        db_session,
+        user,
+        description='<p>こんにちは</p><script>alert(1)</script>'
+                    '<img src=x onerror="alert(document.cookie)">',
+    )
+
+    response = client.post(
+        f"/api/products/{product.id}/translate",
+        json={"scope": "description"},
+    )
+    assert response.status_code == 201, response.data
+    suggestion = response.get_json()["suggestion"]
+    translated = suggestion["translated_description"] or ""
+
+    assert "<script" not in translated.lower()
+    assert "onerror" not in translated.lower()
+    assert "<img" not in translated.lower()
+
+    # Applying must also not reintroduce unsafe HTML.
+    job_id = suggestion["job_id"]
+    apply_resp = client.post(f"/api/translation-suggestions/{job_id}/apply")
+    assert apply_resp.status_code == 200
+
+    db_session.expire_all()
+    refreshed = db_session.query(Product).filter_by(id=product.id).one()
+    stored = refreshed.custom_description_en or ""
+    assert "<script" not in stored.lower()
+    assert "onerror" not in stored.lower()
+
+
 def test_reject_denies_other_users_suggestion(client, db_session):
     owner = User(username="suggestion_owner")
     owner.set_password("testpassword")
