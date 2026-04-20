@@ -60,10 +60,12 @@ def _resolve_web_base_url() -> str:
     if configured:
         return configured.rstrip("/")
 
-    # Render internal DNS convention: ``http://esp-web:10000`` works in
-    # many Render topologies but isn't guaranteed; operators should set
-    # WEB_INTERNAL_URL explicitly in render.yaml.
-    return "http://esp-web:10000"
+    # Render's private network explicitly blocks port 10000 (the public
+    # HTTPS port) and 18012/18013/19099 for internal communication, so the
+    # esp-web service must listen on a *second* port for worker traffic.
+    # The default matches render.yaml's ``INTERNAL_PORT=8080``; operators
+    # should still set ``WEB_INTERNAL_URL`` explicitly when deploying.
+    return "http://esp-web:8080"
 
 
 def _resolve_source_fetch_timeout() -> int:

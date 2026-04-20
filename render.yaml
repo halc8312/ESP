@@ -82,8 +82,12 @@ services:
         value: rembg
       - key: BG_REMOVAL_INTERNAL_SECRET
         sync: false
+      # Render's private network blocks port 10000 (the public HTTPS port).
+      # esp-web binds a second port (INTERNAL_PORT=8080) inside the container
+      # specifically so background workers can POST to internal endpoints
+      # (e.g. /internal/bg-removal/<job_id>/upload) over the private network.
       - key: WEB_INTERNAL_URL
-        value: http://esp-web:10000
+        value: http://esp-web:8080
       - key: WORKER_ENABLE_SCHEDULER
         value: "1"
       - key: WARM_BROWSER_POOL
