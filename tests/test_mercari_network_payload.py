@@ -594,6 +594,91 @@ def test_scrape_item_detail_can_return_payload_result_when_dom_fetch_fails(monke
     assert data["_scrape_meta"]["network_capture"]["used_payload"] is True
 
 
+def test_scrape_item_detail_non_browser_pool_path_unions_photos_from_captured_payloads(monkeypatch):
+    """Regression for the Devin Review finding on PR #64.
+
+    When ``MERCARI_CAPTURE_NETWORK_PAYLOAD`` is enabled but
+    ``MERCARI_USE_BROWSER_POOL_DETAIL`` is NOT, the non-browser-pool capture
+    path must still feed every captured API response into the photo URL
+    union post-pass.  Before the fix, ``_capture_mercari_network_payload``
+    discarded all but the single winning candidate, so items whose photos
+    were split across multiple responses (or whose winner carried a
+    sparse photo list) returned only 1 image in production.
+    """
+    url = "https://jp.mercari.com/item/m123456789"
+    monkeypatch.setenv("MERCARI_CAPTURE_NETWORK_PAYLOAD", "true")
+    monkeypatch.setenv("MERCARI_USE_NETWORK_PAYLOAD", "true")
+    monkeypatch.delenv("MERCARI_USE_BROWSER_POOL_DETAIL", raising=False)
+
+    # Winner carries a single photo; the rest live in other captured
+    # responses (think /items/get_items?seller_id=… returning the full
+    # photo list of the target item alongside other seller items).
+    winner_photo = "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg?aaa"
+    other_photos = [
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg?bbb",
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_3.jpg?ccc",
+        "https://static.mercdn.net/item/detail/orig/photos/m123456789_4.jpg?ddd",
+    ]
+
+    payload_bundle = {
+        "item": {
+            "url": url,
+            "title": "Payload Title",
+            "price": 3200,
+            "status": "on_sale",
+            "description": "Payload description",
+            "image_urls": [winner_photo],
+            "variants": [],
+        },
+        "meta": {
+            "strategy": "payload",
+            "field_sources": {"image_urls": "payload"},
+        },
+        "response_url": "https://api.mercari.example/items/m123456789",
+        "responses_seen": 2,
+        "captured_payloads": [
+            {
+                "url": "https://api.mercari.jp/items/get?id=m123456789",
+                "payload": {
+                    "data": {
+                        "id": "m123456789",
+                        "photos": [{"url": winner_photo}],
+                    },
+                },
+            },
+            {
+                "url": "https://api.mercari.jp/v2/relateditems/list-similar-items",
+                "payload": {
+                    "items": [
+                        {
+                            "id": "m123456789",
+                            "photos": [{"url": u} for u in other_photos],
+                        },
+                        {
+                            "id": "m999999999",
+                            "photos": [
+                                {"url": "https://static.mercdn.net/item/detail/orig/photos/m999999999_1.jpg"},
+                            ],
+                        },
+                    ],
+                },
+            },
+        ],
+    }
+
+    with patch("mercari_db._capture_mercari_network_payload", return_value=payload_bundle), patch(
+        "mercari_db.fetch_dynamic", return_value=MagicMock()
+    ), patch("mercari_db.parse_mercari_item_page", return_value=(_dom_item(url), _dom_meta())):
+        data = scrape_item_detail(url)
+
+    image_urls = data["image_urls"]
+    # All four target photos must be present, ordered by photo index,
+    # deduplicated, and with no photos belonging to the unrelated
+    # m999999999 item.
+    assert image_urls[:4] == [winner_photo] + other_photos
+    assert all("m999999999" not in u for u in image_urls)
+
+
 def test_scrape_item_detail_can_use_browser_pool_dom_fetch(monkeypatch):
     url = "https://jp.mercari.com/item/m123456789"
     monkeypatch.setenv("MERCARI_USE_BROWSER_POOL_DETAIL", "true")
