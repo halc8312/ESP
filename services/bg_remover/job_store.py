@@ -117,6 +117,16 @@ def mark_succeeded(
         if row is None:
             logger.warning("bg job not found while marking succeeded: %s", job_id)
             return None
+        if row.status in TERMINAL_STATUSES:
+            # Preserve operator decisions (applied/rejected) and any prior
+            # terminal state instead of letting a late worker success
+            # overwrite them.
+            logger.info(
+                "bg job %s already in terminal status %s; not marking succeeded",
+                job_id,
+                row.status,
+            )
+            return None
         now = utc_now()
         row.status = "succeeded"
         row.result_image_url = result_image_url
@@ -151,6 +161,15 @@ def mark_failed(
         )
         if row is None:
             logger.warning("bg job not found while marking failed: %s", job_id)
+            return
+        if row.status in TERMINAL_STATUSES:
+            # The worker's late failure path must not clobber an operator's
+            # reject/apply decision or an earlier succeeded result.
+            logger.info(
+                "bg job %s already in terminal status %s; not marking failed",
+                job_id,
+                row.status,
+            )
             return
         now = utc_now()
         row.status = "failed"

@@ -363,6 +363,69 @@ def test_internal_upload_rejects_bad_signature(client, db_session, monkeypatch):
     assert response.status_code == 401
 
 
+def test_mark_succeeded_preserves_terminal_status(db_session):
+    """A late worker success must not overwrite an operator's reject/apply."""
+    from services.bg_remover import job_store
+
+    user = User(username="guard-success")
+    user.set_password("x")
+    db_session.add(user)
+    db_session.commit()
+    product = _create_product_with_images(
+        db_session, user, ["/media/product_images/guard1.jpg"]
+    )
+
+    job = ImageProcessingJob(
+        job_id="guard-success-job",
+        product_id=product.id,
+        user_id=user.id,
+        source_image_url="/media/product_images/guard1.jpg",
+        provider="rembg",
+        status="rejected",
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    result = job_store.mark_succeeded(
+        job.job_id, result_image_url="/media/processed_images/out.png"
+    )
+    assert result is None
+
+    db_session.refresh(job)
+    assert job.status == "rejected"
+    assert job.result_image_url is None
+
+
+def test_mark_failed_preserves_terminal_status(db_session):
+    """A late worker failure must not overwrite an operator's reject/apply."""
+    from services.bg_remover import job_store
+
+    user = User(username="guard-failed")
+    user.set_password("x")
+    db_session.add(user)
+    db_session.commit()
+    product = _create_product_with_images(
+        db_session, user, ["/media/product_images/guard2.jpg"]
+    )
+
+    job = ImageProcessingJob(
+        job_id="guard-failed-job",
+        product_id=product.id,
+        user_id=user.id,
+        source_image_url="/media/product_images/guard2.jpg",
+        provider="rembg",
+        status="applied",
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    job_store.mark_failed(job.job_id, error_message="late boom")
+
+    db_session.refresh(job)
+    assert job.status == "applied"
+    assert job.error_message is None
+
+
 def test_internal_upload_is_csrf_exempt(app, client, db_session):
     """Worker->web upload must work even with CSRFProtect fully enabled,
     because workers authenticate via HMAC instead of browser cookies."""
