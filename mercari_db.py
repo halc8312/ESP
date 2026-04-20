@@ -528,7 +528,13 @@ async def _capture_mercari_network_payload_async(url: str) -> dict:
         },
     )
 
-    return _select_best_mercari_payload(captured_payloads, url)
+    result = _select_best_mercari_payload(captured_payloads, url)
+    # Preserve the full captured payload list so downstream post-passes
+    # (notably the photo URL union) can scan every response, not just the
+    # single winning candidate.  Without this the non-browser-pool capture
+    # path silently drops photos that live in other responses.
+    result["captured_payloads"] = captured_payloads
+    return result
 
 
 def _capture_mercari_network_payload(url: str) -> dict:
@@ -941,6 +947,22 @@ def scrape_item_detail(url: str, driver=None):
             payload_meta.setdefault("field_sources", dict(payload_meta.get("field_sources") or {}))
             payload_meta["network_capture"] = network_capture
             payload_meta["fallback_mode"] = "payload_without_dom"
+            # Even in the DOM-failed fallback we still have every
+            # captured API response, so run the photo URL union so the
+            # caller isn't stuck with just the winning candidate's
+            # (often sparse) photo subset.
+            fallback_target_id = extract_mercari_item_id(url)
+            if fallback_target_id:
+                fallback_blobs: list = []
+                for captured in browser_pool_payloads or []:
+                    if isinstance(captured, dict):
+                        fallback_blobs.append(captured.get("payload"))
+                for captured in payload_result.get("captured_payloads") or []:
+                    if isinstance(captured, dict):
+                        fallback_blobs.append(captured.get("payload"))
+                _merge_target_photo_url_union(
+                    payload_item, payload_meta, fallback_blobs, fallback_target_id,
+                )
             attach_extraction_trace(
                 payload_item,
                 strategy=payload_meta.get("strategy", "payload"),
@@ -1007,7 +1029,14 @@ def scrape_item_detail(url: str, driver=None):
     target_item_id = extract_mercari_item_id(url)
     if target_item_id:
         blobs: list = []
+        # Browser-pool detail path exposes the raw captured payloads list.
         for captured in browser_pool_payloads or []:
+            if isinstance(captured, dict):
+                blobs.append(captured.get("payload"))
+        # Non-browser-pool network capture path returns only the single
+        # best selection; we stash the full list on payload_result so we
+        # can scan every response for target photos here too.
+        for captured in payload_result.get("captured_payloads") or []:
             if isinstance(captured, dict):
                 blobs.append(captured.get("payload"))
         if page is not None:
