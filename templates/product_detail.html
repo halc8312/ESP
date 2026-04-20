@@ -1016,6 +1016,7 @@
         imageUrls.forEach(function (url, index) {
             var card = document.createElement('article');
             card.className = 'product-image-card';
+            card.setAttribute('data-image-url', url);
 
             var actions = document.createElement('div');
             actions.className = 'product-image-card-actions';
@@ -1023,16 +1024,16 @@
             var backgroundButton = document.createElement('button');
             backgroundButton.type = 'button';
             backgroundButton.className = 'product-image-action-btn remove-bg';
-            backgroundButton.textContent = 'BG';
-            backgroundButton.disabled = true;
-            backgroundButton.title = '白背景化は後続対応です';
+            backgroundButton.textContent = '白抜き';
+            backgroundButton.title = '背景を白抜きして透過PNGを生成します';
+            backgroundButton.setAttribute('data-bg-remove-btn', '');
             actions.appendChild(backgroundButton);
 
             var iconDeleteButton = document.createElement('button');
             iconDeleteButton.type = 'button';
-            iconDeleteButton.className = 'product-image-action-btn delete';
+            iconDeleteButton.className = 'product-image-action-btn delete image-delete-btn-icon';
             iconDeleteButton.textContent = '✕';
-            iconDeleteButton.title = 'この画像を削除';
+            iconDeleteButton.title = '削除';
             iconDeleteButton.addEventListener('click', function () {
                 imageUrls.splice(index, 1);
                 renderImageList();
@@ -1045,6 +1046,7 @@
             thumb.className = 'product-image-thumb';
             thumb.src = url;
             thumb.alt = 'image ' + (index + 1);
+            thumb.setAttribute('data-bg-thumb', '');
             card.appendChild(thumb);
 
             var body = document.createElement('div');
@@ -1070,6 +1072,33 @@
             urlText.className = 'product-image-url';
             urlText.textContent = url;
             body.appendChild(urlText);
+
+            var bgStatus = document.createElement('div');
+            bgStatus.className = 'product-image-bg-status';
+            bgStatus.setAttribute('data-bg-status', '');
+            bgStatus.hidden = true;
+            body.appendChild(bgStatus);
+
+            var bgActions = document.createElement('div');
+            bgActions.className = 'product-image-bg-actions';
+            bgActions.setAttribute('data-bg-actions', '');
+            bgActions.hidden = true;
+
+            var applyBtn = document.createElement('button');
+            applyBtn.type = 'button';
+            applyBtn.className = 'btn-secondary btn-sm';
+            applyBtn.textContent = '反映';
+            applyBtn.setAttribute('data-bg-apply', '');
+            bgActions.appendChild(applyBtn);
+
+            var rejectBtn = document.createElement('button');
+            rejectBtn.type = 'button';
+            rejectBtn.className = 'btn-secondary btn-sm';
+            rejectBtn.textContent = '破棄';
+            rejectBtn.setAttribute('data-bg-reject', '');
+            bgActions.appendChild(rejectBtn);
+
+            body.appendChild(bgActions);
 
             card.appendChild(body);
             imageGrid.appendChild(card);
