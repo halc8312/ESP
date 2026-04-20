@@ -142,6 +142,12 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(translation_bp)
     app.register_blueprint(bg_removal_bp)
 
+    # Internal worker-to-web upload endpoint authenticates via HMAC, not
+    # browser sessions; exempt it from CSRF so the RQ worker can POST the
+    # processed PNG back. User-facing bg-removal routes remain protected.
+    from routes.bg_removal import internal_upload_bg_result
+    csrf.exempt(internal_upload_bg_result)
+
 
 def _register_backward_compat_aliases(app: Flask) -> None:
     app.add_url_rule("/", endpoint="index", view_func=lambda: None, build_only=True)

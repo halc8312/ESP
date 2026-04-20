@@ -149,10 +149,10 @@ def _build_snapshot_with_images(
     snapshot = ProductSnapshot(
         product_id=product.id,
         scraped_at=utc_now(),
-        title=getattr(latest, "title", None) or product.last_title,
-        price=getattr(latest, "price", None) or product.last_price,
-        status=getattr(latest, "status", None) or product.last_status,
-        description=getattr(latest, "description", None),
+        title=latest.title if latest and latest.title is not None else product.last_title,
+        price=latest.price if latest and latest.price is not None else product.last_price,
+        status=latest.status if latest and latest.status is not None else product.last_status,
+        description=latest.description if latest else None,
         image_urls="|".join(new_image_urls),
     )
     session_db.add(snapshot)
@@ -443,6 +443,12 @@ def reject_image_job(job_id: str):
         )
         if row is None:
             return jsonify({"error": "not_found"}), 404
+
+        # Guard against terminal-state transitions: once a job has been
+        # applied or already rejected, surface the current state instead
+        # of overwriting it.
+        if row.status in {"applied", "rejected"}:
+            return jsonify({"job": serialize_job(row)})
 
         row.status = "rejected"
         row.updated_at = utc_now()

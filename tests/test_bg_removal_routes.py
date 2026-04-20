@@ -363,6 +363,51 @@ def test_internal_upload_rejects_bad_signature(client, db_session, monkeypatch):
     assert response.status_code == 401
 
 
+def test_internal_upload_is_csrf_exempt(app, client, db_session):
+    """Worker->web upload must work even with CSRFProtect fully enabled,
+    because workers authenticate via HMAC instead of browser cookies."""
+    user = User(username="hmac-csrf")
+    user.set_password("x")
+    db_session.add(user)
+    db_session.commit()
+    product = _create_product_with_images(
+        db_session, user, ["/media/product_images/hmac_csrf.jpg"]
+    )
+    job = ImageProcessingJob(
+        job_id="hmac-job-csrf",
+        product_id=product.id,
+        user_id=user.id,
+        source_image_url="/media/product_images/hmac_csrf.jpg",
+        provider="rembg",
+        status="running",
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    body = b"\x89PNG\r\n\x1a\nfakebytes"
+    ts = str(int(time.time()))
+    sig = compute_signature(job_id=job.job_id, timestamp=ts, body=body)
+
+    # Flip CSRF on to mimic production; the internal upload endpoint
+    # should still succeed because app.py exempts it from CSRF.
+    app.config["WTF_CSRF_ENABLED"] = True
+    try:
+        response = client.post(
+            f"/internal/bg-removal/{job.job_id}/upload",
+            data=body,
+            content_type="application/octet-stream",
+            headers={
+                SIGNATURE_HEADER: sig,
+                TIMESTAMP_HEADER: ts,
+                JOB_ID_HEADER: job.job_id,
+            },
+        )
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = False
+
+    assert response.status_code == 200, response.data
+
+
 def test_internal_upload_rejects_stale_timestamp(client, db_session, monkeypatch):
     user = User(username="hmac-stale")
     user.set_password("x")
