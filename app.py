@@ -122,6 +122,7 @@ def _register_blueprints(app: Flask) -> None:
     from routes.settings import settings_bp
     from routes.shops import shops_bp
     from routes.translation import translation_bp
+    from routes.bg_removal import bg_removal_bp
     from routes.trash import trash_bp
 
     app.register_blueprint(auth_bp)
@@ -139,6 +140,7 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(catalog_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(translation_bp)
+    app.register_blueprint(bg_removal_bp)
 
 
 def _register_backward_compat_aliases(app: Flask) -> None:

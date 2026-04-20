@@ -449,28 +449,33 @@
                         <div class="image-manager-toolbar">
                             <div style="display: grid; gap: 6px;">
                                 <p class="product-image-note">ドラッグで並べ替え、不要な画像は削除できます。URL追加と画像アップロードに対応しています。</p>
-                                <p class="product-edit-mock-note"><strong>白背景化ボタンは先に配置</strong>しています。処理自体は後続で連携します。</p>
+                                <p class="product-edit-mock-note"><strong>白抜き</strong>ボタンで背景を透過PNGに変換できます。処理完了後にプレビューを確認して反映/破棄を選択してください。</p>
                             </div>
                             <div class="image-toolbar-actions">
-                                <button type="button" class="btn-secondary mock-feature-btn" disabled title="白背景化は後続対応です">まとめて白抜き</button>
                                 <button type="button" class="btn-secondary" onclick="focusImageUrlInput()">URLから追加</button>
+                                <button type="button" class="btn-secondary" data-bg-remove-bulk-btn title="全ての画像の背景を白抜きします">まとめて白抜き</button>
                             </div>
                         </div>
 
-                        <div id="imageSortGrid" class="image-sort-grid">
+                        <div id="imageSortGrid" class="image-sort-grid" data-product-id="{{ product.id }}">
                             {% for url in images %}
                             <article class="product-image-card" data-image-url="{{ url }}">
                                 <div class="product-image-card-actions">
-                                    <button type="button" class="product-image-action-btn remove-bg" disabled title="白背景化は後続対応です">BG</button>
+                                    <button type="button" class="product-image-action-btn remove-bg" data-bg-remove-btn title="背景を白抜きして透過PNGを生成します">白抜き</button>
                                     <button type="button" class="product-image-action-btn delete image-delete-btn-icon" title="削除">✕</button>
                                 </div>
-                                <img src="{{ url }}" alt="image {{ loop.index }}" class="product-image-thumb">
+                                <img src="{{ url }}" alt="image {{ loop.index }}" class="product-image-thumb" data-bg-thumb>
                                 <div class="product-image-card-body">
                                     <div class="product-image-card-top">
                                         <span class="product-image-order">{{ loop.index }}枚目</span>
                                         <button type="button" class="image-sort-handle">並べ替え</button>
                                     </div>
                                     <div class="product-image-url">{{ url }}</div>
+                                    <div class="product-image-bg-status" data-bg-status hidden></div>
+                                    <div class="product-image-bg-actions" data-bg-actions hidden>
+                                        <button type="button" class="btn-secondary btn-sm" data-bg-apply>反映</button>
+                                        <button type="button" class="btn-secondary btn-sm" data-bg-reject>破棄</button>
+                                    </div>
                                 </div>
                             </article>
                             {% endfor %}
@@ -848,6 +853,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.6/Sortable.min.js" referrerpolicy="origin"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tinymce/6.8.3/tinymce.min.js" referrerpolicy="origin"></script>
 <script src="{{ url_for('static', filename='js/product_translation.js') }}"></script>
+<script src="{{ url_for('static', filename='js/product_bg_removal.js') }}"></script>
 <script>
     var imageUrls = [];
     var imageGrid = null;

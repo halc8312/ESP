@@ -52,6 +52,18 @@ RUN mkdir -p "$ARGOS_PACKAGES_DIR" "$ARGOS_TRANSLATE_PACKAGE_DIR" "$ARGOS_PACKAG
     && chmod -R 755 /opt/argos \
     && rm -f /tmp/argos_preload.py
 
+# Bake the rembg u2netp background-removal model into the image so the
+# worker never has to download it on first use. u2netp is ~4.7MB on disk
+# and ~250MB resident — comfortably fits alongside the Playwright browser
+# pool on the current esp-worker standard plan.
+ENV U2NET_HOME=/opt/rembg
+COPY services/bg_remover/preload.py /tmp/rembg_preload.py
+RUN mkdir -p "$U2NET_HOME" \
+    && BG_REMOVAL_PRELOAD_MODEL=u2netp \
+        python /tmp/rembg_preload.py \
+    && chmod -R 755 /opt/rembg \
+    && rm -f /tmp/rembg_preload.py
+
 COPY . .
 
 RUN useradd -m myuser

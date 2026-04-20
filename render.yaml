@@ -43,6 +43,10 @@ services:
         value: media
       - key: TRANSLATOR_BACKEND
         value: argos
+      - key: BG_REMOVAL_BACKEND
+        value: rembg
+      - key: BG_REMOVAL_INTERNAL_SECRET
+        sync: false
       - key: SELECTOR_ALERT_WEBHOOK_URL
         sync: false
 
@@ -74,6 +78,12 @@ services:
         value: media
       - key: TRANSLATOR_BACKEND
         value: argos
+      - key: BG_REMOVAL_BACKEND
+        value: rembg
+      - key: BG_REMOVAL_INTERNAL_SECRET
+        sync: false
+      - key: WEB_INTERNAL_URL
+        value: http://esp-web:10000
       - key: WORKER_ENABLE_SCHEDULER
         value: "1"
       - key: WARM_BROWSER_POOL
