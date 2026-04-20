@@ -66,7 +66,8 @@ RUN mkdir -p "$U2NET_HOME" \
 
 COPY . .
 
-RUN useradd -m myuser
+RUN useradd -m myuser \
+    && chown -R myuser:myuser /opt/argos /opt/rembg
 USER myuser
 
 # ScrapeQueue はプロセス内シングルトンのため worker は 1 を維持する

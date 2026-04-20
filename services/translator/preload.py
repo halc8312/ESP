@@ -103,6 +103,32 @@ def main() -> int:
         return 0
 
     logger.info("Argos %s->%s package installed successfully.", source, target)
+
+    # Argos delegates Japanese sentence segmentation to stanza, which lazily
+    # downloads its ``resources.json`` and tokenizer model into the package's
+    # ``stanza/`` subdirectory on first use. At runtime the worker runs as a
+    # non-root user without write access to ``/opt/argos``, so we must force
+    # that download here at build time by executing one real translation.
+    #
+    # We run a sample for the configured pair only; other pairs would not be
+    # installed. English targets do not need stanza on the source side, but
+    # for the default ja->en pair the call above triggers StanzaSentencizer
+    # to populate the stanza directory, which we then chmod world-readable.
+    sample_text = "これはビルド時の翻訳プリロードです。"
+    try:
+        logger.info(
+            "Running warmup translation to trigger stanza resource download ..."
+        )
+        argostranslate.translate.translate(sample_text, source, target)
+        logger.info("Warmup translation succeeded; stanza resources cached.")
+    except Exception as exc:
+        logger.warning(
+            "Warmup translation failed (%s). The worker may still need to "
+            "download stanza resources at runtime, which will fail if the "
+            "package directory is not writable.",
+            exc,
+        )
+
     return 0
 
 
