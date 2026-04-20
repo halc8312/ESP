@@ -5,10 +5,18 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 
 from services.browser_pool import run_browser_page_task
 from services.html_page_adapter import HtmlPageAdapter
 from services.scraping_client import run_coro_sync
+
+_MERCARI_ITEM_ID_IN_URL = re.compile(r"/item/(m\d+)", re.IGNORECASE)
+
+
+def _extract_mercari_item_id_from_url(url: str) -> str:
+    match = _MERCARI_ITEM_ID_IN_URL.search(url or "")
+    return match.group(1).lower() if match else ""
 
 
 _MERCARI_LAUNCH_ARGS = [
@@ -138,9 +146,29 @@ async def fetch_mercari_page_and_payloads_via_browser_pool_async(
         )
 
         response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+        # On production (Render US) the /items/get?id=<TARGET> XHR frequently
+        # lands *after* the default 5s networkidle window, which caused the
+        # detail scraper to fall back to just the og:image (one image) on a
+        # large fraction of item pages.  Explicitly wait (best effort) for
+        # that response so the photo URL union post-pass always has a
+        # target-scoped blob to union from.
+        target_item_id = _extract_mercari_item_id_from_url(url)
+        if target_item_id:
+            def _matches_target_items_get(resp) -> bool:
+                resp_url = str(getattr(resp, "url", "") or "").lower()
+                return "items/get" in resp_url and target_item_id in resp_url
+
+            try:
+                await page.wait_for_response(
+                    _matches_target_items_get, timeout=15000
+                )
+            except Exception:
+                pass
+
         if network_idle:
             try:
-                await page.wait_for_load_state("networkidle", timeout=5000)
+                await page.wait_for_load_state("networkidle", timeout=10000)
             except Exception:
                 pass
         if wait_selector:
@@ -151,6 +179,14 @@ async def fetch_mercari_page_and_payloads_via_browser_pool_async(
 
         # Click through the image carousel to render all lazy-loaded images
         await _click_through_image_carousel(page)
+
+        # Give any late-firing XHRs (thumbnails, related items, photo details)
+        # a second networkidle pass so our response listener can capture them.
+        if network_idle:
+            try:
+                await page.wait_for_load_state("networkidle", timeout=3000)
+            except Exception:
+                pass
 
         if response_tasks:
             await asyncio.gather(*response_tasks, return_exceptions=True)
