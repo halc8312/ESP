@@ -449,28 +449,33 @@
                         <div class="image-manager-toolbar">
                             <div style="display: grid; gap: 6px;">
                                 <p class="product-image-note">ドラッグで並べ替え、不要な画像は削除できます。URL追加と画像アップロードに対応しています。</p>
-                                <p class="product-edit-mock-note"><strong>白背景化ボタンは先に配置</strong>しています。処理自体は後続で連携します。</p>
+                                <p class="product-edit-mock-note"><strong>白抜き</strong>ボタンで背景を透過PNGに変換できます。処理完了後にプレビューを確認して反映/破棄を選択してください。</p>
                             </div>
                             <div class="image-toolbar-actions">
-                                <button type="button" class="btn-secondary mock-feature-btn" disabled title="白背景化は後続対応です">まとめて白抜き</button>
                                 <button type="button" class="btn-secondary" onclick="focusImageUrlInput()">URLから追加</button>
+                                <button type="button" class="btn-secondary" data-bg-remove-bulk-btn title="全ての画像の背景を白抜きします">まとめて白抜き</button>
                             </div>
                         </div>
 
-                        <div id="imageSortGrid" class="image-sort-grid">
+                        <div id="imageSortGrid" class="image-sort-grid" data-product-id="{{ product.id }}">
                             {% for url in images %}
                             <article class="product-image-card" data-image-url="{{ url }}">
                                 <div class="product-image-card-actions">
-                                    <button type="button" class="product-image-action-btn remove-bg" disabled title="白背景化は後続対応です">BG</button>
+                                    <button type="button" class="product-image-action-btn remove-bg" data-bg-remove-btn title="背景を白抜きして透過PNGを生成します">白抜き</button>
                                     <button type="button" class="product-image-action-btn delete image-delete-btn-icon" title="削除">✕</button>
                                 </div>
-                                <img src="{{ url }}" alt="image {{ loop.index }}" class="product-image-thumb">
+                                <img src="{{ url }}" alt="image {{ loop.index }}" class="product-image-thumb" data-bg-thumb>
                                 <div class="product-image-card-body">
                                     <div class="product-image-card-top">
                                         <span class="product-image-order">{{ loop.index }}枚目</span>
                                         <button type="button" class="image-sort-handle">並べ替え</button>
                                     </div>
                                     <div class="product-image-url">{{ url }}</div>
+                                    <div class="product-image-bg-status" data-bg-status hidden></div>
+                                    <div class="product-image-bg-actions" data-bg-actions hidden>
+                                        <button type="button" class="btn-secondary btn-sm" data-bg-apply>反映</button>
+                                        <button type="button" class="btn-secondary btn-sm" data-bg-reject>破棄</button>
+                                    </div>
                                 </div>
                             </article>
                             {% endfor %}
@@ -848,6 +853,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.6/Sortable.min.js" referrerpolicy="origin"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tinymce/6.8.3/tinymce.min.js" referrerpolicy="origin"></script>
 <script src="{{ url_for('static', filename='js/product_translation.js') }}"></script>
+<script src="{{ url_for('static', filename='js/product_bg_removal.js') }}"></script>
 <script>
     var imageUrls = [];
     var imageGrid = null;
@@ -1000,6 +1006,24 @@
         }
     }
 
+    // Bridge for product_bg_removal.js: when the user applies a bg-removal
+    // result, swap the original URL for the processed URL in the page-level
+    // imageUrls array so the hidden image_urls_json field (and therefore the
+    // next form save) carries the new URL instead of silently reverting to
+    // the original.
+    window.replaceImageUrl = function (oldUrl, newUrl) {
+        if (!oldUrl || !newUrl || oldUrl === newUrl) {
+            return false;
+        }
+        var idx = imageUrls.indexOf(oldUrl);
+        if (idx === -1) {
+            return false;
+        }
+        imageUrls[idx] = newUrl;
+        syncImageUrls();
+        return true;
+    };
+
     function renderImageList() {
         if (!imageGrid) {
             return;
@@ -1010,6 +1034,7 @@
         imageUrls.forEach(function (url, index) {
             var card = document.createElement('article');
             card.className = 'product-image-card';
+            card.setAttribute('data-image-url', url);
 
             var actions = document.createElement('div');
             actions.className = 'product-image-card-actions';
@@ -1017,16 +1042,16 @@
             var backgroundButton = document.createElement('button');
             backgroundButton.type = 'button';
             backgroundButton.className = 'product-image-action-btn remove-bg';
-            backgroundButton.textContent = 'BG';
-            backgroundButton.disabled = true;
-            backgroundButton.title = '白背景化は後続対応です';
+            backgroundButton.textContent = '白抜き';
+            backgroundButton.title = '背景を白抜きして透過PNGを生成します';
+            backgroundButton.setAttribute('data-bg-remove-btn', '');
             actions.appendChild(backgroundButton);
 
             var iconDeleteButton = document.createElement('button');
             iconDeleteButton.type = 'button';
-            iconDeleteButton.className = 'product-image-action-btn delete';
+            iconDeleteButton.className = 'product-image-action-btn delete image-delete-btn-icon';
             iconDeleteButton.textContent = '✕';
-            iconDeleteButton.title = 'この画像を削除';
+            iconDeleteButton.title = '削除';
             iconDeleteButton.addEventListener('click', function () {
                 imageUrls.splice(index, 1);
                 renderImageList();
@@ -1039,6 +1064,7 @@
             thumb.className = 'product-image-thumb';
             thumb.src = url;
             thumb.alt = 'image ' + (index + 1);
+            thumb.setAttribute('data-bg-thumb', '');
             card.appendChild(thumb);
 
             var body = document.createElement('div');
@@ -1064,6 +1090,33 @@
             urlText.className = 'product-image-url';
             urlText.textContent = url;
             body.appendChild(urlText);
+
+            var bgStatus = document.createElement('div');
+            bgStatus.className = 'product-image-bg-status';
+            bgStatus.setAttribute('data-bg-status', '');
+            bgStatus.hidden = true;
+            body.appendChild(bgStatus);
+
+            var bgActions = document.createElement('div');
+            bgActions.className = 'product-image-bg-actions';
+            bgActions.setAttribute('data-bg-actions', '');
+            bgActions.hidden = true;
+
+            var applyBtn = document.createElement('button');
+            applyBtn.type = 'button';
+            applyBtn.className = 'btn-secondary btn-sm';
+            applyBtn.textContent = '反映';
+            applyBtn.setAttribute('data-bg-apply', '');
+            bgActions.appendChild(applyBtn);
+
+            var rejectBtn = document.createElement('button');
+            rejectBtn.type = 'button';
+            rejectBtn.className = 'btn-secondary btn-sm';
+            rejectBtn.textContent = '破棄';
+            rejectBtn.setAttribute('data-bg-reject', '');
+            bgActions.appendChild(rejectBtn);
+
+            body.appendChild(bgActions);
 
             card.appendChild(body);
             imageGrid.appendChild(card);

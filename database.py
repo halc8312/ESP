@@ -63,6 +63,8 @@ ADDITIVE_STARTUP_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("products", "selling_price", "ALTER TABLE products ADD COLUMN selling_price INTEGER"),
     ("products", "custom_title_en", "ALTER TABLE products ADD COLUMN custom_title_en VARCHAR"),
     ("products", "custom_description_en", "ALTER TABLE products ADD COLUMN custom_description_en TEXT"),
+    ("products", "custom_title_en_source_hash", "ALTER TABLE products ADD COLUMN custom_title_en_source_hash VARCHAR(64)"),
+    ("products", "custom_description_en_source_hash", "ALTER TABLE products ADD COLUMN custom_description_en_source_hash VARCHAR(64)"),
     ("products", "archived", "ALTER TABLE products ADD COLUMN archived BOOLEAN DEFAULT FALSE"),
     ("products", "deleted_at", "ALTER TABLE products ADD COLUMN deleted_at TIMESTAMP"),
     ("price_lists", "layout", "ALTER TABLE price_lists ADD COLUMN layout VARCHAR DEFAULT 'grid'"),

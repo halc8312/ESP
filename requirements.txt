@@ -23,3 +23,5 @@ patchright
 msgspec
 nh3
 argostranslate
+Pillow
+rembg

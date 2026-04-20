@@ -393,3 +393,60 @@ class TranslationSuggestion(Base):
 
     product = relationship("Product")
     user = relationship("User")
+
+
+class ImageProcessingJob(Base):
+    """
+    Background image processing job (currently: background removal via rembg).
+
+    One row per user-initiated operation. The media worker reads this row,
+    downloads the source image, runs the configured backend (e.g. rembg),
+    and posts the processed bytes back to an internal HMAC-authenticated
+    endpoint on the web service. The UI polls ``status`` until the job
+    reaches a terminal state and then lets the operator accept or reject
+    the result image.
+    """
+
+    __tablename__ = "image_processing_jobs"
+    __table_args__ = (
+        Index(
+            "ix_image_processing_jobs_product_lookup",
+            "product_id",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    job_id = Column(String(64), unique=True, nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    # "bg_remove" is the only operation in Phase 1. Kept as a string so
+    # Phase 2 can introduce e.g. "upscale", "compress" without a migration.
+    operation = Column(String(32), nullable=False, default="bg_remove")
+
+    # Backend that produced (or will produce) the result; e.g. "rembg",
+    # "remove_bg", "photoroom". Stored for auditability.
+    provider = Column(String(32), nullable=False, default="rembg")
+
+    # URL of the image the operator chose to process. Captured at enqueue
+    # time so replaying the job is deterministic. The URL may be an
+    # absolute http(s) URL (scraped marketplace image) or a managed
+    # ``/media/product_images/...`` path.
+    source_image_url = Column(String, nullable=False)
+
+    # URL of the processed image once the worker has uploaded it back.
+    # Populated by the internal upload endpoint.
+    result_image_url = Column(String)
+
+    # queued -> running -> succeeded | failed | applied | rejected
+    status = Column(String(16), nullable=False, default="queued", index=True)
+    error_message = Column(Text)
+
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+    completed_at = Column(DateTime)
+
+    product = relationship("Product")
+    user = relationship("User")
