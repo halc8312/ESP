@@ -82,12 +82,20 @@ services:
         value: rembg
       - key: BG_REMOVAL_INTERNAL_SECRET
         sync: false
-      # Render's private network blocks port 10000 (the public HTTPS port).
-      # esp-web binds a second port (INTERNAL_PORT=8080) inside the container
-      # specifically so background workers can POST to internal endpoints
-      # (e.g. /internal/bg-removal/<job_id>/upload) over the private network.
-      - key: WEB_INTERNAL_URL
-        value: http://esp-web:8080
+      # Render's private network exposes services under an auto-generated
+      # hostname of the form ``<service-name>-<suffix>`` (e.g. ``esp-web-ne5j``)
+      # — NOT the bare service name. We therefore resolve the hostname via
+      # ``fromService.property: host`` so Render injects the correct value
+      # at deploy time. The public HTTPS port 10000 is blocked on the private
+      # network, so esp-web also binds a second port (INTERNAL_PORT=8080)
+      # inside the container for worker -> web traffic.
+      - key: WEB_INTERNAL_HOST
+        fromService:
+          type: web
+          name: esp-web
+          property: host
+      - key: WEB_INTERNAL_PORT
+        value: "8080"
       - key: WORKER_ENABLE_SCHEDULER
         value: "1"
       - key: WARM_BROWSER_POOL
