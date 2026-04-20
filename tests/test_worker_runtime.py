@@ -166,6 +166,35 @@ def test_load_worker_runtime_settings_requires_rq_backend():
         load_worker_runtime_settings(app)
 
 
+def test_load_worker_runtime_settings_includes_media_queue_when_configured():
+    app = create_worker_app(
+        config_overrides={
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "SCRAPE_QUEUE_NAME": "scrape",
+            "MEDIA_QUEUE_NAME": "media",
+        }
+    )
+
+    settings = load_worker_runtime_settings(app)
+
+    assert settings.queue_name == "scrape"
+    assert settings.queue_names == ("scrape", "media")
+
+
+def test_load_worker_runtime_settings_deduplicates_queue_names():
+    app = create_worker_app(
+        config_overrides={
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "SCRAPE_QUEUE_NAME": "shared",
+            "MEDIA_QUEUE_NAME": "shared",
+        }
+    )
+
+    settings = load_worker_runtime_settings(app)
+
+    assert settings.queue_names == ("shared",)
+
+
 def test_load_worker_runtime_settings_reads_worker_flags():
     app = create_worker_app(
         config_overrides={

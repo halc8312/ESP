@@ -36,6 +36,177 @@
         cursor: not-allowed;
     }
 
+    .translation-panel {
+        margin: 16px 0 8px;
+        display: grid;
+        gap: 12px;
+    }
+
+    .translation-stale-banner {
+        background: #fff7ed;
+        border: 1px solid #fdba74;
+        border-radius: 8px;
+        padding: 10px 12px;
+        color: #9a3412;
+        font-size: 0.85rem;
+        line-height: 1.5;
+    }
+
+    .translation-panel-status {
+        font-size: 0.82rem;
+        color: var(--text-muted);
+        min-height: 1em;
+    }
+
+    .translation-panel-status[data-kind="error"] {
+        color: #b91c1c;
+    }
+
+    .translation-panel-status[data-kind="success"] {
+        color: #047857;
+    }
+
+    .translation-panel-status[data-kind="warning"] {
+        color: #92400e;
+    }
+
+    .translation-panel-suggestions {
+        display: grid;
+        gap: 10px;
+    }
+
+    .translation-suggestion {
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 12px;
+        background: #ffffff;
+        display: grid;
+        gap: 8px;
+    }
+
+    .translation-suggestion-header {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        font-size: 0.78rem;
+    }
+
+    .translation-status-badge {
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #e2e8f0;
+        color: #1f2937;
+        font-weight: 600;
+    }
+
+    .translation-status-badge.translation-status-queued,
+    .translation-status-badge.translation-status-running {
+        background: #dbeafe;
+        color: #1d4ed8;
+    }
+
+    .translation-status-badge.translation-status-succeeded {
+        background: #dcfce7;
+        color: #166534;
+    }
+
+    .translation-status-badge.translation-status-failed {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+
+    .translation-status-badge.translation-status-applied {
+        background: #ede9fe;
+        color: #5b21b6;
+    }
+
+    .translation-status-badge.translation-status-rejected {
+        background: #f3f4f6;
+        color: #4b5563;
+    }
+
+    .translation-scope-badge {
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: #f1f5f9;
+        color: #334155;
+    }
+
+    .translation-timestamp {
+        margin-left: auto;
+        color: var(--text-muted);
+    }
+
+    .translation-field {
+        display: grid;
+        gap: 4px;
+    }
+
+    .translation-field-label {
+        font-size: 0.74rem;
+        color: var(--text-muted);
+        font-weight: 600;
+    }
+
+    .translation-field-value {
+        font-size: 0.88rem;
+        line-height: 1.55;
+        color: #1f2937;
+        white-space: pre-wrap;
+    }
+
+    .translation-field-value.translation-field-html {
+        white-space: normal;
+    }
+
+    .translation-field-empty {
+        color: var(--text-muted);
+        font-style: italic;
+    }
+
+    .translation-error {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        border-radius: 8px;
+        padding: 8px 10px;
+        color: #991b1b;
+        font-size: 0.82rem;
+    }
+
+    .translation-suggestion-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .translation-action-btn {
+        padding: 6px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border-color);
+        background: #ffffff;
+        color: #1f2937;
+        font-size: 0.82rem;
+        cursor: pointer;
+    }
+
+    .translation-action-btn.translation-action-apply {
+        background: #2563eb;
+        border-color: #2563eb;
+        color: #ffffff;
+    }
+
+    .translation-action-btn.translation-action-reject {
+        background: #ffffff;
+        border-color: #d1d5db;
+        color: #374151;
+    }
+
+    .translation-action-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
     .image-entry-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -410,9 +581,11 @@
                                     <h3>英語</h3>
                                     <p>国際顧客向け。手動修正も可能です。</p>
                                 </div>
-                                <div class="locale-editor-actions">
-                                    <button type="button" class="translate-trigger" disabled title="翻訳API連携後に有効化します">自動翻訳</button>
-                                    <button type="button" class="translate-trigger" disabled title="翻訳API連携後に有効化します">全文翻訳</button>
+                                <div class="locale-editor-actions" data-translation-actions>
+                                    <button type="button" class="translate-trigger" data-translate-scope="title"
+                                        title="商品名のみ自動翻訳します">タイトル翻訳</button>
+                                    <button type="button" class="translate-trigger" data-translate-scope="full"
+                                        title="商品名と説明文を自動翻訳します">自動翻訳</button>
                                 </div>
                             </div>
 
@@ -428,10 +601,31 @@
                                     rows="8">{{ product.custom_description_en or '' }}</textarea>
                             </div>
 
-                            <p class="editor-helper-text">翻訳の自動同期と本文翻訳は、外部API連携の仕様確定後に有効化します。</p>
+                            <div id="translationPanel" class="translation-panel"
+                                data-product-id="{{ product.id }}"
+                                data-translate-url="/api/products/{{ product.id }}/translate"
+                                data-suggestions-url="/api/products/{{ product.id }}/translation-suggestions"
+                                data-apply-url-template="/api/translation-suggestions/{job_id}/apply"
+                                data-reject-url-template="/api/translation-suggestions/{job_id}/reject">
+                                {% if translation_state and (translation_state.title_stale or translation_state.description_stale) %}
+                                <div class="translation-stale-banner" role="status">
+                                    <strong>日本語が更新されました。</strong>
+                                    {% if translation_state.title_stale and translation_state.description_stale %}
+                                        商品名と説明文の英訳が古い可能性があります。再翻訳をおすすめします。
+                                    {% elif translation_state.title_stale %}
+                                        商品名の英訳が古い可能性があります。再翻訳をおすすめします。
+                                    {% else %}
+                                        説明文の英訳が古い可能性があります。再翻訳をおすすめします。
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+                                <div class="translation-panel-status" data-translation-status aria-live="polite"></div>
+                                <div class="translation-panel-suggestions" data-translation-suggestions></div>
+                            </div>
+
+                            <p class="editor-helper-text">翻訳は Argos Translate (MITライセンス) を使用しています。候補を確認してから英語欄に反映できます。</p>
                         </section>
                     </div>
-                    <p class="editor-helper-text">3/22 モックに合わせて入力レイアウトを先に調整しています。翻訳ボタンと白背景化の処理は後続連携です。</p>
                 </div>
             </details>
  
@@ -653,6 +847,7 @@
 {% block scripts %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.6/Sortable.min.js" referrerpolicy="origin"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tinymce/6.8.3/tinymce.min.js" referrerpolicy="origin"></script>
+<script src="{{ url_for('static', filename='js/product_translation.js') }}"></script>
 <script>
     var imageUrls = [];
     var imageGrid = null;

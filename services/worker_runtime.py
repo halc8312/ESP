@@ -26,6 +26,7 @@ logger = logging.getLogger("worker_runtime")
 class WorkerRuntimeSettings:
     queue_backend: str
     queue_name: str
+    queue_names: tuple[str, ...]
     redis_url: str
     burst: bool
     with_scheduler: bool
@@ -68,6 +69,11 @@ def _collect_worker_runtime_settings(app: Flask, *, require_rq_backend: bool) ->
         raise RuntimeError("Dedicated worker runtime requires SCRAPE_QUEUE_BACKEND=rq")
 
     queue_name = str(app.config.get("SCRAPE_QUEUE_NAME", "scrape") or "scrape").strip()
+    media_queue_name = str(app.config.get("MEDIA_QUEUE_NAME", "") or "").strip() or queue_name
+    queue_names: list[str] = []
+    for candidate in (queue_name, media_queue_name):
+        if candidate and candidate not in queue_names:
+            queue_names.append(candidate)
     redis_url = str(app.config.get("REDIS_URL", "redis://localhost:6379/0") or "redis://localhost:6379/0").strip()
     burst = _as_bool(app.config.get("RQ_BURST", False))
     with_scheduler = _as_bool(app.config.get("RQ_WITH_SCHEDULER", False))
@@ -95,6 +101,7 @@ def _collect_worker_runtime_settings(app: Flask, *, require_rq_backend: bool) ->
     return WorkerRuntimeSettings(
         queue_backend=queue_backend,
         queue_name=queue_name,
+        queue_names=tuple(queue_names),
         redis_url=redis_url,
         burst=burst,
         with_scheduler=with_scheduler,
@@ -119,12 +126,13 @@ def build_worker_runtime(app: Flask) -> WorkerRuntime:
     ping = getattr(connection, "ping", None)
     if callable(ping):
         ping()
-    queue = Queue(settings.queue_name, connection=connection)
-    worker = SimpleWorker([queue], connection=connection)
+    queue_names = list(settings.queue_names) or [settings.queue_name]
+    queues = [Queue(name, connection=connection) for name in queue_names]
+    worker = SimpleWorker(queues, connection=connection)
     return WorkerRuntime(
         settings=settings,
         connection=connection,
-        queue=queue,
+        queue=queues[0],
         worker=worker,
     )
 

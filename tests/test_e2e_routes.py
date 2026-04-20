@@ -1231,8 +1231,8 @@ class TestProductRoutes:
         assert response.status_code == 200
         html = response.data.decode('utf-8')
         assert 'まとめて白抜き' in html
+        assert 'タイトル翻訳' in html
         assert '自動翻訳' in html
-        assert '全文翻訳' in html
         assert 'URLから追加' in html
     
     def test_product_detail_403_for_other_user(self, client, db_session):

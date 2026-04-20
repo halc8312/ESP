@@ -121,6 +121,7 @@ def _register_blueprints(app: Flask) -> None:
     from routes.scrape import scrape_bp
     from routes.settings import settings_bp
     from routes.shops import shops_bp
+    from routes.translation import translation_bp
     from routes.trash import trash_bp
 
     app.register_blueprint(auth_bp)
@@ -137,6 +138,7 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(pricelist_bp)
     app.register_blueprint(catalog_bp)
     app.register_blueprint(api_bp)
+    app.register_blueprint(translation_bp)
 
 
 def _register_backward_compat_aliases(app: Flask) -> None:
@@ -270,6 +272,10 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
             "SCRAPE_QUEUE_BACKEND": os.environ.get("SCRAPE_QUEUE_BACKEND", "inmemory"),
             "REDIS_URL": os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
             "SCRAPE_QUEUE_NAME": os.environ.get("SCRAPE_QUEUE_NAME", "scrape"),
+            "MEDIA_QUEUE_NAME": os.environ.get("MEDIA_QUEUE_NAME", ""),
+            "TRANSLATOR_BACKEND": os.environ.get("TRANSLATOR_BACKEND", "argos"),
+            "TRANSLATOR_SOURCE_LANG": os.environ.get("TRANSLATOR_SOURCE_LANG", "ja"),
+            "TRANSLATOR_TARGET_LANG": os.environ.get("TRANSLATOR_TARGET_LANG", "en"),
             "RQ_BURST": os.environ.get("RQ_BURST", ""),
             "RQ_WITH_SCHEDULER": os.environ.get("RQ_WITH_SCHEDULER", ""),
             "SCRAPE_JOB_HEARTBEAT_SECONDS": os.environ.get("SCRAPE_JOB_HEARTBEAT_SECONDS", "30"),

@@ -36,6 +36,22 @@ RUN scrapling install \
     && chmod -R 755 /opt/ms-playwright \
     && rm -rf /root/.cache /tmp/*
 
+# Bake the Argos Translate ja->en model into the image so the worker does
+# not have to download ~200MB on first use. The model is also pre-loaded
+# into the shared /opt/argos cache so non-root users can read it.
+ENV ARGOS_PACKAGES_DIR=/opt/argos/packages \
+    ARGOS_TRANSLATE_PACKAGE_DIR=/opt/argos/translate \
+    ARGOS_PACKAGE_INDEX_CACHE=/opt/argos/index
+
+# Copy the preload helper first so we can bake the model without having to
+# invalidate the requirements layer when application code changes.
+COPY services/translator/preload.py /tmp/argos_preload.py
+RUN mkdir -p "$ARGOS_PACKAGES_DIR" "$ARGOS_TRANSLATE_PACKAGE_DIR" "$ARGOS_PACKAGE_INDEX_CACHE" \
+    && TRANSLATOR_PRELOAD_SOURCE_LANG=ja TRANSLATOR_PRELOAD_TARGET_LANG=en \
+        python /tmp/argos_preload.py \
+    && chmod -R 755 /opt/argos \
+    && rm -f /tmp/argos_preload.py
+
 COPY . .
 
 RUN useradd -m myuser
