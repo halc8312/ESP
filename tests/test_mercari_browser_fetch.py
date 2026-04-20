@@ -173,6 +173,227 @@ def test_fetch_mercari_page_and_payloads_waits_for_target_items_get(monkeypatch)
     ), "Primary networkidle wait must be >=10000ms on production."
 
 
+def test_fetch_mercari_page_and_payloads_reloads_when_target_items_get_missing(monkeypatch):
+    """Regression: in production, some Mercari item pages hydrate so slowly
+    that the ``/items/get?id=<TARGET>`` XHR never fires within the wait
+    window, leaving ``captured_payloads`` without a target-scoped blob and
+    the page body with just og:image.  The detail fetch must detect this
+    sparse state and do exactly one in-browser ``page.reload()`` — which
+    almost always recovers the real photo set on the warm second attempt.
+    """
+    captured: dict = {"goto_urls": [], "reload_calls": 0}
+
+    async def fake_run_browser_page_task(site, task_coro_factory, **kwargs):
+        response_handlers: list = []
+
+        class FakeResponse:
+            status = 200
+            url = "https://jp.mercari.com/item/m42"
+
+        class FakeRespMatch:
+            url = (
+                "https://api.mercari.jp/items/get?id=m42"
+                "&include_item_attributes=true"
+            )
+
+            async def all_headers(self):
+                return {"content-type": "application/json"}
+
+            async def json(self):
+                return {"data": {"item": {"id": "m42"}}}
+
+        class FakePage:
+            url = "https://jp.mercari.com/item/m42"
+
+            def on(self, event, handler):
+                response_handlers.append(handler)
+
+            async def goto(self, url, wait_until, timeout):
+                captured["goto_urls"].append(url)
+                return FakeResponse()
+
+            async def reload(self, wait_until, timeout):
+                captured["reload_calls"] += 1
+                # On reload the target /items/get XHR finally fires and is
+                # captured by the response listener.
+                for h in response_handlers:
+                    h(FakeRespMatch())
+                return FakeResponse()
+
+            async def wait_for_load_state(self, state, timeout):
+                pass
+
+            async def wait_for_selector(self, selector, timeout):
+                pass
+
+            async def wait_for_response(self, predicate, timeout):
+                pass
+
+            async def query_selector_all(self, selector):
+                return []
+
+            async def query_selector(self, selector):
+                return None
+
+            async def wait_for_timeout(self, ms):
+                pass
+
+            async def content(self):
+                return "<html><body></body></html>"
+
+        await task_coro_factory(FakePage(), object())
+
+    monkeypatch.setattr(
+        "services.mercari_browser_fetch.run_browser_page_task",
+        fake_run_browser_page_task,
+    )
+
+    page, payloads = fetch_mercari_page_and_payloads_via_browser_pool_sync(
+        "https://jp.mercari.com/item/m42"
+    )
+
+    assert captured["reload_calls"] == 1, (
+        "A sparse first attempt (no target /items/get captured) must trigger "
+        "exactly one page.reload() retry."
+    )
+    # The second attempt's /items/get response must have been captured.
+    assert any(
+        "items/get" in (p.get("url") or "").lower() and "m42" in (p.get("url") or "").lower()
+        for p in payloads
+    )
+
+
+def test_fetch_mercari_page_and_payloads_skips_reload_when_target_captured(monkeypatch):
+    """If the first navigation already captured ``/items/get?id=<TARGET>``,
+    the sparse-state reload must NOT fire (no wasted second page load)."""
+    captured: dict = {"reload_calls": 0}
+
+    async def fake_run_browser_page_task(site, task_coro_factory, **kwargs):
+        response_handlers: list = []
+
+        class FakeResponse:
+            status = 200
+            url = "https://jp.mercari.com/item/m7"
+
+        class FakeRespMatch:
+            url = "https://api.mercari.jp/items/get?id=m7"
+
+            async def all_headers(self):
+                return {"content-type": "application/json"}
+
+            async def json(self):
+                return {"data": {"item": {"id": "m7"}}}
+
+        class FakePage:
+            url = "https://jp.mercari.com/item/m7"
+
+            def on(self, event, handler):
+                response_handlers.append(handler)
+
+            async def goto(self, url, wait_until, timeout):
+                # The target /items/get XHR fires during the initial
+                # navigation, so the sparse-state reload should not fire.
+                for h in response_handlers:
+                    h(FakeRespMatch())
+                return FakeResponse()
+
+            async def reload(self, wait_until, timeout):
+                captured["reload_calls"] += 1
+                return FakeResponse()
+
+            async def wait_for_load_state(self, state, timeout):
+                pass
+
+            async def wait_for_selector(self, selector, timeout):
+                pass
+
+            async def wait_for_response(self, predicate, timeout):
+                pass
+
+            async def query_selector_all(self, selector):
+                return []
+
+            async def query_selector(self, selector):
+                return None
+
+            async def wait_for_timeout(self, ms):
+                pass
+
+            async def content(self):
+                return "<html></html>"
+
+        await task_coro_factory(FakePage(), object())
+
+    monkeypatch.setattr(
+        "services.mercari_browser_fetch.run_browser_page_task",
+        fake_run_browser_page_task,
+    )
+
+    fetch_mercari_page_and_payloads_via_browser_pool_sync(
+        "https://jp.mercari.com/item/m7"
+    )
+
+    assert captured["reload_calls"] == 0
+
+
+def test_fetch_mercari_page_and_payloads_skips_reload_for_non_item_urls(monkeypatch):
+    """Pricelist / shop / catalog URLs carry no ``m<digits>`` target item id,
+    so the sparse-state reload heuristic must be a no-op for them."""
+    captured: dict = {"reload_calls": 0}
+
+    async def fake_run_browser_page_task(site, task_coro_factory, **kwargs):
+        class FakeResponse:
+            status = 200
+            url = "https://jp.mercari.com/shop/abc"
+
+        class FakePage:
+            url = "https://jp.mercari.com/shop/abc"
+
+            def on(self, event, handler):
+                pass
+
+            async def goto(self, url, wait_until, timeout):
+                return FakeResponse()
+
+            async def reload(self, wait_until, timeout):
+                captured["reload_calls"] += 1
+                return FakeResponse()
+
+            async def wait_for_load_state(self, state, timeout):
+                pass
+
+            async def wait_for_selector(self, selector, timeout):
+                pass
+
+            async def wait_for_response(self, predicate, timeout):
+                pass
+
+            async def query_selector_all(self, selector):
+                return []
+
+            async def query_selector(self, selector):
+                return None
+
+            async def wait_for_timeout(self, ms):
+                pass
+
+            async def content(self):
+                return "<html></html>"
+
+        await task_coro_factory(FakePage(), object())
+
+    monkeypatch.setattr(
+        "services.mercari_browser_fetch.run_browser_page_task",
+        fake_run_browser_page_task,
+    )
+
+    fetch_mercari_page_and_payloads_via_browser_pool_sync(
+        "https://jp.mercari.com/shop/abc"
+    )
+
+    assert captured["reload_calls"] == 0
+
+
 def test_fetch_mercari_page_and_payloads_skips_wait_for_non_item_urls(monkeypatch):
     """Pricelist / shop / catalog URLs don't carry an ``m<digits>`` item id,
     so the ``wait_for_response`` should not be issued (it would pointlessly
