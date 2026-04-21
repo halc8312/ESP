@@ -43,6 +43,11 @@ services:
         value: media
       - key: TRANSLATOR_BACKEND
         value: argos
+      # Set OPENAI_API_KEY in the Render dashboard (sync: false) if / when
+      # TRANSLATOR_BACKEND is switched to ``openai``. Also set the same key
+      # on esp-worker so both processes can instantiate the client.
+      - key: OPENAI_API_KEY
+        sync: false
       - key: BG_REMOVAL_BACKEND
         value: rembg
       - key: BG_REMOVAL_INTERNAL_SECRET
@@ -78,6 +83,8 @@ services:
         value: media
       - key: TRANSLATOR_BACKEND
         value: argos
+      - key: OPENAI_API_KEY
+        sync: false
       - key: BG_REMOVAL_BACKEND
         value: rembg
       - key: BG_REMOVAL_INTERNAL_SECRET
