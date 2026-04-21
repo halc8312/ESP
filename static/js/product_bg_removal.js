@@ -173,6 +173,7 @@
             }
             setCardActionsVisible(card, true);
             setButtonBusy(card, false);
+            refreshBulkApplyVisibility();
         } else if (job.status === "failed") {
             setCardStatus(
                 card,
@@ -298,6 +299,7 @@
                     }
                     delete jobsByImageUrl[imageUrl];
                 }
+                refreshBulkApplyVisibility();
             })
             .catch(function () {
                 setCardStatus(card, "ネットワークエラー", "error");
@@ -328,6 +330,7 @@
                 setCardActionsVisible(card, false);
                 clearThumbPreview(card);
                 delete jobsByImageUrl[imageUrl];
+                refreshBulkApplyVisibility();
             });
     }
 
@@ -362,6 +365,144 @@
         });
     }
 
+    function collectApplyableJobIds() {
+        var ids = [];
+        Object.keys(jobsByImageUrl).forEach(function (imageUrl) {
+            var info = jobsByImageUrl[imageUrl];
+            if (info && info.jobId && info.status === "succeeded") {
+                ids.push({ imageUrl: imageUrl, jobId: info.jobId });
+            }
+        });
+        return ids;
+    }
+
+    function refreshBulkApplyVisibility() {
+        var btn = document.querySelector("[data-bg-apply-bulk-btn]");
+        if (!btn) return;
+        var hasApplyable = collectApplyableJobIds().length > 0;
+        btn.hidden = !hasApplyable;
+    }
+
+    function onBulkApplyClick() {
+        if (!grid || !productId) return;
+        var applyable = collectApplyableJobIds();
+        if (applyable.length === 0) return;
+
+        var bulkBtn = document.querySelector("[data-bg-apply-bulk-btn]");
+        if (bulkBtn) {
+            bulkBtn.setAttribute("disabled", "disabled");
+            bulkBtn.dataset.originalLabel =
+                bulkBtn.dataset.originalLabel || bulkBtn.textContent;
+            bulkBtn.textContent = "反映中...";
+        }
+
+        applyable.forEach(function (entry) {
+            var card = findCard(entry.imageUrl);
+            setCardStatus(card, "反映中...", "pending");
+        });
+
+        var jobIds = applyable.map(function (entry) {
+            return entry.jobId;
+        });
+
+        fetch(
+            "/api/products/" + productId + "/image-processing-jobs/apply-all",
+            {
+                method: "POST",
+                credentials: "same-origin",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRF-Token": getCsrfToken(),
+                    Accept: "application/json",
+                },
+                body: JSON.stringify({ job_ids: jobIds }),
+            }
+        )
+            .then(function (res) {
+                return res.json().then(function (payload) {
+                    return { ok: res.ok, status: res.status, payload: payload };
+                });
+            })
+            .then(function (result) {
+                if (!result.ok) {
+                    var err =
+                        (result.payload && result.payload.error) ||
+                        "apply_failed";
+                    applyable.forEach(function (entry) {
+                        var card = findCard(entry.imageUrl);
+                        setCardStatus(card, "反映失敗: " + err, "error");
+                    });
+                    return;
+                }
+
+                var applied = (result.payload && result.payload.applied) || [];
+                applied.forEach(function (job) {
+                    var originalUrl = job.source_image_url;
+                    var card = findCard(originalUrl);
+                    var info = jobsByImageUrl[originalUrl] || {};
+                    var newUrl = job.result_image_url || info.resultUrl;
+                    setCardStatus(
+                        card,
+                        "反映済み。保存ボタンで確定してください。",
+                        "success"
+                    );
+                    setCardActionsVisible(card, false);
+
+                    if (card && newUrl) {
+                        card.setAttribute("data-image-url", newUrl);
+                        var urlNode = card.querySelector(".product-image-url");
+                        if (urlNode) urlNode.textContent = newUrl;
+                        var thumb = card.querySelector("[data-bg-thumb]");
+                        if (thumb) {
+                            thumb.setAttribute("src", newUrl);
+                            delete thumb.dataset.originalSrc;
+                        }
+                        if (typeof window.replaceImageUrl === "function") {
+                            try {
+                                window.replaceImageUrl(originalUrl, newUrl);
+                            } catch (err) {
+                                // Legacy helper may not be present.
+                            }
+                        }
+                    }
+                    delete jobsByImageUrl[originalUrl];
+                });
+
+                var skipped = (result.payload && result.payload.skipped) || [];
+                skipped.forEach(function (item) {
+                    // Best-effort surface: find any card still tracking this jobId.
+                    Object.keys(jobsByImageUrl).forEach(function (imageUrl) {
+                        var info = jobsByImageUrl[imageUrl];
+                        if (info && info.jobId === item.job_id) {
+                            var card = findCard(imageUrl);
+                            setCardStatus(
+                                card,
+                                "スキップ: " +
+                                    (item.reason || "apply_failed"),
+                                "error"
+                            );
+                        }
+                    });
+                });
+
+                refreshBulkApplyVisibility();
+            })
+            .catch(function () {
+                applyable.forEach(function (entry) {
+                    var card = findCard(entry.imageUrl);
+                    setCardStatus(card, "ネットワークエラー", "error");
+                });
+            })
+            .finally(function () {
+                if (bulkBtn) {
+                    bulkBtn.removeAttribute("disabled");
+                    if (bulkBtn.dataset.originalLabel) {
+                        bulkBtn.textContent = bulkBtn.dataset.originalLabel;
+                    }
+                }
+            });
+    }
+
     function init() {
         grid = document.getElementById("imageSortGrid");
         if (!grid) return;
@@ -376,6 +517,14 @@
             bulkBtn.addEventListener("click", function (e) {
                 e.preventDefault();
                 onBulkClick();
+            });
+        }
+
+        var bulkApplyBtn = document.querySelector("[data-bg-apply-bulk-btn]");
+        if (bulkApplyBtn) {
+            bulkApplyBtn.addEventListener("click", function (e) {
+                e.preventDefault();
+                onBulkApplyClick();
             });
         }
     }

@@ -269,6 +269,170 @@ def test_apply_rejects_cross_user_job(client, db_session, monkeypatch):
     assert response.status_code == 404
 
 
+# ---------- apply-all (bulk apply) endpoint ----------
+
+def test_apply_all_replaces_every_succeeded_job_in_one_snapshot(
+    client, db_session, monkeypatch
+):
+    user = _login(client, db_session)
+    img_a = _write_local_image(monkeypatch, "bulk_a.jpg")
+    img_b = _write_local_image(monkeypatch, "bulk_b.jpg")
+    img_c = "https://cdn.example/bulk_c.jpg"
+    product = _create_product_with_images(db_session, user, [img_a, img_b, img_c])
+
+    # Trigger bg-removal for the two local images (the CDN one stays as-is).
+    job_a = client.post(
+        f"/api/products/{product.id}/images/remove-background",
+        json={"image_url": img_a},
+    ).get_json()["job_id"]
+    job_b = client.post(
+        f"/api/products/{product.id}/images/remove-background",
+        json={"image_url": img_b},
+    ).get_json()["job_id"]
+
+    # Snapshots before apply-all: there's just the seed snapshot.
+    snapshots_before = (
+        db_session.query(ProductSnapshot)
+        .filter_by(product_id=product.id)
+        .count()
+    )
+
+    response = client.post(
+        f"/api/products/{product.id}/image-processing-jobs/apply-all"
+    )
+    assert response.status_code == 200, response.data
+    payload = response.get_json()
+
+    applied_ids = {j["job_id"] for j in payload["applied"]}
+    assert applied_ids == {job_a, job_b}
+    assert payload["skipped"] == []
+
+    images = payload["images"]
+    assert len(images) == 3
+    assert images[0].startswith("/media/processed_images/")
+    assert images[1].startswith("/media/processed_images/")
+    assert images[2] == img_c
+
+    # Exactly one new snapshot was written — bulk-apply must coalesce.
+    snapshots_after = (
+        db_session.query(ProductSnapshot)
+        .filter_by(product_id=product.id)
+        .count()
+    )
+    assert snapshots_after == snapshots_before + 1
+
+
+def test_apply_all_respects_job_ids_filter(client, db_session, monkeypatch):
+    user = _login(client, db_session)
+    img_a = _write_local_image(monkeypatch, "filter_a.jpg")
+    img_b = _write_local_image(monkeypatch, "filter_b.jpg")
+    product = _create_product_with_images(db_session, user, [img_a, img_b])
+
+    job_a = client.post(
+        f"/api/products/{product.id}/images/remove-background",
+        json={"image_url": img_a},
+    ).get_json()["job_id"]
+    client.post(
+        f"/api/products/{product.id}/images/remove-background",
+        json={"image_url": img_b},
+    )
+
+    response = client.post(
+        f"/api/products/{product.id}/image-processing-jobs/apply-all",
+        json={"job_ids": [job_a]},
+    )
+    assert response.status_code == 200, response.data
+    payload = response.get_json()
+
+    applied_ids = {j["job_id"] for j in payload["applied"]}
+    assert applied_ids == {job_a}
+
+    images = payload["images"]
+    # Only the first slot was replaced.
+    assert images[0].startswith("/media/processed_images/")
+    assert images[1] == img_b
+
+
+def test_apply_all_empty_when_no_succeeded_jobs(client, db_session, monkeypatch):
+    user = _login(client, db_session)
+    image_url = _write_local_image(monkeypatch, "empty.jpg")
+    product = _create_product_with_images(db_session, user, [image_url])
+
+    response = client.post(
+        f"/api/products/{product.id}/image-processing-jobs/apply-all"
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["applied"] == []
+    assert payload["skipped"] == []
+    assert payload["images"] == [image_url]
+
+
+def test_apply_all_prefers_newest_when_multiple_jobs_share_source(
+    client, db_session, monkeypatch
+):
+    """When two successful jobs target the same source_image_url, the
+    newer result must win. The older job is skipped because the source
+    URL is already gone from the image list by the time it is processed.
+    """
+    import datetime as _dt
+
+    user = _login(client, db_session)
+    image_url = _write_local_image(monkeypatch, "dup.jpg")
+    product = _create_product_with_images(db_session, user, [image_url])
+
+    old_job = ImageProcessingJob(
+        job_id="old-job",
+        product_id=product.id,
+        user_id=user.id,
+        source_image_url=image_url,
+        result_image_url="/media/processed_images/old.png",
+        provider="rembg",
+        status="succeeded",
+        created_at=_dt.datetime(2026, 1, 1, 0, 0, 0),
+    )
+    new_job = ImageProcessingJob(
+        job_id="new-job",
+        product_id=product.id,
+        user_id=user.id,
+        source_image_url=image_url,
+        result_image_url="/media/processed_images/new.png",
+        provider="rembg",
+        status="succeeded",
+        created_at=_dt.datetime(2026, 4, 1, 0, 0, 0),
+    )
+    db_session.add_all([old_job, new_job])
+    db_session.commit()
+
+    response = client.post(
+        f"/api/products/{product.id}/image-processing-jobs/apply-all"
+    )
+    assert response.status_code == 200, response.data
+    payload = response.get_json()
+
+    applied_ids = {j["job_id"] for j in payload["applied"]}
+    assert applied_ids == {"new-job"}
+
+    skipped_ids = {item["job_id"] for item in payload["skipped"]}
+    assert skipped_ids == {"old-job"}
+    assert payload["images"] == ["/media/processed_images/new.png"]
+
+
+def test_apply_all_refuses_cross_user_product(client, db_session, monkeypatch):
+    victim = User(username="victim-bulk")
+    victim.set_password("x")
+    db_session.add(victim)
+    db_session.commit()
+    image_url = _write_local_image(monkeypatch, "victim_bulk.jpg")
+    victim_product = _create_product_with_images(db_session, victim, [image_url])
+
+    _login(client, db_session, username="attacker-bulk")
+    response = client.post(
+        f"/api/products/{victim_product.id}/image-processing-jobs/apply-all"
+    )
+    assert response.status_code == 404
+
+
 # ---------- reject endpoint ----------
 
 def test_reject_marks_job_rejected(client, db_session, monkeypatch):
