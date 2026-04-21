@@ -396,6 +396,33 @@
         line-height: 1.5;
     }
 
+    .beginner-guide-banner {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        background: #eff6ff;
+        border-left: 4px solid #3b82f6;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 20px;
+        font-size: 0.88rem;
+        line-height: 1.6;
+        color: #1e40af;
+    }
+
+    .beginner-guide-icon {
+        font-size: 1.2rem;
+        flex-shrink: 0;
+        margin-top: 1px;
+    }
+
+    .field-help-text {
+        margin: 4px 0 0;
+        font-size: 0.78rem;
+        color: var(--text-muted);
+        line-height: 1.5;
+    }
+
     @media (max-width: 1023px) {
         .image-entry-grid,
         .product-locale-meta-grid,
@@ -428,6 +455,12 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <input type="hidden" name="delete_v_ids" id="delete_v_ids" value="">
     <input type="hidden" name="image_urls_json" id="image_urls_json" value='{{ images|tojson|safe }}'>
+    <div class="beginner-guide-banner">
+        <span class="beginner-guide-icon">💡</span>
+        <div>
+            <strong>編集の流れ</strong>：① 商品画像を登録 → ② 商品名・説明文を入力 → ③ 価格・在庫を設定 → ④「保存」ボタンを押す
+        </div>
+    </div>
 
     <div class="product-edit-layout">
         <div class="product-edit-main">
@@ -493,7 +526,7 @@
                                     <input type="url" id="image_url_input" placeholder="https://example.com/image.jpg">
                                     <button type="button" class="btn-secondary" onclick="addImageUrl()">URLを追加</button>
                                 </div>
-                                <p class="text-small text-muted mb-0">http(s) または `/media/...` 形式の画像URLを追加できます。</p>
+                                <p class="text-small text-muted mb-0">画像のURLを貼り付けて「URLを追加」ボタンを押すと、その画像が一覧に追加されます。（例: https://example.com/image.jpg）</p>
                             </div>
 
                             <div class="form-group image-add-group">
@@ -528,6 +561,7 @@
                                 <option value="{{ s.id }}" {% if product.shop_id==s.id %}selected{% endif %}>{{ s.name }}</option>
                                 {% endfor %}
                             </select>
+                            <p class="field-help-text">どのショップに紐付けるかを選んでください。まだショップがない場合は空欄のままで大丈夫です。</p>
                         </div>
 
                         <div class="form-group">
@@ -536,6 +570,7 @@
                                 <option value="active" {% if product.status=='active' %}selected{% endif %}>有効 (Active)</option>
                                 <option value="draft" {% if product.status=='draft' %}selected{% endif %}>下書き (Draft)</option>
                             </select>
+                            <p class="field-help-text">「有効」にすると公開カタログに表示されます。準備中は「下書き」を選んでください。</p>
                         </div>
 
                         <div class="sync-pill-row">
@@ -572,12 +607,14 @@
                                 <label for="title">商品名 (日本語)</label>
                                 <input type="text" id="title" name="title"
                                     value="{{ product.custom_title or product.last_title or '' }}">
+                                <p class="field-help-text">お客様に表示される商品名を入力してください。（例：ヴィンテージレザーバッグ）</p>
                             </div>
 
                             <div class="form-group">
                                 <label for="description">説明文 (日本語 / HTML可)</label>
                                 <textarea id="description" name="description"
                                     rows="8">{{ product.custom_description or (snapshot.description if snapshot else '') }}</textarea>
+                                <p class="field-help-text">商品の特徴やサイズ感など、お客様に伝えたい内容を書いてください。</p>
                             </div>
                         </section>
 
@@ -599,12 +636,14 @@
                                 <label for="title_en">商品名 (英語)</label>
                                 <input type="text" id="title_en" name="title_en" value="{{ product.custom_title_en or '' }}"
                                     placeholder="e.g. Vintage Camera Body">
+                                <p class="field-help-text">海外のお客様向けに英語の商品名を入力してください。「自動翻訳」ボタンで自動生成できます。</p>
                             </div>
 
                             <div class="form-group">
                                 <label for="description_en">説明文 (英語 / HTML可)</label>
                                 <textarea id="description_en" name="description_en"
                                     rows="8">{{ product.custom_description_en or '' }}</textarea>
+                                <p class="field-help-text">英語の商品説明です。翻訳ボタンで自動生成後、手動で修正することもできます。</p>
                             </div>
 
                             <div id="translationPanel" class="translation-panel"
@@ -629,6 +668,7 @@
                                 <div class="translation-panel-suggestions" data-translation-suggestions></div>
                             </div>
 
+                            <p class="editor-helper-text" style="margin-top:6px;">「自動翻訳」ボタンで日本語から英語へ自動翻訳します。翻訳後に内容を確認・修正してから「反映」してください。</p>
                             <p class="editor-helper-text">翻訳は GPT API を使用しています。候補を確認してから英語欄に反映できます。</p>
                         </section>
                     </div>
@@ -654,22 +694,22 @@
                             <span class="mobile-collapsible-icon">▶</span>
                         </summary>
                         <div class="mobile-collapsible-content">
-                            <p class="text-small text-muted mb-1">カンマ区切りで入力してください (例: S, M, L)。既存の行は削除されません。</p>
+                            <p class="text-small text-muted mb-1">カンマ（,）区切りで入力してください（例: S, M, L）。「生成」ボタンを押すと自動でバリエーション行が追加されます。既存の行は削除されません。</p>
                             <div class="bulk-generator" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
                                 <div class="filter-group">
-                                    <label>Option1 Values</label>
+                                    <label>オプション1の値（例: 赤, 青, 白）</label>
                                     <input type="text" id="bulk_opt1" placeholder="例: Red, Blue">
                                 </div>
                                 <div class="filter-group">
-                                    <label>Option2 Values</label>
+                                    <label>オプション2の値（例: S, M, L）</label>
                                     <input type="text" id="bulk_opt2" placeholder="例: S, M, L">
                                 </div>
                                 <div class="filter-group">
-                                    <label>共通価格</label>
+                                    <label>共通の販売価格（円）</label>
                                     <input type="number" id="bulk_price" placeholder="">
                                 </div>
                                 <div class="filter-group">
-                                    <label>共通SKU接頭辞</label>
+                                    <label>SKU接頭辞（例: MY-ITEM-）</label>
                                     <input type="text" id="bulk_sku" placeholder="MER-ITEM-">
                                 </div>
                             </div>
@@ -680,16 +720,16 @@
 
                     <div class="option-names-section">
                         <div class="filter-group">
-                            <label>Option1 Name</label>
+                            <label>オプション1の名前（例: 色）</label>
                             <input type="text" name="option1_name" value="{{ product.option1_name or 'Title' }}">
                         </div>
                         <div class="filter-group">
-                            <label>Option2 Name</label>
+                            <label>オプション2の名前（例: サイズ）</label>
                             <input type="text" name="option2_name" value="{{ product.option2_name or '' }}"
                                 placeholder="(例: Size)">
                         </div>
                         <div class="filter-group">
-                            <label>Option3 Name</label>
+                            <label>オプション3の名前</label>
                             <input type="text" name="option3_name" value="{{ product.option3_name or '' }}">
                         </div>
                     </div>
@@ -698,13 +738,13 @@
                         <table class="variant-table" id="variantTable">
                             <thead>
                                 <tr>
-                                    <th style="width:15%">Opt1</th>
-                                    <th style="width:15%">Opt2</th>
-                                    <th style="width:15%">価格</th>
-                                    <th style="width:15%">SKU</th>
-                                    <th style="width:10%">在庫</th>
-                                    <th class="hide-mobile" style="width:10%">重量</th>
-                                    <th class="hide-mobile">税/HS/Origin</th>
+                                    <th style="width:15%">オプション1<br><small class="text-muted" style="font-weight:normal;font-size:0.75rem;">（例：色）</small></th>
+                                    <th style="width:15%">オプション2<br><small class="text-muted" style="font-weight:normal;font-size:0.75rem;">（例：サイズ）</small></th>
+                                    <th style="width:15%">販売価格（円）</th>
+                                    <th style="width:15%">SKU<br><small class="text-muted" style="font-weight:normal;font-size:0.75rem;">（商品管理番号）</small></th>
+                                    <th style="width:10%">在庫数</th>
+                                    <th class="hide-mobile" style="width:10%">重量（g）</th>
+                                    <th class="hide-mobile">詳細設定</th>
                                     <th style="width:50px;">操作</th>
                                 </tr>
                             </thead>
@@ -756,42 +796,47 @@
 
         <div class="product-edit-side">
 
-            <!-- ⑤ SEO & Tags -->
+            <!-- ⑤ SEO・タグ設定 -->
             <details class="content-card product-edit-panel" open>
                 <summary class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
-                        <h2>SEO &amp; Tags</h2>
-                        <p>Search optimization and classification</p>
+                        <h2>SEO・タグ設定</h2>
+                        <p>検索エンジン対策と分類設定</p>
                     </div>
                     <span class="product-edit-summary-side">
-                        <span class="product-edit-summary-meta">SEO</span>
+                        <span class="product-edit-summary-meta">任意</span>
                         <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
                     </span>
                 </summary>
                 <div class="content-card-body">
                     <div class="form-group">
-                        <label for="vendor">販売元 (Vendor)</label>
+                        <label for="vendor">ブランド名・販売元</label>
                         <input type="text" id="vendor" name="vendor"
                             value="{{ product.custom_vendor or '' }}" placeholder="e.g. My Brand">
+                        <p class="field-help-text">商品のブランドや製造元を入力します。（例：Nike、無印良品）空欄でも構いません。</p>
                     </div>
                     <div class="form-group">
-                        <label for="tags">タグ (Tags)</label>
+                        <label for="tags">タグ（検索キーワード）</label>
                         <input type="text" id="tags" name="tags" value="{{ product.tags or '' }}" placeholder="カンマ区切りで入力">
+                        <p class="field-help-text">商品を探しやすくするキーワードをカンマ区切りで入力します。（例：アウトドア,バッグ,レザー）</p>
                     </div>
                     <div class="form-group">
-                        <label for="handle">URLハンドル (Handle)</label>
+                        <label for="handle">URLスラッグ（Handle）</label>
                         <input type="text" id="handle" name="handle"
                             value="{{ product.custom_handle or '' }}">
+                        <p class="field-help-text">商品ページのURLに使われる英数字の文字列です。通常は自動設定されるため空欄で構いません。</p>
                     </div>
                     <div class="form-group">
-                        <label for="seo_title">ページタイトル (SEO Title)</label>
+                        <label for="seo_title">検索エンジン用タイトル（SEO）</label>
                         <input type="text" id="seo_title" name="seo_title" value="{{ product.seo_title or '' }}"
                             placeholder="60文字以内推奨">
+                        <p class="field-help-text">Google等の検索結果に表示されるページタイトルです。60文字以内で商品名＋特徴を入れると効果的です。</p>
                     </div>
                     <div class="form-group">
-                        <label for="seo_description">メタディスクリプション</label>
+                        <label for="seo_description">検索結果の説明文（メタディスクリプション）</label>
                         <textarea id="seo_description" name="seo_description"
                             rows="3">{{ product.seo_description or '' }}</textarea>
+                        <p class="field-help-text">検索結果に表示される説明文です。120〜160文字程度で商品の魅力を簡潔にまとめてください。</p>
                     </div>
                 </div>
             </details>
@@ -800,8 +845,8 @@
             <details class="content-card product-edit-panel" style="border: 2px dashed rgba(0,0,0,0.15); opacity: 0.85;">
                 <summary class="content-card-header product-edit-summary" style="background: #f5f5f5;">
                     <div class="product-edit-summary-copy">
-                        <h2>🔒 Internal Sourcing Details</h2>
-                        <p>Internal use only — not visible in the public catalog</p>
+                        <h2>🔒 内部情報（スクレイピング元）</h2>
+                        <p>管理者用の内部情報です。公開カタログには表示されません。</p>
                     </div>
                     <span class="product-edit-summary-side">
                         <span class="product-edit-summary-meta">内部</span>
@@ -810,27 +855,27 @@
                 </summary>
                 <div class="content-card-body" style="background: #fafafa;">
                     <div class="form-group">
-                        <label>Source Site</label>
+                        <label>取得元サイト</label>
                         <input type="text" value="{{ product.site or '' }}" readonly disabled
                             style="background: #eee; cursor: not-allowed;">
                     </div>
                     <div class="form-group">
-                        <label>Source URL</label>
+                        <label>取得元URL</label>
                         <input type="text" value="{{ product.source_url or '' }}" readonly disabled
                             style="background: #eee; cursor: not-allowed; word-break: break-all;">
                     </div>
                     <div class="form-group">
-                        <label>Last Scraped Title</label>
+                        <label>取得時の商品名</label>
                         <input type="text" value="{{ product.last_title or '' }}" readonly disabled
                             style="background: #eee; cursor: not-allowed;">
                     </div>
                     <div class="form-group">
-                        <label>Last Scraped Price</label>
+                        <label>取得時の価格</label>
                         <input type="text" value="{{ product.last_price or '' }}" readonly disabled
                             style="background: #eee; cursor: not-allowed;">
                     </div>
                     <div class="form-group">
-                        <label>Last Status</label>
+                        <label>取得時のステータス</label>
                         <input type="text" value="{{ product.last_status or '' }}" readonly disabled
                             style="background: #eee; cursor: not-allowed;">
                     </div>
@@ -841,6 +886,7 @@
     </div>
 
     <div class="desktop-only product-edit-save-row">
+        <p style="text-align:center; color:var(--text-muted); font-size:0.82rem; margin-bottom:8px;">編集が完了したら「保存」ボタンを押してください。</p>
         <button type="submit" style="width: 100%;">保存</button>
     </div>
 
