@@ -42,10 +42,11 @@ services:
       - key: MEDIA_QUEUE_NAME
         value: media
       - key: TRANSLATOR_BACKEND
-        value: argos
-      # Set OPENAI_API_KEY in the Render dashboard (sync: false) if / when
-      # TRANSLATOR_BACKEND is switched to ``openai``. Also set the same key
-      # on esp-worker so both processes can instantiate the client.
+        value: openai
+      # OPENAI_API_KEY must be set in the Render dashboard (sync: false) on
+      # both esp-web and esp-worker so both processes can instantiate the
+      # OpenAI client. The default model is gpt-4.1-nano; override with
+      # OPENAI_TRANSLATOR_MODEL if a different model is desired.
       - key: OPENAI_API_KEY
         sync: false
       - key: BG_REMOVAL_BACKEND
@@ -82,7 +83,7 @@ services:
       - key: MEDIA_QUEUE_NAME
         value: media
       - key: TRANSLATOR_BACKEND
-        value: argos
+        value: openai
       - key: OPENAI_API_KEY
         sync: false
       - key: BG_REMOVAL_BACKEND
