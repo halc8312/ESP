@@ -29,7 +29,7 @@
     var maxVisibleJobs = 3;
     var pollIntervalMs = 2000;
     var dismissTtlMs = 60 * 60 * 1000;
-    var mobileMedia = window.matchMedia("(max-width: 767px)");
+    var mobileMedia = window.matchMedia("(max-width: 1023px)");
 
     var state = {
         jobs: new Map(),
@@ -330,7 +330,17 @@
         document.body.classList.toggle("scrape-tracker-sheet-open", state.mobileSheetOpen);
     }
 
+    function closeSidebarIfOpen() {
+        if (!document.body.classList.contains("sidebar-open")) {
+            return;
+        }
+        if (typeof window.closeSidebar === "function") {
+            window.closeSidebar();
+        }
+    }
+
     function openMobileSheet() {
+        closeSidebarIfOpen();
         updateMobileSheetState(true);
     }
 
@@ -550,6 +560,13 @@
         render();
     }
 
+    function handleSidebarStateChange(event) {
+        var isOpen = Boolean(event && event.detail && event.detail.open);
+        if (isOpen) {
+            closeMobileSheet();
+        }
+    }
+
     pillEl.addEventListener("click", function () {
         if (!state.visibleJobs.length || !state.isMobileViewport) {
             return;
@@ -591,6 +608,7 @@
             closeMobileSheet();
         }
     });
+    window.addEventListener("esp:sidebar-state", handleSidebarStateChange);
 
     if (typeof mobileMedia.addEventListener === "function") {
         mobileMedia.addEventListener("change", handleViewportChange);
