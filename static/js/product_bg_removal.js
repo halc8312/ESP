@@ -481,6 +481,12 @@
                                     (item.reason || "apply_failed"),
                                 "error"
                             );
+                            // Remove the skipped job from client state so the
+                            // bulk-apply button doesn't keep offering to retry
+                            // it. The server has already decided the entry is
+                            // no longer applyable (e.g. source image removed
+                            // or superseded by a newer job).
+                            delete jobsByImageUrl[imageUrl];
                         }
                     });
                 });
