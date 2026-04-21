@@ -269,6 +269,120 @@ def test_apply_rejects_cross_user_job(client, db_session, monkeypatch):
     assert response.status_code == 404
 
 
+# ---------- apply-all (bulk apply) endpoint ----------
+
+def test_apply_all_replaces_every_succeeded_job_in_one_snapshot(
+    client, db_session, monkeypatch
+):
+    user = _login(client, db_session)
+    img_a = _write_local_image(monkeypatch, "bulk_a.jpg")
+    img_b = _write_local_image(monkeypatch, "bulk_b.jpg")
+    img_c = "https://cdn.example/bulk_c.jpg"
+    product = _create_product_with_images(db_session, user, [img_a, img_b, img_c])
+
+    # Trigger bg-removal for the two local images (the CDN one stays as-is).
+    job_a = client.post(
+        f"/api/products/{product.id}/images/remove-background",
+        json={"image_url": img_a},
+    ).get_json()["job_id"]
+    job_b = client.post(
+        f"/api/products/{product.id}/images/remove-background",
+        json={"image_url": img_b},
+    ).get_json()["job_id"]
+
+    # Snapshots before apply-all: there's just the seed snapshot.
+    snapshots_before = (
+        db_session.query(ProductSnapshot)
+        .filter_by(product_id=product.id)
+        .count()
+    )
+
+    response = client.post(
+        f"/api/products/{product.id}/image-processing-jobs/apply-all"
+    )
+    assert response.status_code == 200, response.data
+    payload = response.get_json()
+
+    applied_ids = {j["job_id"] for j in payload["applied"]}
+    assert applied_ids == {job_a, job_b}
+    assert payload["skipped"] == []
+
+    images = payload["images"]
+    assert len(images) == 3
+    assert images[0].startswith("/media/processed_images/")
+    assert images[1].startswith("/media/processed_images/")
+    assert images[2] == img_c
+
+    # Exactly one new snapshot was written — bulk-apply must coalesce.
+    snapshots_after = (
+        db_session.query(ProductSnapshot)
+        .filter_by(product_id=product.id)
+        .count()
+    )
+    assert snapshots_after == snapshots_before + 1
+
+
+def test_apply_all_respects_job_ids_filter(client, db_session, monkeypatch):
+    user = _login(client, db_session)
+    img_a = _write_local_image(monkeypatch, "filter_a.jpg")
+    img_b = _write_local_image(monkeypatch, "filter_b.jpg")
+    product = _create_product_with_images(db_session, user, [img_a, img_b])
+
+    job_a = client.post(
+        f"/api/products/{product.id}/images/remove-background",
+        json={"image_url": img_a},
+    ).get_json()["job_id"]
+    client.post(
+        f"/api/products/{product.id}/images/remove-background",
+        json={"image_url": img_b},
+    )
+
+    response = client.post(
+        f"/api/products/{product.id}/image-processing-jobs/apply-all",
+        json={"job_ids": [job_a]},
+    )
+    assert response.status_code == 200, response.data
+    payload = response.get_json()
+
+    applied_ids = {j["job_id"] for j in payload["applied"]}
+    assert applied_ids == {job_a}
+
+    images = payload["images"]
+    # Only the first slot was replaced.
+    assert images[0].startswith("/media/processed_images/")
+    assert images[1] == img_b
+
+
+def test_apply_all_empty_when_no_succeeded_jobs(client, db_session, monkeypatch):
+    user = _login(client, db_session)
+    image_url = _write_local_image(monkeypatch, "empty.jpg")
+    product = _create_product_with_images(db_session, user, [image_url])
+
+    response = client.post(
+        f"/api/products/{product.id}/image-processing-jobs/apply-all"
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["applied"] == []
+    assert payload["skipped"] == []
+    assert payload["images"] == [image_url]
+
+
+def test_apply_all_refuses_cross_user_product(client, db_session, monkeypatch):
+    victim = User(username="victim-bulk")
+    victim.set_password("x")
+    db_session.add(victim)
+    db_session.commit()
+    image_url = _write_local_image(monkeypatch, "victim_bulk.jpg")
+    victim_product = _create_product_with_images(db_session, victim, [image_url])
+
+    _login(client, db_session, username="attacker-bulk")
+    response = client.post(
+        f"/api/products/{victim_product.id}/image-processing-jobs/apply-all"
+    )
+    assert response.status_code == 404
+
+
 # ---------- reject endpoint ----------
 
 def test_reject_marks_job_rejected(client, db_session, monkeypatch):

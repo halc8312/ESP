@@ -429,6 +429,111 @@ def apply_image_job(job_id: str):
 
 
 @bg_removal_bp.route(
+    "/api/products/<int:product_id>/image-processing-jobs/apply-all",
+    methods=["POST"],
+)
+@login_required
+def apply_all_image_jobs(product_id: int):
+    """Apply every currently-reviewable (``succeeded``) bg-removal job
+    for a product in a single transaction / snapshot.
+
+    Request body (optional JSON): ``{"job_ids": ["..", ".."]}`` to scope
+    the operation to a specific subset. When omitted, all succeeded
+    jobs owned by the caller for this product are applied.
+
+    Response: ``{"applied": [...serialized jobs...], "skipped": [...],
+    "images": [...new image list...]}``.
+    """
+    payload = request.get_json(silent=True) or {}
+    requested_ids = payload.get("job_ids")
+    if requested_ids is not None and not isinstance(requested_ids, list):
+        return jsonify({"error": "invalid_job_ids"}), 400
+    requested_ids = (
+        [str(j) for j in requested_ids] if requested_ids is not None else None
+    )
+
+    session_db = SessionLocal()
+    try:
+        product = _load_owned_product(session_db, product_id)
+        if product is None:
+            return jsonify({"error": "not_found"}), 404
+
+        query = (
+            session_db.query(ImageProcessingJob)
+            .filter_by(product_id=product.id, user_id=current_user.id)
+            .filter(ImageProcessingJob.status == "succeeded")
+        )
+        if requested_ids is not None:
+            query = query.filter(ImageProcessingJob.job_id.in_(requested_ids))
+        # Oldest-first so that if multiple jobs target the same source URL,
+        # the later (more recent) one ends up as the final replacement.
+        jobs = query.order_by(ImageProcessingJob.created_at.asc()).all()
+
+        if not jobs:
+            return jsonify(
+                {
+                    "applied": [],
+                    "skipped": [],
+                    "images": _iter_current_image_urls(session_db, product),
+                }
+            )
+
+        current_images = _iter_current_image_urls(session_db, product)
+        applied: list[ImageProcessingJob] = []
+        skipped: list[dict] = []
+
+        for job in jobs:
+            if not job.result_image_url:
+                skipped.append(
+                    {"job_id": job.job_id, "reason": "missing_result_url"}
+                )
+                continue
+            if job.source_image_url not in current_images:
+                skipped.append(
+                    {
+                        "job_id": job.job_id,
+                        "reason": "source_image_no_longer_present",
+                    }
+                )
+                continue
+
+            current_images, replaced = _replace_image_in_list(
+                current_images,
+                old_url=job.source_image_url,
+                new_url=job.result_image_url,
+            )
+            if not replaced:
+                skipped.append(
+                    {
+                        "job_id": job.job_id,
+                        "reason": "source_image_no_longer_present",
+                    }
+                )
+                continue
+
+            job.status = "applied"
+            job.updated_at = utc_now()
+            applied.append(job)
+
+        if applied:
+            _build_snapshot_with_images(session_db, product, current_images)
+        session_db.commit()
+
+        return jsonify(
+            {
+                "applied": serialize_jobs(applied),
+                "skipped": skipped,
+                "images": current_images,
+            }
+        )
+    except Exception:
+        session_db.rollback()
+        raise
+    finally:
+        session_db.close()
+
+
+@bg_removal_bp.route(
     "/api/image-processing-jobs/<job_id>/reject",
     methods=["POST"],
 )
