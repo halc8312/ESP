@@ -1331,7 +1331,7 @@
                 return;
             }
 
-            const priceElements = document.querySelectorAll('[data-jpy-price]');
+            const priceElements = document.querySelectorAll('.product-card-price[data-jpy-price], #modalPrice[data-jpy-price]');
             const rateDisplay = document.getElementById('rateDisplay');
 
             priceElements.forEach(el => {
