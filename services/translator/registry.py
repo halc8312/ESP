@@ -29,12 +29,23 @@ def resolve_backend_name() -> str:
 
 
 def _instantiate_backend(name: str) -> TranslatorBackend:
+    source_language = os.environ.get("TRANSLATOR_SOURCE_LANG", "ja")
+    target_language = os.environ.get("TRANSLATOR_TARGET_LANG", "en")
+
     if name == "argos":
         from services.translator.argos_backend import ArgosTranslatorBackend
 
         return ArgosTranslatorBackend(
-            source_language=os.environ.get("TRANSLATOR_SOURCE_LANG", "ja"),
-            target_language=os.environ.get("TRANSLATOR_TARGET_LANG", "en"),
+            source_language=source_language,
+            target_language=target_language,
+        )
+
+    if name == "openai":
+        from services.translator.openai_backend import OpenAITranslatorBackend
+
+        return OpenAITranslatorBackend(
+            source_language=source_language,
+            target_language=target_language,
         )
 
     raise TranslatorUnavailableError(
