@@ -465,9 +465,11 @@ def apply_all_image_jobs(product_id: int):
         )
         if requested_ids is not None:
             query = query.filter(ImageProcessingJob.job_id.in_(requested_ids))
-        # Oldest-first so that if multiple jobs target the same source URL,
-        # the later (more recent) one ends up as the final replacement.
-        jobs = query.order_by(ImageProcessingJob.created_at.asc()).all()
+        # Newest-first so that when several jobs share the same
+        # ``source_image_url`` the most recent result is the one that
+        # replaces it; older duplicates are skipped because the source
+        # URL is no longer present after the first replacement.
+        jobs = query.order_by(ImageProcessingJob.created_at.desc()).all()
 
         if not jobs:
             return jsonify(

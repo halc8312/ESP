@@ -368,6 +368,56 @@ def test_apply_all_empty_when_no_succeeded_jobs(client, db_session, monkeypatch)
     assert payload["images"] == [image_url]
 
 
+def test_apply_all_prefers_newest_when_multiple_jobs_share_source(
+    client, db_session, monkeypatch
+):
+    """When two successful jobs target the same source_image_url, the
+    newer result must win. The older job is skipped because the source
+    URL is already gone from the image list by the time it is processed.
+    """
+    import datetime as _dt
+
+    user = _login(client, db_session)
+    image_url = _write_local_image(monkeypatch, "dup.jpg")
+    product = _create_product_with_images(db_session, user, [image_url])
+
+    old_job = ImageProcessingJob(
+        job_id="old-job",
+        product_id=product.id,
+        user_id=user.id,
+        source_image_url=image_url,
+        result_image_url="/media/processed_images/old.png",
+        provider="rembg",
+        status="succeeded",
+        created_at=_dt.datetime(2026, 1, 1, 0, 0, 0),
+    )
+    new_job = ImageProcessingJob(
+        job_id="new-job",
+        product_id=product.id,
+        user_id=user.id,
+        source_image_url=image_url,
+        result_image_url="/media/processed_images/new.png",
+        provider="rembg",
+        status="succeeded",
+        created_at=_dt.datetime(2026, 4, 1, 0, 0, 0),
+    )
+    db_session.add_all([old_job, new_job])
+    db_session.commit()
+
+    response = client.post(
+        f"/api/products/{product.id}/image-processing-jobs/apply-all"
+    )
+    assert response.status_code == 200, response.data
+    payload = response.get_json()
+
+    applied_ids = {j["job_id"] for j in payload["applied"]}
+    assert applied_ids == {"new-job"}
+
+    skipped_ids = {item["job_id"] for item in payload["skipped"]}
+    assert skipped_ids == {"old-job"}
+    assert payload["images"] == ["/media/processed_images/new.png"]
+
+
 def test_apply_all_refuses_cross_user_product(client, db_session, monkeypatch):
     victim = User(username="victim-bulk")
     victim.set_password("x")
