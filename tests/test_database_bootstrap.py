@@ -162,6 +162,37 @@ def test_apply_additive_startup_migrations_backfills_scrape_job_columns():
     assert "tracker_dismissed_at" in columns
 
 
+def test_apply_additive_startup_migrations_adds_description_template_user_id():
+    smoke_db = Path(f"test_db_additive_description_templates_{uuid.uuid4().hex}.sqlite")
+    smoke_engine = database.create_app_engine(f"sqlite:///{smoke_db.as_posix()}")
+
+    try:
+        with smoke_engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE description_templates (
+                        id INTEGER PRIMARY KEY,
+                        name VARCHAR NOT NULL,
+                        content TEXT NOT NULL,
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    )
+                    """
+                )
+            )
+
+        with smoke_engine.begin() as connection:
+            results = database.apply_additive_startup_migrations(bind=connection)
+        columns = {column["name"] for column in inspect(smoke_engine).get_columns("description_templates")}
+    finally:
+        smoke_engine.dispose()
+        smoke_db.unlink(missing_ok=True)
+
+    assert "description_templates.user_id" in results["applied"]
+    assert "user_id" in columns
+
+
 def test_apply_additive_startup_migrations_avoids_missing_column_probe_queries(monkeypatch):
     class FakeInspector:
         def __init__(self, table_columns):
@@ -279,7 +310,7 @@ def test_run_alembic_upgrade_for_database_url_backfills_tracker_dismissed_at_fro
     assert "ix_scrape_jobs_tracker_dismissed_at" in indexes
     assert "selector_repair_candidates" in table_names
     assert "selector_active_rule_sets" in table_names
-    assert version_num == "20260411_0005"
+    assert version_num == "20260422_0006"
 
 
 def test_inspect_additive_schema_drift_reports_missing_scrape_job_columns():

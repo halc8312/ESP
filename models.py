@@ -139,12 +139,18 @@ class ProductSnapshot(Base):
 
 class DescriptionTemplate(Base):
     __tablename__ = "description_templates"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_description_templates_user_name"),
+    )
 
     id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False, unique=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    name = Column(String, nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
+    user = relationship("User")
 
 
 class PricingRule(Base):
