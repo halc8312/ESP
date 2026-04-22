@@ -12,6 +12,12 @@
 <div class="dashboard-actions">
     <a href="{{ url_for('main.index') }}" class="btn btn-primary">商品一覧を開く</a>
     <a href="{{ url_for('scrape.scrape_form') }}" class="btn btn-secondary">商品抽出へ</a>
+    <a href="{{ request.full_path if request.query_string else request.path }}" class="btn btn-muted">再読み込み</a>
+</div>
+
+<div class="dashboard-meta-bar">
+    <span>生成: {{ generated_at.strftime('%Y-%m-%d %H:%M') if generated_at else '-' }}</span>
+    <span>最終更新商品: {{ last_updated_at.strftime('%Y-%m-%d %H:%M') if last_updated_at else 'まだありません' }}</span>
 </div>
 
 {% if total_items == 0 %}
@@ -23,27 +29,27 @@
 </div>
 {% else %}
 <div class="dashboard-summary-grid">
-    <article class="dashboard-summary-card">
+    <article class="dashboard-summary-card dashboard-summary-card--neutral">
         <span class="dashboard-summary-label">管理対象商品</span>
         <strong class="dashboard-summary-value">{{ total_items }}</strong>
         <span class="dashboard-summary-note">現在のスコープ内の商品数</span>
     </article>
-    <article class="dashboard-summary-card">
+    <article class="dashboard-summary-card dashboard-summary-card--positive">
         <span class="dashboard-summary-label">公開中</span>
         <strong class="dashboard-summary-value">{{ publication_counts.get('active', 0) }}</strong>
         <span class="dashboard-summary-note">`Product.status = active`</span>
     </article>
-    <article class="dashboard-summary-card">
+    <article class="dashboard-summary-card dashboard-summary-card--neutral">
         <span class="dashboard-summary-label">下書き</span>
         <strong class="dashboard-summary-value">{{ publication_counts.get('draft', 0) }}</strong>
         <span class="dashboard-summary-note">`Product.status = draft`</span>
     </article>
-    <article class="dashboard-summary-card">
+    <article class="dashboard-summary-card dashboard-summary-card--positive">
         <span class="dashboard-summary-label">公開準備OK</span>
         <strong class="dashboard-summary-value">{{ ready_count }}</strong>
         <span class="dashboard-summary-note">現行バリデーションで問題なし</span>
     </article>
-    <article class="dashboard-summary-card">
+    <article class="dashboard-summary-card dashboard-summary-card--attention">
         <span class="dashboard-summary-label">要対応商品</span>
         <strong class="dashboard-summary-value">{{ issue_summary.products_with_issues }}</strong>
         <span class="dashboard-summary-note">バリデーションで警告またはエラーあり</span>
@@ -58,8 +64,10 @@
             </div>
             <div class="content-card-body">
                 {% if attention_items %}
+                <div class="dashboard-section-note">エラー件数の多い順に表示しています。まずは「編集」から詳細を開いて不足項目を埋めてください。</div>
                 <div class="table-responsive">
                     <table class="product-table">
+                        <caption class="visually-hidden">要対応商品の一覧</caption>
                         <thead>
                             <tr>
                                 <th>商品</th>
@@ -76,6 +84,7 @@
                                 <td>
                                     <div class="product-title-cell">{{ item.title }}</div>
                                     <div class="text-muted">{{ item.site_label }}</div>
+                                    <div class="dashboard-inline-link"><a href="{{ item.detail_url }}">詳細で原因を確認</a></div>
                                 </td>
                                 <td>
                                     <div class="dashboard-issue-badges">
@@ -135,6 +144,7 @@
             <div class="content-card-body">
                 <div class="table-responsive">
                     <table class="product-table">
+                        <caption class="visually-hidden">最近更新された商品の一覧</caption>
                         <thead>
                             <tr>
                                 <th>画像</th>
@@ -152,7 +162,7 @@
                             <tr>
                                 <td>
                                     {% if item.thumbnail_url %}
-                                    <img src="{{ item.thumbnail_url }}" alt="thumbnail" class="dashboard-thumbnail">
+                                    <img src="{{ item.thumbnail_url }}" alt="thumbnail" class="dashboard-thumbnail" loading="lazy">
                                     {% else %}
                                     <span class="product-thumb-placeholder" aria-hidden="true"></span>
                                     {% endif %}

@@ -375,6 +375,12 @@ def _select_best_mercari_payload(captured_payloads: list[dict], item_url: str) -
     from every captured blob so that we never lose photos because the
     highest-scoring dict happened to be sparse.
     """
+    observed_response_urls = []
+    for response_payload in captured_payloads:
+        response_url = str(response_payload.get("url") or "").strip()
+        if response_url and response_url not in observed_response_urls:
+            observed_response_urls.append(response_url)
+
     target_item_id = extract_mercari_item_id(item_url)
     best = {
         "item": {},
@@ -386,6 +392,7 @@ def _select_best_mercari_payload(captured_payloads: list[dict], item_url: str) -
         },
         "response_url": "",
         "responses_seen": len(captured_payloads),
+        "observed_response_urls": observed_response_urls[:10],
         "raw_payload": None,
     }
     best_score = -1
@@ -433,6 +440,7 @@ def _select_best_mercari_payload(captured_payloads: list[dict], item_url: str) -
                 "meta": meta,
                 "response_url": response_url,
                 "responses_seen": len(captured_payloads),
+                "observed_response_urls": observed_response_urls[:10],
                 "raw_payload": response_payload.get("payload"),
             }
 
@@ -905,6 +913,7 @@ def scrape_item_detail(url: str, driver=None):
         "captured": False,
         "responses_seen": 0,
         "response_url": "",
+        "observed_response_urls": [],
         "used_payload": False,
     }
     used_browser_pool_detail = should_use_mercari_browser_pool_detail()
@@ -916,6 +925,7 @@ def scrape_item_detail(url: str, driver=None):
             payload_meta = dict(payload_result.get("meta") or {})
             network_capture["responses_seen"] = int(payload_result.get("responses_seen") or 0)
             network_capture["response_url"] = str(payload_result.get("response_url") or "")
+            network_capture["observed_response_urls"] = list(payload_result.get("observed_response_urls") or [])
             network_capture["captured"] = _has_usable_payload_item(payload_item)
         except Exception as exc:
             network_capture["capture_error"] = str(exc)
@@ -935,6 +945,7 @@ def scrape_item_detail(url: str, driver=None):
                 payload_meta = dict(payload_result.get("meta") or {})
                 network_capture["responses_seen"] = int(payload_result.get("responses_seen") or 0)
                 network_capture["response_url"] = str(payload_result.get("response_url") or "")
+                network_capture["observed_response_urls"] = list(payload_result.get("observed_response_urls") or [])
                 network_capture["captured"] = _has_usable_payload_item(payload_item)
         else:
             page = fetch_dynamic(url, headless=True, network_idle=True)
@@ -1007,6 +1018,12 @@ def scrape_item_detail(url: str, driver=None):
             "Mercari payload/dom mismatch for %s: %s",
             url,
             ",".join(shadow_compare["mismatch_fields"]),
+        )
+    if capture_enabled and network_capture["responses_seen"] and not network_capture["captured"]:
+        logger.info(
+            "Mercari payload capture observed no usable item for %s; urls=%s",
+            url,
+            ",".join(network_capture.get("observed_response_urls") or []),
         )
 
     if (use_payload or bool(browser_pool_payloads)) and has_usable_payload_item:

@@ -6,7 +6,7 @@
 {% block content %}
 <div class="page-header">
     <h1>設定</h1>
-    <p class="page-subtitle">見せたくない言葉を登録できます</p>
+    <p class="page-subtitle">除外キーワードを登録して、取り込みたくない商品を先に弾けます。</p>
 </div>
 
 <div class="content-card">
@@ -30,10 +30,10 @@
                     <summary>細かい設定</summary>
                     <div class="form-group settings-advanced-body">
                         <label for="match_type">一致のしかた</label>
-                    <select id="match_type" name="match_type">
-                            <option value="partial">ふつう</option>
-                            <option value="exact">ぴったり同じときだけ</option>
-                    </select>
+                        <select id="match_type" name="match_type">
+                            <option value="partial">部分一致</option>
+                            <option value="exact">完全一致</option>
+                        </select>
                     </div>
                 </details>
                 <div class="form-group settings-form-action">
@@ -56,7 +56,9 @@
                 <div class="settings-keyword-copy">
                     <span class="settings-keyword-text">{{ kw.keyword }}</span>
                     {% if kw.match_type == "exact" %}
-                    <span class="settings-keyword-badge">ぴったり</span>
+                    <span class="settings-keyword-badge">完全一致</span>
+                    {% else %}
+                    <span class="settings-keyword-badge settings-keyword-badge--neutral">部分一致</span>
                     {% endif %}
                 </div>
                 <form action="{{ url_for('settings.delete_keyword', keyword_id=kw.id) }}" method="POST"
@@ -78,6 +80,7 @@
         <h2>よく使う例</h2>
     </div>
     <div class="content-card-body">
+        <p class="text-muted settings-example-copy">クリックすると入力欄へセットされます。内容を確認して「追加する」を押してください。</p>
         <div class="settings-example-list">
             {% for example in ["ジャンク", "専用", "訳あり", "確認用", "部品取り", "まとめ売り", "難あり"] %}
             <button type="button" class="settings-example-button" data-keyword-example="{{ example }}">{{ example }}</button>
@@ -97,6 +100,7 @@
             }
             input.value = button.dataset.keywordExample || '';
             input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
         });
     });
 </script>
