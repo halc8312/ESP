@@ -188,8 +188,9 @@ class TestMainRoutes:
         assert b'id="espLoadingOverlay"' in response.data
         assert b'class="loading-overlay" hidden' in response.data
 
-        stylesheet = Path(__file__).resolve().parents[1] / 'static' / 'css' / 'style.css'
-        assert '.loading-overlay[hidden]' in stylesheet.read_text(encoding='utf-8')
+        stylesheet = client.get('/static/css/style.css')
+        assert stylesheet.status_code == 200
+        assert b'.loading-overlay[hidden]' in stylesheet.data
     
     def test_dashboard_requires_login(self, client):
         """Test that dashboard requires authentication"""
