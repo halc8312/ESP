@@ -10,9 +10,16 @@
 
 <body class="login-page">
     <div class="login-container">
+        <div class="login-brand">
+            <span class="login-brand-mark">ESP</span>
+            <div>
+                <p class="login-brand-kicker">EC sourcing workspace</p>
+                <p class="login-brand-title">Product Operations Console</p>
+            </div>
+        </div>
         <h1>ログイン</h1>
         {% if error %}
-        <div class="error">{{ error }}</div>
+        <div class="error login-error-box" role="alert">{{ error }}</div>
         {% endif %}
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
@@ -22,7 +29,10 @@
             </div>
             <div class="form-group">
                 <label for="password">パスワード</label>
-                <input type="password" id="password" name="password" required autocomplete="current-password">
+                <div class="password-field">
+                    <input type="password" id="password" name="password" required autocomplete="current-password">
+                    <button type="button" class="password-toggle" data-toggle-password="#password" data-show-label="表示" data-hide-label="非表示" aria-pressed="false">表示</button>
+                </div>
             </div>
             <button type="submit">ログイン</button>
         </form>

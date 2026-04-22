@@ -6,6 +6,163 @@
 {% block head %}
 {{ super() }}
 <style>
+    .product-edit-page-copy {
+        margin: 6px 0 0;
+        color: var(--text-muted);
+        max-width: 720px;
+        line-height: 1.7;
+    }
+
+    .product-edit-hero .content-card-body {
+        padding: 20px;
+    }
+
+    .product-edit-hero-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.5fr) minmax(260px, 1fr);
+        gap: 20px;
+        align-items: start;
+    }
+
+    .product-edit-eyebrow {
+        margin: 0 0 8px;
+        font-size: 0.76rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #1d4ed8;
+    }
+
+    .product-edit-hero-main h2 {
+        margin: 0;
+        font-size: clamp(1.5rem, 2vw, 2rem);
+        line-height: 1.2;
+    }
+
+    .product-edit-hero-copy {
+        margin: 10px 0 0;
+        color: var(--text-muted);
+        line-height: 1.7;
+    }
+
+    .product-edit-step-list {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 18px;
+    }
+
+    .product-edit-step-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid #cfe0ff;
+        background: linear-gradient(180deg, #f8fbff 0%, #eef5ff 100%);
+        color: #1d4ed8;
+        font-size: 0.82rem;
+        font-weight: 700;
+        text-decoration: none;
+    }
+
+    .product-edit-step-link:hover {
+        background: #e6f0ff;
+    }
+
+    .product-edit-hero-meta {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-content: flex-start;
+        justify-content: flex-end;
+    }
+
+    .product-edit-chip {
+        display: inline-flex;
+        align-items: center;
+        min-height: 38px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: #f4f7fb;
+        border: 1px solid var(--border-color);
+        color: var(--text-color);
+        font-size: 0.82rem;
+        font-weight: 600;
+    }
+
+    .product-edit-status-chip.is-active {
+        background: #ecfdf3;
+        border-color: #bbf7d0;
+        color: #166534;
+    }
+
+    .product-edit-status-chip.is-draft {
+        background: #fff8e8;
+        border-color: #f7d58b;
+        color: #9a6700;
+    }
+
+    .product-edit-dirty-chip.is-dirty {
+        background: #fff4d6;
+        border-color: #f3c969;
+        color: #8a5a00;
+    }
+
+    .product-edit-dirty-chip.is-saving {
+        background: #eef6ff;
+        border-color: #bfdbfe;
+        color: #1d4ed8;
+    }
+
+    .product-edit-panel[id] {
+        scroll-margin-top: 96px;
+    }
+
+    .product-basic-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        margin-bottom: 16px;
+    }
+
+    .product-basic-note {
+        margin: 0;
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: #f8fbff;
+        border: 1px solid #dbeafe;
+        color: #36507a;
+        line-height: 1.7;
+        font-size: 0.84rem;
+    }
+
+    .product-source-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 16px;
+    }
+
+    .product-source-card {
+        display: grid;
+        gap: 6px;
+        padding: 14px;
+        border-radius: 12px;
+        background: #f9fafb;
+        border: 1px solid var(--border-color);
+    }
+
+    .product-source-card span {
+        font-size: 0.76rem;
+        color: var(--text-muted);
+    }
+
+    .product-source-card strong {
+        font-size: 1rem;
+        line-height: 1.4;
+    }
+
     .product-edit-mock-note {
         margin: 0;
         color: var(--text-muted);
@@ -113,7 +270,7 @@
 
     .product-locale-meta-grid {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
         margin-bottom: 18px;
     }
@@ -203,6 +360,7 @@
         display: flex;
         gap: 8px;
         flex-wrap: wrap;
+        grid-column: 1 / -1;
     }
 
     .sync-pill {
@@ -225,15 +383,295 @@
         line-height: 1.5;
     }
 
+    .product-edit-inline-stack {
+        display: grid;
+        gap: 6px;
+    }
+
+    .translation-callout {
+        margin-bottom: 16px;
+        padding: 14px 16px;
+        border-radius: 12px;
+        border: 1px solid #f7d58b;
+        background: #fff8e8;
+        display: grid;
+        gap: 8px;
+    }
+
+    .translation-callout p {
+        margin: 0;
+        color: #7c5a1b;
+        line-height: 1.6;
+        font-size: 0.82rem;
+    }
+
+    .translation-callout .btn {
+        width: fit-content;
+    }
+
+    .product-edit-error {
+        margin-bottom: 16px;
+        padding: 12px;
+        border-radius: 6px;
+        border: 1px solid #ef9a9a;
+        background: #fce4ec;
+        color: #c62828;
+    }
+
+    .field-helper-text {
+        margin: 6px 0 0;
+        font-size: 0.78rem;
+        color: var(--text-muted);
+        line-height: 1.6;
+    }
+
+    .product-variant-overview {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+
+    .product-variant-overview-card {
+        display: grid;
+        gap: 6px;
+        padding: 14px;
+        border-radius: 12px;
+        background: #f8fafc;
+        border: 1px solid var(--border-color);
+    }
+
+    .product-variant-overview-card span {
+        font-size: 0.76rem;
+        color: var(--text-muted);
+    }
+
+    .product-variant-overview-card strong {
+        font-size: 1rem;
+    }
+
+    .product-edit-checklist-card .content-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .product-edit-checklist-card .content-card-header p {
+        margin: 4px 0 0;
+        font-size: 0.82rem;
+        color: var(--text-muted);
+        line-height: 1.6;
+    }
+
+    .product-edit-overview-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 16px;
+    }
+
+    .product-edit-overview-card {
+        display: grid;
+        gap: 4px;
+        padding: 12px;
+        border-radius: 12px;
+        background: #f8fafc;
+        border: 1px solid var(--border-color);
+    }
+
+    .product-edit-overview-card span {
+        font-size: 0.76rem;
+        color: var(--text-muted);
+    }
+
+    .product-edit-overview-card strong {
+        font-size: 1rem;
+        line-height: 1.4;
+    }
+
+    .product-edit-checklist-list {
+        display: grid;
+        gap: 12px;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    .product-edit-checklist-item {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 12px;
+        align-items: start;
+        padding: 12px;
+        border-radius: 12px;
+        background: #fff8e8;
+        border: 1px solid #f7d58b;
+    }
+
+    .product-edit-checklist-item.is-complete {
+        background: #ecfdf3;
+        border-color: #bbf7d0;
+    }
+
+    .product-edit-check-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 42px;
+        min-width: 42px;
+        height: 42px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.88);
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        font-size: 0.76rem;
+        font-weight: 700;
+    }
+
+    .product-edit-check-content {
+        display: grid;
+        gap: 4px;
+    }
+
+    .product-edit-check-content strong {
+        font-size: 0.92rem;
+    }
+
+    .product-edit-check-note {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 0.8rem;
+        line-height: 1.6;
+    }
+
+    .product-edit-side-note {
+        margin: 14px 0 0;
+        color: var(--text-muted);
+        font-size: 0.8rem;
+        line-height: 1.7;
+    }
+
+    .product-edit-accent-panel {
+        margin-bottom: 16px;
+        background: #e3f2fd;
+    }
+
+    .product-edit-accent-panel > summary {
+        background: #e3f2fd;
+    }
+
+    .bulk-generator {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: flex-end;
+    }
+
+    .variant-generate-button,
+    .product-edit-full-width-button {
+        width: 100%;
+    }
+
+    .variant-generate-button {
+        background: #0066cc;
+        color: white;
+        border: none;
+        padding: 10px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .variant-generation-summary {
+        margin-top: 12px;
+        padding: 12px 14px;
+        border-radius: 10px;
+        border: 1px solid #bfdbfe;
+        background: #eff6ff;
+        color: #1d4ed8;
+        font-size: 0.84rem;
+        line-height: 1.6;
+    }
+
+    .variant-generation-summary.is-success {
+        border-color: #bbf7d0;
+        background: #ecfdf3;
+        color: #166534;
+    }
+
+    .variant-generation-summary.is-error {
+        border-color: #fecaca;
+        background: #fff1f2;
+        color: #b91c1c;
+    }
+
+    .product-edit-readonly {
+        background: #eee;
+        cursor: not-allowed;
+    }
+
+    .product-edit-readonly.word-break {
+        word-break: break-all;
+    }
+
+    .product-edit-variant-col-opt,
+    .product-edit-variant-col-price,
+    .product-edit-variant-col-sku {
+        width: 15%;
+    }
+
+    .product-edit-variant-col-stock,
+    .product-edit-variant-col-weight {
+        width: 10%;
+    }
+
+    .product-edit-variant-col-actions {
+        width: 50px;
+    }
+
+    .product-edit-variant-tax-cell {
+        text-align: left;
+        font-size: 11px;
+    }
+
+    .product-edit-variant-hs-input {
+        width: 60px;
+    }
+
+    .product-edit-variant-origin-input {
+        width: 40px;
+    }
+
+    .internal-source-panel {
+        border: 2px dashed rgba(15, 23, 42, 0.15);
+        opacity: 0.92;
+    }
+
+    .internal-source-panel .content-card-header {
+        background: #f7f8fa;
+    }
+
+    .internal-source-panel .content-card-body {
+        background: #fafafa;
+    }
+
     @media (max-width: 1023px) {
+        .product-edit-hero-grid,
+        .product-basic-grid,
+        .product-source-grid,
         .image-entry-grid,
         .product-locale-meta-grid,
-        .locale-editor-grid {
+        .locale-editor-grid,
+        .product-variant-overview,
+        .product-edit-overview-grid {
             grid-template-columns: 1fr;
         }
 
         .product-template-row {
             grid-template-columns: 1fr;
+        }
+
+        .product-edit-hero-meta {
+            justify-content: flex-start;
         }
     }
 </style>
@@ -247,8 +685,7 @@
 </div>
 
 {% if error %}
-<div
-    style="background: #fce4ec; border: 1px solid #ef9a9a; padding: 12px; border-radius: 6px; margin-bottom: 16px; color: #c62828;">
+<div class="product-edit-error">
     {{ error }}
 </div>
 {% endif %}
@@ -258,15 +695,97 @@
     <input type="hidden" name="delete_v_ids" id="delete_v_ids" value="">
     <input type="hidden" name="image_urls_json" id="image_urls_json" value='{{ images|tojson|safe }}'>
 
+    <section class="content-card product-edit-hero">
+        <div class="content-card-body">
+            <div class="product-edit-hero-grid">
+                <div class="product-edit-hero-main">
+                    <p class="product-edit-eyebrow">Beginner-Friendly Flow</p>
+                    <h2 id="productSummaryTitle">{{ edit_summary.public_title }}</h2>
+                    <p class="product-edit-hero-copy">{{ edit_summary.status_help }}</p>
+                    <div class="product-edit-step-list">
+                        <a href="#basicSettingsPanel" class="product-edit-step-link">1. 基本設定</a>
+                        <a href="#productImagesPanel" class="product-edit-step-link">2. 商品画像</a>
+                        <a href="#productDescriptionPanel" class="product-edit-step-link">3. 商品説明</a>
+                        <a href="#productVariantsPanel" class="product-edit-step-link">4. 価格・在庫</a>
+                        <a href="#productSeoPanel" class="product-edit-step-link">5. 検索設定</a>
+                    </div>
+                </div>
+                <div class="product-edit-hero-meta">
+                    <span class="product-edit-chip product-edit-dirty-chip" id="saveStateBadge">保存済み</span>
+                    <span class="product-edit-chip">商品ID #{{ product.id }}</span>
+                    <span class="product-edit-chip" id="heroShopBadge">{{ edit_summary.shop_name }}</span>
+                    <span
+                        class="product-edit-chip product-edit-status-chip {% if product.status == 'active' %}is-active{% else %}is-draft{% endif %}"
+                        id="heroStatusBadge">
+                        {{ edit_summary.status_label }}
+                    </span>
+                    <span class="product-edit-chip" id="heroReadinessBadge">チェック {{ edit_summary.completed_count }}/{{ edit_summary.total_count }}</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <div class="product-edit-layout">
         <div class="product-edit-main">
+            <details class="content-card product-edit-panel" id="basicSettingsPanel" open>
+                <summary class="content-card-header product-edit-summary">
+                    <div class="product-edit-summary-copy">
+                        <h2>基本設定</h2>
+                        <p>どのショップで扱うか、今は下書きか公開中かを最初に決めます</p>
+                    </div>
+                    <span class="product-edit-summary-side">
+                        <span class="product-edit-summary-meta">{{ edit_summary.status_label }}</span>
+                        <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
+                    </span>
+                </summary>
+                <div class="content-card-body">
+                    <div class="product-basic-grid">
+                        <div class="form-group">
+                            <label for="shop_id">所属ショップ</label>
+                            <select id="shop_id" name="shop_id">
+                                <option value="">(共通 / 未所属)</option>
+                                {% for s in all_shops %}
+                                <option value="{{ s.id }}" {% if product.shop_id==s.id %}selected{% endif %}>{{ s.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <p class="field-helper-text">この商品をどのショップの商品として扱うかを選びます。未所属のままでも保存できます。</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="status">公開ステータス</label>
+                            <select id="status" name="status">
+                                <option value="active" {% if product.status=='active' %}selected{% endif %}>有効 (Active)</option>
+                                <option value="draft" {% if product.status=='draft' %}selected{% endif %}>下書き (Draft)</option>
+                            </select>
+                            <p class="field-helper-text">初めてなら <code>下書き</code> のまま整えて、最後に <code>有効</code> に切り替えるのがおすすめです。</p>
+                        </div>
+                    </div>
+
+                    <p class="product-basic-note">右側の「保存前チェック」を見ながら、上から順に入力すれば最低限必要な項目を揃えやすくしています。</p>
+
+                    <div class="product-source-grid">
+                        <article class="product-source-card">
+                            <span>取得元サイト</span>
+                            <strong>{{ edit_summary.source_site }}</strong>
+                        </article>
+                        <article class="product-source-card">
+                            <span>仕入れ価格の記録</span>
+                            <strong>{{ edit_summary.source_price_label }}</strong>
+                        </article>
+                        <article class="product-source-card">
+                            <span>仕入れ元の状態</span>
+                            <strong>{{ edit_summary.source_status_label }}</strong>
+                        </article>
+                    </div>
+                </div>
+            </details>
 
             <!-- ① Images (top priority for sales content) -->
-            <details class="content-card product-edit-panel" open>
+            <details class="content-card product-edit-panel" id="productImagesPanel" open>
                 <summary class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
                         <h2>商品画像</h2>
-                        <p>ドラッグ並び替え・削除・追加をまとめて扱います</p>
+                        <p>購入者が最初に見る部分です。並べ替え、削除、追加をここでまとめて行えます</p>
                     </div>
                     <span class="product-edit-summary-side">
                         <span class="product-edit-summary-meta" id="imageCountBadge">{{ images|length }}枚</span>
@@ -276,8 +795,8 @@
                 <div class="content-card-body">
                     <div class="product-image-manager">
                         <div class="image-manager-toolbar">
-                            <div style="display: grid; gap: 6px;">
-                                <p class="product-image-note">ドラッグで並べ替え、不要な画像は削除できます。URL追加と画像アップロードに対応しています。</p>
+                            <div class="product-edit-inline-stack">
+                                <p class="product-image-note">1枚目の画像がいちばん目立ちます。おすすめの順にドラッグして並び替えてください。</p>
                                 <p class="product-edit-mock-note"><strong>白背景化ボタンは先に配置</strong>しています。処理自体は後続で連携します。</p>
                             </div>
                             <div class="image-toolbar-actions">
@@ -297,7 +816,7 @@
                                 <div class="product-image-card-body">
                                     <div class="product-image-card-top">
                                         <span class="product-image-order">{{ loop.index }}枚目</span>
-                                        <button type="button" class="image-sort-handle">並べ替え</button>
+                                        <button type="button" class="image-sort-handle" aria-label="画像の並び順を変更">≡ 並べ替え</button>
                                     </div>
                                     <div class="product-image-url">{{ url }}</div>
                                 </div>
@@ -306,7 +825,7 @@
                         </div>
 
                         <div id="imageEmptyState" class="image-empty-state" {% if images %}hidden{% endif %}>
-                            画像はまだ登録されていません。
+                            画像はまだ登録されていません。まずは見せたい写真を1枚追加してください。
                         </div>
 
                         <div class="image-entry-grid">
@@ -316,7 +835,7 @@
                                     <input type="url" id="image_url_input" placeholder="https://example.com/image.jpg">
                                     <button type="button" class="btn-secondary" onclick="addImageUrl()">URLを追加</button>
                                 </div>
-                                <p class="text-small text-muted mb-0">http(s) または `/media/...` 形式の画像URLを追加できます。</p>
+                                <p class="text-small text-muted mb-0"><code>http(s)</code> または <code>/media/...</code> 形式の画像URLを追加できます。</p>
                             </div>
 
                             <div class="form-group image-add-group">
@@ -330,11 +849,11 @@
             </details>
 
             <!-- ② Public Title / Description / English -->
-            <details class="content-card product-edit-panel" open>
+            <details class="content-card product-edit-panel" id="productDescriptionPanel" open>
                 <summary class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
                         <h2>商品説明</h2>
-                        <p>日本語と英語を並べて、スクロールを抑えて編集します</p>
+                        <p>公開ページに出る名前と説明です。迷ったら日本語から埋めていけば十分です</p>
                     </div>
                     <span class="product-edit-summary-side">
                         <span class="product-edit-summary-meta">必須</span>
@@ -343,27 +862,9 @@
                 </summary>
                 <div class="content-card-body">
                     <div class="product-locale-meta-grid">
-                        <div class="form-group">
-                            <label for="shop_id">所属ショップ</label>
-                            <select id="shop_id" name="shop_id">
-                                <option value="">(共通 / 未所属)</option>
-                                {% for s in all_shops %}
-                                <option value="{{ s.id }}" {% if product.shop_id==s.id %}selected{% endif %}>{{ s.name }}</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="status">ステータス</label>
-                            <select id="status" name="status">
-                                <option value="active" {% if product.status=='active' %}selected{% endif %}>有効 (Active)</option>
-                                <option value="draft" {% if product.status=='draft' %}selected{% endif %}>下書き (Draft)</option>
-                            </select>
-                        </div>
-
                         <div class="sync-pill-row">
-                            <span class="sync-pill">JP → EN 同期UI</span>
-                            <span class="sync-pill">英語欄は手動修正可</span>
+                            <span class="sync-pill">まず日本語を入力</span>
+                            <span class="sync-pill">英語欄はあとからでも可</span>
                         </div>
 
                         <div class="product-template-card">
@@ -376,6 +877,7 @@
                                         <option value="{{ t.content | e }}">{{ t.name }}</option>
                                         {% endfor %}
                                     </select>
+                                    <p class="field-helper-text">よく使う説明文がある場合はここから呼び出せます。あとで手直しも可能です。</p>
                                 </div>
                                 <button type="button" class="btn-secondary" onclick="applyTemplate()">適用する</button>
                             </div>
@@ -395,12 +897,14 @@
                                 <label for="title">商品名 (日本語)</label>
                                 <input type="text" id="title" name="title"
                                     value="{{ product.custom_title or product.last_title or '' }}">
+                                <p class="field-helper-text">一覧や公開ページで最初に見える名前です。短く分かりやすい表現がおすすめです。</p>
                             </div>
 
                             <div class="form-group">
                                 <label for="description">説明文 (日本語 / HTML可)</label>
                                 <textarea id="description" name="description"
                                     rows="8">{{ product.custom_description or (snapshot.description if snapshot else '') }}</textarea>
+                                <p class="field-helper-text">状態、サイズ、付属品、注意点の順で書くと読みやすくなります。</p>
                             </div>
                         </section>
 
@@ -416,31 +920,41 @@
                                 </div>
                             </div>
 
+                            {% if not product.custom_title_en and not product.custom_description_en %}
+                            <div class="translation-callout">
+                                <strong>英語情報はまだ未入力です</strong>
+                                <p>公開カタログで英語表記を使う場合は、まず英語タイトルか英語説明のどちらかを入れておくと運用しやすくなります。</p>
+                                <button type="button" class="btn btn-primary btn-compact" onclick="focusEnglishFields()">英語欄へ移動</button>
+                            </div>
+                            {% endif %}
+
                             <div class="form-group">
                                 <label for="title_en">商品名 (英語)</label>
                                 <input type="text" id="title_en" name="title_en" value="{{ product.custom_title_en or '' }}"
                                     placeholder="e.g. Vintage Camera Body">
+                                <p class="field-helper-text">英語で販売する予定がない場合は、ここは後回しでも問題ありません。</p>
                             </div>
 
                             <div class="form-group">
                                 <label for="description_en">説明文 (英語 / HTML可)</label>
                                 <textarea id="description_en" name="description_en"
                                     rows="8">{{ product.custom_description_en or '' }}</textarea>
+                                <p class="field-helper-text">英語説明は、まず短い要点だけでも十分です。</p>
                             </div>
 
                             <p class="editor-helper-text">翻訳の自動同期と本文翻訳は、外部API連携の仕様確定後に有効化します。</p>
                         </section>
                     </div>
-                    <p class="editor-helper-text">3/22 モックに合わせて入力レイアウトを先に調整しています。翻訳ボタンと白背景化の処理は後続連携です。</p>
+                    <p class="editor-helper-text">翻訳ボタンは先行配置です。処理連携前でも、手入力でそのまま編集して保存できます。</p>
                 </div>
             </details>
  
             <!-- ③ Price & Stock (Variants) -->
-            <details class="content-card product-edit-panel" open>
+            <details class="content-card product-edit-panel" id="productVariantsPanel" open>
                 <summary class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
                         <h2>バリエーション設定</h2>
-                        <p>価格・SKU・在庫をまとめて調整</p>
+                        <p>価格、SKU、在庫数をここでまとめて整えます。1種類だけの商品でも1行あれば十分です</p>
                     </div>
                     <span class="product-edit-summary-side">
                         <span class="product-edit-summary-meta">{{ variants|length }}件</span>
@@ -448,20 +962,36 @@
                     </span>
                 </summary>
                 <div class="content-card-body">
-                    <details class="mobile-collapsible" style="margin-bottom: 16px; background: #e3f2fd;">
-                        <summary class="mobile-collapsible-header" style="background: #e3f2fd;">
-                            <span class="mobile-collapsible-title">⚡ バリエーション一括生成</span>
+                    <div class="product-variant-overview">
+                        <article class="product-variant-overview-card">
+                            <span>登録件数</span>
+                            <strong id="variantCountValue">{{ edit_summary.variant_count }}件</strong>
+                        </article>
+                        <article class="product-variant-overview-card">
+                            <span>在庫あり</span>
+                            <strong id="variantStockValue">{{ edit_summary.in_stock_count }}件</strong>
+                        </article>
+                        <article class="product-variant-overview-card">
+                            <span>価格の目安</span>
+                            <strong id="variantPriceValue">{{ edit_summary.price_label }}</strong>
+                        </article>
+                    </div>
+                    <p class="field-helper-text">色やサイズがない商品は、1行だけ残して価格と在庫を入れれば運用できます。</p>
+
+                    <details class="mobile-collapsible product-edit-accent-panel">
+                        <summary class="mobile-collapsible-header">
+                            <span class="mobile-collapsible-title">一括でバリエーションを作る</span>
                             <span class="mobile-collapsible-icon">▶</span>
                         </summary>
                         <div class="mobile-collapsible-content">
-                            <p class="text-small text-muted mb-1">カンマ区切りで入力してください (例: S, M, L)。既存の行は削除されません。</p>
-                            <div class="bulk-generator" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                            <p class="text-small text-muted mb-1">カンマ区切りで入力してください (例: S, M, L)。既存の行はそのまま残ります。</p>
+                            <div class="bulk-generator">
                                 <div class="filter-group">
-                                    <label>Option1 Values</label>
+                                    <label>項目1の値</label>
                                     <input type="text" id="bulk_opt1" placeholder="例: Red, Blue">
                                 </div>
                                 <div class="filter-group">
-                                    <label>Option2 Values</label>
+                                    <label>項目2の値</label>
                                     <input type="text" id="bulk_opt2" placeholder="例: S, M, L">
                                 </div>
                                 <div class="filter-group">
@@ -473,39 +1003,40 @@
                                     <input type="text" id="bulk_sku" placeholder="MER-ITEM-">
                                 </div>
                             </div>
-                            <button type="button" onclick="generateVariants()" class="mt-1"
-                                style="background:#0066cc; color:white; border:none; padding:10px 16px; border-radius:4px; cursor:pointer; width: 100%;">生成</button>
+                            <button type="button" onclick="generateVariants()" class="mt-1 variant-generate-button">この内容で生成</button>
+                            <div id="variantGenerationSummary" class="variant-generation-summary" hidden aria-live="polite"></div>
                         </div>
                     </details>
 
                     <div class="option-names-section">
                         <div class="filter-group">
-                            <label>Option1 Name</label>
+                            <label>項目名1</label>
                             <input type="text" name="option1_name" value="{{ product.option1_name or 'Title' }}">
                         </div>
                         <div class="filter-group">
-                            <label>Option2 Name</label>
+                            <label>項目名2</label>
                             <input type="text" name="option2_name" value="{{ product.option2_name or '' }}"
                                 placeholder="(例: Size)">
                         </div>
                         <div class="filter-group">
-                            <label>Option3 Name</label>
+                            <label>項目名3</label>
                             <input type="text" name="option3_name" value="{{ product.option3_name or '' }}">
                         </div>
                     </div>
+                    <p class="field-helper-text">例: 色 / サイズ / 状態。1つしか使わない場合は項目名1だけでも大丈夫です。</p>
 
                     <div class="table-responsive">
                         <table class="variant-table" id="variantTable">
                             <thead>
                                 <tr>
-                                    <th style="width:15%">Opt1</th>
-                                    <th style="width:15%">Opt2</th>
-                                    <th style="width:15%">価格</th>
-                                    <th style="width:15%">SKU</th>
-                                    <th style="width:10%">在庫</th>
-                                    <th class="hide-mobile" style="width:10%">重量</th>
-                                    <th class="hide-mobile">税/HS/Origin</th>
-                                    <th style="width:50px;">操作</th>
+                                    <th class="product-edit-variant-col-opt">項目1</th>
+                                    <th class="product-edit-variant-col-opt">項目2</th>
+                                    <th class="product-edit-variant-col-price">販売価格</th>
+                                    <th class="product-edit-variant-col-sku">SKU</th>
+                                    <th class="product-edit-variant-col-stock">在庫</th>
+                                    <th class="hide-mobile product-edit-variant-col-weight">重量(g)</th>
+                                    <th class="hide-mobile">税 / HS / 原産国</th>
+                                    <th class="product-edit-variant-col-actions">操作</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -532,12 +1063,12 @@
                                         <input type="number" name="v_grams_{{ v.id }}" value="{{ v.grams or '' }}"
                                             class="short">
                                     </td>
-                                    <td data-label="税/HS/Origin" class="hide-mobile" style="text-align:left; font-size:11px;">
+                                    <td data-label="税/HS/Origin" class="hide-mobile product-edit-variant-tax-cell">
                                         <label><input type="checkbox" name="v_tax_{{ v.id }}" {% if v.taxable %}checked{% endif %}> 課税</label><br>
                                         HS: <input type="text" name="v_hs_{{ v.id }}" value="{{ v.hs_code or '' }}"
-                                            style="width:60px;"><br>
+                                            class="product-edit-variant-hs-input"><br>
                                         Org: <input type="text" name="v_org_{{ v.id }}" value="{{ v.country_of_origin or '' }}"
-                                            style="width:40px;">
+                                            class="product-edit-variant-origin-input">
                                     </td>
                                     <td data-label="操作">
                                         <button type="button" class="del-btn" onclick="markDelete({{ v.id }})">削除</button>
@@ -548,23 +1079,66 @@
                         </table>
                     </div>
 
-                    <button type="button" class="add-btn mt-1" onclick="addVariantRow()" style="width: 100%;">＋
-                        バリエーションを追加</button>
+                    <button type="button" class="add-btn mt-1 product-edit-full-width-button" onclick="addVariantRow()">＋
+                        バリエーションを追加する</button>
                 </div>
             </details>
         </div>
 
         <div class="product-edit-side">
+            <section class="content-card product-edit-checklist-card">
+                <div class="content-card-header">
+                    <div>
+                        <h2>保存前チェック</h2>
+                        <p>まずは画像、商品名、説明、価格がそろっていれば迷いにくくなります。</p>
+                    </div>
+                    <span class="product-edit-summary-meta" id="checklistCountBadge">{{ edit_summary.completed_count }}/{{ edit_summary.total_count }}</span>
+                </div>
+                <div class="content-card-body">
+                    <div class="product-edit-overview-grid">
+                        <article class="product-edit-overview-card">
+                            <span>商品画像</span>
+                            <strong id="summaryImageValue">{{ edit_summary.image_count }}枚</strong>
+                        </article>
+                        <article class="product-edit-overview-card">
+                            <span>公開状態</span>
+                            <strong id="summaryStatusValue">{{ edit_summary.status_label }}</strong>
+                        </article>
+                        <article class="product-edit-overview-card">
+                            <span>バリエーション</span>
+                            <strong id="summaryVariantValue">{{ edit_summary.variant_count }}件</strong>
+                        </article>
+                        <article class="product-edit-overview-card">
+                            <span>価格の目安</span>
+                            <strong id="summaryPriceValue">{{ edit_summary.price_label }}</strong>
+                        </article>
+                    </div>
+
+                    <ul class="product-edit-checklist-list">
+                        {% for item in edit_summary.checklist %}
+                        <li class="product-edit-checklist-item{% if item.done %} is-complete{% endif %}" data-check-key="{{ item.key }}">
+                            <span class="product-edit-check-icon">{% if item.done %}OK{% else %}要{% endif %}</span>
+                            <div class="product-edit-check-content">
+                                <strong>{{ item.label }}</strong>
+                                <p class="product-edit-check-note">{{ item.done_text if item.done else item.todo_text }}</p>
+                            </div>
+                        </li>
+                        {% endfor %}
+                    </ul>
+
+                    <p class="product-edit-side-note">途中で迷ったら <code>下書き</code> のまま保存して、あとから追記しても問題ありません。</p>
+                </div>
+            </section>
 
             <!-- ⑤ SEO & Tags -->
-            <details class="content-card product-edit-panel" open>
+            <details class="content-card product-edit-panel" id="productSeoPanel" open>
                 <summary class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
-                        <h2>SEO &amp; Tags</h2>
-                        <p>Search optimization and classification</p>
+                        <h2>販売メモ・検索設定</h2>
+                        <p>あとからでも調整できる項目です。分からない場合は空欄でも保存できます</p>
                     </div>
                     <span class="product-edit-summary-side">
-                        <span class="product-edit-summary-meta">SEO</span>
+                        <span class="product-edit-summary-meta">任意</span>
                         <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
                     </span>
                 </summary>
@@ -573,15 +1147,18 @@
                         <label for="vendor">販売元 (Vendor)</label>
                         <input type="text" id="vendor" name="vendor"
                             value="{{ product.custom_vendor or '' }}" placeholder="e.g. My Brand">
+                        <p class="field-helper-text">ブランド名やショップ名を入れたい場合に使います。</p>
                     </div>
                     <div class="form-group">
                         <label for="tags">タグ (Tags)</label>
                         <input type="text" id="tags" name="tags" value="{{ product.tags or '' }}" placeholder="カンマ区切りで入力">
+                        <p class="field-helper-text">検索や整理に使う補助ラベルです。例: vintage,camera,black</p>
                     </div>
                     <div class="form-group">
                         <label for="handle">URLハンドル (Handle)</label>
                         <input type="text" id="handle" name="handle"
                             value="{{ product.custom_handle or '' }}">
+                        <p class="field-helper-text">こだわりがなければ空欄のままでも運用できます。</p>
                     </div>
                     <div class="form-group">
                         <label for="seo_title">ページタイトル (SEO Title)</label>
@@ -597,42 +1174,40 @@
             </details>
 
             <!-- ⑥ Internal Sourcing Details (admin user only, visually separated) -->
-            <details class="content-card product-edit-panel" style="border: 2px dashed rgba(0,0,0,0.15); opacity: 0.85;">
-                <summary class="content-card-header product-edit-summary" style="background: #f5f5f5;">
+            <details class="content-card product-edit-panel internal-source-panel">
+                <summary class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
-                        <h2>🔒 Internal Sourcing Details</h2>
-                        <p>Internal use only — not visible in the public catalog</p>
+                        <h2>内部仕入れメモ</h2>
+                        <p>公開カタログには出ない管理用の情報です</p>
                     </div>
                     <span class="product-edit-summary-side">
                         <span class="product-edit-summary-meta">内部</span>
                         <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
                     </span>
                 </summary>
-                <div class="content-card-body" style="background: #fafafa;">
+                <div class="content-card-body">
                     <div class="form-group">
-                        <label>Source Site</label>
-                        <input type="text" value="{{ product.site or '' }}" readonly disabled
-                            style="background: #eee; cursor: not-allowed;">
+                        <label>取得元サイト</label>
+                        <input type="text" value="{{ product.site or '' }}" readonly disabled class="product-edit-readonly">
                     </div>
                     <div class="form-group">
-                        <label>Source URL</label>
-                        <input type="text" value="{{ product.source_url or '' }}" readonly disabled
-                            style="background: #eee; cursor: not-allowed; word-break: break-all;">
+                        <label>取得元URL</label>
+                        <input type="text" value="{{ product.source_url or '' }}" readonly disabled class="product-edit-readonly word-break">
+                        {% if product.source_url %}
+                        <p class="field-helper-text"><a href="{{ product.source_url }}" target="_blank" rel="noreferrer">取得元ページを開く</a></p>
+                        {% endif %}
                     </div>
                     <div class="form-group">
-                        <label>Last Scraped Title</label>
-                        <input type="text" value="{{ product.last_title or '' }}" readonly disabled
-                            style="background: #eee; cursor: not-allowed;">
+                        <label>最後に取得したタイトル</label>
+                        <input type="text" value="{{ product.last_title or '' }}" readonly disabled class="product-edit-readonly">
                     </div>
                     <div class="form-group">
-                        <label>Last Scraped Price</label>
-                        <input type="text" value="{{ product.last_price or '' }}" readonly disabled
-                            style="background: #eee; cursor: not-allowed;">
+                        <label>最後に取得した価格</label>
+                        <input type="text" value="{{ product.last_price or '' }}" readonly disabled class="product-edit-readonly">
                     </div>
                     <div class="form-group">
-                        <label>Last Status</label>
-                        <input type="text" value="{{ product.last_status or '' }}" readonly disabled
-                            style="background: #eee; cursor: not-allowed;">
+                        <label>最後に取得した状態</label>
+                        <input type="text" value="{{ product.last_status or '' }}" readonly disabled class="product-edit-readonly">
                     </div>
                 </div>
             </details>
@@ -641,11 +1216,11 @@
     </div>
 
     <div class="desktop-only product-edit-save-row">
-        <button type="submit" style="width: 100%;">保存</button>
+        <button type="submit" class="product-edit-full-width-button">変更を保存</button>
     </div>
 
     <div class="sticky-save-container">
-        <button type="submit">保存</button>
+        <button type="submit">この内容で保存</button>
     </div>
 </form>
 {% endblock %}
@@ -662,6 +1237,22 @@
     var imageUrlInput = null;
     var imageFileInput = null;
     var imageUploadHint = null;
+    var productForm = null;
+    var saveStateBadge = null;
+    var productSummaryTitle = null;
+    var heroShopBadge = null;
+    var heroStatusBadge = null;
+    var heroReadinessBadge = null;
+    var checklistCountBadge = null;
+    var summaryImageValue = null;
+    var summaryStatusValue = null;
+    var summaryVariantValue = null;
+    var summaryPriceValue = null;
+    var variantCountValue = null;
+    var variantStockValue = null;
+    var variantPriceValue = null;
+    var variantGenerationSummary = null;
+    var formDirty = false;
 
     document.addEventListener('DOMContentLoaded', function () {
         tinymce.init({
@@ -677,6 +1268,12 @@
             resize: true,
             mobile: {
                 toolbar_mode: 'scrolling'
+            },
+            setup: function (editor) {
+                editor.on('input change undo redo', function () {
+                    markFormDirty();
+                    updateProductEditSummary();
+                });
             }
         });
 
@@ -687,17 +1284,37 @@
         imageUrlInput = document.getElementById('image_url_input');
         imageFileInput = document.getElementById('image_file_input');
         imageUploadHint = document.getElementById('imageUploadHint');
+        productForm = document.querySelector('.product-edit-form');
+        saveStateBadge = document.getElementById('saveStateBadge');
+        productSummaryTitle = document.getElementById('productSummaryTitle');
+        heroShopBadge = document.getElementById('heroShopBadge');
+        heroStatusBadge = document.getElementById('heroStatusBadge');
+        heroReadinessBadge = document.getElementById('heroReadinessBadge');
+        checklistCountBadge = document.getElementById('checklistCountBadge');
+        summaryImageValue = document.getElementById('summaryImageValue');
+        summaryStatusValue = document.getElementById('summaryStatusValue');
+        summaryVariantValue = document.getElementById('summaryVariantValue');
+        summaryPriceValue = document.getElementById('summaryPriceValue');
+        variantCountValue = document.getElementById('variantCountValue');
+        variantStockValue = document.getElementById('variantStockValue');
+        variantPriceValue = document.getElementById('variantPriceValue');
+        variantGenerationSummary = document.getElementById('variantGenerationSummary');
 
         imageUrls = safeParseImageUrls(imageHiddenInput ? imageHiddenInput.value : '[]');
         renderImageList();
+        setSaveState('saved');
+        updateProductEditSummary();
 
-        var form = document.querySelector('.product-edit-form');
-        if (form) {
-            form.addEventListener('submit', function () {
+        if (productForm) {
+            productForm.addEventListener('submit', function () {
                 if (typeof tinymce !== 'undefined') {
                     tinymce.triggerSave();
                 }
+                formDirty = false;
+                setSaveState('saving');
             });
+            productForm.addEventListener('input', handleFormMutation);
+            productForm.addEventListener('change', handleFormMutation);
         }
 
         if (imageGrid && typeof Sortable !== 'undefined') {
@@ -712,6 +1329,7 @@
 
                     var movedImage = imageUrls.splice(evt.oldIndex, 1)[0];
                     imageUrls.splice(evt.newIndex, 0, movedImage);
+                    markFormDirty();
                     renderImageList();
                 }
             });
@@ -738,9 +1356,83 @@
                 }
 
                 imageUploadHint.textContent = imageFileInput.files.length + '件の画像を選択中です。保存すると追加されます。';
+                markFormDirty();
             });
         }
+
+        window.addEventListener('beforeunload', function (event) {
+            if (!formDirty) {
+                return;
+            }
+            event.preventDefault();
+            event.returnValue = '';
+        });
     });
+
+    function handleFormMutation(event) {
+        if (event && event.target && event.target.type === 'hidden') {
+            return;
+        }
+        markFormDirty();
+        updateProductEditSummary();
+    }
+
+    function setSaveState(mode) {
+        if (!saveStateBadge) {
+            return;
+        }
+
+        saveStateBadge.classList.remove('is-dirty', 'is-saving');
+
+        if (mode === 'dirty') {
+            saveStateBadge.textContent = '未保存の変更あり';
+            saveStateBadge.classList.add('is-dirty');
+            return;
+        }
+
+        if (mode === 'saving') {
+            saveStateBadge.textContent = '保存中...';
+            saveStateBadge.classList.add('is-saving');
+            return;
+        }
+
+        formDirty = false;
+        saveStateBadge.textContent = '保存済み';
+    }
+
+    function markFormDirty() {
+        formDirty = true;
+        setSaveState('dirty');
+    }
+
+    function showInlineNotice(message, type) {
+        if (window.ESPUI && window.ESPUI.toast) {
+            window.ESPUI.toast(message, { type: type || 'info' });
+        }
+    }
+
+    function focusEnglishFields() {
+        var titleEn = document.getElementById('title_en');
+        if (!titleEn) {
+            return;
+        }
+        titleEn.focus();
+        titleEn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function showVariantGenerationSummary(message, type) {
+        if (!variantGenerationSummary) {
+            return;
+        }
+        variantGenerationSummary.hidden = false;
+        variantGenerationSummary.textContent = message;
+        variantGenerationSummary.classList.remove('is-error', 'is-success');
+        if (type === 'error') {
+            variantGenerationSummary.classList.add('is-error');
+            return;
+        }
+        variantGenerationSummary.classList.add('is-success');
+    }
 
     function focusImageUpload() {
         if (imageFileInput) {
@@ -805,6 +1497,204 @@
         }
     }
 
+    function getFieldValue(id) {
+        var field = document.getElementById(id);
+        return field ? (field.value || '').trim() : '';
+    }
+
+    function getSelectedOptionText(id) {
+        var field = document.getElementById(id);
+        if (!field || field.selectedIndex < 0) {
+            return '';
+        }
+        return field.options[field.selectedIndex].text.trim();
+    }
+
+    function getEditorText(id) {
+        if (typeof tinymce !== 'undefined') {
+            var editor = tinymce.get(id);
+            if (editor) {
+                return editor.getContent({ format: 'text' }).trim();
+            }
+        }
+
+        return getFieldValue(id);
+    }
+
+    function getVisibleVariantRows() {
+        var table = document.getElementById('variantTable');
+        if (!table || !table.tBodies || !table.tBodies.length) {
+            return [];
+        }
+
+        return Array.prototype.filter.call(table.tBodies[0].rows, function (row) {
+            return row.style.display !== 'none' && !row.classList.contains('deleted-row');
+        });
+    }
+
+    function parseInteger(value) {
+        if (value === null || value === undefined || value === '') {
+            return null;
+        }
+
+        var parsed = parseInt(value, 10);
+        return Number.isNaN(parsed) ? null : parsed;
+    }
+
+    function formatCurrency(amount) {
+        if (amount === null || amount === undefined) {
+            return '未設定';
+        }
+        return '¥' + amount.toLocaleString('ja-JP');
+    }
+
+    function formatPriceRange(values) {
+        if (!values.length) {
+            return '未設定';
+        }
+
+        var min = Math.min.apply(null, values);
+        var max = Math.max.apply(null, values);
+        return min === max ? formatCurrency(min) : formatCurrency(min) + ' - ' + formatCurrency(max);
+    }
+
+    function setChecklistItemState(key, done, message) {
+        var item = document.querySelector('[data-check-key="' + key + '"]');
+        if (!item) {
+            return;
+        }
+
+        item.classList.toggle('is-complete', done);
+
+        var icon = item.querySelector('.product-edit-check-icon');
+        if (icon) {
+            icon.textContent = done ? 'OK' : '要';
+        }
+
+        var note = item.querySelector('.product-edit-check-note');
+        if (note) {
+            note.textContent = message;
+        }
+    }
+
+    function updateProductEditSummary() {
+        var title = getFieldValue('title');
+        var descriptionText = getEditorText('description');
+        var statusValue = getFieldValue('status');
+        var statusLabel = statusValue === 'active' ? '公開中' : '下書き';
+        var shopLabel = getSelectedOptionText('shop_id') || '共通 / 未所属';
+        var rows = getVisibleVariantRows();
+        var pricedValues = [];
+        var inStockCount = 0;
+
+        rows.forEach(function (row) {
+            var priceInput = row.querySelector('input[name^="v_price_"], input[name^="new_v_price_"]');
+            var qtyInput = row.querySelector('input[name^="v_qty_"], input[name^="new_v_qty_"]');
+            var priceValue = parseInteger(priceInput ? priceInput.value : '');
+            var qtyValue = parseInteger(qtyInput ? qtyInput.value : '');
+
+            if (priceValue !== null) {
+                pricedValues.push(priceValue);
+            }
+
+            if (qtyValue !== null && qtyValue > 0) {
+                inStockCount += 1;
+            }
+        });
+
+        var imageCount = imageUrls.length;
+        var priceLabel = formatPriceRange(pricedValues);
+        var completedCount = 0;
+
+        if (productSummaryTitle) {
+            productSummaryTitle.textContent = title || '商品名を入力してください';
+        }
+
+        if (heroShopBadge) {
+            heroShopBadge.textContent = shopLabel;
+        }
+
+        if (heroStatusBadge) {
+            heroStatusBadge.textContent = statusLabel;
+            heroStatusBadge.classList.toggle('is-active', statusValue === 'active');
+            heroStatusBadge.classList.toggle('is-draft', statusValue !== 'active');
+        }
+
+        if (summaryImageValue) {
+            summaryImageValue.textContent = imageCount + '枚';
+        }
+
+        if (summaryStatusValue) {
+            summaryStatusValue.textContent = statusLabel;
+        }
+
+        if (summaryVariantValue) {
+            summaryVariantValue.textContent = rows.length + '件';
+        }
+
+        if (summaryPriceValue) {
+            summaryPriceValue.textContent = priceLabel;
+        }
+
+        if (variantCountValue) {
+            variantCountValue.textContent = rows.length + '件';
+        }
+
+        if (variantStockValue) {
+            variantStockValue.textContent = inStockCount + '件';
+        }
+
+        if (variantPriceValue) {
+            variantPriceValue.textContent = priceLabel;
+        }
+
+        var imageDone = imageCount > 0;
+        var titleDone = title.length > 0;
+        var descriptionDone = descriptionText.length > 0;
+        var variantsDone = rows.length > 0;
+        var priceDone = pricedValues.length > 0;
+
+        setChecklistItemState(
+            'images',
+            imageDone,
+            imageDone ? imageCount + '枚登録済み' : 'まずは1枚以上の画像を追加すると分かりやすくなります'
+        );
+        setChecklistItemState(
+            'title',
+            titleDone,
+            titleDone ? '公開用の商品名が入力されています' : '日本語の商品名を入力してください'
+        );
+        setChecklistItemState(
+            'description',
+            descriptionDone,
+            descriptionDone ? '説明文が入力されています' : '状態や付属品をひとこと入れると親切です'
+        );
+        setChecklistItemState(
+            'variants',
+            variantsDone,
+            variantsDone ? rows.length + '件登録済み' : 'バリエーションを1件以上追加してください'
+        );
+        setChecklistItemState(
+            'price',
+            priceDone,
+            priceDone ? priceLabel : '販売価格を入力してください'
+        );
+
+        [imageDone, titleDone, descriptionDone, variantsDone, priceDone].forEach(function (done) {
+            if (done) {
+                completedCount += 1;
+            }
+        });
+
+        if (heroReadinessBadge) {
+            heroReadinessBadge.textContent = 'チェック ' + completedCount + '/5';
+        }
+
+        if (checklistCountBadge) {
+            checklistCountBadge.textContent = completedCount + '/5';
+        }
+    }
+
     function renderImageList() {
         if (!imageGrid) {
             return;
@@ -834,6 +1724,7 @@
             iconDeleteButton.title = 'この画像を削除';
             iconDeleteButton.addEventListener('click', function () {
                 imageUrls.splice(index, 1);
+                markFormDirty();
                 renderImageList();
             });
             actions.appendChild(iconDeleteButton);
@@ -844,6 +1735,7 @@
             thumb.className = 'product-image-thumb';
             thumb.src = url;
             thumb.alt = 'image ' + (index + 1);
+            thumb.loading = 'lazy';
             card.appendChild(thumb);
 
             var body = document.createElement('div');
@@ -860,7 +1752,8 @@
             var handleButton = document.createElement('button');
             handleButton.type = 'button';
             handleButton.className = 'image-sort-handle';
-            handleButton.textContent = '並べ替え';
+            handleButton.textContent = '≡ 並べ替え';
+            handleButton.setAttribute('aria-label', '画像の並び順を変更');
             topRow.appendChild(handleButton);
 
             body.appendChild(topRow);
@@ -882,12 +1775,13 @@
         imageGrid.appendChild(addTile);
 
         syncImageUrls();
+        updateProductEditSummary();
     }
 
     function addImageUrl() {
         var normalizedUrl = normalizeImageUrl(imageUrlInput ? imageUrlInput.value : '');
         if (!normalizedUrl) {
-            alert('http(s) または / から始まる画像 URL を入力してください');
+            showInlineNotice('http(s) または / から始まる画像 URL を入力してください', 'warning');
             if (imageUrlInput) {
                 imageUrlInput.focus();
             }
@@ -895,7 +1789,7 @@
         }
 
         if (imageUrls.indexOf(normalizedUrl) !== -1) {
-            alert('その画像 URL は既に追加されています');
+            showInlineNotice('その画像 URL は既に追加されています', 'warning');
             if (imageUrlInput) {
                 imageUrlInput.focus();
                 imageUrlInput.select();
@@ -904,6 +1798,7 @@
         }
 
         imageUrls.push(normalizedUrl);
+        markFormDirty();
 
         if (imageUrlInput) {
             imageUrlInput.value = '';
@@ -919,19 +1814,37 @@
             var editor = tinymce.get('description');
             if (editor) {
                 editor.setContent(content);
+            } else {
+                document.getElementById('description').value = content;
             }
+            markFormDirty();
+            updateProductEditSummary();
         }
     }
 
     var deleteIds = [];
 
-    function markDelete(id) {
-        if (confirm('このバリエーションを削除しますか？（保存時に反映されます）')) {
-            deleteIds.push(id);
-            document.getElementById('delete_v_ids').value = deleteIds.join(',');
-            document.getElementById('row-' + id).style.display = 'none';
-            document.getElementById('row-' + id).classList.add('deleted-row');
+    async function markDelete(id) {
+        var confirmed = true;
+        if (window.ESPUI && window.ESPUI.confirm) {
+            confirmed = await window.ESPUI.confirm({
+                title: 'バリエーションを削除',
+                description: '削除は保存時に反映されます。',
+                message: 'このバリエーションを削除しますか？',
+                confirmLabel: '削除予定にする',
+                variant: 'danger'
+            });
         }
+        if (!confirmed) {
+            return;
+        }
+        deleteIds.push(id);
+        document.getElementById('delete_v_ids').value = deleteIds.join(',');
+        document.getElementById('row-' + id).style.display = 'none';
+        document.getElementById('row-' + id).classList.add('deleted-row');
+        markFormDirty();
+        updateProductEditSummary();
+        showInlineNotice('バリエーションを削除予定に追加しました。保存すると反映されます。', 'info');
     }
 
     var newIndex = 0;
@@ -943,14 +1856,14 @@
         var newRow = table.insertRow();
 
         newRow.innerHTML = `
-                <td data-label="Opt1">
+                <td data-label="項目1">
                     <input type="hidden" name="new_v_indices" value="${idx}">
                     <input type="text" name="new_v_opt1_${idx}" value="${opt1}">
                 </td>
-                <td data-label="Opt2">
+                <td data-label="項目2">
                     <input type="text" name="new_v_opt2_${idx}" value="${opt2}">
                 </td>
-                <td data-label="価格">
+                <td data-label="販売価格">
                     <input type="number" name="new_v_price_${idx}" value="${price}">
                 </td>
                 <td data-label="SKU">
@@ -959,23 +1872,27 @@
                 <td data-label="在庫">
                     <input type="number" name="new_v_qty_${idx}" value="1" class="short">
                 </td>
-                <td data-label="重量" class="hide-mobile">
+                <td data-label="重量(g)" class="hide-mobile">
                     <input type="number" name="new_v_grams_${idx}" value="" class="short">
                 </td>
-                <td data-label="税/HS/Origin" class="hide-mobile" style="text-align:left; font-size:11px;">
+                <td data-label="税 / HS / 原産国" class="hide-mobile product-edit-variant-tax-cell">
                     <label><input type="checkbox" name="new_v_tax_${idx}"> 課税</label><br>
-                    HS: <input type="text" name="new_v_hs_${idx}" value="" style="width:60px;"><br>
-                    Org: <input type="text" name="new_v_org_${idx}" value="JP" style="width:40px;">
+                    HS: <input type="text" name="new_v_hs_${idx}" value="" class="product-edit-variant-hs-input"><br>
+                    Org: <input type="text" name="new_v_org_${idx}" value="JP" class="product-edit-variant-origin-input">
                 </td>
                 <td data-label="操作">
                     <button type="button" class="del-btn" onclick="removeNewRow(this)">取消</button>
                 </td>
             `;
+        markFormDirty();
+        updateProductEditSummary();
     }
 
     function removeNewRow(btn) {
         var row = btn.parentNode.parentNode;
         row.parentNode.removeChild(row);
+        markFormDirty();
+        updateProductEditSummary();
     }
 
     function generateVariants() {
@@ -988,23 +1905,30 @@
         const opt2Values = opt2Input.split(',').map(s => s.trim()).filter(s => s);
 
         if (opt1Values.length === 0) {
-            alert('Option1 Valuesを入力してください');
+            showVariantGenerationSummary('項目1の値を入力してください。', 'error');
+            showInlineNotice('項目1の値を入力してください', 'warning');
             return;
         }
 
+        var generatedCount = 0;
         if (opt2Values.length === 0) {
             opt1Values.forEach(v1 => {
                 let sku = skuPrefix ? skuPrefix + v1 : '';
                 addVariantRow(v1, '', price, sku);
+                generatedCount += 1;
             });
         } else {
             opt1Values.forEach(v1 => {
                 opt2Values.forEach(v2 => {
                     let sku = skuPrefix ? skuPrefix + v1 + '-' + v2 : '';
                     addVariantRow(v1, v2, price, sku);
+                    generatedCount += 1;
                 });
             });
         }
+
+        showVariantGenerationSummary(generatedCount + '件のバリエーション候補を追加しました。保存すると確定します。', 'success');
+        showInlineNotice(generatedCount + '件のバリエーション候補を追加しました。', 'success');
     }
 </script>
 {% endblock %}

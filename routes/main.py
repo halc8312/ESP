@@ -280,12 +280,17 @@ def dashboard():
 
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         current_shop = next((shop for shop in all_shops if shop.id == current_shop_id), None)
+        last_updated_at = max(
+            [row["updated_at"] for row in dashboard_rows if row["updated_at"]] or [None]
+        )
 
         return render_template(
             "dashboard.html",
             attention_items=attention_items,
             current_scope_name=current_shop.name if current_shop else "全ショップ",
+            generated_at=utc_now(),
             issue_summary=issue_summary,
+            last_updated_at=last_updated_at,
             operational_notes=operational_notes,
             publication_counts=publication_counts,
             recent_items=recent_items,
@@ -309,7 +314,9 @@ def dashboard():
 def index():
     session_db = SessionLocal()
     try:
-        page = int(request.args.get("page", 1))
+        raw_page = request.args.get("page", "1")
+        page = int(raw_page) if str(raw_page).isdigit() else 1
+        page = max(page, 1)
         selected_site = request.args.get("site")
         selected_status = request.args.get("status")
         selected_change_filter = request.args.get("change_filter")
@@ -398,9 +405,14 @@ def index():
                 products_to_display.append(p)
 
         total_items = len(products_to_display)
-        total_pages = (total_items + PAGE_SIZE - 1) // PAGE_SIZE
+        total_pages = max(1, (total_items + PAGE_SIZE - 1) // PAGE_SIZE)
+        if page > total_pages:
+            page = total_pages
         offset = (page - 1) * PAGE_SIZE
         paginated_products = products_to_display[offset : offset + PAGE_SIZE]
+        page_start = offset + 1 if total_items else 0
+        page_end = min(offset + PAGE_SIZE, total_items)
+        page_numbers = list(range(max(1, page - 2), min(total_pages, page + 2) + 1))
 
         has_prev = page > 1
         has_next = page < total_pages
@@ -428,6 +440,10 @@ def index():
             total_count=total_count,
             # Pagination
             page=page,
+            page_end=page_end,
+            page_numbers=page_numbers,
+            page_start=page_start,
+            total_items=total_items,
             total_pages=total_pages,
             has_prev=has_prev,
             has_next=has_next,

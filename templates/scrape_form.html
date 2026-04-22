@@ -6,112 +6,143 @@
 {% block content %}
 <div class="page-header">
     <h1>商品抽出</h1>
+    <p class="page-subtitle">URL指定と検索抽出を1つの導線にまとめ、進捗確認と選択登録をしやすくします。</p>
 </div>
 
-<div class="content-card">
-    <!-- 方法1: URL直接指定 -->
+<section class="content-card scrape-workflow-card">
     <div class="content-card-header">
-        <h3>URLから抽出</h3>
+        <div>
+            <h2>抽出フロー</h2>
+            <p class="text-muted mb-0">抽出方法の選択からプレビュー登録まで、同じ画面で進められます。</p>
+        </div>
     </div>
     <div class="content-card-body">
-        <form method="POST" action="{{ url_for('scrape_run') }}" class="scrape-form-compact">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-            <div class="form-row">
-                <div class="form-group form-group--keyword">
-                    <input type="url" name="target_url"
-                        placeholder="https://... メルカリ / ラクマ / Yahoo / 駿河屋 / オフモール / ヤフオク / SNKRDUNK"
-                        required inputmode="url" autocomplete="url">
-                </div>
-                <div class="form-group form-group--submit">
-                    <button type="submit" class="btn btn-primary">URLから商品を抽出</button>
-                </div>
-            </div>
-        </form>
-    </div>
+        <ol class="scrape-stepper" id="scrapeStepper" aria-label="抽出ステップ">
+            <li class="scrape-step is-active" data-step="setup">1. 条件入力</li>
+            <li class="scrape-step" data-step="queued">2. 受付</li>
+            <li class="scrape-step" data-step="running">3. 抽出中</li>
+            <li class="scrape-step" data-step="review">4. 選択登録</li>
+        </ol>
 
-    <!-- 方法2: 検索条件 -->
-    <div class="content-card-header" style="border-top: 1px solid var(--border-color);">
-        <h3>条件で検索して抽出</h3>
-    </div>
-    <div class="content-card-body">
-        <form method="POST" action="{{ url_for('scrape_run') }}" class="scrape-form-compact">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-            <div class="form-row">
-                <div class="form-group">
-                    <label>サイト</label>
-                    <select name="site">
-                        <option value="mercari">メルカリ</option>
-                        <option value="yahoo">Yahoo!ショッピング</option>
-                        <option value="rakuma">ラクマ</option>
-                        <option value="surugaya">駿河屋</option>
-                        <option value="offmall">オフモール</option>
-                        <option value="yahuoku">ヤフオク</option>
-                        <option value="snkrdunk">SNKRDUNK</option>
-                    </select>
+        <div class="scrape-mode-tabs" role="tablist" aria-label="抽出方法">
+            <button type="button" class="scrape-mode-tab is-active" role="tab" aria-selected="true"
+                aria-controls="scrapeTabUrl" id="scrapeTabButtonUrl" data-scrape-tab="url">URLから抽出</button>
+            <button type="button" class="scrape-mode-tab" role="tab" aria-selected="false"
+                aria-controls="scrapeTabSearch" id="scrapeTabButtonSearch" data-scrape-tab="search">検索して抽出</button>
+        </div>
+
+        <section id="scrapeTabUrl" class="scrape-tab-panel" role="tabpanel" aria-labelledby="scrapeTabButtonUrl">
+            <form method="POST" action="{{ url_for('scrape_run') }}" class="scrape-form-compact" data-scrape-form="url">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="scrape-form-intro">
+                    <strong>URL指定</strong>
+                    <p class="text-muted mb-0">個別商品URLを直接貼り付けて、1件ずつ確実に取り込みます。</p>
                 </div>
-                <div class="form-group form-group--keyword">
-                    <label>キーワード</label>
-                    <input type="text" name="keyword" value="スニーカー" required autocomplete="off">
+                <div class="form-row">
+                    <div class="form-group form-group--keyword">
+                        <label for="scrapeTargetUrl">対象URL</label>
+                        <input type="url" id="scrapeTargetUrl" name="target_url"
+                            placeholder="https://... メルカリ / ラクマ / Yahoo / 駿河屋 / オフモール / ヤフオク / SNKRDUNK"
+                            required inputmode="url" autocomplete="url">
+                    </div>
+                    <div class="form-group form-group--submit">
+                        <button type="submit" class="btn btn-primary" data-loading-label="URLを解析しています...">URLから商品を抽出</button>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>件数</label>
-                    <select name="limit">
-                        <option value="10">10件</option>
-                        <option value="20">20件</option>
-                        <option value="50">50件</option>
-                        <option value="100">100件</option>
-                    </select>
+            </form>
+        </section>
+
+        <section id="scrapeTabSearch" class="scrape-tab-panel" role="tabpanel" aria-labelledby="scrapeTabButtonSearch" hidden>
+            <form method="POST" action="{{ url_for('scrape_run') }}" class="scrape-form-compact" data-scrape-form="search">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="scrape-form-intro">
+                    <strong>検索抽出</strong>
+                    <p class="text-muted mb-0">キーワード条件をまとめて指定し、候補をプレビューから選んで登録します。</p>
                 </div>
-                <div class="form-group">
-                    <label>価格 min</label>
-                    <input type="number" name="price_min" inputmode="numeric" min="0" placeholder="¥0">
-                </div>
-                <div class="form-group">
-                    <label>価格 max</label>
-                    <input type="number" name="price_max" inputmode="numeric" min="0" placeholder="上限なし">
-                </div>
-                <div class="form-group form-group--submit">
-                    <button type="submit" class="btn btn-primary" aria-label="商品を抽出する">商品を抽出する</button>
-                </div>
-            </div>
-            <details class="filter-advanced" style="margin-top: 8px;">
-                <summary>詳細オプション（ソート順・カテゴリID）</summary>
-                <div class="filter-advanced-body" style="margin-top: 10px;">
+                <div class="form-row">
                     <div class="form-group">
-                        <label>ソート順</label>
-                        <select name="sort">
-                            <option value="created_desc">新着順</option>
-                            <option value="price_asc">価格：安い順</option>
-                            <option value="price_desc">価格：高い順</option>
+                        <label for="scrapeSite">サイト</label>
+                        <select id="scrapeSite" name="site">
+                            <option value="mercari">メルカリ</option>
+                            <option value="yahoo">Yahoo!ショッピング</option>
+                            <option value="rakuma">ラクマ</option>
+                            <option value="surugaya">駿河屋</option>
+                            <option value="offmall">オフモール</option>
+                            <option value="yahuoku">ヤフオク</option>
+                            <option value="snkrdunk">SNKRDUNK</option>
+                        </select>
+                    </div>
+                    <div class="form-group form-group--keyword">
+                        <label for="scrapeKeyword">キーワード</label>
+                        <input type="text" id="scrapeKeyword" name="keyword" placeholder="例: スニーカー, カメラ, ゲーム" required autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="scrapeLimit">件数</label>
+                        <select id="scrapeLimit" name="limit">
+                            <option value="10">10件</option>
+                            <option value="20">20件</option>
+                            <option value="50">50件</option>
+                            <option value="100">100件</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>カテゴリID（任意）</label>
-                        <input type="text" name="category" placeholder="例：1" inputmode="numeric">
+                        <label for="scrapePriceMin">価格 min</label>
+                        <input type="number" id="scrapePriceMin" name="price_min" inputmode="numeric" min="0" placeholder="¥0">
+                    </div>
+                    <div class="form-group">
+                        <label for="scrapePriceMax">価格 max</label>
+                        <input type="number" id="scrapePriceMax" name="price_max" inputmode="numeric" min="0" placeholder="上限なし">
+                    </div>
+                    <div class="form-group form-group--submit">
+                        <button type="submit" class="btn btn-primary" aria-label="商品を抽出する" data-loading-label="候補を抽出しています...">商品を抽出する</button>
                     </div>
                 </div>
-            </details>
-        </form>
+                <details class="filter-advanced scrape-filter-advanced">
+                    <summary>詳細オプション（ソート順・カテゴリID）</summary>
+                    <div class="filter-advanced-body scrape-filter-advanced-body">
+                        <div class="form-group">
+                            <label for="scrapeSort">ソート順</label>
+                            <select id="scrapeSort" name="sort">
+                                <option value="created_desc">新着順</option>
+                                <option value="price_asc">価格: 安い順</option>
+                                <option value="price_desc">価格: 高い順</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="scrapeCategory">カテゴリID（任意）</label>
+                            <input type="text" id="scrapeCategory" name="category" placeholder="例: 1" inputmode="numeric">
+                        </div>
+                    </div>
+                </details>
+            </form>
+        </section>
+
+        <div id="scrapeProgressStatus" class="scrape-inline-status" aria-live="polite">
+            抽出方法を選び、条件を入力して開始してください。
+        </div>
     </div>
-</div>
+</section>
 
 <section id="scrapePreviewSection" class="content-card scrape-preview-section" hidden>
     <div class="content-card-header">
         <h3>抽出プレビュー</h3>
     </div>
     <div class="content-card-body">
-        <div id="scrapePreviewFlash" class="scrape-preview-flash" hidden></div>
+        <div id="scrapePreviewFlash" class="scrape-preview-flash" hidden aria-live="polite"></div>
 
         <div class="scrape-preview-toolbar">
-            <div id="scrapePreviewSummary" class="scrape-preview-summary text-muted">
-                抽出結果がここに表示されます。
+            <div>
+                <div id="scrapePreviewSummary" class="scrape-preview-summary text-muted" aria-live="polite">
+                    抽出結果がここに表示されます。
+                </div>
+                <div id="scrapePreviewSelection" class="scrape-preview-selection text-muted">0件選択中</div>
             </div>
             <div class="scrape-preview-actions">
                 <label class="scrape-preview-select-all">
                     <input type="checkbox" id="scrapePreviewSelectAll">
                     すべて選択
                 </label>
-                <button type="button" id="registerSelectedButton" class="btn btn-primary" disabled>選択した商品を登録</button>
+                <button type="button" id="registerSelectedButton" class="btn btn-primary" data-loading-label="登録しています..." disabled>選択した商品を登録</button>
             </div>
         </div>
 
