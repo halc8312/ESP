@@ -14,6 +14,17 @@
     --sidebar-width: 240px;
     --bottom-nav-height: 60px;
     --mobile-header-height: 56px;
+    --z-mobile-header: 1000;
+    --z-bottom-nav: 1020;
+    --z-floating-action: 1030;
+    --z-sticky-save: 1040;
+    --z-scrape-tracker: 1200;
+    --z-scrape-tracker-sheet: 1201;
+    --z-sidebar-overlay: 1300;
+    --z-sidebar: 1301;
+    --mobile-fixed-bottom-offset: env(safe-area-inset-bottom);
+    --mobile-sticky-save-offset: 0px;
+    --mobile-scrape-tracker-offset: calc(var(--mobile-fixed-bottom-offset) + 8px);
 }
 
 * {
@@ -29,6 +40,21 @@ body {
     line-height: 1.5;
     font-size: 16px;
     /* Base size for mobile legibility */
+}
+
+body.has-bottom-nav {
+    --mobile-fixed-bottom-offset: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
+    --mobile-scrape-tracker-offset: calc(var(--mobile-fixed-bottom-offset) + 8px);
+}
+
+body.has-sticky-save {
+    --mobile-sticky-save-offset: 80px;
+    --mobile-scrape-tracker-offset: calc(var(--mobile-fixed-bottom-offset) + var(--mobile-sticky-save-offset) + 12px);
+}
+
+body.sidebar-open,
+body.scrape-tracker-sheet-open {
+    overflow: hidden;
 }
 
 /* Typography */
@@ -1417,7 +1443,7 @@ tr.changed {
     height: var(--mobile-header-height);
     background: var(--header-bg);
     border-bottom: 1px solid var(--border-color);
-    z-index: 1000;
+    z-index: var(--z-mobile-header);
     padding: 0 12px;
     align-items: center;
     justify-content: space-between;
@@ -1508,7 +1534,7 @@ tr.changed {
     height: 100vh;
     background: var(--card-bg);
     border-right: 1px solid var(--border-color);
-    z-index: 1001;
+    z-index: var(--z-sidebar);
     display: flex;
     flex-direction: column;
     overflow-y: auto;
@@ -1625,7 +1651,7 @@ tr.changed {
     right: 0;
     bottom: 0;
     background: rgba(0, 0, 0, 0.5);
-    z-index: 1000;
+    z-index: var(--z-sidebar-overlay);
     opacity: 0;
     transition: opacity 0.3s ease;
 }
@@ -1651,7 +1677,7 @@ tr.changed {
     height: var(--bottom-nav-height);
     background: var(--card-bg);
     border-top: 1px solid var(--border-color);
-    z-index: 999;
+    z-index: var(--z-bottom-nav);
     justify-content: space-around;
     align-items: center;
     padding-bottom: env(safe-area-inset-bottom);
@@ -2421,7 +2447,7 @@ details.mobile-collapsible[open]>summary::after {
     justify-content: center;
     font-size: 1.5rem;
     cursor: pointer;
-    z-index: 998;
+    z-index: var(--z-floating-action);
     transition: transform 0.2s, box-shadow 0.2s;
 }
 
@@ -2730,12 +2756,12 @@ button:active {
     .sticky-save-container {
         display: block;
         position: fixed;
-        bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
+        bottom: var(--mobile-fixed-bottom-offset);
         left: 0;
         right: 0;
         padding: 12px 16px;
         background: linear-gradient(to top, var(--card-bg) 80%, transparent);
-        z-index: 997;
+        z-index: var(--z-sticky-save);
     }
 
     .sticky-save-container button {
@@ -3017,7 +3043,7 @@ button:active {
     border: 1px solid var(--border-color);
     box-shadow: var(--shadow-md);
     cursor: pointer;
-    z-index: 998;
+    z-index: var(--z-floating-action);
     align-items: center;
     justify-content: center;
     font-size: 18px;
@@ -3173,17 +3199,18 @@ button:active {
 .scrape-progress-panel {
     position: fixed;
     right: 16px;
-    bottom: calc(var(--bottom-nav-height) + 14px + env(safe-area-inset-bottom));
-    z-index: 1200;
+    bottom: calc(var(--mobile-fixed-bottom-offset) + 14px);
+    z-index: var(--z-scrape-tracker);
     width: min(400px, calc(100vw - 24px));
 }
 
 .global-scrape-tracker {
     position: fixed;
     right: 16px;
-    bottom: calc(var(--bottom-nav-height) + 14px + env(safe-area-inset-bottom));
-    z-index: 1200;
+    bottom: var(--mobile-scrape-tracker-offset);
+    z-index: var(--z-scrape-tracker);
     width: min(400px, calc(100vw - 24px));
+    transition: opacity 0.2s ease, visibility 0.2s ease;
 }
 
 .global-scrape-tracker-desktop {
@@ -3294,7 +3321,7 @@ button:active {
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 1201;
+    z-index: var(--z-scrape-tracker-sheet);
     max-height: min(60dvh, 520px);
     background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.98));
     border-top-left-radius: 22px;
@@ -3840,18 +3867,6 @@ button:active {
     display: none !important;
 }
 
-@media (min-width: 768px) and (max-width: 1023px) {
-    .scrape-progress-panel {
-        right: 24px;
-        width: min(480px, calc(100vw - 48px));
-    }
-
-    .global-scrape-tracker {
-        right: 24px;
-        width: min(480px, calc(100vw - 48px));
-    }
-}
-
 @media (min-width: 1024px) {
     .scrape-progress-panel {
         right: 24px;
@@ -3869,7 +3884,7 @@ button:active {
     }
 }
 
-@media (max-width: 767px) {
+@media (max-width: 1023px) {
     .scrape-progress-panel {
         left: 10px;
         right: 10px;
@@ -3880,7 +3895,7 @@ button:active {
         left: 10px;
         right: 10px;
         width: auto;
-        bottom: calc(var(--bottom-nav-height) + 8px + env(safe-area-inset-bottom));
+        bottom: var(--mobile-scrape-tracker-offset);
     }
 
     .scrape-progress-shell {
@@ -4034,8 +4049,11 @@ button:active {
     }
 }
 
-body.scrape-tracker-sheet-open {
-    overflow: hidden;
+body.sidebar-open .global-scrape-tracker,
+body.sidebar-open .scrape-progress-panel {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
 }
 
 /* ── Phase 1: Compact scrape form ── */

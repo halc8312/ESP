@@ -6,6 +6,7 @@ import uuid
 
 from flask import Blueprint, render_template, request, redirect, url_for, session
 from flask_login import login_required, current_user
+from sqlalchemy import or_
 from werkzeug.utils import secure_filename
 
 from database import SessionLocal
@@ -271,17 +272,29 @@ def manage_templates():
     session_db = SessionLocal()
     try:
         if request.method == "POST":
-            name = request.form.get("name")
+            name = (request.form.get("name") or "").strip()
             content = normalize_rich_text(request.form.get("content"))
             if name and content:
-                new_template = DescriptionTemplate(name=name, content=content)
+                new_template = DescriptionTemplate(
+                    user_id=current_user.id,
+                    name=name,
+                    content=content,
+                )
                 session_db.add(new_template)
                 session_db.commit()
             return redirect(url_for('shops.manage_templates'))
 
-        templates = session_db.query(DescriptionTemplate).order_by(DescriptionTemplate.id).all()
-        # Only show user's shops for context if needed, but template is global for now? 
-        # Requirement was Shop/Product isolation. Let's filter Shop list in dropdown.
+        templates = (
+            session_db.query(DescriptionTemplate)
+            .filter(
+                or_(
+                    DescriptionTemplate.user_id == current_user.id,
+                    DescriptionTemplate.user_id.is_(None),
+                )
+            )
+            .order_by(DescriptionTemplate.id)
+            .all()
+        )
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         current_shop_id = session.get('current_shop_id')
 
@@ -303,7 +316,11 @@ def manage_templates():
 def delete_template(template_id):
     session_db = SessionLocal()
     try:
-        template = session_db.query(DescriptionTemplate).filter_by(id=template_id).one_or_none()
+        template = (
+            session_db.query(DescriptionTemplate)
+            .filter_by(id=template_id, user_id=current_user.id)
+            .one_or_none()
+        )
         if template:
             session_db.delete(template)
             session_db.commit()

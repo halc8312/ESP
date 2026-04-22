@@ -3,9 +3,11 @@ Product detail routes.
 """
 import json
 import os
+import re
 import uuid
 from flask import Blueprint, render_template, request, redirect, url_for, session
 from flask_login import login_required, current_user
+from sqlalchemy import or_
 from werkzeug.utils import secure_filename
 
 from database import SessionLocal
@@ -154,11 +156,151 @@ def _build_image_snapshot(product, base_snapshot, image_urls):
     )
 
 
+def _format_currency(amount):
+    if amount is None:
+        return "未設定"
+    return f"¥{amount:,}"
+
+
+def _has_visible_text(value):
+    if not value:
+        return False
+    return bool(re.sub(r"<[^>]+>", " ", value).strip())
+
+
+def _product_status_label(status):
+    return "公開中" if status == "active" else "下書き"
+
+
+def _source_status_label(status):
+    mapping = {
+        "on_sale": "仕入れ元: 販売中",
+        "sold": "仕入れ元: 売り切れ",
+        "deleted": "仕入れ元: 削除済み",
+    }
+    if not status:
+        return "仕入れ元: 未確認"
+    return mapping.get(status, f"仕入れ元: {status}")
+
+
+def _build_product_edit_summary(product, snapshot, images, variants):
+    public_title = (product.custom_title or product.last_title or "").strip()
+    public_description = product.custom_description or (snapshot.description if snapshot else "") or ""
+    priced_variants = [variant.price for variant in variants if variant.price is not None]
+    variant_count = len(variants)
+    in_stock_count = sum(1 for variant in variants if (variant.inventory_qty or 0) > 0)
+
+    if priced_variants:
+        min_price = min(priced_variants)
+        max_price = max(priced_variants)
+        price_label = (
+            _format_currency(min_price)
+            if min_price == max_price
+            else f"{_format_currency(min_price)} - {_format_currency(max_price)}"
+        )
+    else:
+        price_label = "未設定"
+
+    checklist = [
+        {
+            "key": "images",
+            "label": "商品画像",
+            "done": bool(images),
+            "done_text": f"{len(images)}枚登録済み",
+            "todo_text": "まずは1枚以上の画像を追加すると分かりやすくなります",
+        },
+        {
+            "key": "title",
+            "label": "商品名",
+            "done": bool(public_title),
+            "done_text": "公開用の商品名が入力されています",
+            "todo_text": "日本語の商品名を入力してください",
+        },
+        {
+            "key": "description",
+            "label": "商品説明",
+            "done": _has_visible_text(public_description),
+            "done_text": "説明文が入力されています",
+            "todo_text": "状態や付属品をひとこと入れると親切です",
+        },
+        {
+            "key": "variants",
+            "label": "バリエーション",
+            "done": variant_count > 0,
+            "done_text": f"{variant_count}件登録済み",
+            "todo_text": "バリエーションを1件以上追加してください",
+        },
+        {
+            "key": "price",
+            "label": "販売価格",
+            "done": bool(priced_variants),
+            "done_text": price_label,
+            "todo_text": "販売価格を入力してください",
+        },
+    ]
+    completed_count = sum(1 for item in checklist if item["done"])
+
+    return {
+        "public_title": public_title or "商品名を入力してください",
+        "shop_name": product.shop.name if product.shop else "共通 / 未所属",
+        "status_label": _product_status_label(product.status),
+        "status_help": (
+            "初めての編集なら下書きのまま内容を整えて、最後に公開へ切り替えると安全です。"
+            if product.status != "active"
+            else "現在は公開中です。保存すると販売ページ側の情報にも反映しやすくなります。"
+        ),
+        "source_site": product.site or "未設定",
+        "source_status_label": _source_status_label(product.last_status),
+        "source_price_label": _format_currency(product.last_price),
+        "image_count": len(images),
+        "variant_count": variant_count,
+        "in_stock_count": in_stock_count,
+        "price_label": price_label,
+        "completed_count": completed_count,
+        "total_count": len(checklist),
+        "checklist": checklist,
+    }
+
+
 def _render_product_detail(session_db, product, snapshot, images, *, error=None, status_code=200):
-    templates = session_db.query(DescriptionTemplate).order_by(DescriptionTemplate.name).all()
+    from services.translator import compute_source_hash
+
+    templates = (
+        session_db.query(DescriptionTemplate)
+        .filter(
+            or_(
+                DescriptionTemplate.user_id == current_user.id,
+                DescriptionTemplate.user_id.is_(None),
+            )
+        )
+        .order_by(DescriptionTemplate.name)
+        .all()
+    )
     all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
     current_shop_id = session.get('current_shop_id')
     variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
+    edit_summary = _build_product_edit_summary(product, snapshot, images, variants)
+
+    current_title_hash = compute_source_hash(product.custom_title or product.last_title or "")
+    current_description_hash = compute_source_hash(
+        product.custom_description
+        or (snapshot.description if snapshot is not None else "")
+        or ""
+    )
+    translation_state = {
+        "title_stale": bool(
+            product.custom_title_en
+            and product.custom_title_en_source_hash
+            and product.custom_title_en_source_hash != current_title_hash
+        ),
+        "description_stale": bool(
+            product.custom_description_en
+            and product.custom_description_en_source_hash
+            and product.custom_description_en_source_hash != current_description_hash
+        ),
+        "title_has_translation": bool(product.custom_title_en),
+        "description_has_translation": bool(product.custom_description_en),
+    }
 
     return render_template(
         "product_detail.html",
@@ -169,7 +311,9 @@ def _render_product_detail(session_db, product, snapshot, images, *, error=None,
         all_shops=all_shops,
         current_shop_id=current_shop_id,
         variants=variants,
+        edit_summary=edit_summary,
         error=error,
+        translation_state=translation_state,
     ), status_code
 
 

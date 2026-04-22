@@ -250,16 +250,24 @@
     </div>
 
     <script>
+        function notifySidebarState(isOpen) {
+            window.dispatchEvent(new CustomEvent('esp:sidebar-state', {
+                detail: { open: Boolean(isOpen) }
+            }));
+        }
+
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
             const overlay = document.querySelector('.sidebar-overlay');
             const toggleButton = document.querySelector('[data-action="toggle-sidebar"]');
-            sidebar.classList.toggle('open');
-            overlay.classList.toggle('open');
-            document.body.classList.toggle('sidebar-open');
+            const isOpen = !sidebar.classList.contains('open');
+            sidebar.classList.toggle('open', isOpen);
+            overlay.classList.toggle('open', isOpen);
+            document.body.classList.toggle('sidebar-open', isOpen);
             if (toggleButton) {
-                toggleButton.setAttribute('aria-expanded', sidebar.classList.contains('open'));
+                toggleButton.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
             }
+            notifySidebarState(isOpen);
         }
 
         function closeSidebar() {
@@ -272,7 +280,11 @@
             if (toggleButton) {
                 toggleButton.setAttribute('aria-expanded', 'false');
             }
+            notifySidebarState(false);
         }
+
+        window.toggleSidebar = toggleSidebar;
+        window.closeSidebar = closeSidebar;
 
         // Close sidebar on escape key
         document.addEventListener('keydown', function (e) {

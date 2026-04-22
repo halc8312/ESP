@@ -20,7 +20,11 @@ except ImportError:
     get_healer = None
 
 from services.mercari_item_parser import parse_mercari_item_page, _append_unique_image_url
-from services.mercari_item_parser import parse_mercari_network_payload
+from services.mercari_item_parser import (
+    collect_mercari_photo_urls_for_item,
+    extract_mercari_item_id,
+    parse_mercari_network_payload,
+)
 from services.extraction_policy import attach_extraction_trace, pick_first_valid
 from services.browser_pool import run_browser_page_task
 from services.html_page_adapter import HtmlPageAdapter
@@ -340,16 +344,52 @@ def _merge_mercari_results(payload_item: dict, payload_meta: dict, dom_item: dic
     return merged, merged_meta
 
 
+# Regex identifying a Mercari API response URL that explicitly names an
+# item id, e.g. ``/items/get?id=m123`` or ``/items/m123``.  Returning the
+# id from the URL lets us (a) skip responses that clearly name a
+# *different* item and (b) boost the score of the canonical item endpoint
+# even when its payload dict doesn't embed an ``id`` field.
+_MERCARI_RESPONSE_ITEM_ID_PATTERN = re.compile(
+    r"(?:[?&]id=|/items/)(m\d+)",
+    re.IGNORECASE,
+)
+
+
+def _response_url_item_id(response_url: str) -> str:
+    """Return the ``m\\d+`` item id encoded in a Mercari API response URL."""
+    match = _MERCARI_RESPONSE_ITEM_ID_PATTERN.search(str(response_url or ""))
+    return match.group(1).lower() if match else ""
+
+
 def _select_best_mercari_payload(captured_payloads: list[dict], item_url: str) -> dict:
+    """Pick the best payload-provided item dict for title/price/status/description.
+
+    When we know the target ``m\\d+`` item id we only consider responses
+    that either (a) embed a dict whose ``id`` matches the target or (b)
+    come from a URL that explicitly names the target (e.g.
+    ``/items/get?id=m123`` or ``/items/m123``).  Everything else could
+    contain data from related / similar / seller-other items.
+
+    Photos are **not** used to rank candidates here.  The final photo
+    list is assembled by :func:`collect_mercari_photo_urls_for_item`
+    from every captured blob so that we never lose photos because the
+    highest-scoring dict happened to be sparse.
+    """
     observed_response_urls = []
     for response_payload in captured_payloads:
         response_url = str(response_payload.get("url") or "").strip()
         if response_url and response_url not in observed_response_urls:
             observed_response_urls.append(response_url)
 
+    target_item_id = extract_mercari_item_id(item_url)
     best = {
         "item": {},
-        "meta": {"strategy": "payload", "field_sources": {}, "reasons": ["payload-candidate-missing"]},
+        "meta": {
+            "strategy": "payload",
+            "field_sources": {},
+            "reasons": ["payload-candidate-missing"],
+            "target_item_id": target_item_id,
+        },
         "response_url": "",
         "responses_seen": len(captured_payloads),
         "observed_response_urls": observed_response_urls[:10],
@@ -358,16 +398,39 @@ def _select_best_mercari_payload(captured_payloads: list[dict], item_url: str) -
     best_score = -1
 
     for response_payload in captured_payloads:
-        item, meta = parse_mercari_network_payload(response_payload.get("payload") or {}, item_url)
+        response_url = str(response_payload.get("url", "") or "")
+        response_item_id = _response_url_item_id(response_url)
+
+        # Response URL explicitly names a *different* item — skip outright.
+        if target_item_id and response_item_id and response_item_id != target_item_id:
+            continue
+
+        item, meta = parse_mercari_network_payload(
+            response_payload.get("payload") or {},
+            item_url,
+        )
+        candidate_id_matches_target = bool(meta.get("candidate_id_matches_target"))
+        response_url_matches_target = bool(
+            target_item_id and response_item_id == target_item_id
+        )
+
+        if target_item_id and not (candidate_id_matches_target or response_url_matches_target):
+            # No positive evidence this response describes the requested item.
+            continue
+
         score = sum(
             (
                 4 if _is_nonempty_text(item.get("title")) else 0,
                 3 if _is_positive_price(item.get("price")) else 0,
-                2 if _is_nonempty_list(item.get("image_urls")) else 0,
                 2 if _is_useful_status(item.get("status")) else 0,
                 1 if _is_nonempty_text(item.get("description")) else 0,
             )
         )
+        if candidate_id_matches_target:
+            score += 20
+        elif response_url_matches_target:
+            score += 10
+
         if score <= 0:
             continue
         if score > best_score:
@@ -375,13 +438,50 @@ def _select_best_mercari_payload(captured_payloads: list[dict], item_url: str) -
             best = {
                 "item": item,
                 "meta": meta,
-                "response_url": response_payload.get("url", ""),
+                "response_url": response_url,
                 "responses_seen": len(captured_payloads),
                 "observed_response_urls": observed_response_urls[:10],
                 "raw_payload": response_payload.get("payload"),
             }
 
     return best
+
+
+def _merge_target_photo_url_union(
+    item: dict,
+    meta: dict,
+    blobs,
+    target_item_id: str,
+) -> None:
+    """Union every ``/photos/m<TARGET>_N.jpg`` URL found in ``blobs`` into ``item``.
+
+    Mercari encodes the owning item id directly in photo paths, so URL-based
+    matching is immune to cross-item contamination.  This acts as a final
+    safety net: even when the winning payload candidate carried no (or only
+    partial) photos, we still end up with every photo that was visible in
+    any captured API response or the page HTML.
+    """
+    if not target_item_id:
+        return
+    photos = collect_mercari_photo_urls_for_item(blobs, target_item_id)
+    if not photos:
+        return
+    existing = list(item.get("image_urls") or [])
+    combined = list(photos)
+    for existing_url in existing:
+        if existing_url not in combined:
+            combined.append(existing_url)
+    if len(combined) <= len(existing):
+        return
+    item["image_urls"] = combined
+    field_sources = dict((meta or {}).get("field_sources") or {})
+    old_source = field_sources.get("image_urls")
+    field_sources["image_urls"] = (
+        _merge_source_labels(old_source, "payload-url-union")
+        if old_source
+        else "payload-url-union"
+    )
+    meta["field_sources"] = field_sources
 
 
 async def _capture_mercari_network_payload_async(url: str) -> dict:
@@ -436,7 +536,13 @@ async def _capture_mercari_network_payload_async(url: str) -> dict:
         },
     )
 
-    return _select_best_mercari_payload(captured_payloads, url)
+    result = _select_best_mercari_payload(captured_payloads, url)
+    # Preserve the full captured payload list so downstream post-passes
+    # (notably the photo URL union) can scan every response, not just the
+    # single winning candidate.  Without this the non-browser-pool capture
+    # path silently drops photos that live in other responses.
+    result["captured_payloads"] = captured_payloads
+    return result
 
 
 def _capture_mercari_network_payload(url: str) -> dict:
@@ -852,6 +958,22 @@ def scrape_item_detail(url: str, driver=None):
             payload_meta.setdefault("field_sources", dict(payload_meta.get("field_sources") or {}))
             payload_meta["network_capture"] = network_capture
             payload_meta["fallback_mode"] = "payload_without_dom"
+            # Even in the DOM-failed fallback we still have every
+            # captured API response, so run the photo URL union so the
+            # caller isn't stuck with just the winning candidate's
+            # (often sparse) photo subset.
+            fallback_target_id = extract_mercari_item_id(url)
+            if fallback_target_id:
+                fallback_blobs: list = []
+                for captured in browser_pool_payloads or []:
+                    if isinstance(captured, dict):
+                        fallback_blobs.append(captured.get("payload"))
+                for captured in payload_result.get("captured_payloads") or []:
+                    if isinstance(captured, dict):
+                        fallback_blobs.append(captured.get("payload"))
+                _merge_target_photo_url_union(
+                    payload_item, payload_meta, fallback_blobs, fallback_target_id,
+                )
             attach_extraction_trace(
                 payload_item,
                 strategy=payload_meta.get("strategy", "payload"),
@@ -914,6 +1036,29 @@ def scrape_item_detail(url: str, driver=None):
     meta["network_capture"] = network_capture
     if shadow_compare:
         meta["shadow_compare"] = shadow_compare
+
+    # Final photo safety net: regardless of which payload candidate (or the
+    # DOM) supplied ``image_urls``, union in every /photos/m<TARGET>_N.jpg
+    # URL we saw in any captured response or the page HTML.  Mercari encodes
+    # the owning item id in photo paths so this can only add photos that
+    # truly belong to the target item — it is immune to cross-item
+    # contamination.
+    target_item_id = extract_mercari_item_id(url)
+    if target_item_id:
+        blobs: list = []
+        # Browser-pool detail path exposes the raw captured payloads list.
+        for captured in browser_pool_payloads or []:
+            if isinstance(captured, dict):
+                blobs.append(captured.get("payload"))
+        # Non-browser-pool network capture path returns only the single
+        # best selection; we stash the full list on payload_result so we
+        # can scan every response for target photos here too.
+        for captured in payload_result.get("captured_payloads") or []:
+            if isinstance(captured, dict):
+                blobs.append(captured.get("payload"))
+        if page is not None:
+            blobs.append(getattr(page, "body", "") or "")
+        _merge_target_photo_url_union(item, meta, blobs, target_item_id)
 
     item["_scrape_meta"] = meta
     report_detail_result("mercari", url, item, meta, page_type="detail")

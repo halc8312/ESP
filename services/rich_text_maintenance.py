@@ -49,6 +49,12 @@ def run_rich_text_maintenance(*, apply: bool = False, user_id: int | None = None
             product_query = product_query.filter(Product.user_id == user_id)
             pricelist_query = pricelist_query.filter(PriceList.user_id == user_id)
             snapshot_query = snapshot_query.join(Product, Product.id == ProductSnapshot.product_id).filter(Product.user_id == user_id)
+            description_template_query = (
+                session_db.query(DescriptionTemplate)
+                .filter(DescriptionTemplate.user_id == user_id)
+            )
+        else:
+            description_template_query = session_db.query(DescriptionTemplate)
 
         sections: dict[str, dict[str, int]] = {}
         sections["products"] = _process_records(
@@ -61,14 +67,11 @@ def run_rich_text_maintenance(*, apply: bool = False, user_id: int | None = None
             ("notes",),
             _normalize_optional_rich_text,
         )
-        if user_id is None:
-            sections["description_templates"] = _process_records(
-                session_db.query(DescriptionTemplate).order_by(DescriptionTemplate.id),
-                ("content",),
-                _normalize_optional_rich_text,
-            )
-        else:
-            warnings.append("description_templates_skipped_for_user_scope")
+        sections["description_templates"] = _process_records(
+            description_template_query.order_by(DescriptionTemplate.id),
+            ("content",),
+            _normalize_optional_rich_text,
+        )
 
         if include_snapshots:
             sections["product_snapshots"] = _process_records(

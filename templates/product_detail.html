@@ -193,6 +193,177 @@
         cursor: not-allowed;
     }
 
+    .translation-panel {
+        margin: 16px 0 8px;
+        display: grid;
+        gap: 12px;
+    }
+
+    .translation-stale-banner {
+        background: #fff7ed;
+        border: 1px solid #fdba74;
+        border-radius: 8px;
+        padding: 10px 12px;
+        color: #9a3412;
+        font-size: 0.85rem;
+        line-height: 1.5;
+    }
+
+    .translation-panel-status {
+        font-size: 0.82rem;
+        color: var(--text-muted);
+        min-height: 1em;
+    }
+
+    .translation-panel-status[data-kind="error"] {
+        color: #b91c1c;
+    }
+
+    .translation-panel-status[data-kind="success"] {
+        color: #047857;
+    }
+
+    .translation-panel-status[data-kind="warning"] {
+        color: #92400e;
+    }
+
+    .translation-panel-suggestions {
+        display: grid;
+        gap: 10px;
+    }
+
+    .translation-suggestion {
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 12px;
+        background: #ffffff;
+        display: grid;
+        gap: 8px;
+    }
+
+    .translation-suggestion-header {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        font-size: 0.78rem;
+    }
+
+    .translation-status-badge {
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #e2e8f0;
+        color: #1f2937;
+        font-weight: 600;
+    }
+
+    .translation-status-badge.translation-status-queued,
+    .translation-status-badge.translation-status-running {
+        background: #dbeafe;
+        color: #1d4ed8;
+    }
+
+    .translation-status-badge.translation-status-succeeded {
+        background: #dcfce7;
+        color: #166534;
+    }
+
+    .translation-status-badge.translation-status-failed {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+
+    .translation-status-badge.translation-status-applied {
+        background: #ede9fe;
+        color: #5b21b6;
+    }
+
+    .translation-status-badge.translation-status-rejected {
+        background: #f3f4f6;
+        color: #4b5563;
+    }
+
+    .translation-scope-badge {
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: #f1f5f9;
+        color: #334155;
+    }
+
+    .translation-timestamp {
+        margin-left: auto;
+        color: var(--text-muted);
+    }
+
+    .translation-field {
+        display: grid;
+        gap: 4px;
+    }
+
+    .translation-field-label {
+        font-size: 0.74rem;
+        color: var(--text-muted);
+        font-weight: 600;
+    }
+
+    .translation-field-value {
+        font-size: 0.88rem;
+        line-height: 1.55;
+        color: #1f2937;
+        white-space: pre-wrap;
+    }
+
+    .translation-field-value.translation-field-html {
+        white-space: normal;
+    }
+
+    .translation-field-empty {
+        color: var(--text-muted);
+        font-style: italic;
+    }
+
+    .translation-error {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        border-radius: 8px;
+        padding: 8px 10px;
+        color: #991b1b;
+        font-size: 0.82rem;
+    }
+
+    .translation-suggestion-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .translation-action-btn {
+        padding: 6px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border-color);
+        background: #ffffff;
+        color: #1f2937;
+        font-size: 0.82rem;
+        cursor: pointer;
+    }
+
+    .translation-action-btn.translation-action-apply {
+        background: #2563eb;
+        border-color: #2563eb;
+        color: #ffffff;
+    }
+
+    .translation-action-btn.translation-action-reject {
+        background: #ffffff;
+        border-color: #d1d5db;
+        color: #374151;
+    }
+
+    .translation-action-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
     .image-entry-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -654,6 +825,14 @@
         background: #fafafa;
     }
 
+    .field-helper-text,
+    .field-help-text {
+        margin: 4px 0 0;
+        font-size: 0.78rem;
+        color: var(--text-muted);
+        line-height: 1.5;
+    }
+
     @media (max-width: 1023px) {
         .product-edit-hero-grid,
         .product-basic-grid,
@@ -796,29 +975,35 @@
                     <div class="product-image-manager">
                         <div class="image-manager-toolbar">
                             <div class="product-edit-inline-stack">
-                                <p class="product-image-note">1枚目の画像がいちばん目立ちます。おすすめの順にドラッグして並び替えてください。</p>
-                                <p class="product-edit-mock-note"><strong>白背景化ボタンは先に配置</strong>しています。処理自体は後続で連携します。</p>
+                                <p class="product-image-note">ドラッグで並べ替え、不要な画像は削除できます。URL追加と画像アップロードに対応しています。</p>
+                                <p class="product-edit-mock-note"><strong>白抜き</strong>ボタンで背景を透過PNGに変換できます。処理完了後にプレビューを確認して反映/破棄を選択してください。</p>
                             </div>
                             <div class="image-toolbar-actions">
-                                <button type="button" class="btn-secondary mock-feature-btn" disabled title="白背景化は後続対応です">まとめて白抜き</button>
                                 <button type="button" class="btn-secondary" onclick="focusImageUrlInput()">URLから追加</button>
+                                <button type="button" class="btn-secondary" data-bg-remove-bulk-btn title="全ての画像の背景を白抜きします">まとめて白抜き</button>
+                                <button type="button" class="btn-secondary" data-bg-apply-bulk-btn title="プレビュー済みの白抜き結果をまとめて反映します" hidden>まとめて反映</button>
                             </div>
                         </div>
 
-                        <div id="imageSortGrid" class="image-sort-grid">
+                        <div id="imageSortGrid" class="image-sort-grid" data-product-id="{{ product.id }}">
                             {% for url in images %}
                             <article class="product-image-card" data-image-url="{{ url }}">
                                 <div class="product-image-card-actions">
-                                    <button type="button" class="product-image-action-btn remove-bg" disabled title="白背景化は後続対応です">BG</button>
+                                    <button type="button" class="product-image-action-btn remove-bg" data-bg-remove-btn title="背景を白抜きして透過PNGを生成します">白抜き</button>
                                     <button type="button" class="product-image-action-btn delete image-delete-btn-icon" title="削除">✕</button>
                                 </div>
-                                <img src="{{ url }}" alt="image {{ loop.index }}" class="product-image-thumb">
+                                <img src="{{ url }}" alt="image {{ loop.index }}" class="product-image-thumb" data-bg-thumb>
                                 <div class="product-image-card-body">
                                     <div class="product-image-card-top">
                                         <span class="product-image-order">{{ loop.index }}枚目</span>
                                         <button type="button" class="image-sort-handle" aria-label="画像の並び順を変更">≡ 並べ替え</button>
                                     </div>
                                     <div class="product-image-url">{{ url }}</div>
+                                    <div class="product-image-bg-status" data-bg-status hidden></div>
+                                    <div class="product-image-bg-actions" data-bg-actions hidden>
+                                        <button type="button" class="btn-secondary btn-sm" data-bg-apply>反映</button>
+                                        <button type="button" class="btn-secondary btn-sm" data-bg-reject>破棄</button>
+                                    </div>
                                 </div>
                             </article>
                             {% endfor %}
@@ -835,7 +1020,7 @@
                                     <input type="url" id="image_url_input" placeholder="https://example.com/image.jpg">
                                     <button type="button" class="btn-secondary" onclick="addImageUrl()">URLを追加</button>
                                 </div>
-                                <p class="text-small text-muted mb-0"><code>http(s)</code> または <code>/media/...</code> 形式の画像URLを追加できます。</p>
+                                <p class="text-small text-muted mb-0"><code>http(s)</code> または <code>/media/...</code> 形式の画像URLを追加できます。例: <code>https://example.com/image.jpg</code></p>
                             </div>
 
                             <div class="form-group image-add-group">
@@ -914,9 +1099,11 @@
                                     <h3>英語</h3>
                                     <p>国際顧客向け。手動修正も可能です。</p>
                                 </div>
-                                <div class="locale-editor-actions">
-                                    <button type="button" class="translate-trigger" disabled title="翻訳API連携後に有効化します">自動翻訳</button>
-                                    <button type="button" class="translate-trigger" disabled title="翻訳API連携後に有効化します">全文翻訳</button>
+                                <div class="locale-editor-actions" data-translation-actions>
+                                    <button type="button" class="translate-trigger" data-translate-scope="title"
+                                        title="商品名のみ自動翻訳します">タイトル翻訳</button>
+                                    <button type="button" class="translate-trigger" data-translate-scope="full"
+                                        title="商品名と説明文を自動翻訳します">自動翻訳</button>
                                 </div>
                             </div>
 
@@ -932,20 +1119,42 @@
                                 <label for="title_en">商品名 (英語)</label>
                                 <input type="text" id="title_en" name="title_en" value="{{ product.custom_title_en or '' }}"
                                     placeholder="e.g. Vintage Camera Body">
-                                <p class="field-helper-text">英語で販売する予定がない場合は、ここは後回しでも問題ありません。</p>
+                                <p class="field-helper-text">海外向け販売では自動翻訳で下書きを作れます。英語販売しない場合は後回しでも問題ありません。</p>
                             </div>
 
                             <div class="form-group">
                                 <label for="description_en">説明文 (英語 / HTML可)</label>
                                 <textarea id="description_en" name="description_en"
                                     rows="8">{{ product.custom_description_en or '' }}</textarea>
-                                <p class="field-helper-text">英語説明は、まず短い要点だけでも十分です。</p>
+                                <p class="field-helper-text">自動翻訳後に手動で調整できます。まずは短い要点だけでも十分です。</p>
                             </div>
 
-                            <p class="editor-helper-text">翻訳の自動同期と本文翻訳は、外部API連携の仕様確定後に有効化します。</p>
+                            <div id="translationPanel" class="translation-panel"
+                                data-product-id="{{ product.id }}"
+                                data-translate-url="/api/products/{{ product.id }}/translate"
+                                data-suggestions-url="/api/products/{{ product.id }}/translation-suggestions"
+                                data-apply-url-template="/api/translation-suggestions/{job_id}/apply"
+                                data-reject-url-template="/api/translation-suggestions/{job_id}/reject">
+                                {% if translation_state and (translation_state.title_stale or translation_state.description_stale) %}
+                                <div class="translation-stale-banner" role="status">
+                                    <strong>日本語が更新されました。</strong>
+                                    {% if translation_state.title_stale and translation_state.description_stale %}
+                                        商品名と説明文の英訳が古い可能性があります。再翻訳をおすすめします。
+                                    {% elif translation_state.title_stale %}
+                                        商品名の英訳が古い可能性があります。再翻訳をおすすめします。
+                                    {% else %}
+                                        説明文の英訳が古い可能性があります。再翻訳をおすすめします。
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+                                <div class="translation-panel-status" data-translation-status aria-live="polite"></div>
+                                <div class="translation-panel-suggestions" data-translation-suggestions></div>
+                            </div>
+
+                            <p class="editor-helper-text">「自動翻訳」ボタンで日本語から英語へ自動翻訳します。翻訳後に内容を確認・修正してから「反映」してください。</p>
+                            <p class="editor-helper-text">翻訳は GPT API を使用しています。候補を確認してから英語欄に反映できます。</p>
                         </section>
                     </div>
-                    <p class="editor-helper-text">翻訳ボタンは先行配置です。処理連携前でも、手入力でそのまま編集して保存できます。</p>
                 </div>
             </details>
  
@@ -984,22 +1193,22 @@
                             <span class="mobile-collapsible-icon">▶</span>
                         </summary>
                         <div class="mobile-collapsible-content">
-                            <p class="text-small text-muted mb-1">カンマ区切りで入力してください (例: S, M, L)。既存の行はそのまま残ります。</p>
+                            <p class="text-small text-muted mb-1">カンマ区切りで入力してください（例: S, M, L）。「生成」を押すと既存行を残したまま候補を追加します。</p>
                             <div class="bulk-generator">
                                 <div class="filter-group">
-                                    <label>項目1の値</label>
+                                    <label>オプション1の値（例: 赤, 青, 白）</label>
                                     <input type="text" id="bulk_opt1" placeholder="例: Red, Blue">
                                 </div>
                                 <div class="filter-group">
-                                    <label>項目2の値</label>
+                                    <label>オプション2の値（例: S, M, L）</label>
                                     <input type="text" id="bulk_opt2" placeholder="例: S, M, L">
                                 </div>
                                 <div class="filter-group">
-                                    <label>共通価格</label>
+                                    <label>共通の販売価格（円）</label>
                                     <input type="number" id="bulk_price" placeholder="">
                                 </div>
                                 <div class="filter-group">
-                                    <label>共通SKU接頭辞</label>
+                                    <label>SKU接頭辞（例: MY-ITEM-）</label>
                                     <input type="text" id="bulk_sku" placeholder="MER-ITEM-">
                                 </div>
                             </div>
@@ -1010,16 +1219,16 @@
 
                     <div class="option-names-section">
                         <div class="filter-group">
-                            <label>項目名1</label>
+                            <label>オプション1の名前（例: 色）</label>
                             <input type="text" name="option1_name" value="{{ product.option1_name or 'Title' }}">
                         </div>
                         <div class="filter-group">
-                            <label>項目名2</label>
+                            <label>オプション2の名前（例: サイズ）</label>
                             <input type="text" name="option2_name" value="{{ product.option2_name or '' }}"
                                 placeholder="(例: Size)">
                         </div>
                         <div class="filter-group">
-                            <label>項目名3</label>
+                            <label>オプション3の名前</label>
                             <input type="text" name="option3_name" value="{{ product.option3_name or '' }}">
                         </div>
                     </div>
@@ -1029,8 +1238,8 @@
                         <table class="variant-table" id="variantTable">
                             <thead>
                                 <tr>
-                                    <th class="product-edit-variant-col-opt">項目1</th>
-                                    <th class="product-edit-variant-col-opt">項目2</th>
+                                    <th class="product-edit-variant-col-opt">オプション1</th>
+                                    <th class="product-edit-variant-col-opt">オプション2</th>
                                     <th class="product-edit-variant-col-price">販売価格</th>
                                     <th class="product-edit-variant-col-sku">SKU</th>
                                     <th class="product-edit-variant-col-stock">在庫</th>
@@ -1144,31 +1353,33 @@
                 </summary>
                 <div class="content-card-body">
                     <div class="form-group">
-                        <label for="vendor">販売元 (Vendor)</label>
+                        <label for="vendor">ブランド名・販売元</label>
                         <input type="text" id="vendor" name="vendor"
                             value="{{ product.custom_vendor or '' }}" placeholder="e.g. My Brand">
                         <p class="field-helper-text">ブランド名やショップ名を入れたい場合に使います。</p>
                     </div>
                     <div class="form-group">
-                        <label for="tags">タグ (Tags)</label>
+                        <label for="tags">タグ（検索キーワード）</label>
                         <input type="text" id="tags" name="tags" value="{{ product.tags or '' }}" placeholder="カンマ区切りで入力">
                         <p class="field-helper-text">検索や整理に使う補助ラベルです。例: vintage,camera,black</p>
                     </div>
                     <div class="form-group">
-                        <label for="handle">URLハンドル (Handle)</label>
+                        <label for="handle">URLスラッグ（Handle）</label>
                         <input type="text" id="handle" name="handle"
                             value="{{ product.custom_handle or '' }}">
                         <p class="field-helper-text">こだわりがなければ空欄のままでも運用できます。</p>
                     </div>
                     <div class="form-group">
-                        <label for="seo_title">ページタイトル (SEO Title)</label>
+                        <label for="seo_title">検索エンジン用タイトル（SEO）</label>
                         <input type="text" id="seo_title" name="seo_title" value="{{ product.seo_title or '' }}"
                             placeholder="60文字以内推奨">
+                        <p class="field-help-text">Google等の検索結果に表示されるページタイトルです。60文字以内で商品名＋特徴を入れると効果的です。</p>
                     </div>
                     <div class="form-group">
-                        <label for="seo_description">メタディスクリプション</label>
+                        <label for="seo_description">検索結果の説明文（メタディスクリプション）</label>
                         <textarea id="seo_description" name="seo_description"
                             rows="3">{{ product.seo_description or '' }}</textarea>
+                        <p class="field-help-text">検索結果に表示される説明文です。120〜160文字程度で商品の魅力を簡潔にまとめてください。</p>
                     </div>
                 </div>
             </details>
@@ -1228,6 +1439,8 @@
 {% block scripts %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.6/Sortable.min.js" referrerpolicy="origin"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tinymce/6.8.3/tinymce.min.js" referrerpolicy="origin"></script>
+<script src="{{ url_for('static', filename='js/product_translation.js') }}"></script>
+<script src="{{ url_for('static', filename='js/product_bg_removal.js') }}"></script>
 <script>
     var imageUrls = [];
     var imageGrid = null;
@@ -1695,6 +1908,24 @@
         }
     }
 
+    // Bridge for product_bg_removal.js: when the user applies a bg-removal
+    // result, swap the original URL for the processed URL in the page-level
+    // imageUrls array so the hidden image_urls_json field (and therefore the
+    // next form save) carries the new URL instead of silently reverting to
+    // the original.
+    window.replaceImageUrl = function (oldUrl, newUrl) {
+        if (!oldUrl || !newUrl || oldUrl === newUrl) {
+            return false;
+        }
+        var idx = imageUrls.indexOf(oldUrl);
+        if (idx === -1) {
+            return false;
+        }
+        imageUrls[idx] = newUrl;
+        syncImageUrls();
+        return true;
+    };
+
     function renderImageList() {
         if (!imageGrid) {
             return;
@@ -1705,6 +1936,7 @@
         imageUrls.forEach(function (url, index) {
             var card = document.createElement('article');
             card.className = 'product-image-card';
+            card.setAttribute('data-image-url', url);
 
             var actions = document.createElement('div');
             actions.className = 'product-image-card-actions';
@@ -1712,16 +1944,16 @@
             var backgroundButton = document.createElement('button');
             backgroundButton.type = 'button';
             backgroundButton.className = 'product-image-action-btn remove-bg';
-            backgroundButton.textContent = 'BG';
-            backgroundButton.disabled = true;
-            backgroundButton.title = '白背景化は後続対応です';
+            backgroundButton.textContent = '白抜き';
+            backgroundButton.title = '背景を白抜きして透過PNGを生成します';
+            backgroundButton.setAttribute('data-bg-remove-btn', '');
             actions.appendChild(backgroundButton);
 
             var iconDeleteButton = document.createElement('button');
             iconDeleteButton.type = 'button';
-            iconDeleteButton.className = 'product-image-action-btn delete';
+            iconDeleteButton.className = 'product-image-action-btn delete image-delete-btn-icon';
             iconDeleteButton.textContent = '✕';
-            iconDeleteButton.title = 'この画像を削除';
+            iconDeleteButton.title = '削除';
             iconDeleteButton.addEventListener('click', function () {
                 imageUrls.splice(index, 1);
                 markFormDirty();
@@ -1736,6 +1968,7 @@
             thumb.src = url;
             thumb.alt = 'image ' + (index + 1);
             thumb.loading = 'lazy';
+            thumb.setAttribute('data-bg-thumb', '');
             card.appendChild(thumb);
 
             var body = document.createElement('div');
@@ -1762,6 +1995,33 @@
             urlText.className = 'product-image-url';
             urlText.textContent = url;
             body.appendChild(urlText);
+
+            var bgStatus = document.createElement('div');
+            bgStatus.className = 'product-image-bg-status';
+            bgStatus.setAttribute('data-bg-status', '');
+            bgStatus.hidden = true;
+            body.appendChild(bgStatus);
+
+            var bgActions = document.createElement('div');
+            bgActions.className = 'product-image-bg-actions';
+            bgActions.setAttribute('data-bg-actions', '');
+            bgActions.hidden = true;
+
+            var applyBtn = document.createElement('button');
+            applyBtn.type = 'button';
+            applyBtn.className = 'btn-secondary btn-sm';
+            applyBtn.textContent = '反映';
+            applyBtn.setAttribute('data-bg-apply', '');
+            bgActions.appendChild(applyBtn);
+
+            var rejectBtn = document.createElement('button');
+            rejectBtn.type = 'button';
+            rejectBtn.className = 'btn-secondary btn-sm';
+            rejectBtn.textContent = '破棄';
+            rejectBtn.setAttribute('data-bg-reject', '');
+            bgActions.appendChild(rejectBtn);
+
+            body.appendChild(bgActions);
 
             card.appendChild(body);
             imageGrid.appendChild(card);

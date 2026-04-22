@@ -553,10 +553,61 @@ class TestShopsRoutes:
         self._login_user(client, db_session, 'templatestest')
         response = client.get('/templates')
         assert response.status_code == 200
+
+    def test_templates_page_shows_only_current_users_templates(self, client, db_session):
+        """Authenticated users should not see other users' templates."""
+        owner = self._login_user(client, db_session, 'templateownerscope')
+        other_user = User(username='templateotherscope')
+        other_user.set_password('testpassword')
+        db_session.add(other_user)
+        db_session.commit()
+
+        db_session.add(
+            DescriptionTemplate(
+                user_id=owner.id,
+                name='Owner Template',
+                content='Owner content',
+            )
+        )
+        db_session.add(
+            DescriptionTemplate(
+                user_id=other_user.id,
+                name='Other Template',
+                content='Other content',
+            )
+        )
+        db_session.commit()
+
+        response = client.get('/templates')
+
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'Owner Template' in html
+        assert 'Other Template' not in html
+
+    def test_templates_page_keeps_legacy_shared_templates_visible(self, client, db_session):
+        """Legacy templates without ownership should stay visible during migration."""
+        self._login_user(client, db_session, 'templatelegacyvisible')
+        db_session.add(
+            DescriptionTemplate(
+                user_id=None,
+                name='Legacy Shared Template',
+                content='Legacy content',
+            )
+        )
+        db_session.commit()
+
+        response = client.get('/templates')
+
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'Legacy Shared Template' in html
+        assert '共有 / 旧データ' in html
+        assert '削除不可' in html
     
     def test_create_template(self, client, db_session):
         """Test creating a description template"""
-        self._login_user(client, db_session, 'createtemplatetest')
+        user = self._login_user(client, db_session, 'createtemplatetest')
         
         response = client.post('/templates', data={
             'name': 'Test Template',
@@ -566,13 +617,50 @@ class TestShopsRoutes:
         assert response.status_code == 200
         
         # Verify template was created
-        template = db_session.query(DescriptionTemplate).filter_by(name='Test Template').first()
+        template = db_session.query(DescriptionTemplate).filter_by(
+            user_id=user.id,
+            name='Test Template',
+        ).first()
         assert template is not None
         assert template.content == 'This is test template content'
+        assert template.user_id == user.id
+
+    def test_create_template_allows_same_name_for_different_users(self, client, db_session):
+        """Different users can keep templates with the same display name."""
+        user_one = self._login_user(client, db_session, 'createtemplatesameone')
+        response_one = client.post('/templates', data={
+            'name': 'Shared Template Name',
+            'content': 'Owner one content',
+        }, follow_redirects=True)
+        assert response_one.status_code == 200
+
+        user_two = User(username='createtemplatesametwo')
+        user_two.set_password('testpassword')
+        db_session.add(user_two)
+        db_session.commit()
+
+        client.get('/logout', follow_redirects=True)
+        client.post('/login', data={
+            'username': user_two.username,
+            'password': 'testpassword',
+        }, follow_redirects=True)
+        response_two = client.post('/templates', data={
+            'name': 'Shared Template Name',
+            'content': 'Owner two content',
+        }, follow_redirects=True)
+
+        assert response_two.status_code == 200
+        templates = (
+            db_session.query(DescriptionTemplate)
+            .filter(DescriptionTemplate.name == 'Shared Template Name')
+            .order_by(DescriptionTemplate.user_id.asc())
+            .all()
+        )
+        assert [template.user_id for template in templates] == [user_one.id, user_two.id]
 
     def test_create_template_sanitizes_rich_text(self, client, db_session):
         """Test template content is normalized to the shared safe rich-text subset"""
-        self._login_user(client, db_session, 'createtemplatesanitizetest')
+        user = self._login_user(client, db_session, 'createtemplatesanitizetest')
 
         response = client.post('/templates', data={
             'name': 'Sanitized Template',
@@ -581,16 +669,19 @@ class TestShopsRoutes:
 
         assert response.status_code == 200
 
-        template = db_session.query(DescriptionTemplate).filter_by(name='Sanitized Template').first()
+        template = db_session.query(DescriptionTemplate).filter_by(
+            user_id=user.id,
+            name='Sanitized Template',
+        ).first()
         assert template is not None
         assert '<script' not in template.content.lower()
         assert 'Hello' in template.content
     
     def test_delete_template(self, client, db_session):
         """Test deleting a template"""
-        self._login_user(client, db_session, 'deletetemplatetest')
+        user = self._login_user(client, db_session, 'deletetemplatetest')
         
-        template = DescriptionTemplate(name='Template to Delete', content='Content')
+        template = DescriptionTemplate(user_id=user.id, name='Template to Delete', content='Content')
         db_session.add(template)
         db_session.commit()
         template_id = template.id
@@ -601,6 +692,47 @@ class TestShopsRoutes:
         # Verify template was deleted
         deleted_template = db_session.query(DescriptionTemplate).filter_by(id=template_id).first()
         assert deleted_template is None
+
+    def test_delete_template_does_not_remove_other_users_template(self, client, db_session):
+        """Users must not be able to delete templates they do not own."""
+        self._login_user(client, db_session, 'templatedeleteownercheck')
+
+        other_user = User(username='templatedeleteother')
+        other_user.set_password('testpassword')
+        db_session.add(other_user)
+        db_session.commit()
+
+        template = DescriptionTemplate(
+            user_id=other_user.id,
+            name='Other User Template',
+            content='Content',
+        )
+        db_session.add(template)
+        db_session.commit()
+        template_id = template.id
+
+        response = client.post(f'/templates/{template_id}/delete', follow_redirects=True)
+
+        assert response.status_code == 200
+        assert db_session.query(DescriptionTemplate).filter_by(id=template_id).first() is not None
+
+    def test_delete_template_does_not_remove_legacy_shared_template(self, client, db_session):
+        """Legacy shared templates remain visible but are not deletable by scoped users."""
+        self._login_user(client, db_session, 'templatedeletelegacycheck')
+
+        template = DescriptionTemplate(
+            user_id=None,
+            name='Legacy Shared Template Delete',
+            content='Content',
+        )
+        db_session.add(template)
+        db_session.commit()
+        template_id = template.id
+
+        response = client.post(f'/templates/{template_id}/delete', follow_redirects=True)
+
+        assert response.status_code == 200
+        assert db_session.query(DescriptionTemplate).filter_by(id=template_id).first() is not None
 
 
 class TestPriceListRoutes:
@@ -1231,9 +1363,58 @@ class TestProductRoutes:
         assert response.status_code == 200
         html = response.data.decode('utf-8')
         assert 'まとめて白抜き' in html
+        assert 'タイトル翻訳' in html
         assert '自動翻訳' in html
-        assert '全文翻訳' in html
         assert 'URLから追加' in html
+
+    def test_product_detail_shows_only_current_users_templates(self, client, db_session):
+        """Product edit should not expose other users' description templates."""
+        user, product, _ = self._setup_user_with_product(client, db_session, 'productdetailtemplatescope')
+        other_user = User(username='productdetailtemplateother')
+        other_user.set_password('testpassword')
+        db_session.add(other_user)
+        db_session.commit()
+
+        db_session.add(
+            DescriptionTemplate(
+                user_id=user.id,
+                name='Owner Product Template',
+                content='Owner content',
+            )
+        )
+        db_session.add(
+            DescriptionTemplate(
+                user_id=other_user.id,
+                name='Other Product Template',
+                content='Other content',
+            )
+        )
+        db_session.commit()
+
+        response = client.get(f'/product/{product.id}')
+
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'Owner Product Template' in html
+        assert 'Other Product Template' not in html
+
+    def test_product_detail_keeps_legacy_shared_templates_visible(self, client, db_session):
+        """Legacy shared templates should remain available in the editor during rollout."""
+        user, product, _ = self._setup_user_with_product(client, db_session, 'productdetailtemplatelegacy')
+        db_session.add(
+            DescriptionTemplate(
+                user_id=None,
+                name='Legacy Product Template',
+                content='Legacy product content',
+            )
+        )
+        db_session.commit()
+
+        response = client.get(f'/product/{product.id}')
+
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'Legacy Product Template' in html
     
     def test_product_detail_403_for_other_user(self, client, db_session):
         """Test product detail returns 404 for products owned by other user"""

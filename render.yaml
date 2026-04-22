@@ -39,6 +39,20 @@ services:
         value: auto
       - key: IMAGE_STORAGE_PATH
         value: /var/data/images
+      - key: MEDIA_QUEUE_NAME
+        value: media
+      - key: TRANSLATOR_BACKEND
+        value: openai
+      # OPENAI_API_KEY must be set in the Render dashboard (sync: false) on
+      # both esp-web and esp-worker so both processes can instantiate the
+      # OpenAI client. The default model is gpt-4.1-nano; override with
+      # OPENAI_TRANSLATOR_MODEL if a different model is desired.
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: BG_REMOVAL_BACKEND
+        value: rembg
+      - key: BG_REMOVAL_INTERNAL_SECRET
+        sync: false
       - key: SELECTOR_ALERT_WEBHOOK_URL
         sync: false
 
@@ -66,6 +80,30 @@ services:
           property: connectionString
       - key: SCRAPE_QUEUE_BACKEND
         value: rq
+      - key: MEDIA_QUEUE_NAME
+        value: media
+      - key: TRANSLATOR_BACKEND
+        value: openai
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: BG_REMOVAL_BACKEND
+        value: rembg
+      - key: BG_REMOVAL_INTERNAL_SECRET
+        sync: false
+      # Render's private network exposes services under an auto-generated
+      # hostname of the form ``<service-name>-<suffix>`` (e.g. ``esp-web-ne5j``)
+      # — NOT the bare service name. We therefore resolve the hostname via
+      # ``fromService.property: host`` so Render injects the correct value
+      # at deploy time. The public HTTPS port 10000 is blocked on the private
+      # network, so esp-web also binds a second port (INTERNAL_PORT=8080)
+      # inside the container for worker -> web traffic.
+      - key: WEB_INTERNAL_HOST
+        fromService:
+          type: web
+          name: esp-web
+          property: host
+      - key: WEB_INTERNAL_PORT
+        value: "8080"
       - key: WORKER_ENABLE_SCHEDULER
         value: "1"
       - key: WARM_BROWSER_POOL

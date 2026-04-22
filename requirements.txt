@@ -22,3 +22,7 @@ browserforge
 patchright
 msgspec
 nh3
+argostranslate
+openai
+Pillow
+rembg
