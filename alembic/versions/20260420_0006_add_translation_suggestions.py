@@ -26,23 +26,24 @@ def _product_column_names(inspector) -> set[str]:
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
-
-    product_columns = _product_column_names(inspector)
-    with op.batch_alter_table("products") as batch:
-        if "custom_title_en_source_hash" not in product_columns:
-            batch.add_column(
-                sa.Column("custom_title_en_source_hash", sa.String(length=64), nullable=True)
-            )
-        if "custom_description_en_source_hash" not in product_columns:
-            batch.add_column(
-                sa.Column(
-                    "custom_description_en_source_hash",
-                    sa.String(length=64),
-                    nullable=True,
-                )
-            )
-
     existing_tables = set(inspector.get_table_names())
+
+    if "products" in existing_tables:
+        product_columns = _product_column_names(inspector)
+        with op.batch_alter_table("products") as batch:
+            if "custom_title_en_source_hash" not in product_columns:
+                batch.add_column(
+                    sa.Column("custom_title_en_source_hash", sa.String(length=64), nullable=True)
+                )
+            if "custom_description_en_source_hash" not in product_columns:
+                batch.add_column(
+                    sa.Column(
+                        "custom_description_en_source_hash",
+                        sa.String(length=64),
+                        nullable=True,
+                    )
+                )
+
     if "translation_suggestions" not in existing_tables:
         op.create_table(
             "translation_suggestions",
@@ -120,9 +121,10 @@ def downgrade() -> None:
                 op.drop_index(index_name, table_name="translation_suggestions")
         op.drop_table("translation_suggestions")
 
-    product_columns = _product_column_names(inspector)
-    with op.batch_alter_table("products") as batch:
-        if "custom_description_en_source_hash" in product_columns:
-            batch.drop_column("custom_description_en_source_hash")
-        if "custom_title_en_source_hash" in product_columns:
-            batch.drop_column("custom_title_en_source_hash")
+    if "products" in existing_tables:
+        product_columns = _product_column_names(inspector)
+        with op.batch_alter_table("products") as batch:
+            if "custom_description_en_source_hash" in product_columns:
+                batch.drop_column("custom_description_en_source_hash")
+            if "custom_title_en_source_hash" in product_columns:
+                batch.drop_column("custom_title_en_source_hash")

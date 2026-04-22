@@ -6,6 +6,7 @@ import os
 import uuid
 from flask import Blueprint, render_template, request, redirect, url_for, session
 from flask_login import login_required, current_user
+from sqlalchemy import or_
 from werkzeug.utils import secure_filename
 
 from database import SessionLocal
@@ -157,7 +158,17 @@ def _build_image_snapshot(product, base_snapshot, image_urls):
 def _render_product_detail(session_db, product, snapshot, images, *, error=None, status_code=200):
     from services.translator import compute_source_hash
 
-    templates = session_db.query(DescriptionTemplate).order_by(DescriptionTemplate.name).all()
+    templates = (
+        session_db.query(DescriptionTemplate)
+        .filter(
+            or_(
+                DescriptionTemplate.user_id == current_user.id,
+                DescriptionTemplate.user_id.is_(None),
+            )
+        )
+        .order_by(DescriptionTemplate.name)
+        .all()
+    )
     all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
     current_shop_id = session.get('current_shop_id')
     variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
