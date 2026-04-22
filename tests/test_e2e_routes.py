@@ -193,9 +193,12 @@ class TestMainRoutes:
 
     def test_loading_overlay_respects_hidden_attribute(self):
         """The global loading overlay must stay hidden until JS explicitly opens it."""
-        css = Path("/home/runner/work/ESP/ESP/static/css/style.css").read_text(encoding="utf-8")
-        assert ".loading-overlay[hidden]" in css
-        assert "display: none !important;" in css
+        css_path = Path(__file__).resolve().parents[1] / "static" / "css" / "style.css"
+        css = css_path.read_text(encoding="utf-8")
+        assert re.search(
+            r"\.loading-overlay\[hidden\]\s*\{\s*display:\s*none\s*!important;\s*\}",
+            css,
+        )
 
     def test_dashboard_uses_current_scope_metrics(self, client, db_session):
         """Dashboard metrics should align with current product model and index scope."""
