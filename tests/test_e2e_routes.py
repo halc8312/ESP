@@ -170,6 +170,26 @@ class TestMainRoutes:
         
         response = client.get('/')
         assert response.status_code == 200
+
+    def test_loading_overlay_is_hidden_by_default(self, client, db_session):
+        """Authenticated pages should not render the global loading overlay visibly by default."""
+        user = User(username='overlaytest')
+        user.set_password('testpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'overlaytest',
+            'password': 'testpassword'
+        })
+
+        response = client.get('/')
+        assert response.status_code == 200
+        assert b'id="espLoadingOverlay"' in response.data
+        assert b'class="loading-overlay" hidden' in response.data
+
+        stylesheet = Path(__file__).resolve().parents[1] / 'static' / 'css' / 'style.css'
+        assert '.loading-overlay[hidden]' in stylesheet.read_text(encoding='utf-8')
     
     def test_dashboard_requires_login(self, client):
         """Test that dashboard requires authentication"""
