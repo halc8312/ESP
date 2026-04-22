@@ -191,14 +191,13 @@ class TestMainRoutes:
         response = client.get('/dashboard')
         assert response.status_code == 200
 
-    def test_loading_overlay_respects_hidden_attribute(self):
+    def test_loading_overlay_respects_hidden_attribute(self, client):
         """The global loading overlay must stay hidden until JS explicitly opens it."""
-        css_path = Path(__file__).resolve().parents[1] / "static" / "css" / "style.css"
+        css_path = Path(client.application.root_path) / "static" / "css" / "style.css"
         css = css_path.read_text(encoding="utf-8")
-        assert re.search(
-            r"\.loading-overlay\[hidden\]\s*\{\s*display:\s*none\s*!important;\s*\}",
-            css,
-        )
+        match = re.search(r"\.loading-overlay\[hidden\]\s*\{(?P<body>.*?)\}", css, re.S)
+        assert match is not None
+        assert re.search(r"display\s*:\s*none\s*!important\s*;", match.group("body"))
 
     def test_dashboard_uses_current_scope_metrics(self, client, db_session):
         """Dashboard metrics should align with current product model and index scope."""
