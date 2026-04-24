@@ -284,9 +284,9 @@ def test_scrape_item_detail_does_not_treat_description_sold_word_as_sold(_patch_
 def test_scrape_item_detail_image_extraction(_patch_scrapling):
     """scrape_item_detail が画像URLを正しく抽出することを確認"""
     mock_img1 = MagicMock()
-    mock_img1.attrib = {"src": "https://img.fril.jp/photo1.jpg"}
+    mock_img1.attrib = {"src": "https://img.fril.jp/img/111111111/l/222222221.jpg?1"}
     mock_img2 = MagicMock()
-    mock_img2.attrib = {"src": "", "data-lazy": "https://img.fril.jp/photo2.jpg"}
+    mock_img2.attrib = {"src": "", "data-lazy": "https://img.fril.jp/img/111111111/l/222222222.jpg?2"}
 
     mock_page = MagicMock()
     mock_page.get_text.return_value = "商品"
@@ -294,8 +294,21 @@ def test_scrape_item_detail_image_extraction(_patch_scrapling):
     def css_first_side_effect(selector):
         return None
 
+    def css_side_effect(selector):
+        if selector in {
+            ".sp-image",
+            ".soldout-section .image",
+            "img[src*='img.fril.jp']",
+            ".item-box--image img",
+            ".item-box--image-main img",
+            "img[class*='item-image']",
+            "img[src*='fril']",
+        }:
+            return [mock_img1, mock_img2]
+        return []
+
     mock_page.css_first.side_effect = css_first_side_effect
-    mock_page.css.return_value = [mock_img1, mock_img2]
+    mock_page.css.side_effect = css_side_effect
 
     _patch_scrapling.Fetcher.get.return_value = mock_page
 
@@ -303,8 +316,67 @@ def test_scrape_item_detail_image_extraction(_patch_scrapling):
     result = scrape_item_detail("https://item.fril.jp/test")
 
     assert len(result["image_urls"]) == 2
-    assert "https://img.fril.jp/photo1.jpg" in result["image_urls"]
-    assert "https://img.fril.jp/photo2.jpg" in result["image_urls"]
+    assert "https://img.fril.jp/img/111111111/l/222222221.jpg?1" in result["image_urls"]
+    assert "https://img.fril.jp/img/111111111/l/222222222.jpg?2" in result["image_urls"]
+
+
+def test_scrape_item_detail_accepts_scrapling_attribute_handler_images(_patch_scrapling):
+    class AttributeLike:
+        def __init__(self, values):
+            self._values = values
+
+        def get(self, key, default=None):
+            return self._values.get(key, default)
+
+        def items(self):
+            return self._values.items()
+
+    def image_node(values):
+        node = MagicMock()
+        node.attrib = AttributeLike(values)
+        return node
+
+    jsonld_el = MagicMock()
+    jsonld_el.text = json.dumps(
+        {
+            "@type": "Product",
+            "name": "複数画像の商品",
+            "image": "https://img.fril.jp/img/827839210/m/2847527998.jpg?1777001980",
+        }
+    )
+
+    product_imgs = [
+        image_node({"src": "https://img.fril.jp/img/827839210/l/2847527998.jpg?1777001980"}),
+        image_node({"data-lazy": "https://img.fril.jp/img/827839210/l/2847527999.jpg?1777001981"}),
+        image_node({"srcset": "https://img.fril.jp/img/827839210/m/2847528000.jpg?1777001982 1x"}),
+    ]
+    related_img = image_node({"src": "https://img.fril.jp/img/999999999/l/related.jpg?1"})
+
+    mock_page = MagicMock()
+    mock_page.get_text.return_value = "複数画像の商品"
+    mock_page.css_first.return_value = None
+
+    def css_side_effect(selector):
+        if selector == "script[type='application/ld+json']":
+            return [jsonld_el]
+        if selector == ".sp-image":
+            return product_imgs
+        if selector == "img[src*='img.fril.jp']":
+            return product_imgs + [related_img]
+        return []
+
+    mock_page.css.side_effect = css_side_effect
+
+    _patch_scrapling.Fetcher.get.return_value = mock_page
+
+    from rakuma_db import scrape_item_detail
+    result = scrape_item_detail("https://item.fril.jp/0b1b0c2af2bc96e3fd97f1b3e1b683ce")
+
+    assert result["image_urls"] == [
+        "https://img.fril.jp/img/827839210/l/2847527998.jpg?1777001980",
+        "https://img.fril.jp/img/827839210/l/2847527999.jpg?1777001981",
+        "https://img.fril.jp/img/827839210/m/2847528000.jpg?1777001982",
+    ]
 
 
 def test_scrape_item_detail_error_handling(_patch_scrapling):
