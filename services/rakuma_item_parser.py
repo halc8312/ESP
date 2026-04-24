@@ -66,8 +66,17 @@ def _node_text(node) -> str:
 
 
 def _node_attrib(node) -> dict:
-    attrib = getattr(node, "attrib", {})
-    return attrib if isinstance(attrib, dict) else {}
+    attrib = getattr(node, "attrib", {}) or {}
+    if isinstance(attrib, dict):
+        return attrib
+
+    try:
+        return dict(attrib.items())
+    except Exception:
+        try:
+            return dict(attrib)
+        except Exception:
+            return {}
 
 
 def first_node(page, selector: str):
@@ -224,15 +233,134 @@ def _normalize_page_title(page_title: str) -> str:
     return title
 
 
+def _normalize_image_url(raw_url) -> str:
+    if not isinstance(raw_url, str):
+        return ""
+    url = raw_url.strip().strip("'\"")
+    url = url.replace("\\/", "/").replace("\\u002F", "/").replace("\\u002f", "/")
+    if url.startswith("//"):
+        url = "https:" + url
+    return url
+
+
+def _is_rakuma_product_image_url(raw_url) -> bool:
+    url = _normalize_image_url(raw_url)
+    return bool(re.match(r"^https?://img\.fril\.jp/img/[^/]+/[a-z]/[^/?#]+\.(?:jpe?g|png|webp)(?:[?#].*)?$", url, re.I))
+
+
+def _rakuma_image_group_id(raw_url) -> str:
+    url = _normalize_image_url(raw_url)
+    match = re.match(r"^https?://img\.fril\.jp/img/([^/]+)/", url, re.I)
+    return match.group(1) if match else ""
+
+
+def _append_unique_image_url(image_urls: list, raw_url) -> None:
+    url = _normalize_image_url(raw_url)
+    if not _is_rakuma_product_image_url(url):
+        return
+    if url not in image_urls:
+        image_urls.append(url)
+
+
 def _collect_jsonld_images(product_jsonld: dict) -> list:
     raw_images = product_jsonld.get("image")
     image_urls = []
-    if isinstance(raw_images, str) and raw_images.startswith("http"):
-        image_urls.append(raw_images)
+    if isinstance(raw_images, str):
+        _append_unique_image_url(image_urls, raw_images)
+    elif isinstance(raw_images, dict):
+        for key in ("url", "contentUrl", "image", "src"):
+            _append_unique_image_url(image_urls, raw_images.get(key))
     elif isinstance(raw_images, list):
         for image in raw_images:
-            if isinstance(image, str) and image.startswith("http") and image not in image_urls:
-                image_urls.append(image)
+            if isinstance(image, str):
+                _append_unique_image_url(image_urls, image)
+            elif isinstance(image, dict):
+                for key in ("url", "contentUrl", "image", "src"):
+                    before_count = len(image_urls)
+                    _append_unique_image_url(image_urls, image.get(key))
+                    if len(image_urls) > before_count:
+                        break
+    return image_urls
+
+
+def _extract_node_image_url(node) -> str:
+    attrib = _node_attrib(node)
+
+    for attr_name in ("src", "data-lazy", "data-src", "data-original", "data-image", "data-image-url"):
+        candidate = attrib.get(attr_name)
+        if candidate and isinstance(candidate, str) and "placeholder" not in candidate.lower() and "blank" not in candidate.lower():
+            return _normalize_image_url(candidate)
+
+    for attr_name in ("srcset", "data-srcset"):
+        srcset = attrib.get(attr_name)
+        if not isinstance(srcset, str):
+            continue
+        for part in srcset.split(","):
+            candidate = part.strip().split(" ")[0]
+            if candidate and "placeholder" not in candidate.lower() and "blank" not in candidate.lower():
+                return _normalize_image_url(candidate)
+
+    style = attrib.get("style", "")
+    if isinstance(style, str):
+        match = re.search(r"background-image:\s*url\(([^)]+)\)", style)
+        if match:
+            return _normalize_image_url(match.group(1))
+
+    return ""
+
+
+def _select_dominant_image_group_id(image_urls: list) -> str:
+    counts = {}
+    order = []
+    for image_url in image_urls:
+        group_id = _rakuma_image_group_id(image_url)
+        if not group_id:
+            continue
+        if group_id not in counts:
+            counts[group_id] = 0
+            order.append(group_id)
+        counts[group_id] += 1
+
+    if not counts:
+        return ""
+    return max(order, key=lambda group_id: counts[group_id])
+
+
+def _filter_images_to_group(image_urls: list, group_id: str) -> list:
+    if not group_id:
+        return image_urls
+    return [image_url for image_url in image_urls if _rakuma_image_group_id(image_url) == group_id]
+
+
+def _extract_dom_image_urls(page, product_jsonld: dict) -> list:
+    image_selectors = get_selectors("rakuma", "detail", "images") or [".sp-image"]
+    jsonld_images = _collect_jsonld_images(product_jsonld)
+    active_group_id = _select_dominant_image_group_id(jsonld_images)
+
+    image_urls = []
+    for selector in image_selectors:
+        try:
+            imgs = page.css(selector)
+        except Exception as exc:
+            logger.debug("Error extracting Rakuma images for %s: %s", selector, exc)
+            continue
+
+        selector_urls = []
+        for img in imgs:
+            _append_unique_image_url(selector_urls, _extract_node_image_url(img))
+
+        if not selector_urls:
+            continue
+
+        if active_group_id:
+            selector_urls = _filter_images_to_group(selector_urls, active_group_id)
+        else:
+            active_group_id = _select_dominant_image_group_id(selector_urls)
+            selector_urls = _filter_images_to_group(selector_urls, active_group_id)
+
+        for image_url in selector_urls:
+            _append_unique_image_url(image_urls, image_url)
+
     return image_urls
 
 
@@ -359,32 +487,7 @@ def parse_rakuma_item_page(page, url: str, body_text: str | None = None) -> dict
                 end_idx = idx + 500
             description = body_text[idx + len("商品説明"):end_idx].strip()
 
-    image_urls = []
-    image_selectors = get_selectors("rakuma", "detail", "images") or [".sp-image"]
-    for selector in image_selectors:
-        try:
-            imgs = page.css(selector)
-        except Exception as exc:
-            logger.debug("Error extracting Rakuma images for %s: %s", selector, exc)
-            continue
-        for img in imgs:
-            attrib = _node_attrib(img)
-            src = attrib.get("src", "")
-            src = src if isinstance(src, str) else ""
-            if not src or "placeholder" in src.lower() or "blank" in src.lower():
-                lazy_src = attrib.get("data-lazy") or attrib.get("data-src") or ""
-                src = lazy_src if isinstance(lazy_src, str) else ""
-
-            if not src:
-                style = attrib.get("style", "")
-                if isinstance(style, str):
-                    match = re.search(r"background-image:\s*url\(([^)]+)\)", style)
-                    if match:
-                        src = match.group(1).strip("'\"")
-
-            if src and src.startswith("http") and src not in image_urls:
-                image_urls.append(src)
-
+    image_urls = _extract_dom_image_urls(page, product_jsonld)
     if not image_urls:
         image_urls = _collect_jsonld_images(product_jsonld)
 
