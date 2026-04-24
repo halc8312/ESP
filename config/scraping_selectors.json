@@ -206,7 +206,12 @@
                 "[itemprop='price']"
             ],
             "description": [
-                "html > body > div:nth-of-type(1)"
+                ".note.text-break",
+                "#item_detailInfo",
+                ".tbl_product_info",
+                "#item_condition",
+                "#product_detail",
+                "[itemprop='description']"
             ],
             "images": [
                 "html > body > div > div:nth-of-type(1) > div:nth-of-type(4) > div:nth-of-type(1) > div > div:nth-of-type(1) > a > img"

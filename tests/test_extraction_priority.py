@@ -262,6 +262,94 @@ def test_surugaya_detail_tracks_mixed_provenance_and_invalid_primary_fallback_wi
     assert result["_scrape_meta"]["field_sources"]["images"] == "meta"
 
 
+def test_surugaya_detail_rejects_page_chrome_description_from_healer(monkeypatch):
+    html = """
+    <html>
+      <head>
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            "name": "Surugaya Clean Description Item",
+            "image": ["https://cdn.suruga-ya.jp/database/pics_webp/game/clean.jpg.webp"],
+            "offers": {
+              "@type": "Offer",
+              "price": "2980",
+              "availability": "https://schema.org/InStock"
+            }
+          }
+        </script>
+      </head>
+      <body>
+        <div class="dialog-off-canvas-main-canvas">
+          全商品 セーフサーチ サインインはこちら カートはこちら キャンペーン
+        </div>
+        <h1>Surugaya CSS Title</h1>
+        <div class="price_group"><span class="text-price-detail">2,980円(税込)</span></div>
+        <div class="btn_buy">カートに入れる</div>
+        <p class="note text-break">Clean product-only description from the detail note.</p>
+      </body>
+    </html>
+    """
+
+    class FakeHealer:
+        def extract_with_healing(self, page, site, page_type, field, parser="scrapling"):
+            if field == "description":
+                return "全商品 セーフサーチ サインインはこちら カートはこちら キャンペーン", False
+            return "", False
+
+        def extract_images_with_healing(self, page, site, page_type, parser="scrapling"):
+            return [], False
+
+    monkeypatch.setattr(surugaya_db, "_get_healer", lambda: FakeHealer())
+    monkeypatch.setattr(
+        surugaya_db,
+        "_fetch_with_retry",
+        lambda session, url, timeout=30, max_attempts=3: (MockResponse(html, url), None),
+    )
+
+    result = surugaya_db.scrape_item_detail(object(), "https://www.suruga-ya.jp/product/detail/1")
+
+    assert result["description"] == "Clean product-only description from the detail note."
+    assert "全商品" not in result["description"]
+    assert result["_scrape_meta"]["field_sources"]["description"] == "css"
+
+
+def test_surugaya_detail_normalizes_wrapped_meta_title(monkeypatch):
+    html = """
+    <html>
+      <head>
+        <meta property="og:title" content="駿河屋 -&lt;中古&gt;Clean Store Item（その他）" />
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            "image": ["https://cdn.suruga-ya.jp/database/pics_webp/goods/store.jpg.webp"],
+            "offers": {
+              "@type": "Offer",
+              "price": "1200",
+              "availability": "https://schema.org/InStock"
+            }
+          }
+        </script>
+      </head>
+      <body>
+        <h1>食器 Clean Store Item</h1>
+        <div class="price_group"><span class="text-price-detail">1,200円(税込)</span></div>
+        <div class="btn_buy">カートに入れる</div>
+        <p class="note text-break">Clean store item description.</p>
+      </body>
+    </html>
+    """
+
+    monkeypatch.setattr(surugaya_db, "_fetch_with_retry", lambda session, url, timeout=30, max_attempts=3: (MockResponse(html, url), None))
+
+    result = surugaya_db.scrape_item_detail(object(), "https://www.suruga-ya.jp/product/detail/1?tenpo_cd=1")
+
+    assert result["title"] == "Clean Store Item"
+    assert result["_scrape_meta"]["field_sources"]["title"] == "meta"
+
+
 def test_surugaya_detail_marks_javascript_disabled_page_unknown_and_alerts(monkeypatch):
     html = """
     <html>

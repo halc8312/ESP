@@ -76,6 +76,8 @@ SELECTORS = {
         "img[data-src*='cdn.suruga-ya.jp/pics_webp/']",
     ],
     "description": [
+        ".note.text-break",
+        "#item_detailInfo",
         ".tbl_product_info",
         "#item_condition",
         "#product_detail",
@@ -233,6 +235,22 @@ def _is_usable_price_value(value) -> bool:
     return isinstance(value, int) and value > 0
 
 
+def _normalize_surugaya_title(text: str) -> str:
+    title = str(text or "").strip()
+    if not title:
+        return ""
+
+    had_site_prefix = False
+    if title.startswith("駿河屋 -"):
+        title = title[len("駿河屋 -"):].strip()
+        had_site_prefix = True
+
+    title = re.sub(r"^<[^>]+>", "", title).strip()
+    if had_site_prefix:
+        title = re.sub(r"（[^（）]{1,40}）$", "", title).strip()
+    return title
+
+
 def _pick_strategy(field_sources: dict) -> str:
     for source in ("payload", "json_ld", "meta", "css", "derived"):
         if source in field_sources.values():
@@ -344,6 +362,52 @@ def _is_placeholder_image(url: str) -> bool:
         or "bglogo" in lowered
         or "logo-surugaya" in lowered
     )
+
+
+_DESCRIPTION_NOISE_MARKERS = (
+    "全商品",
+    "セーフサーチ",
+    "サインインはこちら",
+    "カートはこちら",
+    "キャンペーン",
+    "駿河屋TOP",
+    "数量の選択",
+    "ショッピングを続ける",
+    "注文手続きを行う",
+)
+
+
+def _is_plausible_description(text: str) -> bool:
+    cleaned = str(text or "").strip()
+    if len(cleaned) < 10:
+        return False
+    return not any(marker in cleaned for marker in _DESCRIPTION_NOISE_MARKERS)
+
+
+def _extract_meta_description(soup: BeautifulSoup) -> tuple[str, str]:
+    meta_candidates = (
+        ("meta", "meta[name='description']"),
+        ("meta", "meta[property='og:description']"),
+    )
+    for source, selector in meta_candidates:
+        meta_el = soup.select_one(selector)
+        if not meta_el:
+            continue
+        text = (meta_el.get("content") or "").strip()
+        if _is_plausible_description(text):
+            return text, source
+    return "", ""
+
+
+def _extract_css_description(soup: BeautifulSoup) -> str:
+    for selector in SELECTORS["description"]:
+        detail_el = soup.select_one(selector)
+        if not detail_el:
+            continue
+        text = detail_el.get_text(separator="\n", strip=True)
+        if _is_plausible_description(text):
+            return text
+    return ""
 
 
 def _extract_image_urls(soup: BeautifulSoup, page_url: str, ld_product: dict) -> list:
@@ -874,18 +938,18 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
     if _healer:
         title_val, _ = _healer.extract_with_healing(soup, 'surugaya', 'detail', 'title', parser='bs4')
         if title_val:
-            css_title = title_val
+            css_title = _normalize_surugaya_title(title_val)
     if not css_title:
         for selector in SELECTORS["title"]:
             title_el = soup.select_one(selector)
             if title_el:
                 text = title_el.get_text(" ", strip=True)
                 if text:
-                    css_title = text
+                    css_title = _normalize_surugaya_title(text)
                     break
     og_title = soup.select_one("meta[property='og:title']")
-    og_title_text = og_title.get("content").strip() if og_title and og_title.get("content") else ""
-    ld_title = str(ld_product.get("name") or "").strip()
+    og_title_text = _normalize_surugaya_title(og_title.get("content")) if og_title and og_title.get("content") else ""
+    ld_title = _normalize_surugaya_title(ld_product.get("name"))
     result["title"], title_source = pick_first_valid(
         ("json_ld", ld_title),
         ("meta", og_title_text),
@@ -1001,25 +1065,16 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
     css_description = ""
     if _healer:
         desc_val, _ = _healer.extract_with_healing(soup, 'surugaya', 'detail', 'description', parser='bs4')
-        if desc_val:
+        if desc_val and _is_plausible_description(desc_val):
             css_description = desc_val
     if not css_description:
-        for selector in SELECTORS["description"]:
-            detail_el = soup.select_one(selector)
-            if not detail_el:
-                continue
-            text = detail_el.get_text(separator="\n", strip=True)
-            if text:
-                css_description = text
-                break
-    meta_description = ""
-    meta_desc_el = soup.select_one("meta[name='description']")
-    if meta_desc_el and meta_desc_el.get("content"):
-        meta_description = meta_desc_el.get("content").strip()
+        css_description = _extract_css_description(soup)
+
+    meta_description, meta_description_source = _extract_meta_description(soup)
     result["description"], description_source = pick_first_valid(
-        ("meta", meta_description),
+        (meta_description_source, meta_description),
         ("css", css_description),
-        validator=_is_usable_text,
+        validator=_is_plausible_description,
         default="",
     )
     if description_source:
