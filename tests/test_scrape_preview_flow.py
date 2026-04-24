@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from models import Product, ScrapeJob, Shop, User
+from models import Product, ScrapeJob, Shop, User, Variant
 from time_utils import utc_now
 
 
@@ -325,6 +325,91 @@ def test_register_selected_allows_unknown_status_when_user_explicitly_selected(c
     product = db_session.query(Product).filter_by(user_id=user.id).one()
     assert product.last_title == 'Preview Unknown Item'
     assert product.last_status == 'on_sale'
+
+
+def test_register_selected_saves_explicitly_selected_item_without_price(client, db_session, monkeypatch):
+    user = login_user(client, db_session, 'register_selected_no_price_user')
+    fake_queue = FakeQueue()
+    fake_queue.jobs['job-1'] = {
+        'job_id': 'job-1',
+        'status': 'completed',
+        'result': {
+            'items': [
+                {
+                    'url': 'https://store.shopping.yahoo.co.jp/example/no-price.html',
+                    'title': 'Preview No Price Item',
+                    'price': None,
+                    'status': 'unknown',
+                    'description': 'preview no price',
+                    'image_urls': ['https://img.example.com/no-price.jpg'],
+                },
+            ],
+            'site': 'yahoo',
+        },
+        'error': None,
+        'elapsed_seconds': 0.1,
+        'queue_position': None,
+        'user_id': user.id,
+    }
+
+    monkeypatch.setattr('routes.scrape.get_queue', lambda: fake_queue)
+
+    response = client.post('/scrape/register-selected', json={
+        'job_id': 'job-1',
+        'selected_indices': [0]
+    })
+
+    assert response.status_code == 200
+    assert response.json['ok'] is True
+    assert response.json['registered_count'] == 1
+    assert response.json['new_count'] == 1
+
+    db_session.expire_all()
+    product = db_session.query(Product).filter_by(user_id=user.id).one()
+    variant = db_session.query(Variant).filter_by(product_id=product.id).one()
+    assert product.last_title == 'Preview No Price Item'
+    assert product.last_price is None
+    assert product.last_status == 'unknown'
+    assert variant.price is None
+    assert variant.inventory_qty == 0
+
+
+def test_register_selected_returns_error_when_selection_cannot_be_persisted(client, db_session, monkeypatch):
+    user = login_user(client, db_session, 'register_selected_rejected_user')
+    fake_queue = FakeQueue()
+    fake_queue.jobs['job-1'] = {
+        'job_id': 'job-1',
+        'status': 'completed',
+        'result': {
+            'items': [
+                {
+                    'url': 'https://example.com/blocked-item',
+                    'title': 'Blocked Item',
+                    'price': None,
+                    'status': 'blocked',
+                    'description': '',
+                    'image_urls': [],
+                },
+            ],
+            'site': 'mercari',
+        },
+        'error': None,
+        'elapsed_seconds': 0.1,
+        'queue_position': None,
+        'user_id': user.id,
+    }
+
+    monkeypatch.setattr('routes.scrape.get_queue', lambda: fake_queue)
+
+    response = client.post('/scrape/register-selected', json={
+        'job_id': 'job-1',
+        'selected_indices': [0]
+    })
+
+    assert response.status_code == 422
+    assert response.json['registered_count'] == 0
+    assert response.json['rejected_count'] == 1
+    assert db_session.query(Product).filter_by(user_id=user.id).count() == 0
 
 
 def test_register_selected_requires_csrf_header_when_enabled(app, client, db_session, monkeypatch):

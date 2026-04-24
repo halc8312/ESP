@@ -282,20 +282,37 @@ def register_selected():
     if not selected_items:
         return jsonify({"error": "No valid items selected"}), 400
 
-    new_count, updated_count = save_scraped_items_to_db(
-        selected_items,
-        user_id=current_user.id,
-        site=result.get("site", "mercari"),
-        shop_id=result.get("shop_id"),
-        manual_selection=True,
-    )
+    try:
+        save_summary = save_scraped_items_to_db(
+            selected_items,
+            user_id=current_user.id,
+            site=result.get("site", "mercari"),
+            shop_id=result.get("shop_id"),
+            manual_selection=True,
+            return_summary=True,
+            raise_on_error=True,
+        )
+    except Exception:
+        return jsonify({"error": "選択商品の保存に失敗しました。時間をおいて再度お試しください。"}), 500
+
+    registered_count = int(save_summary.get("processed_count") or 0)
+    if registered_count <= 0:
+        return jsonify(
+            {
+                "error": "選択した商品は保存できませんでした。商品URL、タイトル、取得状態を確認してください。",
+                "registered_count": 0,
+                "rejected_count": save_summary.get("rejected_count", len(selected_items)),
+            }
+        ), 422
 
     return jsonify(
         {
             "ok": True,
-            "registered_count": len(selected_items),
-            "new_count": new_count,
-            "updated_count": updated_count,
+            "registered_count": registered_count,
+            "selected_count": len(selected_items),
+            "new_count": save_summary.get("new_count", 0),
+            "updated_count": save_summary.get("updated_count", 0),
+            "rejected_count": save_summary.get("rejected_count", 0),
         }
     )
 
