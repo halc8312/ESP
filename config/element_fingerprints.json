@@ -248,7 +248,15 @@
             },
             "description": {
                 "validators": {
-                    "min_length": 10
+                    "min_length": 10,
+                    "must_not_contain": [
+                        "全商品",
+                        "セーフサーチ",
+                        "サインインはこちら",
+                        "カートはこちら",
+                        "ショッピングを続ける",
+                        "注文手続きを行う"
+                    ]
                 },
                 "fingerprint": {
                     "tag_names": ["div", "table", "section"],

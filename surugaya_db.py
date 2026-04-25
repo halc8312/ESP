@@ -12,6 +12,8 @@ import time
 from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
+from services.extraction_policy import attach_extraction_trace, pick_first_valid
+from services.scrape_alerts import report_detail_result
 
 logger = logging.getLogger("surugaya")
 
@@ -29,6 +31,11 @@ BLOCK_MARKERS = (
     "window._cf_chl_opt",
     "cf-challenge-running",
     "challenge-form",
+)
+DEGRADED_PAGE_MARKERS = (
+    "javascript is disabled",
+    "please enable javascript",
+    "enable javascript to continue",
 )
 
 # CSS Selectors
@@ -69,6 +76,8 @@ SELECTORS = {
         "img[data-src*='cdn.suruga-ya.jp/pics_webp/']",
     ],
     "description": [
+        ".note.text-break",
+        "#item_detailInfo",
         ".tbl_product_info",
         "#item_condition",
         "#product_detail",
@@ -157,12 +166,24 @@ def _extract_price_from_body(text: str):
     if not text:
         return None
 
+    # Split the text at buyback section markers to only search the sales section
+    buyback_markers = ("買取", "買い取り", "お売りください", "査定")
+    search_text = text
+    for marker in buyback_markers:
+        idx = search_text.find(marker)
+        if idx != -1:
+            # Only search text before the first buyback marker
+            candidate = search_text[:idx]
+            if len(candidate) > 50:  # Ensure enough text to find a price
+                search_text = candidate
+                break
+
     patterns = [
         r"([0-9][0-9,]{1,})\s*円\s*\(税込\)",
         r"(?:販売価格|価格|税込)[^\d]{0,8}([0-9][0-9,]{1,})",
     ]
     for pattern in patterns:
-        match = re.search(pattern, text)
+        match = re.search(pattern, search_text)
         if not match:
             continue
         try:
@@ -170,6 +191,71 @@ def _extract_price_from_body(text: str):
         except Exception:
             continue
     return None
+
+
+def _is_valid_product_page(result: dict, ld_product: dict) -> bool:
+    title = str(result.get("title") or "").strip()
+    if title:
+        return True
+    if ld_product.get("name"):
+        return True
+    return False
+
+
+def _looks_like_degraded_detail_page(
+    soup: BeautifulSoup,
+    *,
+    ld_product: dict,
+) -> str:
+    page_title = soup.title.get_text(" ", strip=True).lower() if soup.title else ""
+    body_text = soup.get_text(" ", strip=True).lower()
+    marker = next((value for value in DEGRADED_PAGE_MARKERS if value in page_title or value in body_text), "")
+    if not marker:
+        return ""
+
+    has_product_signal = bool(
+        str(ld_product.get("name") or "").strip()
+        or ld_product.get("price") is not None
+        or ld_product.get("availability")
+        or ld_product.get("images")
+        or soup.select_one("h1")
+        or soup.select_one("meta[property='og:title']")
+        or soup.select_one("meta[property='og:image']")
+    )
+    if has_product_signal:
+        return ""
+    return marker
+
+
+def _is_usable_text(value) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _is_usable_price_value(value) -> bool:
+    return isinstance(value, int) and value > 0
+
+
+def _normalize_surugaya_title(text: str) -> str:
+    title = str(text or "").strip()
+    if not title:
+        return ""
+
+    had_site_prefix = False
+    if title.startswith("駿河屋 -"):
+        title = title[len("駿河屋 -"):].strip()
+        had_site_prefix = True
+
+    title = re.sub(r"^<[^>]+>", "", title).strip()
+    if had_site_prefix:
+        title = re.sub(r"（[^（）]{1,40}）$", "", title).strip()
+    return title
+
+
+def _pick_strategy(field_sources: dict) -> str:
+    for source in ("payload", "json_ld", "meta", "css", "derived"):
+        if source in field_sources.values():
+            return source
+    return ""
 
 
 def _fetch_with_retry(session, url: str, timeout: int = 30, max_attempts: int = 3):
@@ -278,6 +364,52 @@ def _is_placeholder_image(url: str) -> bool:
     )
 
 
+_DESCRIPTION_NOISE_MARKERS = (
+    "全商品",
+    "セーフサーチ",
+    "サインインはこちら",
+    "カートはこちら",
+    "キャンペーン",
+    "駿河屋TOP",
+    "数量の選択",
+    "ショッピングを続ける",
+    "注文手続きを行う",
+)
+
+
+def _is_plausible_description(text: str) -> bool:
+    cleaned = str(text or "").strip()
+    if len(cleaned) < 10:
+        return False
+    return not any(marker in cleaned for marker in _DESCRIPTION_NOISE_MARKERS)
+
+
+def _extract_meta_description(soup: BeautifulSoup) -> tuple[str, str]:
+    meta_candidates = (
+        ("meta", "meta[name='description']"),
+        ("meta", "meta[property='og:description']"),
+    )
+    for source, selector in meta_candidates:
+        meta_el = soup.select_one(selector)
+        if not meta_el:
+            continue
+        text = (meta_el.get("content") or "").strip()
+        if _is_plausible_description(text):
+            return text, source
+    return "", ""
+
+
+def _extract_css_description(soup: BeautifulSoup) -> str:
+    for selector in SELECTORS["description"]:
+        detail_el = soup.select_one(selector)
+        if not detail_el:
+            continue
+        text = detail_el.get_text(separator="\n", strip=True)
+        if _is_plausible_description(text):
+            return text
+    return ""
+
+
 def _extract_image_urls(soup: BeautifulSoup, page_url: str, ld_product: dict) -> list:
     image_urls = []
 
@@ -314,13 +446,13 @@ def _extract_image_urls(soup: BeautifulSoup, page_url: str, ld_product: dict) ->
 
 
 def _extract_status(soup: BeautifulSoup, ld_product: dict) -> str:
-    for selector in SELECTORS["stock_available"]:
-        if soup.select(selector):
-            return "active"
-
     for selector in SELECTORS["stock_sold"]:
         if soup.select(selector):
             return "sold"
+
+    for selector in SELECTORS["stock_available"]:
+        if soup.select(selector):
+            return "active"
 
     text = soup.get_text(" ", strip=True)
     sold_keywords = ("売り切れ", "在庫なし", "品切れ", "販売終了")
@@ -337,7 +469,7 @@ def _extract_status(soup: BeautifulSoup, ld_product: dict) -> str:
     if "instock" in availability:
         return "active"
 
-    return "active"
+    return "unknown"
 
 
 def _extract_condition(soup: BeautifulSoup) -> str:
@@ -571,16 +703,25 @@ def _extract_global_product_detail(source_url: str, global_url: str):
 
     ld_product = _extract_json_ld_product(soup)
 
+    field_sources = {}
     title = ""
     title_el = soup.select_one("h1.title_product, h1")
     if title_el:
         title = title_el.get_text(" ", strip=True)
-    if not title and ld_product.get("name"):
-        title = ld_product["name"]
-    if not title:
-        og_title = soup.select_one("meta[property='og:title']")
-        if og_title and og_title.get("content"):
-            title = og_title.get("content").strip()
+        if title:
+            field_sources["title"] = "css"
+    ld_title = str(ld_product.get("name") or "").strip()
+    og_title = soup.select_one("meta[property='og:title']")
+    og_title_text = og_title.get("content").strip() if og_title and og_title.get("content") else ""
+    title, title_source = pick_first_valid(
+        ("json_ld", ld_title),
+        ("meta", og_title_text),
+        ("css", title),
+        validator=_is_usable_text,
+        default="",
+    )
+    if title_source:
+        field_sources["title"] = title_source
 
     # Variant-like price/stock blocks on global pages
     variants = []
@@ -620,6 +761,8 @@ def _extract_global_product_detail(source_url: str, global_url: str):
 
     if price is not None and price <= 0:
         price = None
+    if price is not None:
+        field_sources["price"] = "css" if variants else "json_ld"
 
     # Status from variant stock / schema availability / sold keywords
     status = "unknown"
@@ -641,6 +784,7 @@ def _extract_global_product_detail(source_url: str, global_url: str):
                 status = "active"
             else:
                 status = "active"
+    field_sources["status"] = "css" if stock_values else ("json_ld" if ld_product.get("availability") else "css")
 
     condition = ""
     if variants:
@@ -666,11 +810,16 @@ def _extract_global_product_detail(source_url: str, global_url: str):
             og_url = _normalize_url(og_image.get("content"), resp.url or global_url)
             if og_url and not _is_placeholder_image(og_url):
                 image_urls = [og_url]
+                field_sources["images"] = "meta"
+    elif image_urls:
+        field_sources["images"] = "css"
 
     description = ""
     detail_el = soup.select_one("#product_detail_infor, .propertie_product, [itemprop='description']")
     if detail_el:
         description = detail_el.get_text("\n", strip=True)
+        if description:
+            field_sources["description"] = "css"
 
     categories = []
     for el in soup.select("nav.breadcrumb a, .breadcrumb a"):
@@ -686,6 +835,9 @@ def _extract_global_product_detail(source_url: str, global_url: str):
             "sku": "",
             "inventory_qty": 1 if status == "active" else 0,
         }]
+        field_sources["variants"] = "derived"
+    elif variants:
+        field_sources["variants"] = "css"
 
     item = {
         "url": source_url,
@@ -698,7 +850,11 @@ def _extract_global_product_detail(source_url: str, global_url: str):
         "condition": condition,
         "category": category,
     }
-    return item, None
+    if condition:
+        field_sources["condition"] = "css"
+    if category:
+        field_sources["category"] = "css"
+    return attach_extraction_trace(item, strategy="global_fallback", field_sources=field_sources), None
 
 
 def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
@@ -716,6 +872,7 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
         "condition": "",
         "category": "",
     }
+    field_sources = {}
 
     print(f"[SURUGAYA] Starting curl_cffi scrape for {url}")
 
@@ -752,81 +909,181 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
             result["status"] = "error"
         else:
             result["status"] = "error"
+        meta = {"confidence": "low", "reasons": [result["status"]]}
+        attach_extraction_trace(result, strategy=result["status"], field_sources={})
+        report_detail_result("surugaya", url, result, dict(result.get("_scrape_meta") or {}) | meta, page_type="detail")
         return result
 
     ld_product = _extract_json_ld_product(soup)
+    degraded_marker = _looks_like_degraded_detail_page(soup, ld_product=ld_product)
+    if degraded_marker:
+        result["status"] = "unknown"
+        meta = {
+            "strategy": "degraded",
+            "confidence": "low",
+            "reasons": [f"degraded-marker:{degraded_marker}"],
+            "field_sources": {},
+        }
+        attach_extraction_trace(result, strategy="degraded", field_sources={})
+        result["_scrape_meta"] = dict(result.get("_scrape_meta") or {})
+        result["_scrape_meta"].update(meta)
+        report_detail_result("surugaya", url, result, result.get("_scrape_meta"), page_type="detail")
+        return result
 
     # Try self-healing first if available
     _healer = _get_healer() if _get_healer else None
 
     # ---- Title ----
+    css_title = ""
     if _healer:
         title_val, _ = _healer.extract_with_healing(soup, 'surugaya', 'detail', 'title', parser='bs4')
         if title_val:
-            result["title"] = title_val
-    if not result["title"]:
+            css_title = _normalize_surugaya_title(title_val)
+    if not css_title:
         for selector in SELECTORS["title"]:
             title_el = soup.select_one(selector)
             if title_el:
                 text = title_el.get_text(" ", strip=True)
                 if text:
-                    result["title"] = text
+                    css_title = _normalize_surugaya_title(text)
                     break
-    if not result["title"] and ld_product.get("name"):
-        result["title"] = ld_product["name"]
+    og_title = soup.select_one("meta[property='og:title']")
+    og_title_text = _normalize_surugaya_title(og_title.get("content")) if og_title and og_title.get("content") else ""
+    ld_title = _normalize_surugaya_title(ld_product.get("name"))
+    result["title"], title_source = pick_first_valid(
+        ("json_ld", ld_title),
+        ("meta", og_title_text),
+        ("css", css_title),
+        validator=_is_usable_text,
+        default="",
+    )
+    if title_source:
+        field_sources["title"] = title_source
 
     # ---- Price ----
+    css_price = None
     if _healer:
         price_val, _ = _healer.extract_with_healing(soup, 'surugaya', 'detail', 'price', parser='bs4')
         if price_val:
-            result["price"] = _extract_price(price_val)
-    if result["price"] is None:
+            css_price = _extract_price(price_val)
+    if css_price is None:
         for selector in SELECTORS["price"]:
             for el in soup.select(selector):
-                price = _extract_price(el.get_text(" ", strip=True))
+                # Skip elements in buyback (買取) sections
+                parent_text = ""
+                parent = el.parent
+                while parent and parent.name not in ("body", "html", None):
+                    parent_id = parent.get("id", "").lower()
+                    parent_class = " ".join(parent.get("class", [])).lower()
+                    if "kaitori" in parent_id or "buyback" in parent_id or "kaitori" in parent_class or "buyback" in parent_class:
+                        parent_text = "買取"
+                        break
+                    parent = parent.parent
+                if "買取" in parent_text:
+                    continue
+                # Also skip if the element's own text context mentions buyback
+                el_text = el.get_text(" ", strip=True)
+                if "買取" in el_text or "買い取り" in el_text:
+                    continue
+                price = _extract_price(el_text)
                 if price is not None:
-                    result["price"] = price
+                    css_price = price
                     break
-            if result["price"] is not None:
+            if css_price is not None:
                 break
 
-    if result["price"] is None and ld_product.get("price") is not None:
-        result["price"] = ld_product["price"]
-
-    if result["price"] is None:
-        result["price"] = _extract_price_from_body(soup.get_text(" ", strip=True))
+    ld_price = ld_product.get("price")
+    body_price = _extract_price_from_body(soup.get_text(" ", strip=True)) if _is_valid_product_page(result, ld_product) else None
+    result["price"], price_source = pick_first_valid(
+        ("json_ld", ld_price),
+        ("css", css_price),
+        ("css", body_price),
+        validator=_is_usable_price_value,
+        default=None,
+    )
+    if price_source:
+        field_sources["price"] = price_source
 
     # ---- Stock ----
     result["status"] = _extract_status(soup, ld_product)
+    field_sources["status"] = "css" if any(soup.select(selector) for selector in (SELECTORS["stock_available"] + SELECTORS["stock_sold"])) else ("json_ld" if ld_product.get("availability") else "css")
 
     # ---- Condition ----
     result["condition"] = _extract_condition(soup)
+    if result["condition"]:
+        field_sources["condition"] = "css"
 
     # ---- Images ----
+    css_images = []
     if _healer:
         healed_imgs, _ = _healer.extract_images_with_healing(soup, 'surugaya', 'detail', parser='bs4')
         if healed_imgs:
-            result["image_urls"] = healed_imgs
-    if not result["image_urls"]:
-        result["image_urls"] = _extract_image_urls(soup, page_url, ld_product)
+            css_images = healed_imgs
+
+    jsonld_images = []
+    for raw in ld_product.get("images", []) or []:
+        full_url = _normalize_url(raw, page_url)
+        if full_url and not _is_placeholder_image(full_url):
+            jsonld_images.append(full_url)
+    jsonld_images = _dedupe_keep_order(jsonld_images)
+
+    meta_images = []
+    og_image = soup.select_one("meta[property='og:image']")
+    if og_image and og_image.get("content"):
+        og_url = _normalize_url(og_image.get("content"), page_url)
+        if og_url and not _is_placeholder_image(og_url):
+            meta_images = [og_url]
+
+    css_select_images = []
+    for selector in SELECTORS["main_image"]:
+        for img in soup.select(selector):
+            raw = img.get("src") or img.get("data-src") or img.get("data-original")
+            if not raw:
+                srcset = img.get("srcset")
+                if srcset:
+                    raw = srcset.split(",")[0].strip().split(" ")[0]
+            if not raw:
+                continue
+            full_url = _normalize_url(raw, page_url)
+            if not full_url or _is_placeholder_image(full_url):
+                continue
+            css_select_images.append(full_url)
+    css_select_images = _dedupe_keep_order(css_select_images)
+
+    result["image_urls"], image_source = pick_first_valid(
+        ("json_ld", jsonld_images),
+        ("meta", meta_images),
+        ("css", css_images),
+        ("css", css_select_images),
+        validator=lambda value: isinstance(value, list) and len(value) > 0,
+        default=[],
+    )
+    if image_source:
+        field_sources["images"] = image_source
 
     # ---- Description ----
+    css_description = ""
     if _healer:
         desc_val, _ = _healer.extract_with_healing(soup, 'surugaya', 'detail', 'description', parser='bs4')
-        if desc_val:
-            result["description"] = desc_val
-    if not result["description"]:
-        for selector in SELECTORS["description"]:
-            detail_el = soup.select_one(selector)
-            if not detail_el:
-                continue
-            text = detail_el.get_text(separator="\n", strip=True)
-            if text:
-                result["description"] = text
-                break
+        if desc_val and _is_plausible_description(desc_val):
+            css_description = desc_val
+    if not css_description:
+        css_description = _extract_css_description(soup)
+
+    meta_description, meta_description_source = _extract_meta_description(soup)
+    result["description"], description_source = pick_first_valid(
+        (meta_description_source, meta_description),
+        ("css", css_description),
+        validator=_is_plausible_description,
+        default="",
+    )
+    if description_source:
+        field_sources["description"] = description_source
 
     # ---- Category ----
     result["category"] = _extract_category(soup)
+    if result["category"]:
+        field_sources["category"] = "css"
 
     # Default variant for compatibility
     if result["price"] is not None:
@@ -836,8 +1093,11 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
             "sku": "",
             "inventory_qty": 1 if result["status"] == "active" else 0
         }]
+        field_sources["variants"] = "derived"
         
     logger.info(f"Scraped: {result['title'][:30]}... - ¥{result['price']} ({result['status']})")
+    result = attach_extraction_trace(result, strategy=_pick_strategy(field_sources), field_sources=field_sources)
+    report_detail_result("surugaya", url, result, result.get("_scrape_meta"), page_type="detail")
     return result
 
 

@@ -25,13 +25,23 @@
                 {% for t in templates %}
                 <tr>
                     <td>{{ t.id }}</td>
-                    <td>{{ t.name }}</td>
+                    <td>
+                        {{ t.name }}
+                        {% if t.user_id is none %}
+                        <span class="text-muted" style="font-size: 0.85em;">(共有 / 旧データ)</span>
+                        {% endif %}
+                    </td>
                     <td class="hide-mobile">{{ (t.content | striptags)[:50] if t.content else '' }}...</td>
                     <td>
+                        {% if t.user_id is none %}
+                        <span class="text-muted" style="font-size: 0.85em;">削除不可</span>
+                        {% else %}
                         <form method="POST" action="{{ url_for('delete_template', template_id=t.id) }}"
                             style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                             <button type="submit" onclick="return confirm('本当に削除しますか？');" class="btn-danger">削除</button>
                         </form>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -47,6 +57,7 @@
     </div>
     <div class="content-card-body">
         <form method="POST" action="{{ url_for('manage_templates') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="form-group">
                 <label>テンプレート名</label>
                 <input type="text" name="name" required>

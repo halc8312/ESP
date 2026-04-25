@@ -8,7 +8,8 @@ from flask_login import login_required, current_user
 
 from database import SessionLocal
 from models import Product, Variant, ProductSnapshot
-from services.image_service import cache_mercari_image, download_external_image, ImageValidationError
+from services.image_service import cache_mercari_image, download_external_image
+from services.rich_text import normalize_rich_text
 
 export_bp = Blueprint('export', __name__)
 
@@ -74,7 +75,6 @@ def export_shopify():
             )
 
             title = product.custom_title or product.last_title or ""
-            # Description processing remains same
             description = product.custom_description or (snapshot.description if snapshot else "")
             vendor = product.custom_vendor or product.site.capitalize()
             handle = product.custom_handle or f"{product.site or 'product'}-{product.id}"
@@ -102,7 +102,7 @@ def export_shopify():
 
                 if i == 0:
                     row["Title"] = title
-                    row["Body (HTML)"] = description.replace("\n", "<br>")
+                    row["Body (HTML)"] = normalize_rich_text(description)
                     row["Vendor"] = vendor
                     row["Type"] = "Mercari Item" # Default Type
                     row["Published"] = "true" if product.status == 'active' else 'false'
@@ -125,7 +125,7 @@ def export_shopify():
                 row["Variant Grams"] = variant.grams or ""
                 row["Variant Inventory Tracker"] = "shopify"
                 
-                if product.last_status == 'sold':
+                if product.last_status in {'sold', 'deleted'}:
                     final_qty = 0
                 else:
                     final_qty = variant.inventory_qty if variant.inventory_qty is not None else default_qty
@@ -160,6 +160,9 @@ def export_shopify():
         response.headers["Content-Disposition"] = "attachment; filename=shopify_products.csv"
         response.headers["Content-type"] = "text/csv"
         return response
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -215,11 +218,10 @@ def export_ebay():
             snap = p.snapshots[-1] if p.snapshots else None
             title_src = snap.title if snap and snap.title else (p.last_title or "")
             title = (title_src or "")[:80]
-            description_src = snap.description if snap and snap.description else ""
+            description_src = p.custom_description or (snap.description if snap and snap.description else "")
             if not description_src:
                 description_src = title_src
-            desc_clean = description_src.replace("\r\n", "\n").replace("\r", "\n")
-            description_html = desc_clean.replace("\n", "<br>")
+            description_html = normalize_rich_text(description_src)
 
             base_price_yen = None
             if snap and snap.price is not None:
@@ -254,6 +256,9 @@ def export_ebay():
         resp.headers["Content-Type"] = "text/csv; charset=utf-8"
         resp.headers["Content-Disposition"] = 'attachment; filename="ebay_export.csv"'
         return resp
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -277,7 +282,7 @@ def export_stock_update():
             variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
             
             for variant in variants:
-                if product.last_status == 'sold':
+                if product.last_status in {'sold', 'deleted'}:
                     final_qty = 0
                 else:
                     final_qty = variant.inventory_qty if variant.inventory_qty is not None else default_qty
@@ -295,6 +300,9 @@ def export_stock_update():
         response.headers["Content-Disposition"] = "attachment; filename=shopify_stock_update.csv"
         response.headers["Content-type"] = "text/csv"
         return response
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -334,6 +342,9 @@ def export_price_update():
         response.headers["Content-Disposition"] = "attachment; filename=shopify_price_update.csv"
         response.headers["Content-type"] = "text/csv"
         return response
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -343,7 +354,6 @@ def export_price_update():
 def export_images():
     """Export product images as a ZIP file."""
     import zipfile
-    import requests
     from io import BytesIO
     
     session_db = SessionLocal()
@@ -374,7 +384,7 @@ def export_images():
                         image_bytes, ext = download_external_image(img_url)
                         filename = f"{product_folder}/image_{i+1}{ext}"
                         zip_file.writestr(filename, image_bytes)
-                    except (ImageValidationError, requests.RequestException) as e:
+                    except Exception as e:
                         print(f"Error downloading image: {e}")
                         continue
 
@@ -383,6 +393,8 @@ def export_images():
         response.headers["Content-Disposition"] = "attachment; filename=product_images.zip"
         response.headers["Content-type"] = "application/zip"
         return response
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
-

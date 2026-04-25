@@ -8,9 +8,26 @@ from urllib.parse import urljoin
 
 from selector_config import get_selectors, get_valid_domains
 from scrape_metrics import check_scrape_health, get_metrics, log_scrape_result
+from services.extraction_policy import attach_extraction_trace, pick_first
+from services.scrape_alerts import report_detail_result
 from services.selector_healer import get_healer
 
 logger = logging.getLogger("yahoo")
+
+
+_YAHOO_ACTIVE_PAGE_MARKERS = (
+    "カートに入れる",
+    "注文する",
+    "購入手続き",
+    "今すぐ購入",
+)
+_YAHOO_SOLD_PAGE_MARKERS = (
+    "在庫切れ",
+    "売り切れ",
+    "販売終了",
+    "在庫がありません",
+    "現在ご購入いただけません",
+)
 
 
 def _empty_result(url: str, status: str = "error") -> dict:
@@ -52,12 +69,100 @@ def _extract_item_from_page(page) -> dict:
     )
 
 
+def _get_page_text(page) -> str:
+    for attr_name in ("get_all_text", "get_text"):
+        extractor = getattr(page, attr_name, None)
+        if not callable(extractor):
+            continue
+        try:
+            text = extractor() or ""
+        except Exception:
+            continue
+        if isinstance(text, str) and text.strip():
+            return text
+    return ""
+
+
+def _iter_variant_stocks(item: dict):
+    if isinstance(item.get("stockTableTwoAxis"), dict):
+        two_axis = item["stockTableTwoAxis"]
+        first_opt = two_axis.get("firstOption", {})
+        for opt1 in first_opt.get("choiceList", []):
+            second_opt = opt1.get("secondOption", {})
+            for opt2 in second_opt.get("choiceList", []):
+                stock = opt2.get("stock", {})
+                if isinstance(stock, dict):
+                    yield stock
+
+    if isinstance(item.get("stockTableOneAxis"), dict):
+        one_axis = item["stockTableOneAxis"]
+        first_opt = one_axis.get("firstOption", {})
+        for opt1 in first_opt.get("choiceList", []):
+            stock = opt1.get("stock", {})
+            if isinstance(stock, dict):
+                yield stock
+
+
+def _stock_entry_is_available(stock: dict) -> bool:
+    if not isinstance(stock, dict):
+        return False
+
+    quantity = stock.get("quantity")
+    try:
+        if quantity is not None and int(quantity) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+
+    return stock.get("isAvailable") is True
+
+
+def _stock_entry_is_unavailable(stock: dict) -> bool:
+    if not isinstance(stock, dict):
+        return False
+
+    quantity = stock.get("quantity")
+    try:
+        if quantity is not None and int(quantity) <= 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+
+    return stock.get("isSoldOut") is True or stock.get("isAvailable") is False
+
+
+def _infer_detail_status(item: dict, page_text: str = "") -> tuple[str, str]:
+    variant_stocks = list(_iter_variant_stocks(item))
+    if any(_stock_entry_is_available(stock) for stock in variant_stocks):
+        return "on_sale", "next_data"
+    if variant_stocks and all(_stock_entry_is_unavailable(stock) for stock in variant_stocks):
+        return "sold", "next_data"
+
+    stock = item.get("stock", {})
+    if _stock_entry_is_available(stock):
+        return "on_sale", "next_data"
+    if _stock_entry_is_unavailable(stock):
+        return "sold", "next_data"
+
+    if item.get("isOnSale") is True:
+        return "on_sale", "next_data"
+    if item.get("isOnSale") is False:
+        return "sold", "next_data"
+
+    if any(marker in page_text for marker in _YAHOO_ACTIVE_PAGE_MARKERS):
+        return "on_sale", "css"
+    if any(marker in page_text for marker in _YAHOO_SOLD_PAGE_MARKERS):
+        return "sold", "css"
+
+    return "unknown", ""
+
+
 def scrape_item_detail_light(url: str) -> dict:
     """
     HTTP-only Yahoo Shopping detail scrape.
     Returns an empty dict when the page structure cannot be parsed.
     """
-    result = _empty_result(url, status="on_sale")
+    result = _empty_result(url, status="unknown")
     try:
         from services.scraping_client import fetch_static
 
@@ -66,11 +171,14 @@ def scrape_item_detail_light(url: str) -> dict:
         if not item:
             logger.debug("No JSON item data found, falling back to CSS selectors with self-healing")
             healer = get_healer()
+            field_sources = {}
+            page_text = _get_page_text(page)
 
             # Title (with healing)
             title_val, title_healed = healer.extract_with_healing(page, 'yahoo', 'detail', 'title', parser='scrapling')
             if title_val:
                 result["title"] = title_val
+                field_sources["title"] = "css"
                 if title_healed:
                     logger.info("Yahoo title selector was healed")
             
@@ -83,6 +191,7 @@ def scrape_item_detail_light(url: str) -> dict:
                 digits = ''.join(c for c in price_val if c.isdigit())
                 if digits:
                     result["price"] = int(digits)
+                    field_sources["price"] = "css"
                 if price_healed:
                     logger.info("Yahoo price selector was healed")
 
@@ -90,6 +199,7 @@ def scrape_item_detail_light(url: str) -> dict:
             desc_val, desc_healed = healer.extract_with_healing(page, 'yahoo', 'detail', 'description', parser='scrapling')
             if desc_val:
                 result["description"] = desc_val
+                field_sources["description"] = "css"
                 if desc_healed:
                     logger.info("Yahoo description selector was healed")
 
@@ -109,16 +219,36 @@ def scrape_item_detail_light(url: str) -> dict:
             if img_healed:
                 logger.info("Yahoo image selectors were healed")
             result["image_urls"] = image_urls
-            
-            return result
+            if image_urls:
+                field_sources["images"] = "css"
 
-        if item.get("name"):
-            result["title"] = item["name"]
+            status, status_source = _infer_detail_status({}, page_text)
+            result["status"] = status
+            if status_source:
+                field_sources["status"] = status_source
 
-        if item.get("applicablePrice"):
-            result["price"] = int(item["applicablePrice"])
-        elif item.get("price"):
-            result["price"] = int(item["price"])
+            return attach_extraction_trace(result, strategy="css", field_sources=field_sources)
+
+        field_sources = {}
+        meta_title = next(
+            (str(el.attrib.get("content", "") or "") for el in page.css("meta[property='og:title']")),
+            "",
+        )
+        title, title_source = pick_first(
+            ("next_data", item.get("name")),
+            ("meta", meta_title),
+        )
+        if title:
+            result["title"] = title
+            field_sources["title"] = title_source
+
+        price, price_source = pick_first(
+            ("next_data", item.get("applicablePrice")),
+            ("next_data", item.get("price")),
+        )
+        if price is not None:
+            result["price"] = int(price)
+            field_sources["price"] = price_source
 
         image_urls = []
         json_images = item.get("images")
@@ -139,6 +269,17 @@ def scrape_item_detail_light(url: str) -> dict:
                     img_url = ""
                 if img_url and img_url.startswith("http") and img_url not in image_urls:
                     image_urls.append(img_url)
+        if not image_urls:
+            og_images = [
+                str(el.attrib.get("content", "") or "")
+                for el in page.css("meta[property='og:image']")
+                if str(el.attrib.get("content", "") or "").startswith("http")
+            ]
+            image_urls.extend(og_images)
+            if og_images:
+                field_sources["images"] = "meta"
+        elif image_urls:
+            field_sources["images"] = "next_data"
         result["image_urls"] = image_urls
 
         variants = []
@@ -194,22 +335,27 @@ def scrape_item_detail_light(url: str) -> dict:
                         }
                     )
         result["variants"] = variants
+        if variants:
+            field_sources["variants"] = "next_data"
 
-        description = item.get("description", "") or item.get("itemDescription", "")
+        meta_description = ""
+        meta_el = page.css("meta[name='description']")
+        if meta_el:
+            meta_description = str(meta_el[0].attrib.get("content", "") or "")
+        description, description_source = pick_first(
+            ("next_data", item.get("description", "") or item.get("itemDescription", "")),
+            ("meta", meta_description),
+        )
         if description:
             result["description"] = description
-        else:
-            meta_el = page.css("meta[name='description']")
-            if meta_el:
-                result["description"] = str(meta_el[0].attrib.get("content", "") or "")
+            field_sources["description"] = description_source
 
-        stock = item.get("stock", {})
-        if isinstance(stock, dict):
-            qty = stock.get("quantity")
-            if stock.get("isSoldOut") or (qty is not None and qty <= 0):
-                result["status"] = "sold"
+        status, status_source = _infer_detail_status(item, _get_page_text(page))
+        result["status"] = status
+        if status_source:
+            field_sources["status"] = status_source
 
-        return result
+        return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
     except Exception as exc:
         logger.debug("Yahoo light scrape error: %s", exc)
         return {}
@@ -221,7 +367,9 @@ def scrape_item_detail(url_or_driver, maybe_url=None, **_kwargs):
     The legacy `(driver, url)` signature is accepted for backward compatibility.
     """
     url = _resolve_detail_url(url_or_driver, maybe_url)
-    return scrape_item_detail_light(url) or _empty_result(url)
+    result = scrape_item_detail_light(url) or _empty_result(url)
+    report_detail_result("yahoo", url, result, result.get("_scrape_meta"), page_type="detail")
+    return result
 
 
 def _extract_search_urls(page, base_url: str, max_items: int) -> list:

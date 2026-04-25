@@ -1,6 +1,6 @@
 {
     "_comment": "Scraping selectors configuration. Update these when site structure changes.",
-    "_updated": "2026-03-12",
+    "_updated": "2026-03-22",
     "mercari": {
         "shops": {
             "title": [
@@ -19,13 +19,32 @@
         },
         "general": {
             "title": [
+                "[data-testid='name']",
                 "h1"
             ],
             "price": [
-                "[data-testid='price']"
+                "[data-testid='price']",
+                "span.merPrice"
+            ],
+            "description": [
+                "[data-testid='description']"
+            ],
+            "status_badges": [
+                "[data-testid='sold-out-badge']"
+            ],
+            "checkout_button": [
+                "[data-testid='checkout-button']"
             ],
             "images": [
-                "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']"
+                "[data-testid^='image-'] img",
+                "[data-testid^='imageThumbnail-'] img",
+                "img[src*='static.mercdn.net'][src*='/item/'][src*='/photos/']",
+                "img[data-src*='static.mercdn.net'][data-src*='/item/'][data-src*='/photos/']",
+                "img[data-lazy*='static.mercdn.net'][data-lazy*='/item/'][data-lazy*='/photos/']",
+                "img[data-lazy-src*='static.mercdn.net'][data-lazy-src*='/item/'][data-lazy-src*='/photos/']",
+                "img[srcset*='static.mercdn.net'][srcset*='/item/'][srcset*='/photos/']",
+                "source[srcset*='static.mercdn.net'][srcset*='/item/'][srcset*='/photos/']",
+                "picture img[src*='static.mercdn.net']"
             ]
         },
         "search": {
@@ -142,6 +161,7 @@
         "detail": {
             "title": [
                 "h1.product-name-en",
+                "h2.product-name-ja",
                 "p.product-name-jp",
                 "h1[class*='product-name']",
                 "h1"
@@ -176,13 +196,25 @@
     "surugaya": {
         "detail": {
             "title": [
+                "#item_title",
                 "html > body > h1"
             ],
             "price": [
-                "html > body > div:nth-of-type(1) > span"
+                ".price_group .text-price-detail",
+                ".price_group label",
+                "span.text-price-detail",
+                "[itemprop='price']"
             ],
             "description": [
-                "html > body > div:nth-of-type(1)"
+                ".note.text-break",
+                "#item_detailInfo",
+                ".tbl_product_info",
+                "#item_condition",
+                "#product_detail",
+                "[itemprop='description']"
+            ],
+            "images": [
+                "html > body > div > div:nth-of-type(1) > div:nth-of-type(4) > div:nth-of-type(1) > div > div:nth-of-type(1) > a > img"
             ]
         }
     }

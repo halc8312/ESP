@@ -1,0 +1,104 @@
+# === Git ===
+.git
+.gitignore
+
+# === CI / GitHub ===
+.github
+
+# === IDE / Editor ===
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# === Python build artifacts ===
+__pycache__
+*.py[cod]
+*$py.class
+*.egg-info
+*.egg
+.eggs
+build/
+dist/
+wheels/
+sdist/
+
+# === Virtual environments ===
+venv/
+env/
+ENV/
+.Python
+
+# === SQLite databases (should not ship in image) ===
+*.db
+*.db-shm
+*.db-wal
+*.db.backup
+
+# === HTML dumps / debug artifacts ===
+dump.html
+mercari_page_dump.html
+mercari_page_dump_live.html
+mercari_test.html
+search_dump.html
+
+# === CSV data files ===
+*.csv
+
+# === Test result artifacts ===
+scrape_test_results.json
+scraping_test_report.json
+out.txt
+
+# === Documentation (not needed at runtime) ===
+docs/
+knowledge/
+*.md
+
+# === Debug / one-off scripts (not imported by app) ===
+analyze_dump.py
+parse_dump.py
+parse_mercari_html.py
+save_mercari_html.py
+find_mercari_url.py
+get_live_mercari.py
+get_active_mercari_from_db.py
+inspect_db.py
+cleanup_db.py
+env_check.py
+debug_snkrdunk.py
+debug_yahoo_repro.py
+debug_yahoo_store.py
+verify_fix.py
+verify_isolation.py
+verify_register.py
+simple_test.py
+add_patrol_fail_count.py
+run_tests_windows_hack.py
+
+# === Test files (not needed in production image) ===
+test_*.py
+tests/
+test_db_patchset_*.sqlite
+
+# === Ad-hoc / non-runtime scripts ===
+scripts/
+
+# === Empty / unused directories ===
+llama.cpp/
+
+# === Docker / compose (not needed inside image) ===
+docker-compose*.yml
+Dockerfile
+render*.yaml
+
+# === Misc artifacts ===
+*.log
+/tmp/
+
+# === Gemini settings ===
+.gemini/
+
+# === Agent configs ===
+.agent

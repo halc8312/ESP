@@ -38,6 +38,14 @@ def load_selectors(force_reload: bool = False) -> dict:
         return {}
 
 
+def get_json_selectors(site: str, page_type: str, field: str) -> list:
+    config = load_selectors()
+    try:
+        return config.get(site, {}).get(page_type, {}).get(field, [])
+    except Exception:
+        return []
+
+
 def get_selectors(site: str, page_type: str, field: str) -> list:
     """
     Get selectors for a specific site, page type, and field.
@@ -54,11 +62,16 @@ def get_selectors(site: str, page_type: str, field: str) -> list:
         >>> get_selectors('yahoo', 'detail', 'title')
         ["[class*='styles_itemName']", "[class*='styles_itemTitle']", ...]
     """
-    config = load_selectors()
     try:
-        return config.get(site, {}).get(page_type, {}).get(field, [])
-    except Exception:
-        return []
+        from services.repair_store import load_active_selectors
+
+        active_selectors = load_active_selectors(site, page_type, field)
+        if active_selectors:
+            return active_selectors
+    except Exception as exc:
+        logging.debug("Selector DB override lookup failed, falling back to JSON: %s", exc)
+
+    return get_json_selectors(site, page_type, field)
 
 
 def get_valid_domains(site: str, page_type: str = 'search') -> list:

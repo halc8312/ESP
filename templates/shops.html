@@ -8,18 +8,33 @@
     <h1>ショップ管理</h1>
 </div>
 
+{% if error %}
+<div class="content-card shops-error-card">
+    <div class="content-card-body">
+        <p class="error shops-error-copy">{{ error }}</p>
+    </div>
+</div>
+{% endif %}
+
 <!-- 新規追加フォーム -->
 <div class="content-card">
     <div class="content-card-header">
         <h3>新規ショップ追加</h3>
     </div>
     <div class="content-card-body">
-        <form method="POST" class="shop-add-form" style="display:flex; gap:10px; flex-wrap: wrap;">
-            <input type="text" name="name" placeholder="ショップ名 (例: 文具店A)" required autocomplete="organization"
-                style="flex: 1; min-width: 200px;">
-            <input type="url" name="logo_url" placeholder="ロゴ画像URL (任意)" style="flex: 2; min-width: 250px;">
+        <form method="POST" enctype="multipart/form-data" class="shop-add-form shop-form-grid">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <input type="text" id="newShopName" name="name" placeholder="ショップ名 (例: 文具店A)" required autocomplete="organization"
+                class="shop-form-field shop-form-field--name">
+            <input type="url" id="newShopLogoUrl" name="logo_url" placeholder="外部ロゴURL (任意)" class="shop-form-field shop-form-field--url">
+            <input type="file" id="newShopLogoFile" name="logo_file" accept="image/*" class="shop-form-field shop-form-field--file">
+            <div class="shop-logo-preview" id="newShopLogoPreview" aria-live="polite">
+                <span class="shop-logo-preview-empty">ロゴプレビュー</span>
+                <img src="" alt="" hidden>
+            </div>
             <button type="submit" class="add-btn">追加</button>
         </form>
+        <p class="text-small text-muted mt-1 mb-0">画像を選択した場合はアップロード画像を優先して登録します。</p>
     </div>
 </div>
 
@@ -28,49 +43,179 @@
     <div class="content-card-header">
         <h3>登録済みショップ</h3>
     </div>
-    <div class="content-card-body" style="padding: 0;">
+    <div class="content-card-body shops-table-body">
         <div class="table-responsive">
             <table>
-                <tr>
-                    <th>ID</th>
-                    <th>ショップ名</th>
-                    <th>商品数</th>
-                    <th>操作</th>
-                </tr>
-                {% for s in shops %}
-                <tr>
-                    <td>{{ s.id }}</td>
-                    <td>{{ s.name }}</td>
-                    <td>{{ s.product_count }}</td>
-                    <td>
-                        <div style="display: flex; gap: 8px;">
-                            <button type="button" class="btn-secondary"
-                                onclick="document.getElementById('edit-form-{{ s.id }}').style.display='table-row';">編集</button>
-                            <form method="POST" action="{{ url_for('shops.delete_shop', shop_id=s.id) }}"
-                                style="display:inline;">
-                                <button type="submit" onclick="return confirm('削除すると紐付いている商品も影響を受けます。本当によろしいですか？');"
-                                    class="btn-danger">削除</button>
-                            </form>
-                        </div>
-                    </td>
-                </tr>
-                <!-- 編集用フォーム（デフォルト非表示） -->
-                <tr id="edit-form-{{ s.id }}" style="display: none; background-color: var(--bg-secondary);">
-                    <td colspan="4">
-                        <form method="POST" action="{{ url_for('shops.edit_shop', shop_id=s.id) }}"
-                            style="display:flex; gap:10px; padding: 10px;">
-                            <input type="text" name="name" value="{{ s.name }}" required style="flex: 1;">
-                            <input type="url" name="logo_url" value="{{ s.logo_url or '' }}" placeholder="ロゴURL"
-                                style="flex: 2;">
-                            <button type="submit" class="btn-primary">保存</button>
-                            <button type="button" class="btn-secondary"
-                                onclick="document.getElementById('edit-form-{{ s.id }}').style.display='none';">キャンセル</button>
-                        </form>
-                    </td>
-                </tr>
-                {% endfor %}
+                <caption class="visually-hidden">登録済みショップの一覧</caption>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>ロゴ</th>
+                        <th>ショップ名</th>
+                        <th>商品数</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in shops %}
+                    <tr data-shop-row data-shop-id="{{ s.id }}" data-shop-name="{{ s.name }}" data-shop-logo-url="{{ s.logo_url or '' }}"
+                        data-shop-product-count="{{ s.product_count }}" data-shop-edit-url="{{ url_for('shops.edit_shop', shop_id=s.id) }}">
+                        <td>{{ s.id }}</td>
+                        <td class="shops-logo-cell">
+                            {% if s.logo_url %}
+                            <img src="{{ s.logo_url }}" alt="{{ s.name }} logo" class="shops-logo-image" loading="lazy">
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ s.name }}</td>
+                        <td>{{ s.product_count }}</td>
+                        <td>
+                            <div class="shops-row-actions">
+                                <button type="button" class="btn-secondary" data-shop-edit>編集</button>
+                                <form method="POST" action="{{ url_for('shops.delete_shop', shop_id=s.id) }}"
+                                    data-confirm-title="ショップを削除" data-confirm-message="「{{ s.name }}」を削除します。紐付いている {{ s.product_count }}件の商品は未所属になります。よろしいですか？"
+                                    data-confirm-label="削除する" data-confirm-variant="danger">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                    <button type="submit" class="btn-danger">削除</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
             </table>
         </div>
     </div>
 </div>
+
+<div id="shopsPageConfig" data-edit-error-shop-id="{{ edit_error_shop_id or '' }}"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function updateLogoPreview(previewId, urlValue, fileInput) {
+        const preview = document.getElementById(previewId);
+        if (!preview) {
+            return;
+        }
+
+        const image = preview.querySelector('img');
+        const placeholder = preview.querySelector('.shop-logo-preview-empty');
+        const rawUrl = (urlValue || '').trim();
+
+        if (fileInput && fileInput.files && fileInput.files[0]) {
+            image.src = URL.createObjectURL(fileInput.files[0]);
+            image.alt = 'アップロード予定のロゴ';
+            image.hidden = false;
+            placeholder.hidden = true;
+            return;
+        }
+
+        if (rawUrl) {
+            image.src = rawUrl;
+            image.alt = 'ロゴプレビュー';
+            image.hidden = false;
+            placeholder.hidden = true;
+            return;
+        }
+
+        image.hidden = true;
+        image.removeAttribute('src');
+        placeholder.hidden = false;
+    }
+
+    function bindPreview(urlInputId, fileInputId, previewId) {
+        const urlInput = document.getElementById(urlInputId);
+        const fileInput = document.getElementById(fileInputId);
+        if (!urlInput || !fileInput) {
+            return;
+        }
+
+        const refresh = function () {
+            updateLogoPreview(previewId, urlInput.value, fileInput);
+        };
+
+        urlInput.addEventListener('input', refresh);
+        fileInput.addEventListener('change', refresh);
+        refresh();
+    }
+
+    function buildEditShopForm(row) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.enctype = 'multipart/form-data';
+        form.action = row.dataset.shopEditUrl;
+        form.className = 'shop-edit-form-modal';
+
+        form.innerHTML = '' +
+            '<input type="hidden" name="csrf_token" value="' + document.querySelector('meta[name="csrf-token"]').content + '">' +
+            '<div class="form-group">' +
+            '<label for="modalShopName">ショップ名</label>' +
+            '<input type="text" id="modalShopName" name="name" value="' + row.dataset.shopName + '" required>' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label for="modalShopLogoUrl">ロゴURL</label>' +
+            '<input type="url" id="modalShopLogoUrl" name="logo_url" value="' + (row.dataset.shopLogoUrl || '') + '" placeholder="ロゴURL">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label for="modalShopLogoFile">画像アップロード</label>' +
+            '<input type="file" id="modalShopLogoFile" name="logo_file" accept="image/*">' +
+            '</div>' +
+            '<div class="shop-logo-preview" id="modalShopLogoPreview" aria-live="polite">' +
+            '<span class="shop-logo-preview-empty">ロゴプレビュー</span>' +
+            '<img src="" alt="" hidden>' +
+            '</div>' +
+            '<p class="text-small text-muted mb-0">画像を選択した場合はアップロード画像を優先します。URL欄を空にして保存するとロゴを解除できます。</p>';
+
+        window.setTimeout(function () {
+            bindPreview('modalShopLogoUrl', 'modalShopLogoFile', 'modalShopLogoPreview');
+        }, 0);
+
+        return form;
+    }
+
+    async function openEditShopModal(row) {
+        const form = buildEditShopForm(row);
+        const result = await window.ESPUI.showDialog({
+            title: 'ショップを編集',
+            description: row.dataset.shopProductCount + '件の商品が紐付いています。',
+            body: form,
+            actions: [
+                { label: 'キャンセル', value: 'cancel', variant: 'secondary' },
+                { label: '保存する', value: 'confirm', variant: 'primary', autofocus: true }
+            ]
+        });
+
+        if (result !== 'confirm') {
+            return;
+        }
+
+        document.body.appendChild(form);
+        window.ESPUI.showLoading({ message: 'ショップ情報を保存しています...' });
+        form.submit();
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        bindPreview('newShopLogoUrl', 'newShopLogoFile', 'newShopLogoPreview');
+
+        document.querySelectorAll('[data-shop-edit]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                const row = button.closest('[data-shop-row]');
+                if (row) {
+                    openEditShopModal(row);
+                }
+            });
+        });
+
+        const config = document.getElementById('shopsPageConfig');
+        const editErrorShopId = config ? config.dataset.editErrorShopId : '';
+        if (editErrorShopId) {
+            const row = document.querySelector('[data-shop-row][data-shop-id="' + editErrorShopId + '"]');
+            if (row) {
+                openEditShopModal(row);
+            }
+        }
+    });
+</script>
 {% endblock %}

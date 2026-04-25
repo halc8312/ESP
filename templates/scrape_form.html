@@ -6,110 +6,143 @@
 {% block content %}
 <div class="page-header">
     <h1>商品抽出</h1>
+    <p class="page-subtitle">URL指定と検索抽出を1つの導線にまとめ、進捗確認と選択登録をしやすくします。</p>
 </div>
 
-<div class="content-card">
-    <!-- 方法1: URL直接指定 -->
+<section class="content-card scrape-workflow-card">
     <div class="content-card-header">
-        <h3>URLから抽出</h3>
+        <div>
+            <h2>抽出フロー</h2>
+            <p class="text-muted mb-0">抽出方法の選択からプレビュー登録まで、同じ画面で進められます。</p>
+        </div>
     </div>
     <div class="content-card-body">
-        <form method="POST" action="{{ url_for('scrape_run') }}" class="scrape-form-compact">
-            <div class="form-row">
-                <div class="form-group form-group--keyword">
-                    <input type="url" name="target_url"
-                        placeholder="https://... メルカリ / ラクマ / Yahoo / 駿河屋 / オフモール / ヤフオク / SNKRDUNK"
-                        required inputmode="url" autocomplete="url">
-                </div>
-                <div class="form-group form-group--submit">
-                    <button type="submit" class="btn btn-primary">URLから商品を抽出</button>
-                </div>
-            </div>
-        </form>
-    </div>
+        <ol class="scrape-stepper" id="scrapeStepper" aria-label="抽出ステップ">
+            <li class="scrape-step is-active" data-step="setup">1. 条件入力</li>
+            <li class="scrape-step" data-step="queued">2. 受付</li>
+            <li class="scrape-step" data-step="running">3. 抽出中</li>
+            <li class="scrape-step" data-step="review">4. 選択登録</li>
+        </ol>
 
-    <!-- 方法2: 検索条件 -->
-    <div class="content-card-header" style="border-top: 1px solid var(--border-color);">
-        <h3>条件で検索して抽出</h3>
-    </div>
-    <div class="content-card-body">
-        <form method="POST" action="{{ url_for('scrape_run') }}" class="scrape-form-compact">
-            <div class="form-row">
-                <div class="form-group">
-                    <label>サイト</label>
-                    <select name="site">
-                        <option value="mercari">メルカリ</option>
-                        <option value="yahoo">Yahoo!ショッピング</option>
-                        <option value="rakuma">ラクマ</option>
-                        <option value="surugaya">駿河屋</option>
-                        <option value="offmall">オフモール</option>
-                        <option value="yahuoku">ヤフオク</option>
-                        <option value="snkrdunk">SNKRDUNK</option>
-                    </select>
+        <div class="scrape-mode-tabs" role="tablist" aria-label="抽出方法">
+            <button type="button" class="scrape-mode-tab is-active" role="tab" aria-selected="true"
+                aria-controls="scrapeTabUrl" id="scrapeTabButtonUrl" data-scrape-tab="url">URLから抽出</button>
+            <button type="button" class="scrape-mode-tab" role="tab" aria-selected="false"
+                aria-controls="scrapeTabSearch" id="scrapeTabButtonSearch" data-scrape-tab="search">検索して抽出</button>
+        </div>
+
+        <section id="scrapeTabUrl" class="scrape-tab-panel" role="tabpanel" aria-labelledby="scrapeTabButtonUrl">
+            <form method="POST" action="{{ url_for('scrape_run') }}" class="scrape-form-compact" data-scrape-form="url">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="scrape-form-intro">
+                    <strong>URL指定</strong>
+                    <p class="text-muted mb-0">個別商品URLを直接貼り付けて、1件ずつ確実に取り込みます。</p>
                 </div>
-                <div class="form-group form-group--keyword">
-                    <label>キーワード</label>
-                    <input type="text" name="keyword" value="スニーカー" required autocomplete="off">
+                <div class="form-row">
+                    <div class="form-group form-group--keyword">
+                        <label for="scrapeTargetUrl">対象URL</label>
+                        <input type="url" id="scrapeTargetUrl" name="target_url"
+                            placeholder="https://... メルカリ / ラクマ / Yahoo / 駿河屋 / オフモール / ヤフオク / SNKRDUNK"
+                            required inputmode="url" autocomplete="url">
+                    </div>
+                    <div class="form-group form-group--submit">
+                        <button type="submit" class="btn btn-primary" data-loading-label="URLを解析しています...">URLから商品を抽出</button>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>件数</label>
-                    <select name="limit">
-                        <option value="10">10件</option>
-                        <option value="20">20件</option>
-                        <option value="50">50件</option>
-                        <option value="100">100件</option>
-                    </select>
+            </form>
+        </section>
+
+        <section id="scrapeTabSearch" class="scrape-tab-panel" role="tabpanel" aria-labelledby="scrapeTabButtonSearch" hidden>
+            <form method="POST" action="{{ url_for('scrape_run') }}" class="scrape-form-compact" data-scrape-form="search">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="scrape-form-intro">
+                    <strong>検索抽出</strong>
+                    <p class="text-muted mb-0">キーワード条件をまとめて指定し、候補をプレビューから選んで登録します。</p>
                 </div>
-                <div class="form-group">
-                    <label>価格 min</label>
-                    <input type="number" name="price_min" inputmode="numeric" min="0" placeholder="¥0">
-                </div>
-                <div class="form-group">
-                    <label>価格 max</label>
-                    <input type="number" name="price_max" inputmode="numeric" min="0" placeholder="上限なし">
-                </div>
-                <div class="form-group form-group--submit">
-                    <button type="submit" class="btn btn-primary" aria-label="商品を抽出する">商品を抽出する</button>
-                </div>
-            </div>
-            <details class="filter-advanced" style="margin-top: 8px;">
-                <summary>詳細オプション（ソート順・カテゴリID）</summary>
-                <div class="filter-advanced-body" style="margin-top: 10px;">
+                <div class="form-row">
                     <div class="form-group">
-                        <label>ソート順</label>
-                        <select name="sort">
-                            <option value="created_desc">新着順</option>
-                            <option value="price_asc">価格：安い順</option>
-                            <option value="price_desc">価格：高い順</option>
+                        <label for="scrapeSite">サイト</label>
+                        <select id="scrapeSite" name="site">
+                            <option value="mercari">メルカリ</option>
+                            <option value="yahoo">Yahoo!ショッピング</option>
+                            <option value="rakuma">ラクマ</option>
+                            <option value="surugaya">駿河屋</option>
+                            <option value="offmall">オフモール</option>
+                            <option value="yahuoku">ヤフオク</option>
+                            <option value="snkrdunk">SNKRDUNK</option>
+                        </select>
+                    </div>
+                    <div class="form-group form-group--keyword">
+                        <label for="scrapeKeyword">キーワード</label>
+                        <input type="text" id="scrapeKeyword" name="keyword" placeholder="例: スニーカー, カメラ, ゲーム" required autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="scrapeLimit">件数</label>
+                        <select id="scrapeLimit" name="limit">
+                            <option value="10">10件</option>
+                            <option value="20">20件</option>
+                            <option value="50">50件</option>
+                            <option value="100">100件</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>カテゴリID（任意）</label>
-                        <input type="text" name="category" placeholder="例：1" inputmode="numeric">
+                        <label for="scrapePriceMin">価格 min</label>
+                        <input type="number" id="scrapePriceMin" name="price_min" inputmode="numeric" min="0" placeholder="¥0">
+                    </div>
+                    <div class="form-group">
+                        <label for="scrapePriceMax">価格 max</label>
+                        <input type="number" id="scrapePriceMax" name="price_max" inputmode="numeric" min="0" placeholder="上限なし">
+                    </div>
+                    <div class="form-group form-group--submit">
+                        <button type="submit" class="btn btn-primary" aria-label="商品を抽出する" data-loading-label="候補を抽出しています...">商品を抽出する</button>
                     </div>
                 </div>
-            </details>
-        </form>
+                <details class="filter-advanced scrape-filter-advanced">
+                    <summary>詳細オプション（ソート順・カテゴリID）</summary>
+                    <div class="filter-advanced-body scrape-filter-advanced-body">
+                        <div class="form-group">
+                            <label for="scrapeSort">ソート順</label>
+                            <select id="scrapeSort" name="sort">
+                                <option value="created_desc">新着順</option>
+                                <option value="price_asc">価格: 安い順</option>
+                                <option value="price_desc">価格: 高い順</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="scrapeCategory">カテゴリID（任意）</label>
+                            <input type="text" id="scrapeCategory" name="category" placeholder="例: 1" inputmode="numeric">
+                        </div>
+                    </div>
+                </details>
+            </form>
+        </section>
+
+        <div id="scrapeProgressStatus" class="scrape-inline-status" aria-live="polite">
+            抽出方法を選び、条件を入力して開始してください。
+        </div>
     </div>
-</div>
+</section>
 
 <section id="scrapePreviewSection" class="content-card scrape-preview-section" hidden>
     <div class="content-card-header">
         <h3>抽出プレビュー</h3>
     </div>
     <div class="content-card-body">
-        <div id="scrapePreviewFlash" class="scrape-preview-flash" hidden></div>
+        <div id="scrapePreviewFlash" class="scrape-preview-flash" hidden aria-live="polite"></div>
 
         <div class="scrape-preview-toolbar">
-            <div id="scrapePreviewSummary" class="scrape-preview-summary text-muted">
-                抽出結果がここに表示されます。
+            <div>
+                <div id="scrapePreviewSummary" class="scrape-preview-summary text-muted" aria-live="polite">
+                    抽出結果がここに表示されます。
+                </div>
+                <div id="scrapePreviewSelection" class="scrape-preview-selection text-muted">0件選択中</div>
             </div>
             <div class="scrape-preview-actions">
                 <label class="scrape-preview-select-all">
                     <input type="checkbox" id="scrapePreviewSelectAll">
                     すべて選択
                 </label>
-                <button type="button" id="registerSelectedButton" class="btn btn-primary" disabled>選択した商品を登録</button>
+                <button type="button" id="registerSelectedButton" class="btn btn-primary" data-loading-label="登録しています..." disabled>選択した商品を登録</button>
             </div>
         </div>
 
@@ -117,603 +150,14 @@
         <div id="scrapePreviewGrid" class="scrape-preview-grid"></div>
     </div>
 </section>
-
-<section id="scrapeProgressPanel" class="scrape-progress-panel" hidden aria-live="polite">
-    <div class="scrape-progress-card">
-        <div class="scrape-progress-shell">
-            <div class="scrape-progress-head">
-                <span id="scrapeProgressBadge" class="scrape-progress-badge is-queued">準備中</span>
-                <button type="button" id="scrapeProgressToggle" class="scrape-progress-toggle" aria-controls="scrapeProgressDetails" aria-expanded="true">
-                    最小化
-                </button>
-            </div>
-
-            <div class="scrape-progress-main">
-                <div id="scrapeProgressSpinner" class="loading-spinner scrape-progress-spinner" aria-hidden="true"></div>
-                <div class="scrape-progress-copy">
-                    <p id="scrapeProgressTitle" class="scrape-progress-title">抽出ジョブを開始しています</p>
-                    <p id="scrapeProgressSubtitle" class="scrape-progress-subtitle">このまま他の操作を続けられます。</p>
-                </div>
-            </div>
-
-            <div class="scrape-progress-track">
-                <div id="scrapeProgressTrackFill" class="scrape-progress-track-fill is-queued"></div>
-            </div>
-
-            <div id="scrapeProgressDetails" class="scrape-progress-details">
-                <div class="scrape-progress-meta">
-                    <span id="scrapeProgressSite">商品抽出</span>
-                    <span id="scrapeProgressLimit">1件</span>
-                    <span id="scrapeProgressElapsed">経過 0秒</span>
-                </div>
-                <p id="scrapeProgressPhase" class="scrape-progress-phase">リクエストを送信しています。</p>
-                <div class="scrape-progress-actions">
-                    <button type="button" id="scrapeProgressFocus" class="btn btn-secondary btn-compact" disabled>結果へ移動</button>
-                    <button type="button" id="scrapeProgressClose" class="btn btn-muted btn-compact" hidden>閉じる</button>
-                </div>
-            </div>
-        </div>
-    </div>
-</section>
+<div
+    id="scrapePageConfig"
+    data-register-url="{{ url_for('scrape.register_selected') }}"
+    data-status-url-template="{{ url_for('api.get_scrape_status', job_id='__JOB_ID__') }}"
+    data-restore-job-id="{{ request.args.get('job_id', '') }}"
+></div>
 {% endblock %}
 
 {% block scripts %}
-<script>
-(function () {
-    "use strict";
-
-    var activePreviewJob = null;
-    var previewSection = document.getElementById('scrapePreviewSection');
-    var previewGrid = document.getElementById('scrapePreviewGrid');
-    var previewMeta = document.getElementById('scrapePreviewMeta');
-    var previewSummary = document.getElementById('scrapePreviewSummary');
-    var previewFlash = document.getElementById('scrapePreviewFlash');
-    var selectAllCheckbox = document.getElementById('scrapePreviewSelectAll');
-    var registerButton = document.getElementById('registerSelectedButton');
-    var progressPanel = document.getElementById('scrapeProgressPanel');
-    var progressBadge = document.getElementById('scrapeProgressBadge');
-    var progressToggle = document.getElementById('scrapeProgressToggle');
-    var progressSpinner = document.getElementById('scrapeProgressSpinner');
-    var progressTitle = document.getElementById('scrapeProgressTitle');
-    var progressSubtitle = document.getElementById('scrapeProgressSubtitle');
-    var progressTrackFill = document.getElementById('scrapeProgressTrackFill');
-    var progressDetails = document.getElementById('scrapeProgressDetails');
-    var progressSite = document.getElementById('scrapeProgressSite');
-    var progressLimit = document.getElementById('scrapeProgressLimit');
-    var progressElapsed = document.getElementById('scrapeProgressElapsed');
-    var progressPhase = document.getElementById('scrapeProgressPhase');
-    var progressFocus = document.getElementById('scrapeProgressFocus');
-    var progressClose = document.getElementById('scrapeProgressClose');
-    var pollTimer = null;
-    var progressAutoCollapseTimer = null;
-
-    function createOverlay() {
-        var overlay = document.createElement('div');
-        overlay.id = 'loadingOverlay';
-        overlay.className = 'loading-overlay';
-        overlay.innerHTML = '<div class="loading-content"><div class="loading-spinner"></div><p class="loading-message" id="loadingMessage">商品を抽出中です...</p><p class="loading-sub" id="loadingSub">しばらくお待ちください...</p></div>';
-        document.body.appendChild(overlay);
-        return overlay;
-    }
-
-    function getOverlay() {
-        return document.getElementById('loadingOverlay');
-    }
-
-    function removeOverlay() {
-        var overlay = getOverlay();
-        if (overlay) {
-            overlay.remove();
-        }
-    }
-
-    function updateOverlay(message, subMessage) {
-        var overlay = getOverlay();
-        if (!overlay) return;
-        var messageEl = document.getElementById('loadingMessage');
-        var subEl = document.getElementById('loadingSub');
-        if (messageEl) messageEl.textContent = message;
-        if (subEl) subEl.textContent = subMessage || '';
-    }
-
-    function clearProgressAutoCollapse() {
-        if (progressAutoCollapseTimer) {
-            clearTimeout(progressAutoCollapseTimer);
-            progressAutoCollapseTimer = null;
-        }
-    }
-
-    function isPhoneViewport() {
-        return window.matchMedia('(max-width: 767px)').matches;
-    }
-
-    function setProgressExpanded(expanded, byUser) {
-        if (!progressPanel) {
-            return;
-        }
-        progressPanel.classList.toggle('is-collapsed', !expanded);
-        progressToggle.textContent = expanded ? '最小化' : '展開';
-        progressToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-        if (byUser) {
-            progressPanel.dataset.userCollapsed = expanded ? '0' : '1';
-        }
-    }
-
-    function scheduleProgressAutoCollapse() {
-        clearProgressAutoCollapse();
-        if (!progressPanel || !isPhoneViewport()) {
-            return;
-        }
-        if (progressPanel.dataset.userCollapsed === '1') {
-            return;
-        }
-        progressAutoCollapseTimer = setTimeout(function () {
-            if (!progressPanel.hidden && progressPanel.dataset.state !== 'success' && progressPanel.dataset.state !== 'error') {
-                setProgressExpanded(false, false);
-            }
-        }, 2600);
-    }
-
-    function setProgressState(state) {
-        if (!progressPanel) {
-            return;
-        }
-        progressPanel.dataset.state = state;
-        progressBadge.className = 'scrape-progress-badge is-' + state;
-        progressTrackFill.className = 'scrape-progress-track-fill is-' + state;
-        progressSpinner.hidden = state === 'success' || state === 'error';
-    }
-
-    function simplifyUrl(value) {
-        try {
-            return new URL(value).hostname;
-        } catch (error) {
-            return 'URL指定';
-        }
-    }
-
-    function getSelectedText(select) {
-        if (!select || !select.options || select.selectedIndex < 0) {
-            return '';
-        }
-        return select.options[select.selectedIndex].text;
-    }
-
-    function buildJobContext(form, formData) {
-        var targetUrl = String(formData.get('target_url') || '').trim();
-        var keyword = String(formData.get('keyword') || '').trim();
-        var limitValue = String(formData.get('limit') || '').trim();
-        var siteLabel = getSelectedText(form.querySelector('select[name="site"]')) || '商品抽出';
-
-        if (targetUrl) {
-            return {
-                siteLabel: 'URLから抽出',
-                limitLabel: '1件',
-                detailLabel: simplifyUrl(targetUrl)
-            };
-        }
-
-        return {
-            siteLabel: siteLabel,
-            limitLabel: limitValue ? limitValue + '件' : '件数未設定',
-            detailLabel: keyword ? 'キーワード: ' + keyword : '条件で抽出します'
-        };
-    }
-
-    function showProgressPanel(context) {
-        if (!progressPanel) {
-            return;
-        }
-
-        progressPanel.hidden = false;
-        progressPanel.dataset.userCollapsed = '0';
-        progressSite.textContent = context.siteLabel;
-        progressLimit.textContent = context.limitLabel;
-        progressElapsed.textContent = '経過 0秒';
-        progressTitle.textContent = '抽出ジョブを開始しました';
-        progressSubtitle.textContent = 'このまま他の操作を続けられます。完了したら下に結果を表示します。';
-        progressPhase.textContent = context.detailLabel;
-        progressFocus.disabled = true;
-        progressClose.hidden = true;
-        setProgressState('queued');
-        setProgressExpanded(true, false);
-        scheduleProgressAutoCollapse();
-    }
-
-    function hideProgressPanel() {
-        if (!progressPanel) {
-            return;
-        }
-        clearProgressAutoCollapse();
-        progressPanel.hidden = true;
-    }
-
-    function getRunningPhase(elapsedSeconds) {
-        if (elapsedSeconds < 8) {
-            return '検索結果ページから候補商品を集めています。';
-        }
-        if (elapsedSeconds < 18) {
-            return '商品ページを順番に確認しています。';
-        }
-        if (elapsedSeconds < 35) {
-            return '取得した候補を整えて、表示できる形にまとめています。';
-        }
-        return '最後の候補まで確認しています。別の操作を続けながら待てます。';
-    }
-
-    function updateProgressPanel(data) {
-        if (!progressPanel) {
-            return;
-        }
-
-        if (data.elapsed_seconds !== undefined) {
-            progressElapsed.textContent = '経過 ' + data.elapsed_seconds + '秒';
-        }
-
-        if (data.status === 'queued') {
-            setProgressState('queued');
-            progressTitle.textContent = 'キューで順番待ちです';
-            progressSubtitle.textContent = '他の作業を続けられます。順番が来たら自動で開始します。';
-            progressPhase.textContent = data.queue_position
-                ? data.queue_position + '番目で待機しています。前のジョブが終わり次第、抽出を開始します。'
-                : 'ジョブをキューへ登録しています。';
-            scheduleProgressAutoCollapse();
-            return;
-        }
-
-        if (data.status === 'running') {
-            setProgressState('running');
-            progressTitle.textContent = '商品を抽出しています';
-            progressSubtitle.textContent = 'このままフォーム確認や他の操作を続けても問題ありません。';
-            progressPhase.textContent = getRunningPhase(Number(data.elapsed_seconds || 0));
-            scheduleProgressAutoCollapse();
-        }
-    }
-
-    function markProgressCompleted(result) {
-        if (!progressPanel) {
-            return;
-        }
-
-        clearProgressAutoCollapse();
-        setProgressState('success');
-        setProgressExpanded(true, false);
-        progressTitle.textContent = '抽出が完了しました';
-        progressSubtitle.textContent = '結果カードを更新しました。必要な商品だけ選んで登録できます。';
-        progressPhase.textContent = '抽出 ' + ((result.items || []).length) + '件'
-            + ' / 除外 ' + (result.excluded_count || 0) + '件';
-        progressFocus.disabled = false;
-        progressClose.hidden = false;
-    }
-
-    function markProgressFailed(message) {
-        if (!progressPanel) {
-            return;
-        }
-
-        clearProgressAutoCollapse();
-        setProgressState('error');
-        setProgressExpanded(true, false);
-        progressTitle.textContent = '抽出に失敗しました';
-        progressSubtitle.textContent = '条件を見直して再実行してください。';
-        progressPhase.textContent = message || '不明なエラー';
-        progressFocus.disabled = true;
-        progressClose.hidden = false;
-    }
-
-    function showFlash(message, type) {
-        previewFlash.hidden = false;
-        previewFlash.textContent = message;
-        previewFlash.className = 'scrape-preview-flash';
-        if (type) {
-            previewFlash.classList.add(type);
-        }
-    }
-
-    function clearFlash() {
-        previewFlash.hidden = true;
-        previewFlash.textContent = '';
-        previewFlash.className = 'scrape-preview-flash';
-    }
-
-    function getItemImageUrl(item) {
-        if (Array.isArray(item.image_urls) && item.image_urls.length > 0) {
-            return item.image_urls[0];
-        }
-        return '';
-    }
-
-    function formatPrice(value) {
-        if (value === null || value === undefined || value === '') {
-            return '価格未取得';
-        }
-        return '¥' + Number(value).toLocaleString('ja-JP');
-    }
-
-    function updateRegisterButtonState() {
-        var checkedCount = previewGrid.querySelectorAll('.scrape-preview-checkbox:checked').length;
-        registerButton.disabled = !activePreviewJob || checkedCount === 0;
-    }
-
-    function renderPreview(result) {
-        var items = result.items || [];
-        var currentJobId = activePreviewJob && activePreviewJob.jobId ? activePreviewJob.jobId : null;
-        var currentRegisterUrl = activePreviewJob && activePreviewJob.registerUrl ? activePreviewJob.registerUrl : null;
-        activePreviewJob = {
-            jobId: result.job_id || currentJobId,
-            registerUrl: currentRegisterUrl,
-            items: items
-        };
-
-        previewSection.hidden = false;
-        clearFlash();
-
-        previewSummary.textContent = '抽出 ' + items.length + '件 / 除外 ' + (result.excluded_count || 0) + '件';
-        previewMeta.innerHTML = '';
-
-        if (result.search_url) {
-            var metaLink = document.createElement('a');
-            metaLink.href = result.search_url;
-            metaLink.target = '_blank';
-            metaLink.rel = 'noopener';
-            metaLink.textContent = '検索URLを開く';
-            previewMeta.appendChild(metaLink);
-        }
-
-        previewGrid.innerHTML = '';
-        selectAllCheckbox.checked = true;
-
-        if (items.length === 0) {
-            var empty = document.createElement('p');
-            empty.className = 'text-muted';
-            empty.textContent = '条件に一致する商品はありませんでした。';
-            previewGrid.appendChild(empty);
-            updateRegisterButtonState();
-            previewSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            return;
-        }
-
-        items.forEach(function (item, index) {
-            var card = document.createElement('label');
-            card.className = 'scrape-preview-card';
-
-            var checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.className = 'scrape-preview-checkbox';
-            checkbox.value = String(index);
-            checkbox.checked = true;
-            checkbox.addEventListener('change', function () {
-                updateRegisterButtonState();
-                if (!checkbox.checked) {
-                    selectAllCheckbox.checked = false;
-                }
-            });
-
-            var imageWrap = document.createElement('div');
-            imageWrap.className = 'scrape-preview-image';
-            var imageUrl = getItemImageUrl(item);
-            if (imageUrl) {
-                var img = document.createElement('img');
-                img.src = imageUrl;
-                img.alt = item.title || 'preview image';
-                imageWrap.appendChild(img);
-            } else {
-                imageWrap.textContent = 'No Image';
-                imageWrap.classList.add('is-empty');
-            }
-
-            var body = document.createElement('div');
-            body.className = 'scrape-preview-card-body';
-
-            var title = document.createElement('div');
-            title.className = 'scrape-preview-title';
-            title.textContent = item.title || '(タイトルなし)';
-
-            var price = document.createElement('div');
-            price.className = 'scrape-preview-price';
-            price.textContent = formatPrice(item.price);
-
-            var status = document.createElement('div');
-            status.className = 'scrape-preview-status';
-            status.textContent = item.status || 'ステータス不明';
-
-            body.appendChild(title);
-            body.appendChild(price);
-            body.appendChild(status);
-
-            if (item.url) {
-                var link = document.createElement('a');
-                link.href = item.url;
-                link.target = '_blank';
-                link.rel = 'noopener';
-                link.textContent = '商品ページを開く';
-                link.className = 'scrape-preview-link';
-                body.appendChild(link);
-            }
-
-            card.appendChild(checkbox);
-            card.appendChild(imageWrap);
-            card.appendChild(body);
-            previewGrid.appendChild(card);
-        });
-
-        updateRegisterButtonState();
-        previewSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-
-    function pollPreviewStatus(statusUrl) {
-        fetch(statusUrl)
-            .then(function (response) {
-                if (!response.ok) {
-                    throw new Error('ステータス取得に失敗しました');
-                }
-                return response.json();
-            })
-            .then(function (data) {
-                if (data.status === 'queued') {
-                    updateProgressPanel(data);
-                    pollTimer = setTimeout(function () { pollPreviewStatus(statusUrl); }, 2000);
-                    return;
-                }
-
-                if (data.status === 'running') {
-                    updateProgressPanel(data);
-                    pollTimer = setTimeout(function () { pollPreviewStatus(statusUrl); }, 2000);
-                    return;
-                }
-
-                if (data.status === 'failed') {
-                    markProgressFailed(data.error || '不明なエラー');
-                    showFlash('商品抽出に失敗しました: ' + (data.error || '不明なエラー'), 'error');
-                    previewSection.hidden = false;
-                    return;
-                }
-
-                var result = data.result || {};
-                result.job_id = data.job_id;
-                renderPreview(result);
-                markProgressCompleted(result);
-            })
-            .catch(function (error) {
-                markProgressFailed(error.message || '通信エラーが発生しました');
-                showFlash(error.message || '通信エラーが発生しました', 'error');
-                previewSection.hidden = false;
-            });
-    }
-
-    function submitPreviewForm(form) {
-        clearFlash();
-        if (pollTimer) {
-            clearTimeout(pollTimer);
-            pollTimer = null;
-        }
-
-        var formData = new FormData(form);
-        var context = buildJobContext(form, formData);
-        formData.append('response_mode', 'preview');
-        showProgressPanel(context);
-        activePreviewJob = {
-            jobId: null,
-            registerUrl: null,
-            items: [],
-            context: context
-        };
-
-        fetch(form.action, {
-            method: 'POST',
-            body: formData
-        })
-            .then(function (response) {
-                if (!response.ok) {
-                    throw new Error('商品抽出ジョブの作成に失敗しました');
-                }
-                return response.json();
-            })
-            .then(function (data) {
-                activePreviewJob = {
-                    jobId: data.job_id,
-                    registerUrl: data.register_url,
-                    items: [],
-                    context: context
-                };
-                pollPreviewStatus(data.status_url);
-            })
-            .catch(function (error) {
-                markProgressFailed(error.message || '送信に失敗しました');
-                showFlash(error.message || '送信に失敗しました', 'error');
-                previewSection.hidden = false;
-            });
-    }
-
-    function getSelectedIndices() {
-        return Array.from(previewGrid.querySelectorAll('.scrape-preview-checkbox:checked')).map(function (checkbox) {
-            return Number(checkbox.value);
-        });
-    }
-
-    registerButton.addEventListener('click', function () {
-        if (!activePreviewJob) {
-            return;
-        }
-
-        var selectedIndices = getSelectedIndices();
-        if (selectedIndices.length === 0) {
-            showFlash('登録する商品を選択してください。', 'error');
-            return;
-        }
-
-        registerButton.disabled = true;
-        fetch(activePreviewJob.registerUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                job_id: activePreviewJob.jobId,
-                selected_indices: selectedIndices
-            })
-        })
-            .then(function (response) {
-                return response.json().then(function (data) {
-                    if (!response.ok) {
-                        throw new Error(data.error || '登録に失敗しました');
-                    }
-                    return data;
-                });
-            })
-            .then(function (data) {
-                showFlash(
-                    '登録完了: ' + data.registered_count + '件（新規 ' + data.new_count + ' / 更新 ' + data.updated_count + '）',
-                    'success'
-                );
-            })
-            .catch(function (error) {
-                showFlash(error.message || '登録に失敗しました', 'error');
-            })
-            .finally(function () {
-                updateRegisterButtonState();
-            });
-    });
-
-    selectAllCheckbox.addEventListener('change', function () {
-        previewGrid.querySelectorAll('.scrape-preview-checkbox').forEach(function (checkbox) {
-            checkbox.checked = selectAllCheckbox.checked;
-        });
-        updateRegisterButtonState();
-    });
-
-    if (progressToggle) {
-        progressToggle.addEventListener('click', function () {
-            var expanded = progressPanel.classList.contains('is-collapsed');
-            setProgressExpanded(expanded, true);
-        });
-    }
-
-    if (progressFocus) {
-        progressFocus.addEventListener('click', function () {
-            if (!previewSection.hidden) {
-                previewSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
-        });
-    }
-
-    if (progressClose) {
-        progressClose.addEventListener('click', function () {
-            hideProgressPanel();
-        });
-    }
-
-    document.querySelectorAll('.scrape-form-compact').forEach(function (form) {
-        form.addEventListener('submit', function (event) {
-            if (!window.fetch || !window.FormData) {
-                createOverlay();
-                updateOverlay('商品を抽出中です...', 'しばらくお待ちください...');
-                return;
-            }
-            event.preventDefault();
-            submitPreviewForm(form);
-        });
-    });
-})();
-</script>
+<script src="{{ url_for('static', filename='js/scrape_form.js') }}"></script>
 {% endblock %}

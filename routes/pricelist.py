@@ -2,17 +2,24 @@
 Price List management routes: create, edit, delete, manage items.
 """
 import uuid
-from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 from flask_login import login_required, current_user
 from sqlalchemy.orm import subqueryload
 
 from database import SessionLocal
 from models import Shop, Product, ProductSnapshot, Variant, PriceList, PriceListItem
+from services.rich_text import normalize_rich_text
+from time_utils import utc_now
 
 pricelist_bp = Blueprint('pricelist', __name__)
 
-PRICE_LIST_LAYOUTS = {"grid", "editorial"}
+PRICE_LIST_LAYOUTS = {"grid", "editorial", "list"}
+PRICE_LIST_THEMES = {"dark", "light"}
+
+
+def _sanitize_notes(raw_html: str) -> str:
+    """Normalize pricelist notes into the shared safe rich-text subset."""
+    return normalize_rich_text(raw_html)
 
 
 def _normalize_layout(value):
@@ -20,6 +27,30 @@ def _normalize_layout(value):
     if layout in PRICE_LIST_LAYOUTS:
         return layout
     return "grid"
+
+
+def _normalize_theme(value):
+    theme = (value or "").strip().lower()
+    if theme in PRICE_LIST_THEMES:
+        return theme
+    return "dark"
+
+
+def _resolve_owned_shop(session_db, raw_shop_id):
+    shop_id_raw = (raw_shop_id or "").strip()
+    if not shop_id_raw:
+        return None, None
+
+    try:
+        shop_id = int(shop_id_raw)
+    except (TypeError, ValueError):
+        return None, "ショップを正しく選択してください"
+
+    shop = session_db.query(Shop).filter_by(id=shop_id, user_id=current_user.id).first()
+    if not shop:
+        return None, "選択したショップが見つかりません"
+
+    return shop, None
 
 
 @pricelist_bp.route("/pricelists")
@@ -51,6 +82,9 @@ def pricelist_list():
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -63,29 +97,36 @@ def pricelist_create():
     try:
         if request.method == "POST":
             name = request.form.get("name", "").strip()
-            notes = request.form.get("notes", "").strip()
+            notes = _sanitize_notes(request.form.get("notes", "").strip())
             currency_rate = int(request.form.get("currency_rate", 150))
             layout = _normalize_layout(request.form.get("layout"))
+            theme = _normalize_theme(request.form.get("theme"))
+            selected_shop_id = (request.form.get("shop_id") or "").strip()
+            shop, shop_error = _resolve_owned_shop(session_db, selected_shop_id)
 
-            if not name:
+            if not name or shop_error:
                 all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
                 current_shop_id = session.get('current_shop_id')
                 return render_template(
                     "pricelist_edit.html",
                     pricelist=None,
-                    error="名前を入力してください",
+                    error="名前を入力してください" if not name else shop_error,
                     selected_layout=layout,
+                    selected_theme=theme,
+                    selected_shop_id=selected_shop_id,
                     all_shops=all_shops,
                     current_shop_id=current_shop_id,
                 )
 
             new_pl = PriceList(
                 user_id=current_user.id,
+                shop_id=shop.id if shop else None,
                 name=name,
                 token=str(uuid.uuid4()),
                 notes=notes,
                 currency_rate=currency_rate,
                 layout=layout,
+                theme=theme,
             )
             session_db.add(new_pl)
             session_db.commit()
@@ -97,9 +138,14 @@ def pricelist_create():
             "pricelist_edit.html",
             pricelist=None,
             selected_layout="grid",
+            selected_theme="dark",
+            selected_shop_id=str(current_shop_id) if current_shop_id else "",
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -119,12 +165,30 @@ def pricelist_edit(pricelist_id):
             return redirect(url_for("pricelist.pricelist_list"))
 
         if request.method == "POST":
+            selected_shop_id = (request.form.get("shop_id") or "").strip()
+            shop, shop_error = _resolve_owned_shop(session_db, selected_shop_id)
+            if shop_error:
+                all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
+                current_shop_id = session.get('current_shop_id')
+                return render_template(
+                    "pricelist_edit.html",
+                    pricelist=pl,
+                    error=shop_error,
+                    selected_layout=_normalize_layout(request.form.get("layout")),
+                    selected_theme=_normalize_theme(request.form.get("theme")),
+                    selected_shop_id=selected_shop_id,
+                    all_shops=all_shops,
+                    current_shop_id=current_shop_id,
+                )
+
             pl.name = request.form.get("name", pl.name).strip()
-            pl.notes = request.form.get("notes", "").strip()
+            pl.notes = _sanitize_notes(request.form.get("notes", "").strip())
             pl.currency_rate = int(request.form.get("currency_rate", 150))
             pl.layout = _normalize_layout(request.form.get("layout"))
+            pl.theme = _normalize_theme(request.form.get("theme"))
+            pl.shop_id = shop.id if shop else None
             pl.is_active = "is_active" in request.form
-            pl.updated_at = datetime.utcnow()
+            pl.updated_at = utc_now()
             session_db.commit()
             return redirect(url_for("pricelist.pricelist_list"))
 
@@ -134,9 +198,14 @@ def pricelist_edit(pricelist_id):
             "pricelist_edit.html",
             pricelist=pl,
             selected_layout=pl.layout or "grid",
+            selected_theme=pl.theme or "dark",
+            selected_shop_id=str(pl.shop_id) if pl.shop_id else "",
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -165,7 +234,7 @@ def pricelist_items(pricelist_id):
                     custom_price = request.form.get(f"custom_price_{item.id}", "").strip()
                     item.custom_price = int(custom_price) if custom_price else None
 
-                pl.updated_at = datetime.utcnow()
+                pl.updated_at = utc_now()
                 session_db.commit()
 
             elif action == "remove_items":
@@ -175,7 +244,7 @@ def pricelist_items(pricelist_id):
                         PriceListItem.id.in_([int(i) for i in item_ids]),
                         PriceListItem.price_list_id == pl.id,
                     ).delete(synchronize_session=False)
-                    pl.updated_at = datetime.utcnow()
+                    pl.updated_at = utc_now()
                     session_db.commit()
 
             return redirect(url_for("pricelist.pricelist_items", pricelist_id=pl.id))
@@ -216,6 +285,9 @@ def pricelist_items(pricelist_id):
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -275,10 +347,13 @@ def pricelist_add_products(pricelist_id):
                     added += 1
 
         if added > 0:
-            pl.updated_at = datetime.utcnow()
+            pl.updated_at = utc_now()
             session_db.commit()
 
         return redirect(url_for("pricelist.pricelist_items", pricelist_id=pl.id))
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -347,6 +422,9 @@ def pricelist_add_products_page(pricelist_id):
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -366,5 +444,8 @@ def pricelist_delete(pricelist_id):
             session_db.delete(pl)
             session_db.commit()
         return redirect(url_for("pricelist.pricelist_list"))
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()

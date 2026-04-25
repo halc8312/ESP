@@ -4,11 +4,14 @@ Uses efficient patrol scrapers that only fetch price and stock data.
 Non-Mercari sites use HTTP-only fetching (Scrapling) to avoid launching Chrome.
 """
 import logging
-from datetime import datetime
+from datetime import timedelta
 from sqlalchemy import asc
 from database import SessionLocal
 from models import Product, Variant
 from services.pricing_service import update_product_selling_price
+from services.scrape_result_policy import normalize_status_for_persistence
+from time_utils import utc_now
+from utils import is_valid_detail_url
 
 # Import lightweight patrol scrapers
 from services.patrol.mercari_patrol import MercariPatrol
@@ -25,6 +28,9 @@ logger = logging.getLogger("patrol")
 
 # Sites that require a browser (Selenium/Chrome)
 _BROWSER_SITES = frozenset()
+
+# Maximum backoff in minutes for consecutive patrol failures
+_MAX_BACKOFF_MINUTES = 180
 
 
 class MonitorService:
@@ -44,7 +50,26 @@ class MonitorService:
         'yahuoku': YahuokuPatrol(),
         'snkrdunk': SnkrdunkPatrol(),
     }
+
+    # Mercari-specific: track consecutive soft-sold counts per product to
+    # implement hysteresis.  Only stored in memory — resets on restart,
+    # which is the safe default (never persisting a stale count).
+    # NOTE: Not thread-safe; relies on the single-threaded RQ worker model
+    # used in production.  If concurrency is introduced, wrap with a Lock.
+    _mercari_soft_sold_counts: dict[int, int] = {}
+
+    # Number of consecutive soft-sold patrol results required before
+    # the status is actually persisted as ``sold``.
+    _MERCARI_SOFT_SOLD_THRESHOLD = 2
     
+    @staticmethod
+    def _apply_backoff(product, session_db):
+        """Increment fail count and push updated_at into the future."""
+        product.patrol_fail_count = (product.patrol_fail_count or 0) + 1
+        backoff_minutes = min(product.patrol_fail_count * 15, _MAX_BACKOFF_MINUTES)
+        product.updated_at = utc_now() + timedelta(minutes=backoff_minutes)
+        session_db.commit()
+
     @staticmethod
     def check_stale_products(limit=15):
         """
@@ -79,6 +104,16 @@ class MonitorService:
                 try:
                     logger.info(f"Patrol: {product.source_url[:50]}...")
                     
+                    # ---- URL validation gate ----
+                    if not is_valid_detail_url(product.source_url, product.site):
+                        logger.warning(
+                            f"Invalid detail URL (site={product.site}), "
+                            f"skipping: {product.source_url[:80]}"
+                        )
+                        MonitorService._apply_backoff(product, session_db)
+                        error_count += 1
+                        continue
+                    
                     # Choose patrol scraper
                     patrol = MonitorService._patrols.get(product.site)
                     if not patrol:
@@ -88,11 +123,64 @@ class MonitorService:
                     # All sites now use driver-less scraping or manage drivers internally
                     result = patrol.fetch(product.source_url)
                     
-                    if not result.success:
-                        logger.warning(f"Patrol failed: {result.error}")
+                    normalized_status = normalize_status_for_persistence(result.status)
+                    active_missing_price = (
+                        normalized_status == "on_sale"
+                        and result.price is None
+                        and str(result.confidence or "").lower() == "low"
+                    )
+                    unknown_status = normalized_status == "unknown"
+
+                    if not result.success or active_missing_price or unknown_status:
+                        failure_reason = (
+                            result.error
+                            or result.reason
+                            or ("unknown patrol status" if unknown_status else "low-confidence active result")
+                        )
+                        logger.warning(f"Patrol failed: {failure_reason}")
+                        MonitorService._apply_backoff(product, session_db)
                         error_count += 1
                         continue
                     
+                    # ---- Success: reset fail counter ----
+                    product.patrol_fail_count = 0
+
+                    # ── Mercari sold-hysteresis ──────────────────────────
+                    # Soft-evidence "sold" from Mercari is not persisted
+                    # until seen N consecutive times, preventing transient
+                    # hydration glitches from flipping active items to sold.
+                    if (
+                        product.site == "mercari"
+                        and normalized_status == "sold"
+                        and getattr(result, "evidence_strength", "hard") == "soft"
+                    ):
+                        prev_count = MonitorService._mercari_soft_sold_counts.get(product.id, 0)
+                        new_count = prev_count + 1
+                        MonitorService._mercari_soft_sold_counts[product.id] = new_count
+                        if new_count < MonitorService._MERCARI_SOFT_SOLD_THRESHOLD:
+                            logger.info(
+                                "Mercari soft-sold deferred for product %s "
+                                "(%d/%d): %s",
+                                product.id,
+                                new_count,
+                                MonitorService._MERCARI_SOFT_SOLD_THRESHOLD,
+                                result.reason or "",
+                            )
+                            # Treat as unknown for this cycle — do not persist
+                            product.updated_at = utc_now()
+                            session_db.commit()
+                            continue
+                        else:
+                            logger.info(
+                                "Mercari soft-sold confirmed for product %s "
+                                "after %d consecutive observations",
+                                product.id,
+                                new_count,
+                            )
+                    else:
+                        # Any non-soft-sold result resets the counter
+                        MonitorService._mercari_soft_sold_counts.pop(product.id, None)
+
                     # Update product with new data
                     changes = MonitorService._apply_patrol_result(
                         session_db, product, result
@@ -104,14 +192,18 @@ class MonitorService:
                         
                         # Recalculate selling price if needed
                         if product.pricing_rule_id:
-                            update_product_selling_price(product.id)
+                            update_product_selling_price(product.id, session=session_db)
                     
                     # Always update timestamp even if no changes
-                    product.updated_at = datetime.utcnow()
+                    product.updated_at = utc_now()
                     session_db.commit()
                     
                 except Exception as e:
                     logger.error(f"Error checking product {product.id}: {e}")
+                    try:
+                        MonitorService._apply_backoff(product, session_db)
+                    except Exception:
+                        pass
                     error_count += 1
                     continue
             
@@ -119,6 +211,7 @@ class MonitorService:
                     
         except Exception as e:
             logger.error(f"Patrol fatal error: {e}")
+            session_db.rollback()
         finally:
             session_db.close()
             logger.info("--- Patrol Finished ---")
@@ -130,23 +223,39 @@ class MonitorService:
         Returns number of changes made.
         """
         changes = 0
+        normalized_status = normalize_status_for_persistence(result.status)
         
         # Update price if changed
-        if result.price is not None and result.price != product.last_price:
+        if (
+            result.price is not None
+            and str(result.confidence or "").lower() == "high"
+            and result.price != product.last_price
+        ):
             product.last_price = result.price
             changes += 1
         
         # Update status if changed
-        if result.status and result.status != product.last_status:
-            product.last_status = result.status
+        if normalized_status and normalized_status != "unknown" and normalized_status != product.last_status:
+            product.last_status = normalized_status
             changes += 1
         
+        existing_variants = session_db.query(Variant).filter_by(
+            product_id=product.id
+        ).all()
+
+        if normalized_status in {"sold", "deleted"}:
+            for existing in existing_variants:
+                if existing.inventory_qty != 0:
+                    existing.inventory_qty = 0
+                    changes += 1
+        elif normalized_status == "on_sale" and not result.variants:
+            for existing in existing_variants:
+                if existing.option1_value == "Default Title" and (existing.inventory_qty or 0) == 0:
+                    existing.inventory_qty = 1
+                    changes += 1
+
         # Update variant stock if available
         if result.variants:
-            existing_variants = session_db.query(Variant).filter_by(
-                product_id=product.id
-            ).all()
-            
             # Match variants by name/option and update stock
             for patrol_var in result.variants:
                 var_name = patrol_var.get("name", "")
@@ -163,7 +272,11 @@ class MonitorService:
                         if existing.inventory_qty != var_stock:
                             existing.inventory_qty = var_stock
                             changes += 1
-                        if var_price and existing.price != var_price:
+                        if (
+                            var_price
+                            and str(result.confidence or "").lower() == "high"
+                            and existing.price != var_price
+                        ):
                             existing.price = var_price
                             changes += 1
                         break

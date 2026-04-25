@@ -1,7 +1,7 @@
 """
 Settings routes - Exclusion keyword management.
 """
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from flask_login import login_required, current_user
 from database import SessionLocal
 from models import ExclusionKeyword, Shop
@@ -17,7 +17,15 @@ def settings_list():
     try:
         keywords = session_db.query(ExclusionKeyword).filter_by(user_id=current_user.id).order_by(ExclusionKeyword.created_at.desc()).all()
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
-        return render_template('settings.html', keywords=keywords, all_shops=all_shops)
+        return render_template(
+            'settings.html',
+            keywords=keywords,
+            all_shops=all_shops,
+            current_shop_id=session.get("current_shop_id"),
+        )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -30,9 +38,11 @@ def add_keyword():
     try:
         keyword = request.form.get('keyword', '').strip()
         match_type = request.form.get('match_type', 'partial')
+        if match_type not in {"partial", "exact"}:
+            match_type = "partial"
         
         if not keyword:
-            flash('キーワードを入力してください', 'error')
+            flash('言葉を入力してください。', 'error')
             return redirect(url_for('settings.settings_list'))
         
         # Check for duplicate
@@ -42,7 +52,7 @@ def add_keyword():
         ).first()
         
         if existing:
-            flash('このキーワードは既に登録されています', 'error')
+            flash('同じ言葉が登録されています。', 'error')
             return redirect(url_for('settings.settings_list'))
         
         new_keyword = ExclusionKeyword(
@@ -52,11 +62,11 @@ def add_keyword():
         )
         session_db.add(new_keyword)
         session_db.commit()
-        flash(f'除外キーワード「{keyword}」を追加しました', 'success')
+        flash('追加しました。', 'success')
         return redirect(url_for('settings.settings_list'))
-    except Exception as e:
+    except Exception:
         session_db.rollback()
-        flash(f'エラー: {e}', 'error')
+        flash('保存できませんでした。', 'error')
         return redirect(url_for('settings.settings_list'))
     finally:
         session_db.close()
@@ -76,11 +86,11 @@ def delete_keyword(keyword_id):
         if keyword:
             session_db.delete(keyword)
             session_db.commit()
-            flash('除外キーワードを削除しました', 'success')
+            flash('削除しました。', 'success')
         return redirect(url_for('settings.settings_list'))
-    except Exception as e:
+    except Exception:
         session_db.rollback()
-        flash(f'エラー: {e}', 'error')
+        flash('削除できませんでした。', 'error')
         return redirect(url_for('settings.settings_list'))
     finally:
         session_db.close()

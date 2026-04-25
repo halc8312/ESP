@@ -1,0 +1,1 @@
+{"jobs": [{"context": {"detail_label": "キーワード: preview", "limit": 10, "limit_label": "10件", "persist_to_db": false, "site_label": "メルカリ"}, "created_at": 10.0, "elapsed_seconds": 0.1, "error": null, "finished_at": null, "job_id": "job-1", "queue_position": 1, "result": null, "result_summary": null, "result_url": "/scrape?job_id=job-1", "site": "mercari", "status": "queued"}]}

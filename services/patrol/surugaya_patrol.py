@@ -2,6 +2,7 @@
 Surugaya patrol scraper.
 Uses Scrapling HTTP fetches only.
 """
+import json
 import logging
 import re
 
@@ -18,10 +19,12 @@ class SurugayaPatrol(BasePatrol):
         "stock_available": ".btn_buy, .cart1, #cart-add",
         "stock_sold": ".waitbtn, .soldout, .outofstock",
     }
+    ACTIVE_KEYWORDS = ("カートに入れる", "購入手続き", "注文する")
+    SOLD_KEYWORDS = ("売り切れ", "在庫なし", "品切れ", "販売終了")
 
     def fetch(self, url: str, driver=None) -> PatrolResult:
         """Fetch price and stock status. The driver argument is ignored."""
-        return self._fetch_with_scrapling(url)
+        return self._finalize_result("surugaya", url, self._fetch_with_scrapling(url))
 
     def _fetch_with_scrapling(self, url: str) -> PatrolResult:
         try:
@@ -55,22 +58,48 @@ class SurugayaPatrol(BasePatrol):
                         pass
 
             status = "unknown"
-            for selector in self.SELECTORS["stock_available"].split(", "):
+            for selector in self.SELECTORS["stock_sold"].split(", "):
                 if soup.select(selector.strip()):
-                    status = "active"
+                    status = "sold"
                     break
             if status == "unknown":
-                for selector in self.SELECTORS["stock_sold"].split(", "):
+                for selector in self.SELECTORS["stock_available"].split(", "):
                     if soup.select(selector.strip()):
-                        status = "sold"
+                        status = "active"
                         break
             if status == "unknown":
-                sold_keywords = ("売り切れ", "在庫なし", "品切れ", "販売終了")
-                active_keywords = ("カートに入れる", "購入手続き", "注文する")
-                if any(keyword in body_text for keyword in sold_keywords):
+                if any(keyword in body_text for keyword in self.SOLD_KEYWORDS):
                     status = "sold"
-                elif any(keyword in body_text for keyword in active_keywords):
+                elif any(keyword in body_text for keyword in self.ACTIVE_KEYWORDS):
                     status = "active"
+            if status == "unknown":
+                for script in soup.select("script[type='application/ld+json']"):
+                    raw = script.string or script.get_text()
+                    if not raw:
+                        continue
+                    try:
+                        payload = json.loads(raw.strip())
+                    except Exception:
+                        continue
+
+                    nodes = payload if isinstance(payload, list) else payload.get("@graph", [payload]) if isinstance(payload, dict) else []
+                    for node in nodes:
+                        if not isinstance(node, dict):
+                            continue
+                        offers = node.get("offers")
+                        if isinstance(offers, list) and offers:
+                            offers = offers[0]
+                        if not isinstance(offers, dict):
+                            continue
+                        availability = str(offers.get("availability") or "").lower()
+                        if "outofstock" in availability or "soldout" in availability:
+                            status = "sold"
+                            break
+                        if "instock" in availability:
+                            status = "active"
+                            break
+                    if status != "unknown":
+                        break
 
             variants = []
             if price is not None:

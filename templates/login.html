@@ -3,32 +3,42 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>Login - ESP</title>
+    <title>ログイン - ESP</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 
 <body class="login-page">
     <div class="login-container">
-        <h1>Login</h1>
+        <div class="login-brand">
+            <span class="login-brand-mark">ESP</span>
+            <div>
+                <p class="login-brand-kicker">EC sourcing workspace</p>
+                <p class="login-brand-title">Product Operations Console</p>
+            </div>
+        </div>
+        <h1>ログイン</h1>
         {% if error %}
-        <div class="error">{{ error }}</div>
+        <div class="error login-error-box" role="alert">{{ error }}</div>
         {% endif %}
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="form-group">
-                <label for="username">Username</label>
-                <input type="text" id="username" name="username" required autocomplete="username">
+                <label for="username">ユーザー名</label>
+                <input type="text" id="username" name="username" required autocomplete="username" autofocus>
             </div>
             <div class="form-group">
-                <label for="password">Password</label>
-                <input type="password" id="password" name="password" required autocomplete="current-password">
+                <label for="password">パスワード</label>
+                <div class="password-field">
+                    <input type="password" id="password" name="password" required autocomplete="current-password">
+                    <button type="button" class="password-toggle" data-toggle-password="#password" data-show-label="表示" data-hide-label="非表示" aria-pressed="false">表示</button>
+                </div>
             </div>
-            <button type="submit">Log In</button>
+            <button type="submit">ログイン</button>
         </form>
         {% if config.ALLOW_PUBLIC_SIGNUP %}
-        <div class="link" style="text-align: center; margin-top: 1rem;">
-            Don't have an account? <a href="{{ url_for('register') }}"
-                style="color: #007bff; text-decoration: none;">Create Account</a>
+        <div class="link">
+            はじめての方は <a href="{{ url_for('register') }}">新規登録</a>
         </div>
         {% endif %}
     </div>

@@ -2,9 +2,16 @@
 Comprehensive E2E Tests for the refactored Flask application.
 Tests all routes after the app.py split to ensure functionality is preserved.
 """
+import io
+import re
+import shutil
+import uuid
+from pathlib import Path
+
 import pytest
 from datetime import datetime
 from models import User, Shop, Product, Variant, ProductSnapshot, DescriptionTemplate, PriceList, PriceListItem, CatalogPageView
+from time_utils import utc_now
 
 
 class TestAuthenticationRoutes:
@@ -14,13 +21,13 @@ class TestAuthenticationRoutes:
         """Test that login page renders correctly"""
         response = client.get('/login')
         assert response.status_code == 200
-        assert b'Login' in response.data or b'login' in response.data.lower()
+        assert "ログイン".encode("utf-8") in response.data
     
     def test_register_page_renders(self, client):
         """Test that register page renders correctly"""
         response = client.get('/register')
         assert response.status_code == 200
-        assert b'Register' in response.data or b'register' in response.data.lower()
+        assert "新規登録".encode("utf-8") in response.data
     
     def test_successful_registration(self, client, db_session):
         """Test user registration creates user and logs in"""
@@ -51,7 +58,7 @@ class TestAuthenticationRoutes:
         })
         
         assert response.status_code == 200
-        assert b'already exists' in response.data or b'Username' in response.data
+        assert "すでに使われています".encode("utf-8") in response.data
     
     def test_login_success(self, client, db_session):
         """Test successful login redirects to index"""
@@ -82,7 +89,7 @@ class TestAuthenticationRoutes:
         })
         
         assert response.status_code == 200
-        assert b'Invalid' in response.data or b'error' in response.data.lower()
+        assert "違います".encode("utf-8") in response.data
     
     def test_logout(self, client, db_session):
         """Test logout redirects to login"""
@@ -116,6 +123,30 @@ class TestAuthenticationRoutes:
         response = client.get('/login', follow_redirects=True)
         assert response.request.path == '/'
 
+    def test_account_page_and_password_change(self, client, db_session):
+        """Test account page renders and password can be updated"""
+        user = User(username='accounttest')
+        user.set_password('testpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'accounttest',
+            'password': 'testpassword'
+        })
+
+        response = client.get('/account')
+        assert response.status_code == 200
+        assert "アカウント".encode("utf-8") in response.data
+
+        response = client.post('/account', data={
+            'current_password': 'testpassword',
+            'new_password': 'NewTestPassword123',
+            'confirm_password': 'NewTestPassword123',
+        }, follow_redirects=True)
+        assert response.status_code == 200
+        assert "変更しました".encode("utf-8") in response.data
+
 
 class TestMainRoutes:
     """E2E tests for main routes (routes/main.py)"""
@@ -139,6 +170,27 @@ class TestMainRoutes:
         
         response = client.get('/')
         assert response.status_code == 200
+
+    def test_loading_overlay_is_hidden_by_default(self, client, db_session):
+        """Authenticated pages should not render the global loading overlay visibly by default."""
+        user = User(username='overlaytest')
+        user.set_password('testpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'overlaytest',
+            'password': 'testpassword'
+        })
+
+        response = client.get('/')
+        assert response.status_code == 200
+        assert b'id="espLoadingOverlay"' in response.data
+        assert b'class="loading-overlay" hidden' in response.data
+
+        stylesheet = client.get('/static/css/style.css')
+        assert stylesheet.status_code == 200
+        assert b'.loading-overlay[hidden]' in stylesheet.data
     
     def test_dashboard_requires_login(self, client):
         """Test that dashboard requires authentication"""
@@ -159,6 +211,147 @@ class TestMainRoutes:
         
         response = client.get('/dashboard')
         assert response.status_code == 200
+
+    def test_dashboard_uses_current_scope_metrics(self, client, db_session):
+        """Dashboard metrics should align with current product model and index scope."""
+        user = User(username='dashmetricstest')
+        user.set_password('testpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        shop = Shop(name='Dashboard Shop', user_id=user.id)
+        db_session.add(shop)
+        db_session.commit()
+
+        active_product = Product(
+            user_id=user.id,
+            shop_id=shop.id,
+            site='mercari',
+            source_url='https://example.com/active',
+            last_title='Active Product',
+            last_price=1200,
+            last_status='on_sale',
+            status='active',
+            selling_price=2400,
+            custom_title_en='Active Product EN',
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        draft_product = Product(
+            user_id=user.id,
+            shop_id=shop.id,
+            site='manual',
+            source_url='https://example.com/draft',
+            last_title='Draft Product',
+            last_price=900,
+            last_status='sold',
+            status='draft',
+            selling_price=None,
+            custom_title_en='',
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        archived_product = Product(
+            user_id=user.id,
+            shop_id=shop.id,
+            site='mercari',
+            source_url='https://example.com/archived',
+            last_title='Archived Product',
+            last_price=800,
+            last_status='on_sale',
+            status='active',
+            selling_price=1000,
+            archived=True,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        deleted_product = Product(
+            user_id=user.id,
+            shop_id=shop.id,
+            site='mercari',
+            source_url='https://example.com/deleted',
+            last_title='Deleted Product',
+            last_price=700,
+            last_status='deleted',
+            status='draft',
+            selling_price=1100,
+            deleted_at=utc_now(),
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        db_session.add_all([active_product, draft_product, archived_product, deleted_product])
+        db_session.commit()
+
+        db_session.add_all([
+            Variant(product_id=active_product.id, option1_value='Default Title', sku='SKU-A', price=2400, inventory_qty=2),
+            Variant(product_id=draft_product.id, option1_value='Default Title', sku='SKU-B', price=900, inventory_qty=0),
+            Variant(product_id=archived_product.id, option1_value='Default Title', sku='SKU-C', price=1000, inventory_qty=0),
+        ])
+        db_session.add_all([
+            ProductSnapshot(
+                product_id=active_product.id,
+                scraped_at=utc_now(),
+                title='Active Product',
+                price=1200,
+                status='on_sale',
+                description='',
+                image_urls='https://img.example.com/active.jpg',
+            ),
+            ProductSnapshot(
+                product_id=draft_product.id,
+                scraped_at=utc_now(),
+                title='Draft Product',
+                price=900,
+                status='sold',
+                description='',
+                image_urls='',
+            ),
+        ])
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'dashmetricstest',
+            'password': 'testpassword'
+        })
+        with client.session_transaction() as session_state:
+            session_state['current_shop_id'] = shop.id
+
+        response = client.get('/dashboard')
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+
+        assert re.search(r'管理対象商品</span>\s*<strong class="dashboard-summary-value">2</strong>', html)
+        assert re.search(r'公開中</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
+        assert re.search(r'下書き</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
+        assert re.search(r'公開準備OK</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
+        assert re.search(r'要対応商品</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
+
+        assert re.search(r'仕入先在庫あり</span>\s*<strong>1</strong>', html)
+        assert re.search(r'仕入先売切れ</span>\s*<strong>1</strong>', html)
+        assert re.search(r'0在庫バリアント</span>\s*<strong>1</strong>', html)
+
+        assert 'Active Product' in html
+        assert 'Draft Product' in html
+        assert 'Archived Product' not in html
+        assert 'Deleted Product' not in html
+
+    def test_dashboard_nav_link_is_marked_active(self, client, db_session):
+        """Sidebar and bottom nav should mark dashboard as active on the dashboard route."""
+        user = User(username='dashnavtest')
+        user.set_password('testpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'dashnavtest',
+            'password': 'testpassword'
+        })
+
+        response = client.get('/dashboard')
+        html = response.get_data(as_text=True)
+
+        assert re.search(r'<a href="/dashboard"\s+class="sidebar-link active"', html)
+        assert re.search(r'<a href="/dashboard"\s+class="bottom-nav-item active"', html)
     
     def test_index_pagination(self, client, db_session):
         """Test index pagination parameters"""
@@ -321,6 +514,10 @@ class TestShopsRoutes:
         self._login_user(client, db_session)
         response = client.get('/shops')
         assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'name="name"' in html
+        assert 'placeholder="ショップ名 (例: 文具店A)"' in html
+        assert 'value="{{ csrf_token() }}"/> placeholder=' not in html
     
     def test_create_shop(self, client, db_session):
         """Test creating a new shop"""
@@ -377,10 +574,61 @@ class TestShopsRoutes:
         self._login_user(client, db_session, 'templatestest')
         response = client.get('/templates')
         assert response.status_code == 200
+
+    def test_templates_page_shows_only_current_users_templates(self, client, db_session):
+        """Authenticated users should not see other users' templates."""
+        owner = self._login_user(client, db_session, 'templateownerscope')
+        other_user = User(username='templateotherscope')
+        other_user.set_password('testpassword')
+        db_session.add(other_user)
+        db_session.commit()
+
+        db_session.add(
+            DescriptionTemplate(
+                user_id=owner.id,
+                name='Owner Template',
+                content='Owner content',
+            )
+        )
+        db_session.add(
+            DescriptionTemplate(
+                user_id=other_user.id,
+                name='Other Template',
+                content='Other content',
+            )
+        )
+        db_session.commit()
+
+        response = client.get('/templates')
+
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'Owner Template' in html
+        assert 'Other Template' not in html
+
+    def test_templates_page_keeps_legacy_shared_templates_visible(self, client, db_session):
+        """Legacy templates without ownership should stay visible during migration."""
+        self._login_user(client, db_session, 'templatelegacyvisible')
+        db_session.add(
+            DescriptionTemplate(
+                user_id=None,
+                name='Legacy Shared Template',
+                content='Legacy content',
+            )
+        )
+        db_session.commit()
+
+        response = client.get('/templates')
+
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'Legacy Shared Template' in html
+        assert '共有 / 旧データ' in html
+        assert '削除不可' in html
     
     def test_create_template(self, client, db_session):
         """Test creating a description template"""
-        self._login_user(client, db_session, 'createtemplatetest')
+        user = self._login_user(client, db_session, 'createtemplatetest')
         
         response = client.post('/templates', data={
             'name': 'Test Template',
@@ -390,15 +638,71 @@ class TestShopsRoutes:
         assert response.status_code == 200
         
         # Verify template was created
-        template = db_session.query(DescriptionTemplate).filter_by(name='Test Template').first()
+        template = db_session.query(DescriptionTemplate).filter_by(
+            user_id=user.id,
+            name='Test Template',
+        ).first()
         assert template is not None
         assert template.content == 'This is test template content'
+        assert template.user_id == user.id
+
+    def test_create_template_allows_same_name_for_different_users(self, client, db_session):
+        """Different users can keep templates with the same display name."""
+        user_one = self._login_user(client, db_session, 'createtemplatesameone')
+        response_one = client.post('/templates', data={
+            'name': 'Shared Template Name',
+            'content': 'Owner one content',
+        }, follow_redirects=True)
+        assert response_one.status_code == 200
+
+        user_two = User(username='createtemplatesametwo')
+        user_two.set_password('testpassword')
+        db_session.add(user_two)
+        db_session.commit()
+
+        client.get('/logout', follow_redirects=True)
+        client.post('/login', data={
+            'username': user_two.username,
+            'password': 'testpassword',
+        }, follow_redirects=True)
+        response_two = client.post('/templates', data={
+            'name': 'Shared Template Name',
+            'content': 'Owner two content',
+        }, follow_redirects=True)
+
+        assert response_two.status_code == 200
+        templates = (
+            db_session.query(DescriptionTemplate)
+            .filter(DescriptionTemplate.name == 'Shared Template Name')
+            .order_by(DescriptionTemplate.user_id.asc())
+            .all()
+        )
+        assert [template.user_id for template in templates] == [user_one.id, user_two.id]
+
+    def test_create_template_sanitizes_rich_text(self, client, db_session):
+        """Test template content is normalized to the shared safe rich-text subset"""
+        user = self._login_user(client, db_session, 'createtemplatesanitizetest')
+
+        response = client.post('/templates', data={
+            'name': 'Sanitized Template',
+            'content': '<p>Hello</p><script>alert(1)</script>'
+        }, follow_redirects=True)
+
+        assert response.status_code == 200
+
+        template = db_session.query(DescriptionTemplate).filter_by(
+            user_id=user.id,
+            name='Sanitized Template',
+        ).first()
+        assert template is not None
+        assert '<script' not in template.content.lower()
+        assert 'Hello' in template.content
     
     def test_delete_template(self, client, db_session):
         """Test deleting a template"""
-        self._login_user(client, db_session, 'deletetemplatetest')
+        user = self._login_user(client, db_session, 'deletetemplatetest')
         
-        template = DescriptionTemplate(name='Template to Delete', content='Content')
+        template = DescriptionTemplate(user_id=user.id, name='Template to Delete', content='Content')
         db_session.add(template)
         db_session.commit()
         template_id = template.id
@@ -409,6 +713,47 @@ class TestShopsRoutes:
         # Verify template was deleted
         deleted_template = db_session.query(DescriptionTemplate).filter_by(id=template_id).first()
         assert deleted_template is None
+
+    def test_delete_template_does_not_remove_other_users_template(self, client, db_session):
+        """Users must not be able to delete templates they do not own."""
+        self._login_user(client, db_session, 'templatedeleteownercheck')
+
+        other_user = User(username='templatedeleteother')
+        other_user.set_password('testpassword')
+        db_session.add(other_user)
+        db_session.commit()
+
+        template = DescriptionTemplate(
+            user_id=other_user.id,
+            name='Other User Template',
+            content='Content',
+        )
+        db_session.add(template)
+        db_session.commit()
+        template_id = template.id
+
+        response = client.post(f'/templates/{template_id}/delete', follow_redirects=True)
+
+        assert response.status_code == 200
+        assert db_session.query(DescriptionTemplate).filter_by(id=template_id).first() is not None
+
+    def test_delete_template_does_not_remove_legacy_shared_template(self, client, db_session):
+        """Legacy shared templates remain visible but are not deletable by scoped users."""
+        self._login_user(client, db_session, 'templatedeletelegacycheck')
+
+        template = DescriptionTemplate(
+            user_id=None,
+            name='Legacy Shared Template Delete',
+            content='Content',
+        )
+        db_session.add(template)
+        db_session.commit()
+        template_id = template.id
+
+        response = client.post(f'/templates/{template_id}/delete', follow_redirects=True)
+
+        assert response.status_code == 200
+        assert db_session.query(DescriptionTemplate).filter_by(id=template_id).first() is not None
 
 
 class TestPriceListRoutes:
@@ -426,22 +771,42 @@ class TestPriceListRoutes:
         })
         return user
 
-    def _create_catalog_fixture(self, db_session, username='catalogfixture', layout='editorial'):
+    def _create_catalog_fixture(
+        self,
+        db_session,
+        username='catalogfixture',
+        layout='editorial',
+        theme='dark',
+        shop_logo_url=None,
+        explicit_pricelist_shop=False,
+    ):
         user = User(username=username)
         user.set_password('testpassword')
         db_session.add(user)
         db_session.commit()
 
+        shop = None
+        if shop_logo_url:
+            shop = Shop(
+                user_id=user.id,
+                name=f'{username}-shop',
+                logo_url=shop_logo_url,
+            )
+            db_session.add(shop)
+            db_session.commit()
+
         product = Product(
             user_id=user.id,
             site='manual',
+            shop_id=shop.id if shop else None,
             source_url='https://example.com/manual-product',
             last_title='Catalog Layout Product',
             last_price=3200,
             last_status='on_sale',
             status='active',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            tags='PSA10,ONEPIECE,Rare',
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product)
         db_session.commit()
@@ -462,15 +827,17 @@ class TestPriceListRoutes:
             status='on_sale',
             description='Catalog description',
             image_urls='https://img.example.com/catalog-layout.jpg|https://img.example.com/catalog-layout-2.jpg',
-            scraped_at=datetime.utcnow()
+            scraped_at=utc_now()
         )
         db_session.add(snapshot)
 
         pricelist = PriceList(
             user_id=user.id,
+            shop_id=shop.id if explicit_pricelist_shop and shop else None,
             name='Editorial Catalog',
             token=f'{username}-token',
             layout=layout,
+            theme=theme,
             currency_rate=150,
             is_active=True
         )
@@ -505,6 +872,48 @@ class TestPriceListRoutes:
         pricelist = db_session.query(PriceList).filter_by(user_id=user.id, name='Editorial List').one()
         assert pricelist.layout == 'editorial'
 
+    def test_pricelist_create_saves_theme(self, client, db_session):
+        """Test creating a price list persists selected theme"""
+        user = self._login_user(client, db_session, 'pricelistcreatethemetest')
+
+        response = client.post('/pricelists/create', data={
+            'name': 'Light Theme List',
+            'notes': 'Theme notes',
+            'currency_rate': '150',
+            'layout': 'grid',
+            'theme': 'light',
+        }, follow_redirects=False)
+
+        assert response.status_code == 302
+
+        pricelist = db_session.query(PriceList).filter_by(user_id=user.id, name='Light Theme List').one()
+        assert pricelist.theme == 'light'
+
+    def test_pricelist_create_saves_selected_shop(self, client, db_session):
+        """Test creating a price list persists the selected shop for logo display."""
+        user = self._login_user(client, db_session, 'pricelistcreateshoptest')
+        shop = Shop(
+            user_id=user.id,
+            name='Logo Shop',
+            logo_url='https://img.example.com/logo-shop.png',
+        )
+        db_session.add(shop)
+        db_session.commit()
+
+        response = client.post('/pricelists/create', data={
+            'name': 'Shop Bound List',
+            'notes': '',
+            'currency_rate': '150',
+            'layout': 'grid',
+            'theme': 'dark',
+            'shop_id': str(shop.id),
+        }, follow_redirects=False)
+
+        assert response.status_code == 302
+
+        pricelist = db_session.query(PriceList).filter_by(user_id=user.id, name='Shop Bound List').one()
+        assert pricelist.shop_id == shop.id
+
     def test_pricelist_edit_updates_layout(self, client, db_session):
         """Test editing a price list can switch layout"""
         user = self._login_user(client, db_session, 'pricelistedittest')
@@ -532,6 +941,72 @@ class TestPriceListRoutes:
         db_session.refresh(pricelist)
         assert pricelist.layout == 'editorial'
 
+    def test_pricelist_edit_updates_theme(self, client, db_session):
+        """Test editing a price list can switch theme"""
+        user = self._login_user(client, db_session, 'pricelisteditthemetest')
+
+        pricelist = PriceList(
+            user_id=user.id,
+            name='Dark Theme List',
+            token='dark-theme-token',
+            layout='grid',
+            theme='dark',
+            currency_rate=150,
+            is_active=True
+        )
+        db_session.add(pricelist)
+        db_session.commit()
+
+        response = client.post(f'/pricelists/{pricelist.id}/edit', data={
+            'name': 'Dark Theme List',
+            'notes': 'Updated notes',
+            'currency_rate': '150',
+            'layout': 'grid',
+            'theme': 'light',
+            'is_active': 'on'
+        }, follow_redirects=False)
+
+        assert response.status_code == 302
+        db_session.refresh(pricelist)
+        assert pricelist.theme == 'light'
+
+    def test_pricelist_edit_updates_selected_shop(self, client, db_session):
+        """Test editing a price list can bind it to a specific shop."""
+        user = self._login_user(client, db_session, 'pricelisteditshoptest')
+        shop = Shop(
+            user_id=user.id,
+            name='Edited Shop',
+            logo_url='https://img.example.com/edited-shop.png',
+        )
+        db_session.add(shop)
+        db_session.commit()
+
+        pricelist = PriceList(
+            user_id=user.id,
+            name='Shopless List',
+            token='shopless-list-token',
+            layout='grid',
+            theme='dark',
+            currency_rate=150,
+            is_active=True
+        )
+        db_session.add(pricelist)
+        db_session.commit()
+
+        response = client.post(f'/pricelists/{pricelist.id}/edit', data={
+            'name': 'Shopless List',
+            'notes': 'Updated notes',
+            'currency_rate': '150',
+            'layout': 'grid',
+            'theme': 'dark',
+            'shop_id': str(shop.id),
+            'is_active': 'on'
+        }, follow_redirects=False)
+
+        assert response.status_code == 302
+        db_session.refresh(pricelist)
+        assert pricelist.shop_id == shop.id
+
     def test_catalog_view_uses_pricelist_layout(self, client, db_session):
         """Test public catalog renders the selected layout class"""
         user, product, pricelist, item = self._create_catalog_fixture(
@@ -545,6 +1020,37 @@ class TestPriceListRoutes:
         assert b'catalog-layout-editorial' in response.data
         assert b'Editorial' in response.data
         assert b'Catalog Layout Product' in response.data
+
+    def test_catalog_view_uses_pricelist_theme(self, client, db_session):
+        """Test public catalog renders the selected base theme"""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogthemetest',
+            layout='grid',
+            theme='light'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+        assert response.status_code == 200
+        assert b'light-mode' in response.data
+        assert b'<strong>Light</strong> theme' in response.data
+
+    def test_catalog_view_prefers_pricelist_shop_logo(self, client, db_session):
+        """Test public catalog uses the explicit pricelist shop logo when configured."""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='cataloglogotest',
+            layout='grid',
+            theme='dark',
+            shop_logo_url='https://img.example.com/shop-logo.png',
+            explicit_pricelist_shop=True,
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+        assert response.status_code == 200
+        html = response.data.decode('utf-8')
+        assert 'https://img.example.com/shop-logo.png' in html
+        assert 'cataloglogotest-shop' in html
 
     def test_catalog_view_renders_product_modal_shell(self, client, db_session):
         """Test public catalog includes quick-view modal markup"""
@@ -560,8 +1066,32 @@ class TestPriceListRoutes:
         assert b'productModal' in response.data
         assert str(product.id).encode('utf-8') in response.data
 
+    def test_catalog_view_renders_mock_filter_controls(self, client, db_session):
+        """Public catalog renders the 3/22-style search, tag, price, and sort controls."""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogfiltertest',
+            layout='grid'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+        assert response.status_code == 200
+        html = response.data.decode('utf-8')
+
+        assert 'searchInput' in html
+        assert 'tagSelect' in html
+        assert 'priceMin' in html
+        assert 'priceMax' in html
+        assert 'sortSelect' in html
+        assert 'All Tags' in html
+        assert 'PSA10' in html
+
     def test_catalog_product_detail_endpoint_returns_json(self, client, db_session):
-        """Test catalog detail endpoint returns modal payload"""
+        """Test catalog detail endpoint returns customer-safe modal payload.
+
+        The public catalog must NOT expose source_url, site, or other
+        internal sourcing details to public customers.
+        """
         user, product, pricelist, item = self._create_catalog_fixture(
             db_session,
             username='catalogdetailapitest',
@@ -570,17 +1100,21 @@ class TestPriceListRoutes:
 
         response = client.get(f'/catalog/{pricelist.token}/product/{product.id}')
         assert response.status_code == 200
-        assert response.json['product_id'] == product.id
-        assert response.json['title'] == 'Catalog Layout Product'
-        assert response.json['price'] == 3200
-        assert response.json['description'] == 'Catalog description'
-        assert 'site' not in response.json
-        assert 'source_url' not in response.json
-        assert response.json['in_stock'] is True
-        assert response.json['image_urls'] == [
+        data = response.json
+        assert data['product_id'] == product.id
+        assert data['title'] == 'Catalog Layout Product'
+        assert data['price'] == 3200
+        assert data['description_html'] == 'Catalog description'
+        assert data['description_text'] == 'Catalog description'
+        assert data['description_snippet'] == 'Catalog description'
+        assert data['in_stock'] is True
+        assert data['image_urls'] == [
             'https://img.example.com/catalog-layout.jpg',
             'https://img.example.com/catalog-layout-2.jpg',
         ]
+        # Information boundary: source/supplier data must not leak
+        assert 'source_url' not in data
+        assert 'site' not in data
 
     def test_catalog_view_does_not_expose_internal_source_fields(self, client, db_session):
         """Public catalog HTML must not leak procurement source fields."""
@@ -731,6 +1265,69 @@ class TestPriceListRoutes:
         response = client.get(f'/pricelists/{pricelist.id}/analytics')
         assert response.status_code == 404
 
+    def test_catalog_view_does_not_expose_source_info(self, client, db_session):
+        """Public catalog HTML must not contain source site names or source URLs."""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogsourcehidetest',
+            layout='grid'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+        assert response.status_code == 200
+        html = response.data.decode('utf-8')
+
+        # No source_url or source site name should appear in public HTML
+        assert 'example.com/manual-product' not in html
+        assert 'View Source' not in html
+        assert 'data-site' not in html
+        assert 'categorySelect' not in html
+
+    def test_catalog_list_layout_renders(self, client, db_session):
+        """Public catalog with list layout renders the correct layout class."""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='cataloglistlayouttest',
+            layout='list'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+        assert response.status_code == 200
+        assert b'catalog-layout-list' in response.data
+        assert b'List' in response.data
+        assert b'Catalog Layout Product' in response.data
+
+    def test_pricelist_create_saves_list_layout(self, client, db_session):
+        """Creating a price list with 'list' layout persists correctly."""
+        user = self._login_user(client, db_session, 'pricelistcreatelisttest')
+
+        response = client.post('/pricelists/create', data={
+            'name': 'Compact List',
+            'notes': '',
+            'currency_rate': '150',
+            'layout': 'list'
+        }, follow_redirects=False)
+
+        assert response.status_code == 302
+        pricelist = db_session.query(PriceList).filter_by(user_id=user.id, name='Compact List').one()
+        assert pricelist.layout == 'list'
+
+    def test_catalog_quick_view_modal_is_customer_safe(self, client, db_session):
+        """Quick-view modal markup must not contain source link elements."""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogmodalsafetest',
+            layout='grid'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+        assert response.status_code == 200
+        html = response.data.decode('utf-8')
+
+        assert 'modalSourceLink' not in html
+        assert 'modal-source-link' not in html
+        assert 'SITE_LABELS' not in html
+
 
 class TestProductRoutes:
     """E2E tests for product routes (routes/products.py)"""
@@ -749,8 +1346,8 @@ class TestProductRoutes:
             last_title='Test Product',
             last_price=1000,
             last_status='on_sale',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product)
         db_session.commit()
@@ -785,8 +1382,8 @@ class TestProductRoutes:
             site='mercari',
             source_url='https://jp.mercari.com/item/m99999',
             last_title='Test',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product)
         db_session.commit()
@@ -800,6 +1397,60 @@ class TestProductRoutes:
         
         response = client.get(f'/product/{product.id}')
         assert response.status_code == 200
+        html = response.data.decode('utf-8')
+        assert 'まとめて白抜き' in html
+        assert 'タイトル翻訳' in html
+        assert '自動翻訳' in html
+        assert 'URLから追加' in html
+
+    def test_product_detail_shows_only_current_users_templates(self, client, db_session):
+        """Product edit should not expose other users' description templates."""
+        user, product, _ = self._setup_user_with_product(client, db_session, 'productdetailtemplatescope')
+        other_user = User(username='productdetailtemplateother')
+        other_user.set_password('testpassword')
+        db_session.add(other_user)
+        db_session.commit()
+
+        db_session.add(
+            DescriptionTemplate(
+                user_id=user.id,
+                name='Owner Product Template',
+                content='Owner content',
+            )
+        )
+        db_session.add(
+            DescriptionTemplate(
+                user_id=other_user.id,
+                name='Other Product Template',
+                content='Other content',
+            )
+        )
+        db_session.commit()
+
+        response = client.get(f'/product/{product.id}')
+
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'Owner Product Template' in html
+        assert 'Other Product Template' not in html
+
+    def test_product_detail_keeps_legacy_shared_templates_visible(self, client, db_session):
+        """Legacy shared templates should remain available in the editor during rollout."""
+        user, product, _ = self._setup_user_with_product(client, db_session, 'productdetailtemplatelegacy')
+        db_session.add(
+            DescriptionTemplate(
+                user_id=None,
+                name='Legacy Product Template',
+                content='Legacy product content',
+            )
+        )
+        db_session.commit()
+
+        response = client.get(f'/product/{product.id}')
+
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'Legacy Product Template' in html
     
     def test_product_detail_403_for_other_user(self, client, db_session):
         """Test product detail returns 404 for products owned by other user"""
@@ -814,8 +1465,8 @@ class TestProductRoutes:
             site='mercari',
             source_url='https://jp.mercari.com/item/m11111',
             last_title='User1 Product',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product)
         db_session.commit()
@@ -863,6 +1514,33 @@ class TestProductRoutes:
         assert product.custom_title_en == 'Updated English Title'
         assert product.custom_description_en == 'Updated English Description'
         assert product.status == 'active'
+
+    def test_product_detail_update_sanitizes_rich_text(self, client, db_session):
+        """Test product descriptions are saved in the shared safe rich-text format"""
+        user, product, variant = self._setup_user_with_product(client, db_session, 'productrichtexttest')
+
+        response = client.post(f'/product/{product.id}', data={
+            'title': 'Updated Title',
+            'description': '<p>Updated Description</p><script>alert(1)</script>',
+            'title_en': 'Updated English Title',
+            'description_en': 'Line one\nLine two',
+            'status': 'active',
+            'vendor': 'Test Vendor',
+            'tags': 'tag1,tag2',
+            'handle': 'custom-handle',
+            'v_ids': [str(variant.id)],
+            f'v_opt1_{variant.id}': 'Size M',
+            f'v_price_{variant.id}': '2000',
+            f'v_sku_{variant.id}': 'UPDATED-SKU',
+            f'v_qty_{variant.id}': '5'
+        }, follow_redirects=True)
+
+        assert response.status_code == 200
+
+        db_session.refresh(product)
+        assert '<script' not in (product.custom_description or '').lower()
+        assert 'Updated Description' in (product.custom_description or '')
+        assert '<br' in (product.custom_description_en or '')
 
     def test_product_detail_update_reorders_and_removes_images(self, client, db_session):
         """Test image updates create a new latest snapshot without mutating history"""
@@ -940,6 +1618,63 @@ class TestProductRoutes:
         assert snapshot.description == 'Manual image description'
         assert snapshot.image_urls == 'https://img.example.com/manual-1.jpg|/media/manual-2.jpg'
 
+    def test_product_detail_update_uploads_images(self, client, db_session, monkeypatch):
+        """Test uploaded product images are saved and appended to the latest snapshot"""
+        import routes.products as products_routes
+
+        storage_dir = Path(__file__).resolve().parent / '.tmp_media' / uuid.uuid4().hex
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(products_routes, 'IMAGE_STORAGE_PATH', str(storage_dir))
+
+        user, product, variant = self._setup_user_with_product(client, db_session, 'productuploadimagetest')
+
+        try:
+            response = client.post(
+                f'/product/{product.id}',
+                data={
+                    'title': 'Uploaded Image Product',
+                    'description': 'Uploaded image description',
+                    'status': 'active',
+                    'vendor': 'Test Vendor',
+                    'tags': 'tag1,tag2',
+                    'handle': 'custom-handle',
+                    'image_urls_json': '["https://img.example.com/existing.jpg"]',
+                    'image_files': [
+                        (io.BytesIO(b'first image bytes'), 'upload-one.png'),
+                        (io.BytesIO(b'second image bytes'), 'upload-two.jpg'),
+                    ],
+                    'v_ids': [str(variant.id)],
+                    f'v_opt1_{variant.id}': 'Size M',
+                    f'v_price_{variant.id}': '2000',
+                    f'v_sku_{variant.id}': 'UPDATED-SKU',
+                    f'v_qty_{variant.id}': '5',
+                },
+                content_type='multipart/form-data',
+                follow_redirects=True,
+            )
+
+            assert response.status_code == 200
+
+            snapshot = (
+                db_session.query(ProductSnapshot)
+                .filter_by(product_id=product.id)
+                .order_by(ProductSnapshot.scraped_at.desc(), ProductSnapshot.id.desc())
+                .first()
+            )
+            assert snapshot is not None
+
+            image_urls = snapshot.image_urls.split('|')
+            assert image_urls[0] == 'https://img.example.com/existing.jpg'
+            assert len(image_urls) == 3
+            assert image_urls[1].startswith('/media/product_images/')
+            assert image_urls[2].startswith('/media/product_images/')
+
+            for image_url in image_urls[1:]:
+                filename = image_url.split('/media/product_images/', 1)[1]
+                assert (storage_dir / 'product_images' / filename).exists()
+        finally:
+            shutil.rmtree(storage_dir, ignore_errors=True)
+
     def test_inline_update_custom_title_en(self, client, db_session):
         """Test inline PATCH updates English title"""
         user, product, _ = self._setup_user_with_product(client, db_session, 'inlineentitletest')
@@ -1007,8 +1742,8 @@ class TestProductRoutes:
             site='mercari',
             source_url='https://jp.mercari.com/item/inline-owner',
             last_title='Owner Product',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product)
         db_session.commit()
@@ -1155,8 +1890,8 @@ class TestExportRoutes:
             last_price=2000,
             last_status='on_sale',
             status='active',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product)
         db_session.commit()
@@ -1178,7 +1913,7 @@ class TestExportRoutes:
             price=2000,
             status='on_sale',
             description='Test description',
-            scraped_at=datetime.utcnow()
+            scraped_at=utc_now()
         )
         db_session.add(snapshot)
         db_session.commit()
@@ -1333,8 +2068,8 @@ class TestSessionIsolation:
             site='mercari',
             source_url='https://jp.mercari.com/item/isolation1',
             last_title='User1 Product',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product1)
         db_session.commit()
@@ -1350,8 +2085,8 @@ class TestSessionIsolation:
             site='mercari',
             source_url='https://jp.mercari.com/item/isolation2',
             last_title='User2 Product',
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=utc_now(),
+            updated_at=utc_now()
         )
         db_session.add(product2)
         db_session.commit()

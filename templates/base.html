@@ -5,6 +5,7 @@
     <meta charset="utf-8">
     <title>{% block title %}ESP{% endblock %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     {% block head %}{% endblock %}
 </head>
@@ -12,6 +13,7 @@
 <body class="{% block body_class %}has-bottom-nav{% endblock %}">
     <a class="skip-link" href="#main-content">本文へスキップ</a>
     {% set current_shop = namespace(name='未選択') %}
+    {% set current_endpoint = request.endpoint or '' %}
     {% for s in all_shops %}
     {% if current_shop_id == s.id %}
     {% set current_shop.name = s.name %}
@@ -25,17 +27,21 @@
         </button>
         <h1 class="mobile-header-title">{% block header_title %}ESP{% endblock %}</h1>
         <div class="mobile-header-shop">
-            <form action="{{ url_for('set_current_shop') }}" method="post" class="shop-select-form">
+            <form action="{{ url_for('set_current_shop') }}" method="post" class="shop-select-form shop-select-form-mobile">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <label class="shop-select-label visually-hidden" for="mobile-shop-select">ショップ選択</label>
-                <select name="shop_id" id="mobile-shop-select" class="shop-select-compact"
-                    aria-describedby="shop-current" data-auto-submit="true">
-                    <option value="">未選択</option>
-                    {% for s in all_shops %}
-                    <option value="{{ s.id }}" {% if current_shop_id==s.id %}selected{% endif %}>
-                        {{ s.name[:8] }}{% if s.name|length > 8 %}...{% endif %}
-                    </option>
-                    {% endfor %}
-                </select>
+                <div class="shop-select-inline">
+                    <select name="shop_id" id="mobile-shop-select" class="shop-select-compact"
+                        aria-describedby="shop-current">
+                        <option value="">未選択</option>
+                        {% for s in all_shops %}
+                        <option value="{{ s.id }}" {% if current_shop_id==s.id %}selected{% endif %}>
+                            {{ s.name[:8] }}{% if s.name|length > 8 %}...{% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="btn btn-compact shop-select-apply">適用</button>
+                </div>
             </form>
             <span class="shop-current" id="shop-current">現在: {{ current_shop.name }}</span>
         </div>
@@ -50,78 +56,102 @@
             <span class="sidebar-logo">ESP</span>
             <button class="sidebar-close" data-action="close-sidebar" aria-label="メニューを閉じる">×</button>
         </div>
-        <nav class="sidebar-nav">
-            <a href="{{ url_for('index') }}" class="sidebar-link {% if request.endpoint == 'index' %}active{% endif %}"
-                {% if request.endpoint=='index' %}aria-current="page" {% endif %}>
-                <span class="nav-icon">📦</span>
-                <span class="nav-text">商品一覧</span>
-            </a>
-            <a href="{{ url_for('dashboard') }}"
-                class="sidebar-link {% if request.endpoint == 'dashboard' %}active{% endif %}" {% if
-                request.endpoint=='dashboard' %}aria-current="page" {% endif %}>
-                <span class="nav-icon">📊</span>
-                <span class="nav-text">ダッシュボード</span>
-            </a>
-            <a href="{{ url_for('scrape_form') }}"
-                class="sidebar-link {% if request.endpoint == 'scrape_form' %}active{% endif %}" {% if
-                request.endpoint=='scrape_form' %}aria-current="page" {% endif %}>
-                <span class="nav-icon">🔍</span>
-                <span class="nav-text">商品抽出</span>
-            </a>
-            <a href="{{ url_for('manage_templates') }}"
-                class="sidebar-link {% if request.endpoint == 'manage_templates' %}active{% endif %}" {% if
-                request.endpoint=='manage_templates' %}aria-current="page" {% endif %}>
-                <span class="nav-icon">📝</span>
-                <span class="nav-text">テンプレート</span>
-            </a>
-            <a href="{{ url_for('manage_shops') }}"
-                class="sidebar-link {% if request.endpoint == 'manage_shops' %}active{% endif %}" {% if
-                request.endpoint=='manage_shops' %}aria-current="page" {% endif %}>
-                <span class="nav-icon">🏪</span>
-                <span class="nav-text">ショップ管理</span>
-            </a>
-            <a href="{{ url_for('pricing.pricing_list') }}"
-                class="sidebar-link {% if request.endpoint == 'pricing.pricing_list' %}active{% endif %}" {% if
-                request.endpoint=='pricing.pricing_list' %}aria-current="page" {% endif %}>
-                <span class="nav-icon">💰</span>
-                <span class="nav-text">価格ルール</span>
-            </a>
-            <a href="{{ url_for('pricelist.pricelist_list') }}"
-                class="sidebar-link {% if request.endpoint and request.endpoint.startswith('pricelist.') %}active{% endif %}"
-                {% if request.endpoint and request.endpoint.startswith('pricelist.') %}aria-current="page" {% endif %}>
-                <span class="nav-icon">📋</span>
-                <span class="nav-text">価格表</span>
-            </a>
-            <a href="{{ url_for('settings.settings_list') }}"
-                class="sidebar-link {% if request.endpoint == 'settings.settings_list' %}active{% endif %}" {% if
-                request.endpoint=='settings.settings_list' %}aria-current="page" {% endif %}>
-                <span class="nav-icon">⚙️</span>
-                <span class="nav-text">設定</span>
-            </a>
-            <a href="{{ url_for('import.import_form') }}"
-                class="sidebar-link {% if request.endpoint == 'import.import_form' %}active{% endif %}" {% if
-                request.endpoint=='import.import_form' %}aria-current="page" {% endif %}>
-                <span class="nav-icon">📥</span>
-                <span class="nav-text">インポート</span>
-            </a>
-            <a href="{{ url_for('archive.archive_list') }}"
-                class="sidebar-link {% if request.endpoint == 'archive.archive_list' %}active{% endif %}" {% if
-                request.endpoint=='archive.archive_list' %}aria-current="page" {% endif %}>
-                <span class="nav-icon">📦</span>
-                <span class="nav-text">アーカイブ</span>
-            </a>
-            <a href="{{ url_for('trash.trash_list') }}"
-                class="sidebar-link {% if request.endpoint == 'trash.trash_list' %}active{% endif %}" {% if
-                request.endpoint=='trash.trash_list' %}aria-current="page" {% endif %}>
-                <span class="nav-icon">🗑️</span>
-                <span class="nav-text">ゴミ箱</span>
-            </a>
+        <nav class="sidebar-nav" aria-label="メインナビゲーション">
+            <section class="sidebar-group" aria-labelledby="sidebar-group-products">
+                <p class="sidebar-group-title" id="sidebar-group-products">商品管理</p>
+                <div class="sidebar-group-links">
+                    <a href="{{ url_for('index') }}" class="sidebar-link {% if current_endpoint.endswith('index') %}active{% endif %}"
+                        {% if current_endpoint.endswith('index') %}aria-current="page" {% endif %}>
+                        <span class="nav-icon">📦</span>
+                        <span class="nav-text">商品一覧</span>
+                    </a>
+                    <a href="{{ url_for('dashboard') }}"
+                        class="sidebar-link {% if current_endpoint.endswith('dashboard') %}active{% endif %}" {% if
+                        current_endpoint.endswith('dashboard') %}aria-current="page" {% endif %}>
+                        <span class="nav-icon">📊</span>
+                        <span class="nav-text">ダッシュボード</span>
+                    </a>
+                    <a href="{{ url_for('archive.archive_list') }}"
+                        class="sidebar-link {% if current_endpoint.endswith('archive_list') %}active{% endif %}" {% if
+                        current_endpoint.endswith('archive_list') %}aria-current="page" {% endif %}>
+                        <span class="nav-icon">🗂️</span>
+                        <span class="nav-text">アーカイブ</span>
+                    </a>
+                    <a href="{{ url_for('trash.trash_list') }}"
+                        class="sidebar-link {% if current_endpoint.endswith('trash_list') %}active{% endif %}" {% if
+                        current_endpoint.endswith('trash_list') %}aria-current="page" {% endif %}>
+                        <span class="nav-icon">🗑️</span>
+                        <span class="nav-text">ゴミ箱</span>
+                    </a>
+                </div>
+            </section>
+
+            <section class="sidebar-group" aria-labelledby="sidebar-group-support">
+                <p class="sidebar-group-title" id="sidebar-group-support">出品支援</p>
+                <div class="sidebar-group-links">
+                    <a href="{{ url_for('scrape_form') }}"
+                        class="sidebar-link {% if current_endpoint.endswith('scrape_form') %}active{% endif %}" {% if
+                        current_endpoint.endswith('scrape_form') %}aria-current="page" {% endif %}>
+                        <span class="nav-icon">🔍</span>
+                        <span class="nav-text">商品抽出</span>
+                    </a>
+                    <a href="{{ url_for('manage_templates') }}"
+                        class="sidebar-link {% if current_endpoint.endswith('manage_templates') %}active{% endif %}" {% if
+                        current_endpoint.endswith('manage_templates') %}aria-current="page" {% endif %}>
+                        <span class="nav-icon">📝</span>
+                        <span class="nav-text">テンプレート</span>
+                    </a>
+                    <a href="{{ url_for('pricing.pricing_list') }}"
+                        class="sidebar-link {% if current_endpoint.endswith('pricing_list') %}active{% endif %}" {% if
+                        current_endpoint.endswith('pricing_list') %}aria-current="page" {% endif %}>
+                        <span class="nav-icon">💰</span>
+                        <span class="nav-text">価格ルール</span>
+                    </a>
+                    <a href="{{ url_for('pricelist.pricelist_list') }}"
+                        class="sidebar-link {% if current_endpoint.startswith('pricelist.') %}active{% endif %}"
+                        {% if current_endpoint.startswith('pricelist.') %}aria-current="page" {% endif %}>
+                        <span class="nav-icon">📋</span>
+                        <span class="nav-text">価格表</span>
+                    </a>
+                    <a href="{{ url_for('import.import_form') }}"
+                        class="sidebar-link {% if current_endpoint.endswith('import_form') %}active{% endif %}" {% if
+                        current_endpoint.endswith('import_form') %}aria-current="page" {% endif %}>
+                        <span class="nav-icon">📥</span>
+                        <span class="nav-text">インポート</span>
+                    </a>
+                </div>
+            </section>
+
+            <section class="sidebar-group" aria-labelledby="sidebar-group-admin">
+                <p class="sidebar-group-title" id="sidebar-group-admin">管理・設定</p>
+                <div class="sidebar-group-links">
+                    <a href="{{ url_for('manage_shops') }}"
+                        class="sidebar-link {% if current_endpoint.endswith('manage_shops') %}active{% endif %}" {% if
+                        current_endpoint.endswith('manage_shops') %}aria-current="page" {% endif %}>
+                        <span class="nav-icon">🏪</span>
+                        <span class="nav-text">ショップ管理</span>
+                    </a>
+                    <a href="{{ url_for('settings.settings_list') }}"
+                        class="sidebar-link {% if current_endpoint.endswith('settings_list') %}active{% endif %}" {% if
+                        current_endpoint.endswith('settings_list') %}aria-current="page" {% endif %}>
+                        <span class="nav-icon">⚙️</span>
+                        <span class="nav-text">設定</span>
+                    </a>
+                    <a href="{{ url_for('auth.account') }}"
+                        class="sidebar-link {% if current_endpoint == 'auth.account' %}active{% endif %}" {% if
+                        current_endpoint == 'auth.account' %}aria-current="page" {% endif %}>
+                        <span class="nav-icon">👤</span>
+                        <span class="nav-text">アカウント</span>
+                    </a>
+                </div>
+            </section>
         </nav>
 
 
         <div class="sidebar-shop-section">
             <label class="sidebar-shop-label">ショップ選択</label>
             <form action="{{ url_for('set_current_shop') }}" method="post" class="shop-select-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <select name="shop_id" class="sidebar-shop-select">
                     <option value="">(ショップ未選択)</option>
                     {% for s in all_shops %}
@@ -133,6 +163,9 @@
                 <button type="submit" class="btn btn-compact">適用</button>
             </form>
             <span class="shop-current">現在: {{ current_shop.name }}</span>
+            {% if current_user.is_authenticated %}
+            <div class="sidebar-user-name">{{ current_user.username }}</div>
+            {% endif %}
         </div>
     </aside>
 
@@ -141,53 +174,100 @@
         {% block content %}{% endblock %}
     </main>
 
+    {% if current_user.is_authenticated %}
+    {% include "_scrape_tracker.html" %}
+    {% endif %}
+
     <!-- Bottom Navigation (Mobile only) -->
-    <nav class="bottom-nav">
-        <a href="{{ url_for('index') }}" class="bottom-nav-item {% if request.endpoint == 'index' %}active{% endif %}"
-            {% if request.endpoint=='index' %}aria-current="page" {% endif %}>
+    <nav class="bottom-nav" aria-label="モバイルナビゲーション">
+        <a href="{{ url_for('index') }}" class="bottom-nav-item {% if current_endpoint.endswith('index') %}active{% endif %}"
+            {% if current_endpoint.endswith('index') %}aria-current="page" {% endif %}>
             <span class="bottom-nav-icon">📦</span>
             <span class="bottom-nav-label">商品</span>
         </a>
-        <a href="{{ url_for('dashboard') }}"
-            class="bottom-nav-item {% if request.endpoint == 'dashboard' %}active{% endif %}" {% if
-            request.endpoint=='dashboard' %}aria-current="page" {% endif %}>
-            <span class="bottom-nav-icon">📊</span>
-            <span class="bottom-nav-label">ダッシュ</span>
-        </a>
         <a href="{{ url_for('scrape_form') }}"
-            class="bottom-nav-item {% if request.endpoint == 'scrape_form' %}active{% endif %}" {% if
-            request.endpoint=='scrape_form' %}aria-current="page" {% endif %}>
+            class="bottom-nav-item {% if current_endpoint.endswith('scrape_form') %}active{% endif %}" {% if
+            current_endpoint.endswith('scrape_form') %}aria-current="page" {% endif %}>
             <span class="bottom-nav-icon">🔍</span>
             <span class="bottom-nav-label">抽出</span>
         </a>
-        <a href="{{ url_for('manage_templates') }}"
-            class="bottom-nav-item {% if request.endpoint == 'manage_templates' %}active{% endif %}" {% if
-            request.endpoint=='manage_templates' %}aria-current="page" {% endif %}>
-            <span class="bottom-nav-icon">📝</span>
-            <span class="bottom-nav-label">テンプレ</span>
+        <a href="{{ url_for('dashboard') }}"
+            class="bottom-nav-item {% if current_endpoint.endswith('dashboard') %}active{% endif %}" {% if
+            current_endpoint.endswith('dashboard') %}aria-current="page" {% endif %}>
+            <span class="bottom-nav-icon">📊</span>
+            <span class="bottom-nav-label">ダッシュ</span>
         </a>
-        <a href="{{ url_for('manage_shops') }}"
-            class="bottom-nav-item {% if request.endpoint == 'manage_shops' %}active{% endif %}" {% if
-            request.endpoint=='manage_shops' %}aria-current="page" {% endif %}>
-            <span class="bottom-nav-icon">🏪</span>
-            <span class="bottom-nav-label">店舗</span>
+        <a href="{{ url_for('pricelist.pricelist_list') }}"
+            class="bottom-nav-item {% if current_endpoint.startswith('pricelist.') %}active{% endif %}" {% if
+            current_endpoint.startswith('pricelist.') %}aria-current="page" {% endif %}>
+            <span class="bottom-nav-icon">📋</span>
+            <span class="bottom-nav-label">価格表</span>
+        </a>
+        <a href="{{ url_for('settings.settings_list') }}"
+            class="bottom-nav-item {% if current_endpoint.endswith('settings_list') %}active{% endif %}" {% if
+            current_endpoint.endswith('settings_list') %}aria-current="page" {% endif %}>
+            <span class="bottom-nav-icon">⚙️</span>
+            <span class="bottom-nav-label">設定</span>
         </a>
     </nav>
 
     <!-- Back to Top Button -->
     <button class="back-to-top" id="backToTop" type="button">↑</button>
 
+    <div id="espToastViewport" class="esp-toast-viewport" aria-live="polite" aria-atomic="true">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        {% for category, message in messages %}
+        <div class="esp-toast is-{{ category }} is-visible" data-autodismiss="true">
+            <div class="esp-toast-body">{{ message }}</div>
+            <button type="button" class="esp-toast-close" aria-label="通知を閉じる">×</button>
+        </div>
+        {% endfor %}
+        {% endif %}
+        {% endwith %}
+    </div>
+
+    <div id="espDialogOverlay" class="esp-dialog-overlay" hidden>
+        <div class="esp-dialog-shell" role="dialog" aria-modal="true" aria-labelledby="espDialogTitle" aria-describedby="espDialogDescription">
+            <div class="esp-dialog-header">
+                <div class="esp-dialog-heading">
+                    <h2 id="espDialogTitle">確認</h2>
+                    <p id="espDialogDescription" hidden></p>
+                </div>
+                <button type="button" class="esp-dialog-close" aria-label="ダイアログを閉じる">×</button>
+            </div>
+            <div class="esp-dialog-body"></div>
+            <div class="esp-dialog-footer"></div>
+        </div>
+    </div>
+
+    <div id="espLoadingOverlay" class="loading-overlay" hidden>
+        <div class="loading-content" role="status" aria-live="assertive">
+            <div class="loading-spinner" aria-hidden="true"></div>
+            <p class="loading-message" id="espLoadingMessage">処理中...</p>
+            <p class="loading-sub" id="espLoadingSub">しばらくお待ちください。</p>
+        </div>
+    </div>
+
     <script>
+        function notifySidebarState(isOpen) {
+            window.dispatchEvent(new CustomEvent('esp:sidebar-state', {
+                detail: { open: Boolean(isOpen) }
+            }));
+        }
+
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
             const overlay = document.querySelector('.sidebar-overlay');
             const toggleButton = document.querySelector('[data-action="toggle-sidebar"]');
-            sidebar.classList.toggle('open');
-            overlay.classList.toggle('open');
-            document.body.classList.toggle('sidebar-open');
+            const isOpen = !sidebar.classList.contains('open');
+            sidebar.classList.toggle('open', isOpen);
+            overlay.classList.toggle('open', isOpen);
+            document.body.classList.toggle('sidebar-open', isOpen);
             if (toggleButton) {
-                toggleButton.setAttribute('aria-expanded', sidebar.classList.contains('open'));
+                toggleButton.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
             }
+            notifySidebarState(isOpen);
         }
 
         function closeSidebar() {
@@ -200,7 +280,11 @@
             if (toggleButton) {
                 toggleButton.setAttribute('aria-expanded', 'false');
             }
+            notifySidebarState(false);
         }
+
+        window.toggleSidebar = toggleSidebar;
+        window.closeSidebar = closeSidebar;
 
         // Close sidebar on escape key
         document.addEventListener('keydown', function (e) {
@@ -226,14 +310,6 @@
             button.addEventListener('click', closeSidebar);
         });
 
-        document.querySelectorAll('select[data-auto-submit="true"]').forEach(function (select) {
-            select.addEventListener('change', function () {
-                if (select.form) {
-                    select.form.submit();
-                }
-            });
-        });
-
         const backToTop = document.getElementById('backToTop');
         if (backToTop) {
             backToTop.addEventListener('click', function () {
@@ -252,6 +328,10 @@
             }
         });
     </script>
+    <script src="{{ url_for('static', filename='js/app_ui.js') }}"></script>
+    {% if current_user.is_authenticated %}
+    <script src="{{ url_for('static', filename='js/scrape_tracker.js') }}"></script>
+    {% endif %}
     {% block scripts %}{% endblock %}
 </body>
 

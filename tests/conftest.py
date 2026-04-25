@@ -1,60 +1,128 @@
 import pytest
 import os
 import sys
-import tempfile
 import uuid
+from pathlib import Path
+
+from sqlalchemy import inspect, text
 
 # Add the application root to the path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Set test database URL before importing database module
-TEST_DB_PATH = os.path.join(tempfile.gettempdir(), f"esp_test_mercari_{uuid.uuid4().hex}.db")
-TEST_DB_URL_PATH = TEST_DB_PATH.replace(os.sep, "/")
-os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_URL_PATH}"
+os.environ["DATABASE_URL"] = "sqlite:///test_mercari.db"
 
-from app import app
-from database import init_db, SessionLocal, Base, engine
+import database
+from app import create_app
+from database import SessionLocal, Base
 from services.rate_limit_service import reset_rate_limiter_for_tests
 
-@pytest.fixture
-def client():
-    # Use an in-memory database for testing
-    app.config['TESTING'] = True
-    # For SQLite, in-memory DB is created by path
-    # But since our app uses a global SessionLocal/engine in database.py dependent on env var,
-    # we might need to patch or ensure env var is set before import or handle it here.
-    # Currently app.py calls init_db() on start.
-    
-    # Ideally we should override the database URL for tests, but database.py reads os.environ at import time.
-    # So we can't easily switch to in-memory unless we reload or structure differently.
-    # For now, let's assume we use a test.db file to avoid messing with production.
-    
-    # We rely on drop_all to clean up, avoiding file lock issues on Windows
-    
-    with app.test_client() as client:
-        with app.app_context():
-            reset_rate_limiter_for_tests()
-            app.config.update(
-                ALLOW_PUBLIC_SIGNUP=True,
-                FORCE_HTTPS=False,
-                HSTS_ENABLED=False,
-                SESSION_COOKIE_SECURE=False,
-                LOGIN_RATE_LIMIT=5,
-                LOGIN_RATE_WINDOW_SECONDS=900,
-                REGISTER_RATE_LIMIT=3,
-                REGISTER_RATE_WINDOW_SECONDS=3600,
-            )
-            # Ensure clean state
-            Base.metadata.drop_all(bind=engine)
-            # Create tables
-            Base.metadata.create_all(bind=engine)
-            yield client
-            reset_rate_limiter_for_tests()
-            # Cleanup
-            Base.metadata.drop_all(bind=engine)
+
+def _reset_sqlite_test_database_schema(target_engine):
+    target_engine.dispose()
+    with target_engine.begin() as connection:
+        connection.execute(text("PRAGMA foreign_keys=OFF"))
+        inspector = inspect(connection)
+        table_names = inspector.get_table_names()
+        for table_name in table_names:
+            connection.execute(text(f'DROP TABLE IF EXISTS "{table_name}"'))
+        connection.execute(text("PRAGMA foreign_keys=ON"))
+
+
+@pytest.fixture(autouse=True)
+def _reset_feature_flag_env(monkeypatch):
+    for env_name in (
+        "ENABLE_SHARED_BROWSER_RUNTIME",
+        "WARM_BROWSER_POOL",
+        "BROWSER_POOL_WARM_SITES",
+        "BROWSER_POOL_MAX_TASKS_BEFORE_RESTART",
+        "BROWSER_POOL_MAX_RUNTIME_SECONDS",
+        "MERCARI_USE_BROWSER_POOL_DETAIL",
+        "MERCARI_BROWSER_POOL_MAX_TASKS_BEFORE_RESTART",
+        "MERCARI_BROWSER_POOL_MAX_RUNTIME_SECONDS",
+        "MERCARI_PATROL_USE_BROWSER_POOL",
+        "SNKRDUNK_USE_BROWSER_POOL_DYNAMIC",
+        "SNKRDUNK_BROWSER_POOL_MAX_TASKS_BEFORE_RESTART",
+        "SNKRDUNK_BROWSER_POOL_MAX_RUNTIME_SECONDS",
+        "SCRAPE_JOB_ORPHAN_TIMEOUT_SECONDS",
+        "SELECTOR_REPAIR_STORE_MODE",
+        "SELECTOR_REPAIR_MIN_SCORE",
+        "SELECTOR_REPAIR_MIN_CANARIES",
+        "SELECTOR_REPAIR_CANARY_URLS_MERCARI_DETAIL",
+        "SELECTOR_REPAIR_CANARY_URLS_SNKRDUNK_DETAIL",
+        "WORKER_BACKLOG_WARN_COUNT",
+        "WORKER_BACKLOG_WARN_AGE_SECONDS",
+        "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP",
+        "WORKER_SELECTOR_REPAIR_LIMIT",
+        "SCRAPE_ALERT_WEBHOOK_URL",
+        "SCRAPE_ALERT_COOLDOWN_SECONDS",
+        "SCRAPE_ALERT_MAX_PER_WINDOW",
+        "SCRAPE_ALERT_WINDOW_SECONDS",
+        "SELECTOR_ALERT_WEBHOOK_URL",
+        "OPERATIONAL_ALERT_WEBHOOK_URL",
+        "OPERATIONAL_ALERT_COOLDOWN_SECONDS",
+        "OPERATIONAL_ALERT_MAX_PER_WINDOW",
+        "OPERATIONAL_ALERT_WINDOW_SECONDS",
+        "APP_ENV",
+        "ENVIRONMENT",
+        "PYTHON_ENV",
+        "RENDER",
+        "RUNTIME_ROLE",
+        "SECRET_KEY",
+        "REDIS_URL",
+        "VALKEY_URL",
+        "ALLOW_PUBLIC_SIGNUP",
+        "FORCE_HTTPS",
+        "HSTS_ENABLED",
+        "SESSION_COOKIE_SECURE",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+
 
 @pytest.fixture
-def db_session():
-    session = SessionLocal()
+def app(monkeypatch):
+    tmp_dir = Path(__file__).resolve().parent / ".tmp"
+    tmp_dir.mkdir(exist_ok=True)
+    database_path = tmp_dir / f"test_app_{uuid.uuid4().hex}.db"
+    database_url = f"sqlite:///{database_path.as_posix()}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    previous_engine = database.engine
+    test_engine = database.create_app_engine(database_url)
+    database.engine = test_engine
+    SessionLocal.remove()
+    SessionLocal.configure(bind=test_engine)
+
+    # Reset the in-memory scrape queue singleton to prevent stale
+    # thread-local sessions in reused ThreadPoolExecutor threads
+    # from pointing at a disposed/deleted test database.
+    import services.scrape_queue as _sq
+    _sq._queue = None
+
+    app = create_app(runtime_role="test", config_overrides={"TESTING": True, "WTF_CSRF_ENABLED": False})
+    with app.app_context():
+        reset_rate_limiter_for_tests()
+        _reset_sqlite_test_database_schema(test_engine)
+        Base.metadata.create_all(bind=test_engine)
+        yield app
+        reset_rate_limiter_for_tests()
+        _reset_sqlite_test_database_schema(test_engine)
+
+    SessionLocal.remove()
+    test_engine.dispose()
+    database.engine = previous_engine
+    SessionLocal.configure(bind=database.engine)
+    if database_path.exists():
+        database_path.unlink()
+
+
+@pytest.fixture
+def client(app):
+    with app.test_client() as client:
+        yield client
+
+@pytest.fixture
+def db_session(app):
+    session = database._session_factory()
     yield session
     session.close()

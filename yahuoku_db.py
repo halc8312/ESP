@@ -7,6 +7,9 @@ import logging
 import re
 from urllib.parse import urljoin
 
+from services.extraction_policy import attach_extraction_trace, pick_first
+from services.scrape_alerts import report_detail_result
+
 logger = logging.getLogger("yahuoku")
 
 
@@ -15,6 +18,26 @@ SEARCH_LINK_SELECTORS = [
     "a[href*='/auction/']",
     "a[href*='page.auctions.yahoo.co.jp/auction/']",
 ]
+
+_CLOSED_STATUS_VALUES = {
+    "closed",
+    "finished",
+    "ended",
+    "closedbysystem",
+    "closedbyseller",
+    "sold",
+}
+_CLOSED_PAGE_MARKERS = (
+    "このオークションは終了しています",
+    "オークションは終了しました",
+    "落札されました",
+    "落札価格",
+)
+_OPEN_PAGE_MARKERS = (
+    "入札する",
+    "今すぐ落札",
+    "購入手続きへ",
+)
 
 
 def _empty_result(url: str, status: str = "error") -> dict:
@@ -62,6 +85,106 @@ def _extract_auction_item(page) -> dict:
     return initial_props.get("auctionItem", {}) or {}
 
 
+def _get_page_text(page) -> str:
+    for attr_name in ("get_all_text", "get_text"):
+        extractor = getattr(page, attr_name, None)
+        if not callable(extractor):
+            continue
+        try:
+            text = extractor() or ""
+        except Exception:
+            continue
+        if isinstance(text, str) and text.strip():
+            return text
+    return ""
+
+
+def _extract_price_value(raw_value):
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, (int, float)):
+        return int(raw_value)
+
+    digits = "".join(ch for ch in str(raw_value) if ch.isdigit())
+    if not digits:
+        return None
+
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def _extract_tax_inclusive_price(item_detail: dict, page_text: str = ""):
+    for key in ("taxinPrice", "taxinBidorbuy", "taxinStartPrice"):
+        price = _extract_price_value(item_detail.get(key))
+        if price is not None and price > 0:
+            return price
+
+    price_data = item_detail.get("price", {})
+    if isinstance(price_data, dict):
+        for key in ("taxInCurrent", "taxInBid", "taxinCurrent", "taxinBid"):
+            price = _extract_price_value(price_data.get(key))
+            if price is not None and price > 0:
+                return price
+
+    if page_text:
+        for pattern in (
+            r"価格\s*([\d,]+)円\s*（税込）",
+            r"即決\s*([\d,]+)円\s*（税込）",
+        ):
+            match = re.search(pattern, page_text)
+            if not match:
+                continue
+            try:
+                return int(match.group(1).replace(",", ""))
+            except ValueError:
+                continue
+
+    if isinstance(price_data, dict):
+        for key in ("current", "bid"):
+            price = _extract_price_value(price_data.get(key))
+            if price is not None:
+                return price
+    elif isinstance(price_data, (int, float)):
+        return int(price_data)
+
+    for key in ("currentPrice", "price", "initPrice"):
+        price = _extract_price_value(item_detail.get(key))
+        if price is not None:
+            return price
+
+    return None
+
+
+def _infer_auction_status(item_detail: dict, page_text: str = "") -> str:
+    status_flag = item_detail.get("status")
+    close_status = item_detail.get("closeStatus")
+
+    for raw_value in (status_flag, close_status):
+        if raw_value in (True, False):
+            if raw_value is True:
+                return "sold"
+            continue
+        normalized = str(raw_value or "").strip().lower()
+        if not normalized:
+            continue
+        if normalized in _CLOSED_STATUS_VALUES:
+            return "sold"
+        if normalized in {"open", "active", "selling"}:
+            return "active"
+
+    if item_detail.get("isFinished") is True or item_detail.get("isClosed") is True:
+        return "sold"
+
+    if any(marker in page_text for marker in _CLOSED_PAGE_MARKERS):
+        return "sold"
+    if any(marker in page_text for marker in _OPEN_PAGE_MARKERS):
+        return "active"
+
+    return "unknown"
+
+
 def scrape_item_detail_light(url: str) -> dict:
     """HTTP-only Yahoo Auctions detail scrape."""
     try:
@@ -72,27 +195,39 @@ def scrape_item_detail_light(url: str) -> dict:
         if not item_detail:
             return {}
 
-        result = _empty_result(url, status="active")
-        result["title"] = item_detail.get("title", "")
+        result = _empty_result(url, status="unknown")
+        field_sources = {}
+        meta_title = next(
+            (str(el.attrib.get("content", "") or "") for el in page.css("meta[property='og:title']")),
+            "",
+        )
+        title, title_source = pick_first(
+            ("next_data", item_detail.get("title", "")),
+            ("meta", meta_title),
+        )
+        result["title"] = title
+        if title_source:
+            field_sources["title"] = title_source
+        page_text = _get_page_text(page)
 
-        price_data = item_detail.get("price", {})
-        if isinstance(price_data, dict):
-            result["price"] = price_data.get("current") or price_data.get("bid")
-        elif isinstance(price_data, (int, float)):
-            result["price"] = int(price_data)
-        if result["price"] is None:
-            result["price"] = item_detail.get("currentPrice") or item_detail.get("price")
+        result["price"] = _extract_tax_inclusive_price(item_detail, page_text)
+        if result["price"] is not None:
+            field_sources["price"] = "next_data"
 
-        description = item_detail.get("description", "") or item_detail.get("itemDescription", "")
+        raw_description = item_detail.get("description", "") or item_detail.get("itemDescription", "")
+        if isinstance(raw_description, list):
+            raw_description = "\n".join(str(d) for d in raw_description)
+        meta_description = ""
+        meta_el = page.css("meta[name='description']")
+        if meta_el:
+            meta_description = str(meta_el[0].attrib.get("content", "") or "")
+        description, description_source = pick_first(
+            ("next_data", str(raw_description or "")),
+            ("meta", meta_description),
+        )
         if description:
-            if isinstance(description, list):
-                result["description"] = "\n".join(str(d) for d in description)
-            else:
-                result["description"] = str(description)
-        else:
-            meta_el = page.css("meta[name='description']")
-            if meta_el:
-                result["description"] = str(meta_el[0].attrib.get("content", "") or "")
+            result["description"] = description
+            field_sources["description"] = description_source
 
         image_urls = []
         for key in ("img", "images", "image", "imageList"):
@@ -120,15 +255,13 @@ def scrape_item_detail_light(url: str) -> dict:
                 og_url = str(og_el[0].attrib.get("content", "") or "")
                 if og_url.startswith("http"):
                     image_urls.append(og_url)
+                    field_sources["images"] = "meta"
+        elif image_urls:
+            field_sources["images"] = "next_data"
         result["image_urls"] = image_urls
 
-        status_flag = item_detail.get("status") or item_detail.get("isFinished") or item_detail.get("isClosed") or item_detail.get("closeStatus")
-        if status_flag in (True, "closed", "finished", "ended", "closedBySystem", "closedBySeller"):
-            result["status"] = "sold"
-        else:
-            page_text = str(page.get_all_text())
-            if "終了" in page_text or "落札" in page_text:
-                result["status"] = "sold"
+        result["status"] = _infer_auction_status(item_detail, page_text)
+        field_sources["status"] = "next_data" if item_detail else "css"
 
         seller_data = item_detail.get("seller", {})
         if isinstance(seller_data, dict):
@@ -148,8 +281,9 @@ def scrape_item_detail_light(url: str) -> dict:
                     "inventory_qty": 1 if result["status"] == "active" else 0,
                 }
             ]
+            field_sources["variants"] = "next_data"
 
-        return result
+        return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
     except Exception as exc:
         logger.debug("Yahuoku light scrape error: %s", exc)
         return {}
@@ -161,7 +295,9 @@ def scrape_item_detail(url_or_driver, maybe_url=None, **_kwargs) -> dict:
     The legacy `(driver, url)` signature is accepted for backward compatibility.
     """
     url = _resolve_detail_url(url_or_driver, maybe_url)
-    return scrape_item_detail_light(url) or _empty_result(url)
+    result = scrape_item_detail_light(url) or _empty_result(url)
+    report_detail_result("yahuoku", url, result, result.get("_scrape_meta"), page_type="detail")
+    return result
 
 
 def scrape_single_item(url: str, headless: bool = True) -> list:

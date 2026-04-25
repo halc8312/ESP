@@ -1,0 +1,32 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: esp-local-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: esp-local-postgres
+    environment:
+      POSTGRES_DB: esp_local
+      POSTGRES_USER: esp
+      POSTGRES_PASSWORD: esp
+    ports:
+      - "5432:5432"
+    volumes:
+      - esp_local_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U esp -d esp_local"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  esp_local_postgres_data:

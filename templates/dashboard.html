@@ -6,107 +6,249 @@
 {% block content %}
 <div class="page-header">
     <h1>ダッシュボード</h1>
+    <p class="page-subtitle">{{ current_scope_name }} / 商品一覧と同じ条件で集計（アーカイブ・ゴミ箱を除外）</p>
 </div>
 
-<!-- Validation Alert (if issues exist) -->
-{% if validation_summary and validation_summary.products_with_issues > 0 %}
-<div class="validation-alert"
-    style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px;">
-    <span style="font-size: 1.5em;">⚠️</span>
-    <div>
-        <strong>{{ validation_summary.products_with_issues }}件の商品に問題があります</strong>
-        <span style="color: #666; font-size: 0.9em;">
-            (❌ エラー: {{ validation_summary.error_count }}件, ⚠️ 警告: {{ validation_summary.warning_count }}件)
-        </span>
+<div class="dashboard-actions">
+    <a href="{{ url_for('main.index') }}" class="btn btn-primary">商品一覧を開く</a>
+    <a href="{{ url_for('scrape.scrape_form') }}" class="btn btn-secondary">商品抽出へ</a>
+    <a href="{{ request.full_path if request.query_string else request.path }}" class="btn btn-muted">再読み込み</a>
+</div>
+
+<div class="dashboard-meta-bar">
+    <span>生成: {{ generated_at.strftime('%Y-%m-%d %H:%M') if generated_at else '-' }}</span>
+    <span>最終更新商品: {{ last_updated_at.strftime('%Y-%m-%d %H:%M') if last_updated_at else 'まだありません' }}</span>
+</div>
+
+{% if total_items == 0 %}
+<div class="content-card">
+    <div class="content-card-body dashboard-empty">
+        <h2>まだ管理対象商品がありません</h2>
+        <p class="text-muted">商品を登録すると、公開状態・仕入先状態・整備状況をここでまとめて確認できます。</p>
     </div>
+</div>
+{% else %}
+<div class="dashboard-summary-grid">
+    <article class="dashboard-summary-card dashboard-summary-card--neutral">
+        <span class="dashboard-summary-label">管理対象商品</span>
+        <strong class="dashboard-summary-value">{{ total_items }}</strong>
+        <span class="dashboard-summary-note">現在のスコープ内の商品数</span>
+    </article>
+    <article class="dashboard-summary-card dashboard-summary-card--positive">
+        <span class="dashboard-summary-label">公開中</span>
+        <strong class="dashboard-summary-value">{{ publication_counts.get('active', 0) }}</strong>
+        <span class="dashboard-summary-note">`Product.status = active`</span>
+    </article>
+    <article class="dashboard-summary-card dashboard-summary-card--neutral">
+        <span class="dashboard-summary-label">下書き</span>
+        <strong class="dashboard-summary-value">{{ publication_counts.get('draft', 0) }}</strong>
+        <span class="dashboard-summary-note">`Product.status = draft`</span>
+    </article>
+    <article class="dashboard-summary-card dashboard-summary-card--positive">
+        <span class="dashboard-summary-label">公開準備OK</span>
+        <strong class="dashboard-summary-value">{{ ready_count }}</strong>
+        <span class="dashboard-summary-note">現行バリデーションで問題なし</span>
+    </article>
+    <article class="dashboard-summary-card dashboard-summary-card--attention">
+        <span class="dashboard-summary-label">要対応商品</span>
+        <strong class="dashboard-summary-value">{{ issue_summary.products_with_issues }}</strong>
+        <span class="dashboard-summary-note">バリデーションで警告またはエラーあり</span>
+    </article>
+</div>
+
+<div class="dashboard-layout">
+    <div class="dashboard-main">
+        <section class="content-card">
+            <div class="content-card-header">
+                <h2>要対応商品</h2>
+            </div>
+            <div class="content-card-body">
+                {% if attention_items %}
+                <div class="dashboard-section-note">エラー件数の多い順に表示しています。まずは「編集」から詳細を開いて不足項目を埋めてください。</div>
+                <div class="table-responsive">
+                    <table class="product-table">
+                        <caption class="visually-hidden">要対応商品の一覧</caption>
+                        <thead>
+                            <tr>
+                                <th>商品</th>
+                                <th>問題</th>
+                                <th class="hide-mobile">公開</th>
+                                <th class="hide-mobile">仕入先</th>
+                                <th class="hide-mobile">更新</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in attention_items %}
+                            <tr>
+                                <td>
+                                    <div class="product-title-cell">{{ item.title }}</div>
+                                    <div class="text-muted">{{ item.site_label }}</div>
+                                    <div class="dashboard-inline-link"><a href="{{ item.detail_url }}">詳細で原因を確認</a></div>
+                                </td>
+                                <td>
+                                    <div class="dashboard-issue-badges">
+                                        {% if item.error_count %}
+                                        <span class="dashboard-issue-badge is-error">❌ {{ item.error_count }}</span>
+                                        {% endif %}
+                                        {% if item.warning_count %}
+                                        <span class="dashboard-issue-badge is-warning">⚠️ {{ item.warning_count }}</span>
+                                        {% endif %}
+                                    </div>
+                                    <div class="dashboard-issue-list">
+                                        {% for issue in item.issues[:2] %}
+                                        <div>{{ issue.message }}</div>
+                                        {% endfor %}
+                                        {% if item.issues|length > 2 %}
+                                        <div>他 {{ item.issues|length - 2 }} 件</div>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                                <td class="hide-mobile">
+                                    <span class="dashboard-badge is-{{ item.publication_status }}">
+                                        {{ '公開中' if item.publication_status == 'active' else '下書き' }}
+                                    </span>
+                                </td>
+                                <td class="hide-mobile">
+                                    <span class="dashboard-badge is-{{ item.source_status }}">
+                                        {% if item.source_status == 'on_sale' %}
+                                        在庫あり
+                                        {% elif item.source_status == 'sold' %}
+                                        売切れ
+                                        {% elif item.source_status == 'deleted' %}
+                                        削除/停止
+                                        {% else %}
+                                        要確認
+                                        {% endif %}
+                                    </span>
+                                </td>
+                                <td class="hide-mobile">{{ item.updated_at.strftime('%Y-%m-%d %H:%M') if item.updated_at else '-' }}</td>
+                                <td>
+                                    <a href="{{ item.detail_url }}" class="btn">編集</a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted">現在のスコープでは要対応商品はありません。</p>
+                {% endif %}
+            </div>
+        </section>
+
+        <section class="content-card">
+            <div class="content-card-header">
+                <h2>最近更新された商品</h2>
+            </div>
+            <div class="content-card-body">
+                <div class="table-responsive">
+                    <table class="product-table">
+                        <caption class="visually-hidden">最近更新された商品の一覧</caption>
+                        <thead>
+                            <tr>
+                                <th>画像</th>
+                                <th>商品</th>
+                                <th class="hide-mobile">価格</th>
+                                <th class="hide-mobile">公開</th>
+                                <th class="hide-mobile">仕入先</th>
+                                <th>品質</th>
+                                <th class="hide-mobile">更新</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in recent_items %}
+                            <tr>
+                                <td>
+                                    {% if item.thumbnail_url %}
+                                    <img src="{{ item.thumbnail_url }}" alt="thumbnail" class="dashboard-thumbnail" loading="lazy">
+                                    {% else %}
+                                    <span class="product-thumb-placeholder" aria-hidden="true"></span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="product-title-cell">{{ item.title }}</div>
+                                    <div class="text-muted">{{ item.site_label }}</div>
+                                </td>
+                                <td class="hide-mobile price-cell">
+                                    <div class="price-row price-sell">
+                                        <span class="price-label">販売:</span>
+                                        <span class="price-value">{% if item.selling_price is not none %}¥{{ "{:,}".format(item.selling_price) }}{% else %}未設定{% endif %}</span>
+                                    </div>
+                                    <div class="price-row price-cost">
+                                        <span class="price-label">仕入:</span>
+                                        <span class="price-value">{% if item.cost_price is not none %}¥{{ "{:,}".format(item.cost_price) }}{% else %}—{% endif %}</span>
+                                    </div>
+                                </td>
+                                <td class="hide-mobile">
+                                    <span class="dashboard-badge is-{{ item.publication_status }}">
+                                        {{ '公開中' if item.publication_status == 'active' else '下書き' }}
+                                    </span>
+                                </td>
+                                <td class="hide-mobile">
+                                    <span class="dashboard-badge is-{{ item.source_status }}">
+                                        {% if item.source_status == 'on_sale' %}
+                                        在庫あり
+                                        {% elif item.source_status == 'sold' %}
+                                        売切れ
+                                        {% elif item.source_status == 'deleted' %}
+                                        削除/停止
+                                        {% else %}
+                                        要確認
+                                        {% endif %}
+                                    </span>
+                                    <div class="text-muted">{{ item.source_status_raw }}</div>
+                                </td>
+                                <td>
+                                    {% if item.issues %}
+                                    <div class="dashboard-issue-badges">
+                                        {% if item.error_count %}
+                                        <span class="dashboard-issue-badge is-error">❌ {{ item.error_count }}</span>
+                                        {% endif %}
+                                        {% if item.warning_count %}
+                                        <span class="dashboard-issue-badge is-warning">⚠️ {{ item.warning_count }}</span>
+                                        {% endif %}
+                                    </div>
+                                    {% else %}
+                                    <span class="dashboard-badge is-clean">問題なし</span>
+                                    {% endif %}
+                                </td>
+                                <td class="hide-mobile">{{ item.updated_at.strftime('%Y-%m-%d %H:%M') if item.updated_at else '-' }}</td>
+                                <td>
+                                    <div class="dashboard-row-actions">
+                                        <a href="{{ item.detail_url }}" class="btn">編集</a>
+                                        {% if item.source_url %}
+                                        <a href="{{ item.source_url }}" target="_blank" rel="noopener" class="btn btn-secondary">元</a>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <aside class="dashboard-side">
+        <section class="content-card">
+            <div class="content-card-header">
+                <h2>運用メモ</h2>
+            </div>
+            <div class="content-card-body">
+                <div class="dashboard-list">
+                    {% for note in operational_notes %}
+                    <div class="dashboard-list-row">
+                        <span>{{ note.label }}</span>
+                        <strong>{{ note.count }}</strong>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </section>
+    </aside>
 </div>
 {% endif %}
-
-<!-- KPI Cards -->
-<div class="dashboard-grid">
-    <div class="stat-card">
-        <h3>全商品数 ({{ current_shop_id and '選択中' or '全ショップ' }})</h3>
-        <div class="value">{{ total_items }}</div>
-    </div>
-    <div class="stat-card">
-        <h3>出品中 (Active)</h3>
-        <div class="value" style="color: #2e7d32;">{{ status_map.get('active', 0) }}</div>
-    </div>
-    <div class="stat-card">
-        <h3>在庫切れ (Variant=0)</h3>
-        <div class="value" style="color: #c62828;">{{ sold_out_count }}</div>
-    </div>
-    <div class="stat-card">
-        <h3>下書き (Draft)</h3>
-        <div class="value" style="color: #f57f17;">{{ status_map.get('draft', 0) }}</div>
-    </div>
-</div>
-
-<!-- Recent Activity -->
-<div class="content-card">
-    <div class="content-card-header">
-        <h2>最近更新された商品</h2>
-    </div>
-    <div class="content-card-body">
-        <div class="table-responsive">
-            <table>
-                <thead>
-                    <tr>
-                        <th>画像</th>
-                        <th>タイトル</th>
-                        <th class="hide-mobile">価格</th>
-                        <th class="hide-mobile">ステータス</th>
-                        <th class="hide-mobile">最終更新</th>
-                        <th>状態</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for p in recent_items %}
-                    <tr>
-                        <td>
-                            {% if p.snapshots and p.snapshots[0].image_urls %}
-                            <img src="{{ p.snapshots[0].image_urls.split('|')[0] }}"
-                                style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px;">
-                            {% else %}
-                            <span
-                                style="display:inline-block; width:50px; height:50px; background:#eee; border-radius: 4px;"></span>
-                            {% endif %}
-                        </td>
-                        <td class="product-title-cell">{{ p.custom_title or p.last_title }}</td>
-                        <td class="hide-mobile">¥{{ "{:,}".format(p.last_price or 0) }}</td>
-                        <td class="hide-mobile">{{ p.last_status }}</td>
-                        <td class="hide-mobile">{{ p.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
-                        <td>
-                            {% if p.validation_issues %}
-                            {% for issue in p.validation_issues %}
-                            {% if issue.type == 'error' %}
-                            <span title="{{ issue.message }}"
-                                style="cursor: help; color: #c62828; font-size: 0.9em;">❌</span>
-                            {% else %}
-                            <span title="{{ issue.message }}"
-                                style="cursor: help; color: #f57f17; font-size: 0.9em;">⚠️</span>
-                            {% endif %}
-                            {% endfor %}
-                            {% else %}
-                            <span style="color: #2e7d32;">✓</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            <a href="{{ url_for('product_detail', product_id=p.id) }}" class="btn">編集</a>
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="7" style="text-align:center;">更新履歴はありません</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        <div style="margin-top:12px; text-align:right;">
-            <a href="{{ url_for('index') }}">すべて見る &raquo;</a>
-        </div>
-    </div>
-</div>
 {% endblock %}

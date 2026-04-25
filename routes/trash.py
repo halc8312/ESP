@@ -1,11 +1,12 @@
 """
 Trash routes - Soft delete with recovery and purge.
 """
-from datetime import datetime, timedelta
+from datetime import timedelta
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from flask_login import login_required, current_user
 from database import SessionLocal
 from models import Product, Variant, ProductSnapshot
+from time_utils import utc_now
 
 trash_bp = Blueprint('trash', __name__)
 
@@ -22,12 +23,15 @@ def trash_list():
         ).order_by(Product.deleted_at.desc()).all()
         
         # Calculate days remaining for each item
-        now = datetime.utcnow()
+        now = utc_now()
         for item in items:
             days_passed = (now - item.deleted_at).days
             item.days_remaining = max(0, 30 - days_passed)
         
         return render_template('trash.html', items=items)
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -50,12 +54,15 @@ def trash_delete():
                 Product.user_id == current_user.id
             ).first()
             if product:
-                product.deleted_at = datetime.utcnow()
+                product.deleted_at = utc_now()
                 count += 1
         
         session_db.commit()
         flash(f'{count}件をゴミ箱に移動しました', 'success')
         return redirect(request.referrer or url_for('main.index'))
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -85,6 +92,9 @@ def trash_restore():
         session_db.commit()
         flash(f'{count}件を復元しました', 'success')
         return redirect(url_for('trash.trash_list'))
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -117,6 +127,9 @@ def trash_purge():
         session_db.commit()
         flash(f'{count}件を完全に削除しました', 'success')
         return redirect(url_for('trash.trash_list'))
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -125,7 +138,7 @@ def purge_old_trash():
     """Auto-purge items deleted more than 30 days ago."""
     session_db = SessionLocal()
     try:
-        cutoff = datetime.utcnow() - timedelta(days=30)
+        cutoff = utc_now() - timedelta(days=30)
         old_items = session_db.query(Product).filter(
             Product.deleted_at != None,
             Product.deleted_at < cutoff
@@ -140,5 +153,8 @@ def purge_old_trash():
         
         session_db.commit()
         return count
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()

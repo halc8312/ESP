@@ -10,12 +10,14 @@ Tests three scenarios:
 import json
 import os
 import sys
-import tempfile
+import uuid
 
 import pytest
 
 # Ensure project root is on path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from services.page_state_classifier import PageStateAssessment
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +79,8 @@ class MockPage:
 def temp_config_dir():
     """Create temporary config files for testing."""
     import shutil
-    tmpdir = tempfile.mkdtemp(prefix="healer_test_")
+    tmpdir = os.path.join(os.getcwd(), f".tmp_selector_healer_{uuid.uuid4().hex}")
+    os.makedirs(tmpdir, exist_ok=True)
 
     selectors = {
         "_updated": "2026-01-01",
@@ -123,8 +126,7 @@ def temp_config_dir():
         }
     }
 
-    config_dir = os.path.join(tmpdir, "config")
-    os.makedirs(config_dir)
+    config_dir = tmpdir
 
     with open(os.path.join(config_dir, "scraping_selectors.json"), "w") as f:
         json.dump(selectors, f)
@@ -362,3 +364,256 @@ class TestHealLog:
         assert entry["site"] == "testsite"
         assert entry["field"] == "price"
         assert "new_selector" in entry
+
+
+class _AlertCollector:
+    def __init__(self):
+        self.events = []
+
+    def notify_selector_issue(self, **payload):
+        self.events.append(payload)
+        return True
+
+
+class TestSelectorHealerAlerting:
+    def test_heal_failure_dispatches_silent_alert(self, healer_with_temp_config, monkeypatch):
+        healer, config_dir = healer_with_temp_config
+        alerts = _AlertCollector()
+
+        page = MockPage(
+            elements_map={
+                ".old-title-class": [],
+                "h1.legacy": [],
+                "h1": [],
+                "h2": [],
+                "*": [],
+            }
+        )
+
+        import selector_config
+        monkeypatch.setattr(
+            selector_config, "_selectors_cache",
+            json.load(open(os.path.join(config_dir, "scraping_selectors.json")))
+        )
+        monkeypatch.setattr("services.selector_healer.get_alert_dispatcher", lambda: alerts)
+
+        value, was_healed = healer.extract_with_healing(
+            page, "testsite", "detail", "title", parser="scrapling"
+        )
+
+        assert value == ""
+        assert was_healed is False
+        assert alerts.events[-1]["event_type"] == "heal_failed"
+        assert alerts.events[-1]["details"]["reason"] == "element_not_found"
+
+    def test_persist_failure_dispatches_alert_but_keeps_healed_result(self, healer_with_temp_config, monkeypatch):
+        healer, config_dir = healer_with_temp_config
+        alerts = _AlertCollector()
+
+        good_el = MockElement(
+            tag="h1",
+            text="Product Found via Healing",
+            attribs={"class": "new-product-title", "id": "healed-title"},
+        )
+        page = MockPage(
+            elements_map={
+                ".old-title-class": [],
+                "h1.legacy": [],
+                "h1": [good_el],
+                "h2": [],
+                "*": [good_el],
+            }
+        )
+
+        import selector_config
+        monkeypatch.setattr(
+            selector_config, "_selectors_cache",
+            json.load(open(os.path.join(config_dir, "scraping_selectors.json")))
+        )
+        monkeypatch.setattr("services.selector_healer.get_alert_dispatcher", lambda: alerts)
+        monkeypatch.setattr(healer, "_save_healed_selector", lambda *args, **kwargs: False)
+
+        value, was_healed = healer.extract_with_healing(
+            page, "testsite", "detail", "title", parser="scrapling"
+        )
+
+        assert value == "Product Found via Healing"
+        assert was_healed is True
+        assert any(event["event_type"] == "persist_failed" for event in alerts.events)
+
+    def test_successful_heal_dispatches_repair_candidate_recorded_alert(self, healer_with_temp_config, monkeypatch):
+        healer, config_dir = healer_with_temp_config
+        alerts = _AlertCollector()
+
+        good_el = MockElement(
+            tag="h1",
+            text="Product Found via Healing",
+            attribs={"class": "new-product-title", "id": "healed-title"},
+        )
+        page = MockPage(
+            elements_map={
+                ".old-title-class": [],
+                "h1.legacy": [],
+                "h1": [good_el],
+                "h2": [],
+                "*": [good_el],
+            }
+        )
+
+        import selector_config
+        monkeypatch.setattr(
+            selector_config, "_selectors_cache",
+            json.load(open(os.path.join(config_dir, "scraping_selectors.json")))
+        )
+        monkeypatch.setattr("services.selector_healer.get_alert_dispatcher", lambda: alerts)
+        monkeypatch.setattr("services.selector_healer.record_repair_candidate", lambda **kwargs: 321)
+
+        value, was_healed = healer.extract_with_healing(
+            page, "testsite", "detail", "title", parser="scrapling"
+        )
+
+        assert value == "Product Found via Healing"
+        assert was_healed is True
+        repair_events = [event for event in alerts.events if event["event_type"] == "repair_candidate_recorded"]
+        assert len(repair_events) == 1
+        assert repair_events[0]["details"]["candidate_id"] == 321
+
+    def test_repeated_low_confidence_healing_dispatches_alert(self, healer_with_temp_config, monkeypatch):
+        healer, config_dir = healer_with_temp_config
+        alerts = _AlertCollector()
+
+        weak_el = MockElement(
+            tag="h1",
+            text="Weak but valid title",
+            attribs={"class": "mismatch-class"},
+        )
+        page = MockPage(
+            elements_map={
+                ".old-title-class": [],
+                "h1.legacy": [],
+                "h1": [weak_el],
+                "h2": [],
+                "*": [weak_el],
+            }
+        )
+
+        import selector_config
+        monkeypatch.setattr(
+            selector_config, "_selectors_cache",
+            json.load(open(os.path.join(config_dir, "scraping_selectors.json")))
+        )
+        monkeypatch.setattr("services.selector_healer.get_alert_dispatcher", lambda: alerts)
+        monkeypatch.setattr(healer, "_save_healed_selector", lambda *args, **kwargs: True)
+        monkeypatch.setenv("SELECTOR_ALERT_LOW_CONFIDENCE_THRESHOLD", "70")
+        monkeypatch.setenv("SELECTOR_ALERT_LOW_CONFIDENCE_REPEAT", "2")
+
+        healer.extract_with_healing(page, "testsite", "detail", "title", parser="scrapling")
+        healer._healed_selectors.clear()
+        healer.extract_with_healing(page, "testsite", "detail", "title", parser="scrapling")
+
+        low_confidence_events = [
+            event for event in alerts.events if event["event_type"] == "low_confidence_repeated"
+        ]
+        assert len(low_confidence_events) == 1
+        assert low_confidence_events[0]["details"]["repeat_count"] == 2
+
+    def test_unhealthy_page_skips_selector_healing_before_persist(self, healer_with_temp_config, monkeypatch):
+        healer, config_dir = healer_with_temp_config
+        alerts = _AlertCollector()
+        save_calls = []
+
+        good_el = MockElement(
+            tag="h1",
+            text="Product Found via Healing",
+            attribs={"class": "new-product-title", "id": "healed-title"},
+        )
+        page = MockPage(
+            elements_map={
+                ".old-title-class": [],
+                "h1.legacy": [],
+                "h1": [good_el],
+                "h2": [],
+                "*": [good_el],
+            }
+        )
+
+        import selector_config
+        monkeypatch.setattr(
+            selector_config, "_selectors_cache",
+            json.load(open(os.path.join(config_dir, "scraping_selectors.json")))
+        )
+        monkeypatch.setattr("services.selector_healer.get_alert_dispatcher", lambda: alerts)
+        monkeypatch.setattr(
+            "services.selector_healer.classify_page_state",
+            lambda site, page, page_type="detail": PageStateAssessment(
+                state="blocked",
+                allow_healing=False,
+                reasons=("blocked-marker",),
+            ),
+        )
+        monkeypatch.setattr(
+            healer,
+            "_save_healed_selector",
+            lambda *args, **kwargs: save_calls.append((args, kwargs)) or True,
+        )
+
+        value, was_healed = healer.extract_with_healing(
+            page, "testsite", "detail", "title", parser="scrapling"
+        )
+
+        assert value == ""
+        assert was_healed is False
+        assert save_calls == []
+        assert alerts.events[-1]["event_type"] == "heal_skipped"
+        assert alerts.events[-1]["details"]["page_state"] == "blocked"
+
+    def test_unhealthy_page_skips_image_healing_before_persist(self, healer_with_temp_config, monkeypatch):
+        healer, config_dir = healer_with_temp_config
+        alerts = _AlertCollector()
+        save_calls = []
+
+        healer._fingerprints.setdefault("testsite", {}).setdefault("detail", {})["images"] = {
+            "validators": {"url_pattern": "^https?://"},
+            "fingerprint": {"tag_names": ["img"], "src_pattern": "example"},
+        }
+
+        selectors = json.load(open(os.path.join(config_dir, "scraping_selectors.json")))
+        selectors["testsite"]["detail"]["images"] = [".old-images"]
+
+        image_el = MockElement(
+            tag="img",
+            attribs={"src": "https://example.com/healed.jpg", "id": "healed-image"},
+        )
+        page = MockPage(
+            elements_map={
+                ".old-images": [],
+                "img": [image_el],
+            }
+        )
+
+        import selector_config
+        monkeypatch.setattr(selector_config, "_selectors_cache", selectors)
+        monkeypatch.setattr("services.selector_healer.get_alert_dispatcher", lambda: alerts)
+        monkeypatch.setattr(
+            "services.selector_healer.classify_page_state",
+            lambda site, page, page_type="detail": PageStateAssessment(
+                state="challenge",
+                allow_healing=False,
+                reasons=("challenge-gate",),
+            ),
+        )
+        monkeypatch.setattr(
+            healer,
+            "_save_healed_selector",
+            lambda *args, **kwargs: save_calls.append((args, kwargs)) or True,
+        )
+
+        urls, was_healed = healer.extract_images_with_healing(
+            page, "testsite", "detail", parser="scrapling"
+        )
+
+        assert urls == []
+        assert was_healed is False
+        assert save_calls == []
+        assert alerts.events[-1]["event_type"] == "heal_skipped"
+        assert alerts.events[-1]["details"]["page_state"] == "challenge"

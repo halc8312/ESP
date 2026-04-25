@@ -29,6 +29,9 @@ def archive_list():
             all_shops=all_shops,
             current_shop_id=current_shop_id
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 

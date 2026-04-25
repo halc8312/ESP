@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}アカウント{% endblock %}
+{% block header_title %}アカウント{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>アカウント</h1>
+</div>
+
+<div class="content-card">
+    <div class="content-card-header">
+        <h2>ご利用中の名前</h2>
+    </div>
+    <div class="content-card-body">
+        <div class="account-name">{{ current_user.username }}</div>
+    </div>
+</div>
+
+<div class="content-card">
+    <div class="content-card-header">
+        <h2>パスワード変更</h2>
+    </div>
+    <div class="content-card-body">
+        <form action="{{ url_for('auth.account') }}" method="POST" class="account-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <div class="form-group">
+                <label for="current_password">今のパスワード</label>
+                <input type="password" id="current_password" name="current_password" required autocomplete="current-password">
+            </div>
+            <div class="form-group">
+                <label for="new_password">新しいパスワード</label>
+                <input type="password" id="new_password" name="new_password" required autocomplete="new-password">
+            </div>
+            <div class="form-group">
+                <label for="confirm_password">新しいパスワード（確認）</label>
+                <input type="password" id="confirm_password" name="confirm_password" required autocomplete="new-password">
+            </div>
+            <button type="submit" class="btn btn-primary">変更する</button>
+        </form>
+    </div>
+</div>
+
+<div class="content-card">
+    <div class="content-card-header">
+        <h2>ログアウト</h2>
+    </div>
+    <div class="content-card-body">
+        <form action="{{ url_for('auth.logout') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <button type="submit" class="btn btn-secondary">ログアウト</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,6 +1,7 @@
 import ast
 import inspect
 import json
+from unittest.mock import AsyncMock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,9 +23,21 @@ MODULES_WITHOUT_SELENIUM = [
 
 
 class MockElement:
-    def __init__(self, text="", attrib=None):
+    def __init__(self, text="", attrib=None, *, all_text=None, css_map=None, parent=None):
         self.text = text
         self.attrib = attrib or {}
+        self.parent = parent
+        self._all_text = all_text
+        self._css_map = css_map or {}
+
+    def css(self, selector):
+        return list(self._css_map.get(selector, []))
+
+    def get_text(self):
+        return self._all_text if self._all_text is not None else self.text
+
+    def get_all_text(self):
+        return self._all_text if self._all_text is not None else self.text
 
 
 class MockPage:
@@ -188,6 +201,167 @@ def test_offmall_search_result_uses_http_only_detail_scrape():
     assert results[0]["status"] == "active"
 
 
+def test_offmall_detail_prefers_visible_tax_included_price():
+    import offmall_db
+
+    detail_page = MockPage(
+        css_map={
+            "script[type='application/ld+json']": [
+                MockElement(
+                    text=json.dumps(
+                        {
+                            "@type": "Product",
+                            "name": "Offmall Camera",
+                            "description": "camera description",
+                            "offers": {"price": "2000", "availability": "https://schema.org/InStock"},
+                        }
+                    )
+                )
+            ],
+            "span.product-detail-price__main": [MockElement(text="2,200")],
+            "div.product-detail-point__box": [],
+            "#panel1 th, .product-detail-spec th": [],
+            "meta[property='og:image']": [],
+            "img[src*='hardoff']": [],
+            ".item-condition, .condition, [class*='rank'], [class*='condition']": [],
+        },
+        text="カートに入れる 2,200 (税込)",
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=detail_page):
+        result = offmall_db.scrape_item_detail_light("https://netmall.hardoff.co.jp/product/12345/")
+
+    assert result["price"] == 2200
+    assert result["status"] == "active"
+
+
+def test_offmall_detail_extracts_description_from_detail_rows():
+    import offmall_db
+
+    detail_td = MockElement(
+        text="",
+        all_text="ソーラーパネル 折り畳み 500Wポータブル蓄電池専用 持ち運びに便利",
+    )
+    detail_th = MockElement(text="特徴・備考")
+    detail_row = MockElement(css_map={"th": [detail_th], "td": [detail_td]})
+
+    detail_page = MockPage(
+        css_map={
+            "script[type='application/ld+json']": [
+                MockElement(
+                    text=json.dumps(
+                        {
+                            "@type": "Product",
+                            "name": "Offmall Solar Panel",
+                            "description": "https://netmall.hardoff.co.jp/product/2549323/",
+                            "offers": {"price": "15000"},
+                        }
+                    )
+                )
+            ],
+            "span.product-detail-price__main": [MockElement(text="16,500")],
+            "div.product-detail-point__box": [],
+            "#panel1 tr, .product-detail-spec tr": [detail_row],
+            "meta[property='og:image']": [],
+            "img[src*='hardoff']": [],
+            ".item-condition, .condition, [class*='rank'], [class*='condition']": [],
+        },
+        text="SOLDOUT 16,500 (税込)",
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=detail_page):
+        result = offmall_db.scrape_item_detail_light("https://netmall.hardoff.co.jp/product/2549323/")
+
+    assert result["description"] == "ソーラーパネル 折り畳み 500Wポータブル蓄電池専用 持ち運びに便利"
+    assert result["status"] == "sold"
+
+
+def test_offmall_detail_falls_back_to_attribute_rows_when_no_freeform_description():
+    import offmall_db
+
+    color_row = MockElement(
+        css_map={
+            "th": [MockElement(text="色")],
+            "td": [MockElement(text="", all_text="ブラック")],
+        }
+    )
+    size_row = MockElement(
+        css_map={
+            "th": [MockElement(text="表記サイズ")],
+            "td": [MockElement(text="", all_text="26.5cm")],
+        }
+    )
+    heel_row = MockElement(
+        css_map={
+            "th": [MockElement(text="ヒール")],
+            "td": [MockElement(text="", all_text="4cm")],
+        }
+    )
+    shipping_row = MockElement(
+        css_map={
+            "th": [MockElement(text="発送目安")],
+            "td": [MockElement(text="", all_text="1-2日後")],
+        }
+    )
+
+    detail_page = MockPage(
+        css_map={
+            "script[type='application/ld+json']": [
+                MockElement(
+                    text=json.dumps(
+                        {
+                            "@type": "Product",
+                            "name": "Nike Vapor Street",
+                            "description": "https://netmall.hardoff.co.jp/product/6004342/",
+                            "offers": {"price": "5500", "availability": "https://schema.org/InStock"},
+                        }
+                    )
+                )
+            ],
+            "span.product-detail-price__main": [MockElement(text="5,500")],
+            "div.product-detail-point__box": [],
+            "#panel1 tr, .product-detail-spec tr": [shipping_row, color_row, size_row, heel_row],
+            "meta[property='og:image']": [],
+            "img[src*='hardoff']": [],
+            ".item-condition, .condition, [class*='rank'], [class*='condition']": [],
+        },
+        text="カートに入れる 5,500 (税込)",
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=detail_page):
+        result = offmall_db.scrape_item_detail_light("https://netmall.hardoff.co.jp/product/6004342/")
+
+    assert result["description"] == "色: ブラック\n表記サイズ: 26.5cm\nヒール: 4cm"
+
+
+def test_offmall_patrol_prefers_visible_tax_included_price():
+    from services.patrol.offmall_patrol import OffmallPatrol
+
+    detail_page = MockPage(
+        css_map={
+            "script[type='application/ld+json']": [
+                MockElement(
+                    text=json.dumps(
+                        {
+                            "@type": "Product",
+                            "name": "Offmall Camera",
+                            "offers": {"price": "2000", "availability": "https://schema.org/InStock"},
+                        }
+                    )
+                )
+            ],
+            "span.product-detail-price__main": [MockElement(text="2,200")],
+        },
+        text="カートに入れる 2,200 (税込)",
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=detail_page):
+        result = OffmallPatrol().fetch("https://netmall.hardoff.co.jp/product/12345/")
+
+    assert result.price == 2200
+    assert result.status == "active"
+
+
 def test_yahuoku_search_result_uses_http_only_detail_scrape():
     import yahuoku_db
 
@@ -236,6 +410,84 @@ def test_yahuoku_search_result_uses_http_only_detail_scrape():
     assert results[0]["price"] == 5555
 
 
+def test_yahuoku_detail_prefers_tax_included_price_and_keeps_open_status():
+    import yahuoku_db
+
+    detail_page = MockPage(
+        find_map={
+            "#__NEXT_DATA__": MockElement(
+                text=json.dumps(
+                    {
+                        "props": {
+                            "pageProps": {
+                                "initialState": {
+                                    "item": {
+                                        "detail": {
+                                            "item": {
+                                                "title": "Auction Console",
+                                                "price": 15000,
+                                                "taxinPrice": 16500,
+                                                "status": "open",
+                                                "seller": {"name": "seller"},
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                )
+            )
+        },
+        css_map={"meta[name='description']": [], "meta[property='og:image']": []},
+        text="価格 16,500円 （税込） 3月21日（土）14時1分 終了予定 購入手続きへ",
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=detail_page):
+        result = yahuoku_db.scrape_item_detail_light("https://auctions.yahoo.co.jp/jp/auction/f123456789")
+
+    assert result["price"] == 16500
+    assert result["status"] == "active"
+
+
+def test_yahuoku_patrol_ignores_end_scheduled_text_for_open_auction():
+    from services.patrol.yahuoku_patrol import YahuokuPatrol
+
+    detail_page = MockPage(
+        find_map={
+            "#__NEXT_DATA__": MockElement(
+                text=json.dumps(
+                    {
+                        "props": {
+                            "pageProps": {
+                                "initialState": {
+                                    "item": {
+                                        "detail": {
+                                            "item": {
+                                                "title": "Auction Console",
+                                                "price": 15000,
+                                                "taxinPrice": 16500,
+                                                "status": "open",
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                )
+            )
+        },
+        text="価格 16,500円 （税込） 3月21日（土）14時1分 終了予定",
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=detail_page):
+        result = YahuokuPatrol().fetch("https://auctions.yahoo.co.jp/jp/auction/f123456789")
+
+    assert result.price == 16500
+    assert result.status == "active"
+
+
 def test_snkrdunk_search_result_uses_scrapling_dynamic_fetch():
     import snkrdunk_db
 
@@ -270,7 +522,7 @@ def test_snkrdunk_search_result_uses_scrapling_dynamic_fetch():
     )
 
     with patch("services.scraping_client.fetch_dynamic", return_value=search_page) as mock_dynamic, patch(
-        "services.scraping_client.fetch_static", return_value=detail_page
+        "services.scraping_client.fetch_static_async", new=AsyncMock(return_value=detail_page)
     ):
         results = snkrdunk_db.scrape_search_result("https://snkrdunk.com/search?keywords=jordan", max_items=1)
 

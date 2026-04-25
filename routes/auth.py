@@ -1,11 +1,13 @@
 """
-Authentication routes: login, register, logout, CLI create-user.
+Authentication routes: login, register, logout, account.
 """
-from flask import Blueprint, current_app, render_template, request, redirect, url_for
-from flask_login import login_user, logout_user, login_required, current_user
+import logging
+
+from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
+from flask_login import current_user, login_required, login_user, logout_user
 
 from database import SessionLocal
-from models import User
+from models import Shop, User
 from services.password_policy import validate_password_strength
 from services.rate_limit_service import (
     get_client_ip,
@@ -15,10 +17,14 @@ from services.rate_limit_service import (
 )
 
 auth_bp = Blueprint('auth', __name__)
+logger = logging.getLogger(__name__)
 
-
-def _rate_limit_response(decision):
-    return render_template("login.html", error=decision.message), decision.status_code
+def _build_account_context(session_db):
+    all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
+    return {
+        "all_shops": all_shops,
+        "current_shop_id": session.get("current_shop_id"),
+    }
 
 
 def _login_identifiers(username):
@@ -31,7 +37,7 @@ def _login_identifiers(username):
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('main.index'))
-        
+
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
@@ -45,8 +51,8 @@ def login():
         ):
             decision = is_limited(scope, identifier, limit, window)
             if not decision.allowed:
-                return _rate_limit_response(decision)
-        
+                return render_template('login.html', error=decision.message), decision.status_code
+
         session_db = SessionLocal()
         try:
             user = session_db.query(User).filter_by(username=username).first()
@@ -58,10 +64,13 @@ def login():
             else:
                 record_attempt("login-ip", client_ip, window)
                 record_attempt("login-user", normalized_username, window)
-                return render_template('login.html', error="Invalid username or password")
+                return render_template('login.html', error="ユーザー名またはパスワードが違います")
+        except Exception:
+            session_db.rollback()
+            raise
         finally:
             session_db.close()
-            
+
     return render_template('login.html')
 
 
@@ -75,7 +84,7 @@ def register():
             'register.html',
             error="Public signup is disabled. Ask an administrator to create an account.",
         ), 403
-    
+
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
@@ -85,7 +94,7 @@ def register():
         decision = is_limited("register-ip", client_ip, limit, window)
         if not decision.allowed:
             return render_template('register.html', error=decision.message), decision.status_code
-        
+
         session_db = SessionLocal()
         try:
             if not username:
@@ -94,30 +103,87 @@ def register():
 
             if session_db.query(User).filter_by(username=username).first():
                 record_attempt("register-ip", client_ip, window)
-                return render_template('register.html', error="Username already exists")
+                return render_template('register.html', error="このユーザー名はすでに使われています。")
 
             password_errors = validate_password_strength(password, username=username)
             if password_errors:
                 record_attempt("register-ip", client_ip, window)
                 return render_template('register.html', error=" ".join(password_errors)), 400
-            
+
             new_user = User(username=username)
             new_user.set_password(password)
             session_db.add(new_user)
             session_db.commit()
-            
+
             # Auto login after registration
             login_user(new_user)
             return redirect(url_for('main.index'))
-        except Exception as e:
-            return render_template('register.html', error=f"Error: {e}")
+        except Exception:
+            logger.exception("Registration failed for user %s", username)
+            session_db.rollback()
+            return render_template('register.html', error="登録中にエラーが発生しました。再度お試しください。")
         finally:
             session_db.close()
-            
+
     return render_template('register.html')
 
 
-@auth_bp.route('/logout')
+@auth_bp.route('/account', methods=['GET', 'POST'])
+@login_required
+def account():
+    session_db = SessionLocal()
+    try:
+        if request.method == 'POST':
+            current_password = request.form.get('current_password', '')
+            new_password = request.form.get('new_password', '')
+            confirm_password = request.form.get('confirm_password', '')
+
+            user = session_db.query(User).filter_by(id=current_user.id).first()
+            if user is None:
+                logout_user()
+                return redirect(url_for('auth.login'))
+
+            if not current_password or not new_password or not confirm_password:
+                flash('3つとも入力してください。', 'error')
+                return redirect(url_for('auth.account'))
+
+            if not user.check_password(current_password):
+                flash('今のパスワードが違います。', 'error')
+                return redirect(url_for('auth.account'))
+
+            password_errors = validate_password_strength(new_password, username=user.username)
+            if password_errors:
+                flash(' '.join(password_errors), 'error')
+                return redirect(url_for('auth.account'))
+
+            if new_password != confirm_password:
+                flash('新しいパスワードが一致していません。', 'error')
+                return redirect(url_for('auth.account'))
+
+            if user.check_password(new_password):
+                flash('今と同じパスワードは使えません。', 'error')
+                return redirect(url_for('auth.account'))
+
+            user.set_password(new_password)
+            try:
+                session_db.commit()
+            except Exception:
+                logger.exception("Password change failed for user %s", user.username)
+                session_db.rollback()
+                flash('変更できませんでした。', 'error')
+                return redirect(url_for('auth.account'))
+            flash('パスワードを変更しました。', 'success')
+            return redirect(url_for('auth.account'))
+
+        return render_template('account.html', **_build_account_context(session_db))
+    except Exception:
+        session_db.rollback()
+        raise
+    finally:
+        session_db.close()
+
+
+@auth_bp.route('/logout', methods=['GET', 'POST'])
 @login_required
 def logout():
     logout_user()
@@ -126,7 +192,7 @@ def logout():
 
 def register_cli_commands(app):
     """Register CLI commands related to authentication."""
-    
+
     @app.cli.command("create-user")
     def create_user():
         import getpass
@@ -136,7 +202,7 @@ def register_cli_commands(app):
         if password_errors:
             print("Password rejected: " + " ".join(password_errors))
             return
-        
+
         session_db = SessionLocal()
         try:
             if session_db.query(User).filter_by(username=username).first():

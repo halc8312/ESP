@@ -1,0 +1,2 @@
+Action(SiteID=US|Country=JP|Currency=USD|Version=1193|CC=UTF-8),CustomLabel,StartPrice,ConditionID,Title,Description,PicURL,Category,Format,Duration,Location,ShippingProfileName,ReturnProfileName,PaymentProfileName,C:Brand,C:Card Condition
+Add,MERCARI-1,12.90,3000,Export Test Product,Test description,,,FixedPriceItem,GTC,Japan,,,,Unbranded,Used

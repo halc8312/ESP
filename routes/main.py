@@ -1,7 +1,9 @@
 """
 Main routes: index and dashboard.
 """
+from collections import Counter
 from datetime import datetime
+
 from flask import Blueprint, render_template, request, session, redirect, url_for
 from flask_login import login_required, current_user
 from sqlalchemy.orm import subqueryload
@@ -9,11 +11,45 @@ from sqlalchemy import func
 
 from database import SessionLocal
 from models import Shop, Product, Variant, ProductSnapshot
+from services.rich_text import normalize_rich_text
 from services.validation_service import validate_product, get_issue_summary
+from time_utils import utc_now
 
 main_bp = Blueprint('main', __name__)
 
 PAGE_SIZE = 50
+
+SOURCE_ON_SALE_STATUSES = {
+    "active",
+    "available",
+    "on_sale",
+    "selling",
+    "在庫あり",
+    "販売中",
+    "出品中",
+    "在庫○",
+}
+SOURCE_SOLD_STATUSES = {
+    "sold",
+    "sold_out",
+    "soldout",
+    "売り切れ",
+}
+SOURCE_DELETED_STATUSES = {
+    "blocked",
+    "deleted",
+    "deleted_detail",
+}
+SITE_LABELS = {
+    "manual": "手動",
+    "mercari": "メルカリ",
+    "offmall": "オフモール",
+    "rakuma": "ラクマ",
+    "snkrdunk": "スニダン",
+    "surugaya": "駿河屋",
+    "yahoo": "ヤフショ",
+    "yahuoku": "ヤフオク",
+}
 
 
 def _manual_form_defaults(current_shop_id):
@@ -90,6 +126,71 @@ def _normalize_manual_image_urls(raw_value):
     return normalized_urls
 
 
+def _normalize_publication_status(raw_status):
+    normalized = str(raw_status or "").strip().lower()
+    if normalized == "active":
+        return "active"
+    return "draft"
+
+
+def _normalize_source_status(raw_status):
+    normalized = str(raw_status or "").strip().lower()
+    if normalized in SOURCE_ON_SALE_STATUSES:
+        return "on_sale"
+    if normalized in SOURCE_SOLD_STATUSES:
+        return "sold"
+    if normalized in SOURCE_DELETED_STATUSES:
+        return "deleted"
+    return "unknown"
+
+
+def _latest_snapshot_for_dashboard(product):
+    if not product.snapshots:
+        return None
+
+    return max(
+        product.snapshots,
+        key=lambda snapshot: (snapshot.scraped_at or datetime.min, snapshot.id or 0),
+    )
+
+
+def _split_snapshot_image_urls(snapshot):
+    if not snapshot or not snapshot.image_urls:
+        return []
+    return [url.strip() for url in snapshot.image_urls.split("|") if url.strip()]
+
+
+def _build_dashboard_product_row(product):
+    latest_snapshot = _latest_snapshot_for_dashboard(product)
+    image_urls = _split_snapshot_image_urls(latest_snapshot)
+    issues = validate_product(product, latest_snapshot)
+    error_count = sum(1 for issue in issues if issue["type"] == "error")
+    warning_count = sum(1 for issue in issues if issue["type"] == "warning")
+    publication_status = _normalize_publication_status(product.status)
+    source_status = _normalize_source_status(product.last_status)
+
+    return {
+        "cost_price": product.last_price,
+        "detail_url": url_for("products.product_detail", product_id=product.id),
+        "error_count": error_count,
+        "has_english_title": bool((product.custom_title_en or "").strip()),
+        "id": product.id,
+        "image_count": len(image_urls),
+        "issues": issues,
+        "publication_status": publication_status,
+        "selling_price": product.selling_price,
+        "site": product.site or "unknown",
+        "site_label": SITE_LABELS.get(product.site, product.site or "未設定"),
+        "source_status": source_status,
+        "source_status_raw": product.last_status or "未設定",
+        "source_url": product.source_url,
+        "thumbnail_url": image_urls[0] if image_urls else None,
+        "title": product.custom_title or product.last_title or f"Product #{product.id}",
+        "updated_at": product.updated_at,
+        "warning_count": warning_count,
+    }
+
+
 @main_bp.route("/dashboard")
 @login_required
 def dashboard():
@@ -97,72 +198,112 @@ def dashboard():
     try:
         current_shop_id = session.get('current_shop_id')
         
-        # Base query for user's products
-        base_query = session_db.query(Product).filter(Product.user_id == current_user.id)
+        # Align dashboard scope with the index view.
+        base_query = session_db.query(Product).filter(
+            Product.user_id == current_user.id,
+            Product.archived != True,
+            Product.deleted_at == None,
+        )
         if current_shop_id:
             base_query = base_query.filter(Product.shop_id == current_shop_id)
 
-        # 1. Total Count
-        total_items = base_query.count()
+        products = base_query.options(subqueryload(Product.snapshots)).all()
+        dashboard_rows = [_build_dashboard_product_row(product) for product in products]
+        total_items = len(dashboard_rows)
 
-        # 2. Status Counts
-        # func.count(Product.id) is cleaner, grouping by status
-        status_counts = (
-            session_db.query(Product.last_status, func.count(Product.id))
-            .filter(Product.user_id == current_user.id)
-        )
-        if current_shop_id:
-            status_counts = status_counts.filter(Product.shop_id == current_shop_id)
-        
-        status_counts = status_counts.group_by(Product.last_status).all()
-        # Convert to dict for easy access: {'active': 10, 'sold': 2, ...}
-        status_map = {s[0]: s[1] for s in status_counts}
+        publication_counts = Counter(row["publication_status"] for row in dashboard_rows)
+        source_counts = Counter(row["source_status"] for row in dashboard_rows)
 
-        # 3. Sold Out / Low Stock Variants
-        # This is a bit complex. We want to find variants with qty=0 linked to our products.
-        # Join Product and Variant
-        sold_out_query = (
+        zero_stock_variants_query = (
             session_db.query(func.count(Variant.id))
             .join(Product)
-            .filter(Product.user_id == current_user.id)
+            .filter(
+                Product.user_id == current_user.id,
+                Product.archived != True,
+                Product.deleted_at == None,
+            )
             .filter(Variant.inventory_qty == 0)
         )
         if current_shop_id:
-            sold_out_query = sold_out_query.filter(Product.shop_id == current_shop_id)
-        
-        sold_out_count = sold_out_query.scalar()
+            zero_stock_variants_query = zero_stock_variants_query.filter(Product.shop_id == current_shop_id)
 
-        # 4. Recent Activity (Last 5 updated) with validation
-        recent_items = (
-            base_query
-            .options(subqueryload(Product.snapshots))
-            .order_by(Product.updated_at.desc())
-            .limit(5)
-            .all()
-        )
-        
-        # 5. Validate recent items and count issues
-        products_with_issues = []
-        for p in recent_items:
-            snapshot = p.snapshots[0] if p.snapshots else None
-            issues = validate_product(p, snapshot)
-            p.validation_issues = issues  # Attach to product for template access
-            products_with_issues.append((p, issues))
-        
-        validation_summary = get_issue_summary(products_with_issues)
+        zero_stock_variant_count = zero_stock_variants_query.scalar() or 0
+
+        products_with_issues = [
+            (row["title"], row["issues"])
+            for row in dashboard_rows
+        ]
+        issue_summary = get_issue_summary(products_with_issues)
+
+        ready_count = total_items - issue_summary["products_with_issues"]
+        operational_notes = [
+            {
+                "count": source_counts.get("on_sale", 0),
+                "label": "仕入先在庫あり",
+            },
+            {
+                "count": source_counts.get("sold", 0),
+                "label": "仕入先売切れ",
+            },
+            {
+                "count": source_counts.get("unknown", 0),
+                "label": "仕入先要確認",
+            },
+            {
+                "count": zero_stock_variant_count,
+                "label": "0在庫バリアント",
+            },
+            {
+                "count": sum(1 for row in dashboard_rows if row["selling_price"] is not None and row["selling_price"] > 0),
+                "label": "販売価格設定済み",
+            },
+            {
+                "count": sum(1 for row in dashboard_rows if row["image_count"] > 0),
+                "label": "画像登録済み",
+            },
+        ]
+
+        recent_items = sorted(
+            dashboard_rows,
+            key=lambda row: row["updated_at"] or datetime.min,
+            reverse=True,
+        )[:8]
+        attention_items = sorted(
+            [row for row in dashboard_rows if row["issues"]],
+            key=lambda row: (
+                row["error_count"],
+                row["warning_count"],
+                row["updated_at"] or datetime.min,
+            ),
+            reverse=True,
+        )[:6]
 
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
+        current_shop = next((shop for shop in all_shops if shop.id == current_shop_id), None)
+        last_updated_at = max(
+            [row["updated_at"] for row in dashboard_rows if row["updated_at"]] or [None]
+        )
 
         return render_template(
             "dashboard.html",
-            total_items=total_items,
-            status_map=status_map,
-            sold_out_count=sold_out_count,
+            attention_items=attention_items,
+            current_scope_name=current_shop.name if current_shop else "全ショップ",
+            generated_at=utc_now(),
+            issue_summary=issue_summary,
+            last_updated_at=last_updated_at,
+            operational_notes=operational_notes,
+            publication_counts=publication_counts,
             recent_items=recent_items,
-            validation_summary=validation_summary,
+            ready_count=ready_count,
+            source_counts=source_counts,
+            total_items=total_items,
+            zero_stock_variant_count=zero_stock_variant_count,
             all_shops=all_shops,
-            current_shop_id=current_shop_id
+            current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -173,7 +314,9 @@ def dashboard():
 def index():
     session_db = SessionLocal()
     try:
-        page = int(request.args.get("page", 1))
+        raw_page = request.args.get("page", "1")
+        page = int(raw_page) if str(raw_page).isdigit() else 1
+        page = max(page, 1)
         selected_site = request.args.get("site")
         selected_status = request.args.get("status")
         selected_change_filter = request.args.get("change_filter")
@@ -262,9 +405,14 @@ def index():
                 products_to_display.append(p)
 
         total_items = len(products_to_display)
-        total_pages = (total_items + PAGE_SIZE - 1) // PAGE_SIZE
+        total_pages = max(1, (total_items + PAGE_SIZE - 1) // PAGE_SIZE)
+        if page > total_pages:
+            page = total_pages
         offset = (page - 1) * PAGE_SIZE
         paginated_products = products_to_display[offset : offset + PAGE_SIZE]
+        page_start = offset + 1 if total_items else 0
+        page_end = min(offset + PAGE_SIZE, total_items)
+        page_numbers = list(range(max(1, page - 2), min(total_pages, page + 2) + 1))
 
         has_prev = page > 1
         has_next = page < total_pages
@@ -292,6 +440,10 @@ def index():
             total_count=total_count,
             # Pagination
             page=page,
+            page_end=page_end,
+            page_numbers=page_numbers,
+            page_start=page_start,
+            total_items=total_items,
             total_pages=total_pages,
             has_prev=has_prev,
             has_next=has_next,
@@ -301,6 +453,9 @@ def index():
             all_shops=all_shops,
             current_shop_id=current_shop_id
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -384,7 +539,9 @@ def product_manual_add():
         effective_inventory_qty = 0 if stock_state == "sold" else inventory_qty
         effective_last_status = "sold" if stock_state == "sold" else "on_sale"
         normalized_images = _normalize_manual_image_urls(form_data["image_urls"])
-        now = datetime.utcnow()
+        normalized_description = normalize_rich_text(form_data["description"]) or None
+        normalized_description_en = normalize_rich_text(form_data["description_en"]) or None
+        now = utc_now()
 
         product = Product(
             user_id=current_user.id,
@@ -395,9 +552,9 @@ def product_manual_add():
             last_price=cost_price,
             last_status=effective_last_status,
             custom_title=title,
-            custom_description=form_data["description"] or None,
+            custom_description=normalized_description,
             custom_title_en=form_data["title_en"] or None,
-            custom_description_en=form_data["description_en"] or None,
+            custom_description_en=normalized_description_en,
             status=publish_status,
             tags=form_data["tags"] or None,
             selling_price=selling_price,
@@ -413,7 +570,7 @@ def product_manual_add():
             title=title,
             price=cost_price,
             status=effective_last_status,
-            description=form_data["description"] or None,
+            description=normalized_description,
             image_urls="|".join(normalized_images),
         )
         session_db.add(snapshot)
@@ -430,6 +587,9 @@ def product_manual_add():
 
         session_db.commit()
         return redirect(url_for('products.product_detail', product_id=product.id))
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 

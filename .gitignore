@@ -4,6 +4,11 @@
 # GitHub App credentials
 gha-creds-*.json
 
+# Environment variables
+.env
+.env.local
+.env.*.local
+
 # Python
 __pycache__/
 *.py[cod]
@@ -38,9 +43,15 @@ wheels/
 # Scraping dumps and generated verification artifacts
 dump*.html
 *_dump*.html
+*_test.html
 mercari_page_dump*.html
+search_dump*.html
 scrape_test_results*.json
 scraping_test_report*.json
+e2e_test_results_*/
+test_db_patchset_*.sqlite
+tests/.tmp/
+!tests/fixtures/**/*.html
 pytest_test.log
 test_stdout.log
 test_stderr.log

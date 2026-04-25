@@ -20,6 +20,9 @@ def pricing_list():
     try:
         rules = session_db.query(PricingRule).filter_by(user_id=current_user.id).all()
         return render_template('pricing.html', rules=rules)
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 

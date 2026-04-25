@@ -25,6 +25,7 @@
 
 <!-- 商品一覧 -->
 <form method="POST" action="{{ url_for('pricelist.pricelist_add_products', pricelist_id=pricelist.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <div class="content-card">
         <div class="content-card-body">
             {% if products %}

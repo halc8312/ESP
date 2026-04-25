@@ -4,15 +4,17 @@ No login required.
 """
 import hashlib
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import timedelta
 from urllib.parse import urlparse
 
 from flask import Blueprint, render_template, abort, jsonify, request, session
 from flask_login import login_required, current_user
-from sqlalchemy.orm import subqueryload
+from sqlalchemy.orm import joinedload, subqueryload
 
-from database import SessionLocal
+from database import SessionLocal, _session_factory
 from models import Shop, PriceList, PriceListItem, Product, CatalogPageView
+from services.rich_text import build_rich_text_excerpt, normalize_rich_text, rich_text_to_plain_text
+from time_utils import utc_now
 
 catalog_bp = Blueprint('catalog', __name__)
 
@@ -29,9 +31,47 @@ def _latest_snapshot(product):
 def _pricelist_by_token(session_db, token):
     return (
         session_db.query(PriceList)
+        .options(joinedload(PriceList.shop))
         .filter(PriceList.token == token, PriceList.is_active == True)
         .first()
     )
+
+
+def _resolve_catalog_shop_branding(pricelist, items):
+    explicit_shop = getattr(pricelist, "shop", None)
+    if explicit_shop and explicit_shop.logo_url:
+        return explicit_shop.logo_url, explicit_shop.name
+
+    for item in items:
+        product = getattr(item, "product", None)
+        shop = getattr(product, "shop", None)
+        if shop and shop.logo_url:
+            return shop.logo_url, shop.name
+
+    if explicit_shop:
+        return None, explicit_shop.name
+    return None, None
+
+
+def _split_catalog_tags(raw_tags):
+    if not raw_tags:
+        return []
+
+    normalized = []
+    seen = set()
+    for part in raw_tags.split(","):
+        candidate = (part or "").strip()
+        if not candidate:
+            continue
+
+        key = candidate.lower()
+        if key in seen:
+            continue
+
+        seen.add(key)
+        normalized.append(candidate)
+
+    return normalized
 
 
 def _build_catalog_item(item):
@@ -48,6 +88,18 @@ def _build_catalog_item(item):
     display_price = item.custom_price or p.selling_price or p.last_price or 0
     total_stock = sum(v.inventory_qty or 0 for v in p.variants)
 
+    # Public catalog: prefer curated custom content over raw scraped text.
+    # Never expose source_url, site, or other internal sourcing details.
+    description = p.custom_description or ""
+    if not description and snapshot:
+        description = snapshot.description or ""
+    description_en = p.custom_description_en or ""
+    description_html = normalize_rich_text(description)
+    description_en_html = normalize_rich_text(description_en)
+    description_text = rich_text_to_plain_text(description)
+    description_en_text = rich_text_to_plain_text(description_en)
+    tags = _split_catalog_tags(p.tags)
+
     return {
         "product_id": p.id,
         "title": display_title,
@@ -57,8 +109,12 @@ def _build_catalog_item(item):
         "image_urls": image_urls,
         "stock": total_stock,
         "in_stock": total_stock > 0,
-        "description": p.custom_description or (snapshot.description if snapshot else "") or "",
-        "description_en": p.custom_description_en or "",
+        "description_html": description_html,
+        "description_en_html": description_en_html,
+        "description_text": description_text,
+        "description_en_text": description_en_text,
+        "description_snippet": build_rich_text_excerpt(description_en or description, limit=80),
+        "tags": tags,
     }
 
 
@@ -95,7 +151,7 @@ def _referrer_group(domain):
 
 def record_page_view(pricelist_id, request_obj, product_id=None):
     """アクセス記録の失敗で公開画面を止めない。"""
-    session_db = SessionLocal()
+    session_db = _session_factory()
     try:
         session_db.add(
             CatalogPageView(
@@ -134,29 +190,35 @@ def catalog_view(token):
             .join(Product)
             .options(subqueryload(PriceListItem.product).subqueryload(Product.snapshots))
             .options(subqueryload(PriceListItem.product).subqueryload(Product.variants))
+            .options(subqueryload(PriceListItem.product).joinedload(Product.shop))
             .order_by(PriceListItem.sort_order)
             .all()
         )
 
         # Process items for display
         catalog_items = []
-        shop_logo = None
         for item in items:
             catalog_item = _build_catalog_item(item)
             if catalog_item is not None:
                 catalog_items.append(catalog_item)
-            
-            # Find the first available shop logo
-            if shop_logo is None and item.product and item.product.shop and item.product.shop.logo_url:
-                shop_logo = item.product.shop.logo_url
+        available_tags = sorted(
+            {tag for catalog_item in catalog_items for tag in catalog_item["tags"]},
+            key=str.lower,
+        )
+        shop_logo, shop_name = _resolve_catalog_shop_branding(pl, items)
 
         return render_template(
             "catalog.html",
             pricelist=pl,
             items=catalog_items,
+            available_tags=available_tags,
             currency_rate=pl.currency_rate,
             shop_logo=shop_logo,
+            shop_name=shop_name,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -192,6 +254,9 @@ def catalog_product_detail(token, product_id):
         record_page_view(pl.id, request, product_id=product_id)
 
         return jsonify(catalog_item)
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -217,7 +282,7 @@ def pricelist_analytics(pricelist_id):
             .all()
         )
 
-        now = datetime.utcnow()
+        now = utc_now()
         seven_days_ago = now - timedelta(days=7)
         thirty_days_ago = now - timedelta(days=30)
         fourteen_days_ago = now - timedelta(days=13)
@@ -309,5 +374,8 @@ def pricelist_analytics(pricelist_id):
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()

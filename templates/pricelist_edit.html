@@ -22,10 +22,28 @@
 <div class="content-card">
     <div class="content-card-body">
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            {% set theme_value = selected_theme or (pricelist.theme if pricelist and pricelist.theme else 'dark') %}
+            {% set shop_value = selected_shop_id if selected_shop_id is defined else (pricelist.shop_id if pricelist and pricelist.shop_id else '') %}
             <div class="form-group">
                 <label for="name">価格表名 *</label>
                 <input type="text" id="name" name="name" value="{{ pricelist.name if pricelist else '' }}"
                     placeholder="例: Customer A Price List" required>
+            </div>
+
+            <div class="form-group">
+                <label for="shop_id">表示ショップ / ロゴ</label>
+                <select id="shop_id" name="shop_id">
+                    <option value="">価格表内の商品から自動判定</option>
+                    {% for s in all_shops %}
+                    <option value="{{ s.id }}" {% if shop_value|string == s.id|string %}selected{% endif %}>
+                        {{ s.name }}{% if s.logo_url %} (ロゴ登録済み){% endif %}
+                    </option>
+                    {% endfor %}
+                </select>
+                <p class="text-small text-muted mb-0" style="margin-top: 6px;">
+                    指定した場合、公開ページのヘッダーではこのショップのロゴを優先して表示します。
+                </p>
             </div>
 
             <div class="form-group">
@@ -37,19 +55,43 @@
             <input type="hidden" name="currency_rate" value="{{ pricelist.currency_rate if pricelist else 150 }}">
 
             <div class="form-group">
+                <label>ベースカラー</label>
+                <div style="display: grid; gap: 12px;">
+                    <label
+                        style="display: block; border: 1px solid {% if theme_value == 'dark' %}#f4b183{% else %}#d9dde3{% endif %}; background: {% if theme_value == 'dark' %}#1f2430{% else %}#fff{% endif %}; color: {% if theme_value == 'dark' %}#fff{% else %}inherit{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
+                        <input type="radio" name="theme" value="dark" {% if theme_value == 'dark' %}checked{% endif %}>
+                        <strong style="display: block; margin-top: 6px;">ダークモード</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: {% if theme_value == 'dark' %}#d7dde8{% else %}#51606f{% endif %};">黒背景ベースで高級感を出す見せ方です。</span>
+                    </label>
+                    <label
+                        style="display: block; border: 1px solid {% if theme_value == 'light' %}#90caf9{% else %}#d9dde3{% endif %}; background: {% if theme_value == 'light' %}#f8fbff{% else %}#fff{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
+                        <input type="radio" name="theme" value="light" {% if theme_value == 'light' %}checked{% endif %}>
+                        <strong style="display: block; margin-top: 6px;">ライトモード</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">白背景ベースで見やすさを優先した見せ方です。</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-group">
                 <label>公開レイアウト</label>
                 <div style="display: grid; gap: 12px;">
                     <label
                         style="display: block; border: 1px solid {% if layout_value == 'grid' %}#90caf9{% else %}#d9dde3{% endif %}; background: {% if layout_value == 'grid' %}#e3f2fd{% else %}#fff{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
                         <input type="radio" name="layout" value="grid" {% if layout_value == 'grid' %}checked{% endif %}>
-                        <strong style="display: block; margin-top: 6px;">グリッド</strong>
-                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">既存のカード型。商品点数が多い価格表向け。</span>
+                        <strong style="display: block; margin-top: 6px;">グリッド (Grid)</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">Card-based layout. Best for catalogs with many products.</span>
                     </label>
                     <label
                         style="display: block; border: 1px solid {% if layout_value == 'editorial' %}#f4b183{% else %}#d9dde3{% endif %}; background: {% if layout_value == 'editorial' %}#fff4e8{% else %}#fff{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
                         <input type="radio" name="layout" value="editorial" {% if layout_value == 'editorial' %}checked{% endif %}>
-                        <strong style="display: block; margin-top: 6px;">エディトリアル</strong>
-                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">画像を大きく見せる縦積み型。少数精鋭の提案向け。</span>
+                        <strong style="display: block; margin-top: 6px;">エディトリアル (Editorial)</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">Large images with alternating layout. Best for curated selections.</span>
+                    </label>
+                    <label
+                        style="display: block; border: 1px solid {% if layout_value == 'list' %}#81c784{% else %}#d9dde3{% endif %}; background: {% if layout_value == 'list' %}#e8f5e9{% else %}#fff{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
+                        <input type="radio" name="layout" value="list" {% if layout_value == 'list' %}checked{% endif %}>
+                        <strong style="display: block; margin-top: 6px;">高密度リスト (Compact List)</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">High-density rows for fast browsing. Shows thumbnail, title, price, and stock at a glance.</span>
                     </label>
                 </div>
             </div>

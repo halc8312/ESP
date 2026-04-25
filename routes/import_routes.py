@@ -4,11 +4,12 @@ Import routes - CSV product import with preview.
 import csv
 import io
 import json
-from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session as flask_session
 from flask_login import login_required, current_user
 from database import SessionLocal
 from models import Product, Variant, Shop
+from services.rich_text import normalize_rich_text
+from time_utils import utc_now
 
 import_bp = Blueprint('import', __name__)
 
@@ -50,6 +51,9 @@ def import_form():
     try:
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         return render_template('import.html', all_shops=all_shops, preview_data=None)
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -141,6 +145,9 @@ def import_preview():
                 'warnings': warnings
             }
         )
+    except Exception:
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -203,6 +210,7 @@ def _process_import(content: str, shop_id_str: str, site: str):
                 price_str = mapped.get('price', '0')
                 url = mapped.get('url', '')
                 description = mapped.get('description', '')
+                normalized_description = normalize_rich_text(description)
                 image_urls = mapped.get('image_urls', '')
                 sku = mapped.get('sku', '')
                 inventory = mapped.get('inventory', '1')
@@ -230,10 +238,10 @@ def _process_import(content: str, shop_id_str: str, site: str):
                     source_url=url,
                     last_title=title,
                     custom_title=title,
-                    custom_description=description,
+                    custom_description=normalized_description,
                     last_price=int(float(price_str)) if price_str else 0,
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow()
+                    created_at=utc_now(),
+                    updated_at=utc_now()
                 )
                 session_db.add(product)
                 session_db.flush()
@@ -245,9 +253,9 @@ def _process_import(content: str, shop_id_str: str, site: str):
                         product_id=product.id,
                         title=title,
                         price=product.last_price,
-                        description=description,
+                        description=normalized_description,
                         image_urls=image_urls,
-                        scraped_at=datetime.utcnow()
+                        scraped_at=utc_now()
                     )
                     session_db.add(snapshot)
                 

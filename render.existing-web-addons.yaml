@@ -1,0 +1,71 @@
+# Add-on Blueprint for the "keep the current Render Web Service" cutover path.
+# This file intentionally does NOT create a new web service.
+# Human operators provision esp-worker / esp-keyvalue / esp-postgres with this,
+# then manually update the existing web service env vars in Render.
+
+previews:
+  generation: off
+
+services:
+  - type: worker
+    name: esp-worker
+    runtime: docker
+    region: singapore
+    plan: standard
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: python worker.py
+    autoDeployTrigger: off
+    numInstances: 2
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - key: SECRET_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: esp-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: esp-keyvalue
+          property: connectionString
+      - key: SCRAPE_QUEUE_BACKEND
+        value: rq
+      - key: WORKER_ENABLE_SCHEDULER
+        value: "1"
+      - key: WARM_BROWSER_POOL
+        value: "1"
+      - key: ENABLE_SHARED_BROWSER_RUNTIME
+        value: "1"
+      - key: BROWSER_POOL_WARM_SITES
+        value: mercari
+      - key: MERCARI_USE_BROWSER_POOL_DETAIL
+        value: "1"
+      - key: MERCARI_PATROL_USE_BROWSER_POOL
+        value: "1"
+      - key: SNKRDUNK_USE_BROWSER_POOL_DYNAMIC
+        value: "1"
+      - key: WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP
+        value: "1"
+      - key: WORKER_BACKLOG_WARN_COUNT
+        value: "25"
+      - key: WORKER_BACKLOG_WARN_AGE_SECONDS
+        value: "900"
+      - key: OPERATIONAL_ALERT_WEBHOOK_URL
+        sync: false
+
+  - type: keyvalue
+    name: esp-keyvalue
+    region: singapore
+    plan: starter
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
+
+databases:
+  - name: esp-postgres
+    region: singapore
+    plan: basic-256mb
+    databaseName: esp_production
+    user: esp_user
+    ipAllowList: []

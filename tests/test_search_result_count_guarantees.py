@@ -1,3 +1,6 @@
+import pytest
+
+import jobs.scrape_tasks as scrape_tasks
 import offmall_db
 import routes.scrape as scrape_routes
 import snkrdunk_db
@@ -61,8 +64,8 @@ def test_build_scrape_task_buffers_large_requests_without_changing_visible_limit
         captured["max_scroll"] = max_scroll
         return list(scraped_items)
 
-    monkeypatch.setattr(scrape_routes.yahoo_db, "scrape_search_result", fake_search_result)
-    monkeypatch.setattr(scrape_routes, "filter_excluded_items", lambda items, user_id: (list(items), 12))
+    monkeypatch.setattr(scrape_tasks.yahoo_db, "scrape_search_result", fake_search_result)
+    monkeypatch.setattr(scrape_tasks, "filter_excluded_items", lambda items, user_id: (list(items), 12))
 
     task = scrape_routes._build_scrape_task(
         site="yahoo",
@@ -85,6 +88,121 @@ def test_build_scrape_task_buffers_large_requests_without_changing_visible_limit
     assert result["excluded_count"] == 12
     assert result["limit"] == 50
     assert "p=sneaker" in captured["search_url"]
+
+
+@pytest.mark.parametrize(
+    ("site", "module_attr", "expected_fragments"),
+    [
+        ("yahoo", "yahoo_db", ("p=camera", "pf=1000", "pt=5000")),
+        ("rakuma", "rakuma_db", ("query=camera", "min=1000", "max=5000")),
+        ("surugaya", "surugaya_db", ("search_word=camera", "price=%5B1000%2C5000%5D")),
+        ("offmall", "offmall_db", ("q=camera", "min=1000", "max=5000")),
+        ("yahuoku", "yahuoku_db", ("p=camera", "va=camera", "aucminprice=1000", "aucmaxprice=5000")),
+        ("snkrdunk", "snkrdunk_db", ("keywords=camera", "minPrice=1000", "maxPrice=5000")),
+    ],
+)
+def test_build_scrape_task_includes_native_price_params_for_supported_sites(
+    monkeypatch,
+    site,
+    module_attr,
+    expected_fragments,
+):
+    captured = {}
+
+    def fake_search_result(search_url, max_items, max_scroll, headless):
+        captured["search_url"] = search_url
+        return []
+
+    monkeypatch.setattr(getattr(scrape_tasks, module_attr), "scrape_search_result", fake_search_result)
+    monkeypatch.setattr(scrape_tasks, "filter_excluded_items", lambda items, user_id: (list(items), 0))
+
+    task = scrape_routes._build_scrape_task(
+        site=site,
+        target_url="",
+        keyword="camera",
+        price_min="1000",
+        price_max="5000",
+        sort="created_desc",
+        category=None,
+        limit=10,
+        user_id=1,
+        persist_to_db=False,
+    )
+
+    task()
+
+    for fragment in expected_fragments:
+        assert fragment in captured["search_url"]
+
+
+def test_build_scrape_task_applies_post_scrape_price_filter_even_with_native_price_url_support(monkeypatch):
+    captured = {}
+    scraped_items = [
+        {
+            "url": "https://example.com/offmall/low",
+            "title": "too cheap",
+            "price": 500,
+            "status": "active",
+            "description": "",
+            "image_urls": [],
+            "variants": [],
+        },
+        {
+            "url": "https://example.com/offmall/ok",
+            "title": "within range",
+            "price": 2500,
+            "status": "active",
+            "description": "",
+            "image_urls": [],
+            "variants": [],
+        },
+        {
+            "url": "https://example.com/offmall/high",
+            "title": "too expensive",
+            "price": 8000,
+            "status": "active",
+            "description": "",
+            "image_urls": [],
+            "variants": [],
+        },
+        {
+            "url": "https://example.com/offmall/unknown",
+            "title": "unknown price",
+            "price": None,
+            "status": "active",
+            "description": "",
+            "image_urls": [],
+            "variants": [],
+        },
+    ]
+
+    def fake_search_result(search_url, max_items, max_scroll, headless):
+        captured["search_url"] = search_url
+        return list(scraped_items)
+
+    monkeypatch.setattr(scrape_tasks.offmall_db, "scrape_search_result", fake_search_result)
+    monkeypatch.setattr(scrape_tasks, "filter_excluded_items", lambda items, user_id: (list(items), 0))
+
+    task = scrape_routes._build_scrape_task(
+        site="offmall",
+        target_url="",
+        keyword="camera",
+        price_min="1000",
+        price_max="5000",
+        sort="created_desc",
+        category=None,
+        limit=10,
+        user_id=1,
+        persist_to_db=False,
+    )
+
+    result = task()
+
+    assert captured["search_url"] == "https://netmall.hardoff.co.jp/search/?q=camera&min=1000&max=5000"
+    assert [item["title"] for item in result["items"]] == ["within range"]
+    assert result["excluded_count"] == 3
+    assert result["price_min"] == 1000
+    assert result["price_max"] == 5000
 
 
 def test_yahoo_search_result_uses_extra_candidates_to_fill_requested_count(monkeypatch):
@@ -177,8 +295,11 @@ def test_snkrdunk_search_result_uses_extra_candidates_to_fill_requested_count(mo
         urls[4]: {"title": "SNKRDUNK 5", "status": "on_sale", "url": urls[4]},
     }
 
+    async def fake_scrape_item_detail_async(url):
+        return detail_map[url]
+
     monkeypatch.setattr("services.scraping_client.fetch_dynamic", lambda *args, **kwargs: search_page)
-    monkeypatch.setattr(snkrdunk_db, "scrape_item_detail", lambda url: detail_map[url])
+    monkeypatch.setattr(snkrdunk_db, "_scrape_item_detail_async", fake_scrape_item_detail_async)
     monkeypatch.setattr(snkrdunk_db, "log_scrape_result", lambda *args, **kwargs: True)
 
     results = snkrdunk_db.scrape_search_result("https://snkrdunk.com/search?keywords=jordan", max_items=3, max_scroll=1)

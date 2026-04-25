@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 from unittest.mock import MagicMock, patch
 from mercari_db import (
     _extract_price_from_text,
@@ -9,7 +10,9 @@ from mercari_db import (
     scrape_search_result,
     scrape_item_detail,
     scrape_shops_product,
+    _collect_search_items_async,
 )
+from services.scraping_client import run_coro_sync
 
 # --- Test Cases for Playwright / Scrapling Implementation ---
 
@@ -54,13 +57,41 @@ def test_scrape_search_result_count_guarantee():
             assert results[2]["title"] == "Item 4" # Item 3 skipped
 
 
+@pytest.mark.asyncio
+async def test_collect_search_items_async_preserves_order_with_partial_failures():
+    urls = [
+        "http://m/item/1",
+        "http://m/item/2",
+        "http://m/item/3",
+        "http://m/item/4",
+    ]
+
+    async def fake_scrape(url):
+        if url.endswith("/1"):
+            await asyncio.sleep(0.03)
+            return {"title": "Item 1", "status": "on_sale", "url": url}
+        if url.endswith("/2"):
+            await asyncio.sleep(0.01)
+            raise RuntimeError("detail failed")
+        if url.endswith("/3"):
+            await asyncio.sleep(0.02)
+            return {"title": "Item 3", "status": "on_sale", "url": url}
+        return {"title": "", "status": "error", "url": url}
+
+    with patch("mercari_db._scrape_item_detail_async", side_effect=fake_scrape):
+        results = await _collect_search_items_async(urls, max_items=3)
+
+    assert [item["url"] for item in results] == [urls[0], urls[2]]
+    assert [item["title"] for item in results] == ["Item 1", "Item 3"]
+
+
 def test_scrape_variants_pattern_detection():
     """
     Test that scrape_item_detail detects variants using Scrapling Response mock.
     """
     url = "http://m/item/variant"
     
-    with patch('mercari_db.StealthyFetcher.fetch') as mock_fetch:
+    with patch('mercari_db.fetch_dynamic') as mock_fetch:
         mock_page = MagicMock()
         mock_fetch.return_value = mock_page
         
@@ -93,6 +124,17 @@ def test_scrape_variants_pattern_detection():
         assert len(data["variants"]) == 2
         assert data["variants"][0]["option1_value"] == "Red"
         assert data["variants"][1]["option1_value"] == "Blue"
+
+
+@pytest.mark.asyncio
+async def test_run_coro_sync_is_safe_under_running_event_loop():
+    async def sample():
+        await asyncio.sleep(0)
+        return "ok"
+
+    result = run_coro_sync(sample())
+
+    assert result == "ok"
 
 
 def test_scrape_variants_shops_pattern():
@@ -144,8 +186,7 @@ def test_extract_plain_number_from_text_ignores_comma_only_text():
 def test_scrape_item_detail_tolerates_invalid_price_text():
     url = "http://m/item/invalid-price"
 
-    with patch('mercari_db.StealthyFetcher.fetch') as mock_fetch, \
-         patch('mercari_db.get_healer', return_value=None):
+    with patch('mercari_db.fetch_dynamic') as mock_fetch:
         mock_page = MagicMock()
         mock_fetch.return_value = mock_page
 
@@ -155,18 +196,17 @@ def test_scrape_item_detail_tolerates_invalid_price_text():
         mock_price = MagicMock()
         mock_price.text = ",,,"
 
-        mock_body_node = MagicMock()
-        mock_body_node.text = "購入手続きへ"
+        checkout_button = MagicMock()
+        checkout_button.text = "購入手続きへ"
+        checkout_button.attrib = {"aria-disabled": "false"}
 
         def mock_css(selector):
             if selector == "h1":
                 return [mock_title]
             if selector == "[data-testid='price']":
                 return [mock_price]
-            if selector == "body *":
-                return [mock_body_node]
-            if selector == "button":
-                return []
+            if selector in {"[data-testid='checkout-button']", "button"}:
+                return [checkout_button]
             return []
 
         mock_page.css.side_effect = mock_css
@@ -175,6 +215,72 @@ def test_scrape_item_detail_tolerates_invalid_price_text():
 
         assert data["title"] == "Valid Item"
         assert data["price"] is None
+        assert data["status"] == "on_sale"
+
+
+def test_scrape_item_detail_ignores_deleted_page_shell_price():
+    url = "http://m/item/deleted"
+
+    with patch('mercari_db.fetch_dynamic') as mock_fetch:
+        mock_page = MagicMock()
+        mock_fetch.return_value = mock_page
+
+        missing_node = MagicMock()
+        missing_node.text = "該当する商品は削除されています"
+        shell_price_node = MagicMock()
+        shell_price_node.text = "開始価格：¥300"
+        title_node = MagicMock()
+        title_node.text = "メルカリ - 日本最大のフリマサービス"
+
+        def mock_css(selector):
+            if selector == "body *":
+                return [missing_node, shell_price_node]
+            if selector == "title":
+                return [title_node]
+            return []
+
+        mock_page.css.side_effect = mock_css
+
+        data = scrape_item_detail(url)
+
+        assert data["price"] is None
+        assert data["status"] == "deleted"
+
+
+def test_scrape_item_detail_prefers_meta_price_when_dom_text_is_empty():
+    url = "http://m/item/meta-price"
+
+    with patch('mercari_db.fetch_dynamic') as mock_fetch:
+        mock_page = MagicMock()
+        mock_fetch.return_value = mock_page
+
+        meta_node = MagicMock()
+        meta_node.text = ""
+        meta_node.attrib = {"content": "2500"}
+
+        title_node = MagicMock()
+        title_node.text = "Valid Item"
+
+        purchase_button = MagicMock()
+        purchase_button.text = "購入手続きへ"
+        purchase_button.attrib = {"aria-disabled": "false"}
+
+        def mock_css(selector):
+            if selector == "meta[name='product:price:amount']":
+                return [meta_node]
+            if selector == "h1":
+                return [title_node]
+            if selector == "button":
+                return [purchase_button]
+            if selector in {"body *", "[data-testid='price']", "script[type='application/ld+json']", "title"}:
+                return []
+            return []
+
+        mock_page.css.side_effect = mock_css
+
+        data = scrape_item_detail(url)
+
+        assert data["price"] == 2500
         assert data["status"] == "on_sale"
 
 

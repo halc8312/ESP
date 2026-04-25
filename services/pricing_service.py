@@ -37,17 +37,21 @@ def calculate_selling_price(cost_price: int, rule: PricingRule) -> int:
     return int(round(result))
 
 
-def update_product_selling_price(product_id: int) -> bool:
+def update_product_selling_price(product_id: int, session=None) -> bool:
     """
     Recalculate and update the selling price for a product.
     
     Args:
         product_id: The ID of the product to update
+        session: Optional SQLAlchemy session. If provided, the caller owns the
+                 session lifecycle (no commit/rollback/close performed here).
         
     Returns:
         True if updated, False if no rule assigned or error
     """
-    session = SessionLocal()
+    owns_session = session is None
+    if owns_session:
+        session = SessionLocal()
     try:
         product = session.query(Product).filter_by(id=product_id).first()
         if not product:
@@ -68,7 +72,8 @@ def update_product_selling_price(product_id: int) -> bool:
         
         if old_price != new_price:
             product.selling_price = new_price
-            session.commit()
+            if owns_session:
+                session.commit()
             logger.info(f"Product {product_id}: selling_price updated {old_price} -> {new_price}")
             return True
         
@@ -76,23 +81,29 @@ def update_product_selling_price(product_id: int) -> bool:
         
     except Exception as e:
         logger.error(f"Error updating selling price for product {product_id}: {e}")
-        session.rollback()
+        if owns_session:
+            session.rollback()
         return False
     finally:
-        session.close()
+        if owns_session:
+            session.close()
 
 
-def update_all_products_with_rule(rule_id: int) -> int:
+def update_all_products_with_rule(rule_id: int, session=None) -> int:
     """
     Update all products that use a specific pricing rule.
     
     Args:
         rule_id: The ID of the pricing rule
+        session: Optional SQLAlchemy session. If provided, the caller owns the
+                 session lifecycle (no commit/rollback/close performed here).
         
     Returns:
         Number of products updated
     """
-    session = SessionLocal()
+    owns_session = session is None
+    if owns_session:
+        session = SessionLocal()
     updated_count = 0
     try:
         rule = session.query(PricingRule).filter_by(id=rule_id).first()
@@ -106,13 +117,16 @@ def update_all_products_with_rule(rule_id: int) -> int:
                 product.selling_price = new_price
                 updated_count += 1
         
-        session.commit()
+        if owns_session:
+            session.commit()
         logger.info(f"Updated {updated_count} products with rule {rule_id}")
         return updated_count
         
     except Exception as e:
         logger.error(f"Error updating products with rule {rule_id}: {e}")
-        session.rollback()
+        if owns_session:
+            session.rollback()
         return 0
     finally:
-        session.close()
+        if owns_session:
+            session.close()

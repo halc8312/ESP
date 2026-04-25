@@ -1,0 +1,19 @@
+{
+  "data": {
+    "item": {
+      "id": "m123456789",
+      "name": "Payload Sneakers",
+      "price": "2980",
+      "description": "Payload description from API",
+      "photos": [
+        {
+          "url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_1.jpg"
+        },
+        {
+          "url": "https://static.mercdn.net/item/detail/orig/photos/m123456789_2.jpg"
+        }
+      ],
+      "status": "on_sale"
+    }
+  }
+}

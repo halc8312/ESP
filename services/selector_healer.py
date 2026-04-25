@@ -26,6 +26,10 @@ import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from services.alerts import get_alert_dispatcher
+from services.page_state_classifier import classify_page_state
+from services.repair_store import record_repair_candidate
+
 logger = logging.getLogger("selector_healer")
 
 _CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config")
@@ -39,6 +43,26 @@ _HEAL_LOG_PATH = os.path.join(_CONFIG_DIR, "heal_history.jsonl")
 
 _fingerprints_cache: Optional[dict] = None
 _fp_lock = threading.Lock()
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = str(os.environ.get(name, "") or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = str(os.environ.get(name, "") or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 
 
 def _load_fingerprints(force: bool = False) -> dict:
@@ -72,6 +96,51 @@ def _save_selectors(data: dict) -> None:
         load_selectors(force_reload=True)
     except Exception:
         pass
+
+
+def _assess_page_state(site: str, page, page_type: str):
+    try:
+        return classify_page_state(site, page, page_type=page_type)
+    except Exception as exc:
+        logger.warning("[%s/%s] Page-state classification failed, allowing legacy healing path: %s", site, page_type, exc)
+        return None
+
+
+def evaluate_selector_candidate(
+    page,
+    site: str,
+    page_type: str,
+    field: str,
+    selector: str,
+    *,
+    parser: str = "scrapling",
+) -> dict[str, Any]:
+    adapter = _get_adapter(parser)
+    fp_config = get_healer()._get_field_config(site, page_type, field)
+    validators = fp_config.get("validators", {})
+    elements = adapter.query_all(page, str(selector or "").strip())
+
+    if field == "images":
+        urls = []
+        for element in elements:
+            src = adapter.get_attr(element, "src") or adapter.get_attr(element, "data-src")
+            if src and _validate_url(src, validators) and src not in urls:
+                urls.append(src)
+        return {
+            "ok": bool(urls),
+            "value": urls,
+            "match_count": len(elements),
+        }
+
+    value = ""
+    if elements:
+        value = adapter.get_text(elements[0])
+
+    return {
+        "ok": bool(value and _validate_text(value, validators)),
+        "value": value,
+        "match_count": len(elements),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -447,6 +516,7 @@ class SelectorHealer:
         # In-memory cache: healed selectors survive even if file write fails
         # Key: (site, page_type, field) → new_selector string
         self._healed_selectors: Dict[tuple, str] = {}
+        self._low_confidence_hits: Dict[tuple, int] = {}
 
     def reload(self) -> None:
         """Force-reload fingerprint data."""
@@ -507,24 +577,63 @@ class SelectorHealer:
                     if src and _validate_url(src, validators):
                         urls.append(src)
                 if urls:
+                    self._low_confidence_hits.pop(cache_key, None)
                     return json.dumps(urls), False
             else:
                 text = adapter.get_text(elements[0])
                 if text and _validate_text(text, validators):
+                    self._low_confidence_hits.pop(cache_key, None)
                     return text, False
 
         logger.info("[%s/%s/%s] All %d selectors failed, attempting self-healing...",
                     site, page_type, field, len(selectors))
 
+        assessment = _assess_page_state(site, page, page_type)
+        if assessment is not None and not assessment.allow_healing:
+            self._notify_selector_issue(
+                event_type="heal_skipped",
+                site=site,
+                page_type=page_type,
+                field=field,
+                severity="warning",
+                message="Self-healing was skipped because the page state was not classified as healthy.",
+                details={
+                    "reason": "page_state_disallowed",
+                    "page_state": assessment.state,
+                    "page_state_reasons": list(assessment.reasons),
+                    "selector_count": len(selectors),
+                    "parser": parser,
+                },
+            )
+            return "", False
+
         # --- Phase 2: Fingerprint-based rediscovery ---
         if not fingerprint:
             logger.debug("No fingerprint available for %s/%s/%s", site, page_type, field)
+            self._notify_selector_issue(
+                event_type="heal_failed",
+                site=site,
+                page_type=page_type,
+                field=field,
+                severity="error",
+                message="Self-healing could not start because no fingerprint was available.",
+                details={"reason": "missing_fingerprint", "selector_count": len(selectors), "parser": parser},
+            )
             return "", False
 
         element, score = _rediscover_element(page, fingerprint, adapter, field, validators)
         if element is None:
             logger.warning("[%s/%s/%s] Self-healing failed: element not found (score too low)",
                           site, page_type, field)
+            self._notify_selector_issue(
+                event_type="heal_failed",
+                site=site,
+                page_type=page_type,
+                field=field,
+                severity="error",
+                message="Self-healing failed because no sufficiently strong candidate was found.",
+                details={"reason": "element_not_found", "selector_count": len(selectors), "parser": parser},
+            )
             return "", False
 
         # Extract value from rediscovered element
@@ -535,6 +644,15 @@ class SelectorHealer:
             value = adapter.get_text(element)
 
         if not value:
+            self._notify_selector_issue(
+                event_type="heal_failed",
+                site=site,
+                page_type=page_type,
+                field=field,
+                severity="error",
+                message="Self-healing rediscovered an element but could not extract a usable value.",
+                details={"reason": "empty_recovered_value", "score": round(score, 2), "parser": parser},
+            )
             return "", False
 
         # --- Phase 3: Generate new selector and save ---
@@ -543,12 +661,42 @@ class SelectorHealer:
             old_first = selectors[0] if selectors else "(none)"
             # Always cache in memory (even if file write fails)
             self._healed_selectors[(site, page_type, field)] = new_selector
-            self._save_healed_selector(site, page_type, field, new_selector)
+            persisted = self._save_healed_selector(site, page_type, field, new_selector)
             _log_heal_event(site, page_type, field, old_first, new_selector, score)
-            logger.info(
-                "[%s/%s/%s] HEALED: new selector '%s' (score=%.1f) → saved",
-                site, page_type, field, new_selector, score,
+            if persisted:
+                logger.info(
+                    "[%s/%s/%s] HEALED: new selector '%s' (score=%.1f) → saved",
+                    site, page_type, field, new_selector, score,
+                )
+            else:
+                logger.warning(
+                    "[%s/%s/%s] HEALED in memory but selector persistence failed for '%s' (score=%.1f)",
+                    site, page_type, field, new_selector, score,
+                )
+                self._notify_selector_issue(
+                    event_type="persist_failed",
+                    site=site,
+                    page_type=page_type,
+                    field=field,
+                    severity="warning",
+                    message="Selector healing succeeded in memory but could not be persisted.",
+                    details={"reason": "selector_persist_failed", "new_selector": new_selector, "score": round(score, 2)},
+                )
+            self._record_repair_candidate(
+                site=site,
+                page_type=page_type,
+                field=field,
+                parser=parser,
+                proposed_selector=new_selector,
+                source_selector=old_first,
+                score=score,
+                details={
+                    "persisted_to_json": persisted,
+                    "page_url": str(getattr(page, "url", "") or ""),
+                    "selector_count": len(selectors),
+                },
             )
+            self._record_low_confidence_hit(site, page_type, field, score, new_selector)
             return value, True
         else:
             logger.info(
@@ -586,13 +734,42 @@ class SelectorHealer:
                     if src not in urls:
                         urls.append(src)
             if urls:
+                self._low_confidence_hits.pop((site, page_type, "images"), None)
                 return urls, False
 
         logger.info("[%s/%s/images] All %d selectors failed, attempting self-healing...",
                     site, page_type, len(selectors))
 
+        assessment = _assess_page_state(site, page, page_type)
+        if assessment is not None and not assessment.allow_healing:
+            self._notify_selector_issue(
+                event_type="heal_skipped",
+                site=site,
+                page_type=page_type,
+                field="images",
+                severity="warning",
+                message="Image healing was skipped because the page state was not classified as healthy.",
+                details={
+                    "reason": "page_state_disallowed",
+                    "page_state": assessment.state,
+                    "page_state_reasons": list(assessment.reasons),
+                    "selector_count": len(selectors),
+                    "parser": parser,
+                },
+            )
+            return [], False
+
         # --- Phase 2: Fingerprint scan for all image elements ---
         if not fingerprint:
+            self._notify_selector_issue(
+                event_type="heal_failed",
+                site=site,
+                page_type=page_type,
+                field="images",
+                severity="error",
+                message="Image healing could not start because no fingerprint was available.",
+                details={"reason": "missing_fingerprint", "selector_count": len(selectors), "parser": parser},
+            )
             return [], False
 
         tag_names = fingerprint.get("tag_names", ["img"])
@@ -617,12 +794,50 @@ class SelectorHealer:
             if new_selector:
                 old_first = selectors[0] if selectors else "(none)"
                 self._healed_selectors[(site, page_type, "images")] = new_selector
-                self._save_healed_selector(site, page_type, "images", new_selector)
+                persisted = self._save_healed_selector(site, page_type, "images", new_selector)
                 _log_heal_event(site, page_type, "images", old_first, new_selector, 100)
-                logger.info("[%s/%s/images] HEALED: new selector '%s' → saved",
-                            site, page_type, new_selector)
+                if persisted:
+                    logger.info("[%s/%s/images] HEALED: new selector '%s' → saved",
+                                site, page_type, new_selector)
+                else:
+                    logger.warning(
+                        "[%s/%s/images] HEALED in memory but selector persistence failed for '%s'",
+                        site, page_type, new_selector,
+                    )
+                    self._notify_selector_issue(
+                        event_type="persist_failed",
+                        site=site,
+                        page_type=page_type,
+                        field="images",
+                        severity="warning",
+                        message="Image healing succeeded in memory but could not be persisted.",
+                        details={"reason": "selector_persist_failed", "new_selector": new_selector, "score": 100},
+                    )
+                self._record_repair_candidate(
+                    site=site,
+                    page_type=page_type,
+                    field="images",
+                    parser=parser,
+                    proposed_selector=new_selector,
+                    source_selector=old_first,
+                    score=100,
+                    details={
+                        "persisted_to_json": persisted,
+                        "page_url": str(getattr(page, "url", "") or ""),
+                        "selector_count": len(selectors),
+                    },
+                )
             return urls, True
 
+        self._notify_selector_issue(
+            event_type="heal_failed",
+            site=site,
+            page_type=page_type,
+            field="images",
+            severity="error",
+            message="Image healing failed because no matching image candidate was found.",
+            details={"reason": "image_not_found", "selector_count": len(selectors), "parser": parser},
+        )
         return [], False
 
     # ----- internal helpers -----
@@ -633,8 +848,114 @@ class SelectorHealer:
                 .get(page_type, {})
                 .get(field, {}))
 
+    def _notify_selector_issue(
+        self,
+        *,
+        event_type: str,
+        site: str,
+        page_type: str,
+        field: str,
+        severity: str,
+        message: str,
+        details: dict | None = None,
+    ) -> None:
+        try:
+            get_alert_dispatcher().notify_selector_issue(
+                event_type=event_type,
+                site=site,
+                page_type=page_type,
+                field=field,
+                severity=severity,
+                message=message,
+                details=details or {},
+            )
+        except Exception as exc:
+            logger.debug("Selector alert dispatch hook failed: %s", exc)
+
+    def _record_repair_candidate(
+        self,
+        *,
+        site: str,
+        page_type: str,
+        field: str,
+        parser: str,
+        proposed_selector: str,
+        source_selector: str,
+        score: float | int,
+        details: dict | None = None,
+    ) -> int | None:
+        candidate_id = record_repair_candidate(
+            site=site,
+            page_type=page_type,
+            field=field,
+            parser=parser,
+            proposed_selector=proposed_selector,
+            source_selector=source_selector,
+            score=score,
+            page_state="healthy",
+            details=details,
+        )
+        if candidate_id is not None:
+            numeric_score = None
+            if score is not None:
+                try:
+                    numeric_score = round(float(score), 2)
+                except (TypeError, ValueError):
+                    numeric_score = None
+            self._notify_selector_issue(
+                event_type="repair_candidate_recorded",
+                site=site,
+                page_type=page_type,
+                field=field,
+                severity="warning",
+                message="A selector repair candidate was recorded and is awaiting review.",
+                details={
+                    "candidate_id": candidate_id,
+                    "score": numeric_score,
+                    **(details or {}),
+                },
+            )
+        return candidate_id
+
+    def _record_low_confidence_hit(
+        self,
+        site: str,
+        page_type: str,
+        field: str,
+        score: float,
+        new_selector: str,
+    ) -> None:
+        threshold = _env_float("SELECTOR_ALERT_LOW_CONFIDENCE_THRESHOLD", 65.0)
+        repeat_count = max(1, _env_int("SELECTOR_ALERT_LOW_CONFIDENCE_REPEAT", 3))
+        key = (site, page_type, field)
+
+        if score >= threshold:
+            self._low_confidence_hits.pop(key, None)
+            return
+
+        hits = self._low_confidence_hits.get(key, 0) + 1
+        self._low_confidence_hits[key] = hits
+        if hits < repeat_count:
+            return
+
+        self._low_confidence_hits[key] = 0
+        self._notify_selector_issue(
+            event_type="low_confidence_repeated",
+            site=site,
+            page_type=page_type,
+            field=field,
+            severity="warning",
+            message="Repeated low-confidence selector healing was detected.",
+            details={
+                "score": round(score, 2),
+                "threshold": threshold,
+                "repeat_count": repeat_count,
+                "new_selector": new_selector,
+            },
+        )
+
     def _save_healed_selector(self, site: str, page_type: str, field: str,
-                               new_selector: str) -> None:
+                               new_selector: str) -> bool:
         """Insert the new selector at the top of the selector list in JSON.
         
         File write is best-effort — failures are logged but do NOT propagate.
@@ -661,17 +982,20 @@ class SelectorHealer:
                 data["_updated"] = datetime.now().strftime("%Y-%m-%d")
 
                 _save_selectors(data)
+                return True
         except PermissionError:
             logger.warning(
                 "[%s/%s/%s] Cannot write healed selector to JSON (permission denied). "
                 "Healed selector '%s' is cached in memory only.",
                 site, page_type, field, new_selector,
             )
+            return False
         except Exception as e:
             logger.warning(
                 "[%s/%s/%s] Failed to persist healed selector: %s",
                 site, page_type, field, e,
             )
+            return False
 
 
 # ---------------------------------------------------------------------------

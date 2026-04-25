@@ -1,9 +1,9 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from database import Base
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
+from time_utils import utc_now
 
 class User(UserMixin, Base):
     __tablename__ = 'users'
@@ -25,9 +25,8 @@ class Shop(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False) # 所有者
     name = Column(String, nullable=False) # ユーザーごとにユニークであれば良いが、シンプルにグローバルユニークのままにするか、user_idと複合ユニークにするか。一旦nameはグローバルユニークの制約を外す方が無難だが、Existing logic relies on name. Let's keep name unique for now or just remove unique constraint if we want same shop names for diff users. Let's start with simple: user_id added.
 
-    name = Column(String, nullable=False) 
     logo_url = Column(String, nullable=True) # ショップロゴ画像URL
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
     
     products = relationship("Product", back_populates="shop")
     user = relationship("User") # Link to User
@@ -55,6 +54,11 @@ class Product(Base):
     custom_description = Column(Text)
     custom_title_en = Column(String)
     custom_description_en = Column(Text)
+    # Hashes of the Japanese source text that produced the English fields above.
+    # Allow the edit UI to display a "source updated" badge when the JP text
+    # changes after a translation has been applied.
+    custom_title_en_source_hash = Column(String(64))
+    custom_description_en_source_hash = Column(String(64))
     
     # Shopify項目 (Product Level)
     status = Column(String, default='draft') # active or draft
@@ -79,8 +83,11 @@ class Product(Base):
     # Trash (Soft Delete)
     deleted_at = Column(DateTime, nullable=True)  # NULL = not deleted
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    # Patrol failure tracking (exponential backoff)
+    patrol_fail_count = Column(Integer, default=0)
+
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now)
 
     snapshots = relationship("ProductSnapshot", back_populates="product", cascade="all, delete-orphan")
     variants = relationship("Variant", back_populates="product", cascade="all, delete-orphan")
@@ -119,7 +126,7 @@ class ProductSnapshot(Base):
 
     id = Column(Integer, primary_key=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
-    scraped_at = Column(DateTime, default=datetime.utcnow)
+    scraped_at = Column(DateTime, default=utc_now)
 
     title = Column(String)
     price = Column(Integer)
@@ -132,12 +139,18 @@ class ProductSnapshot(Base):
 
 class DescriptionTemplate(Base):
     __tablename__ = "description_templates"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_description_templates_user_name"),
+    )
 
     id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False, unique=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    name = Column(String, nullable=False)
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
+    user = relationship("User")
 
 
 class PricingRule(Base):
@@ -156,7 +169,7 @@ class PricingRule(Base):
     shipping_cost = Column(Integer, default=0)  # Fixed shipping to add (JPY)
     fixed_fee = Column(Integer, default=0)  # Fixed fee to add (JPY)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     user = relationship("User")
 
@@ -173,7 +186,7 @@ class ExclusionKeyword(Base):
     keyword = Column(String, nullable=False)
     match_type = Column(String, default="partial")  # "partial" or "exact"
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     user = relationship("User")
 
@@ -184,16 +197,19 @@ class PriceList(Base):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    shop_id = Column(Integer, ForeignKey("shops.id"), nullable=True)
     name = Column(String, nullable=False)                # 例: "Customer A Price List"
     token = Column(String, unique=True, nullable=False)  # UUID公開アクセス用
     is_active = Column(Boolean, default=True)            # 有効/無効
     currency_rate = Column(Integer, default=150)         # JPY→USD換算レート
-    layout = Column(String, default="grid")              # grid / editorial
+    layout = Column(String, default="grid")              # grid / editorial / list
+    theme = Column(String, default="dark")               # dark / light
     notes = Column(Text)                                 # 備考（顧客へのメッセージ等）
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now)
 
     user = relationship("User")
+    shop = relationship("Shop")
     items = relationship("PriceListItem", back_populates="price_list", cascade="all, delete-orphan")
     page_views = relationship("CatalogPageView", back_populates="price_list", cascade="all, delete-orphan")
 
@@ -219,7 +235,7 @@ class CatalogPageView(Base):
 
     id = Column(Integer, primary_key=True)
     pricelist_id = Column(Integer, ForeignKey("price_lists.id"), nullable=False)
-    viewed_at = Column(DateTime, default=datetime.utcnow, index=True)
+    viewed_at = Column(DateTime, default=utc_now, index=True)
 
     ip_hash = Column(String(64))
     user_agent_short = Column(String(32))
@@ -227,3 +243,216 @@ class CatalogPageView(Base):
     product_id = Column(Integer, nullable=True)
 
     price_list = relationship("PriceList", back_populates="page_views")
+
+
+class ScrapeJob(Base):
+    __tablename__ = "scrape_jobs"
+
+    job_id = Column(String(64), primary_key=True)
+    logical_job_id = Column(String(64), index=True)
+    parent_job_id = Column(String(64), ForeignKey("scrape_jobs.job_id"), nullable=True)
+
+    status = Column(String(32), nullable=False, index=True)
+    site = Column(String(32), nullable=False, index=True)
+    mode = Column(String(32), nullable=False)
+    requested_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
+    request_payload = Column(Text)
+    context_payload = Column(Text)
+    progress_current = Column(Integer)
+    progress_total = Column(Integer)
+    result_summary = Column(Text)
+    result_payload = Column(Text)
+    error_message = Column(Text)
+    error_payload = Column(Text)
+    tracker_dismissed_at = Column(DateTime, index=True)
+
+    started_at = Column(DateTime)
+    finished_at = Column(DateTime)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    user = relationship("User")
+    parent = relationship("ScrapeJob", remote_side=[job_id], backref="attempts")
+    events = relationship("ScrapeJobEvent", back_populates="job", cascade="all, delete-orphan")
+
+
+class ScrapeJobEvent(Base):
+    __tablename__ = "scrape_job_events"
+
+    id = Column(Integer, primary_key=True)
+    job_id = Column(String(64), ForeignKey("scrape_jobs.job_id"), nullable=False, index=True)
+    event_type = Column(String(64), nullable=False)
+    payload = Column(Text)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+
+    job = relationship("ScrapeJob", back_populates="events")
+
+
+class SelectorRepairCandidate(Base):
+    __tablename__ = "selector_repair_candidates"
+    __table_args__ = (
+        Index(
+            "ix_selector_repair_candidates_lookup",
+            "site",
+            "page_type",
+            "field",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    site = Column(String(32), nullable=False, index=True)
+    page_type = Column(String(32), nullable=False, index=True)
+    field = Column(String(64), nullable=False, index=True)
+    parser = Column(String(32), nullable=False, default="scrapling")
+    proposed_selector = Column(Text, nullable=False)
+    source_selector = Column(Text)
+    score = Column(Integer)
+    page_state = Column(String(32), nullable=False, default="healthy")
+    status = Column(String(32), nullable=False, default="pending", index=True)
+    details_payload = Column(Text)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class SelectorActiveRuleSet(Base):
+    __tablename__ = "selector_active_rule_sets"
+    __table_args__ = (
+        UniqueConstraint("site", "page_type", "field", "version", name="uq_selector_active_rule_sets_version"),
+        Index(
+            "ix_selector_active_rule_sets_lookup",
+            "site",
+            "page_type",
+            "field",
+            "is_active",
+            "version",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    site = Column(String(32), nullable=False, index=True)
+    page_type = Column(String(32), nullable=False, index=True)
+    field = Column(String(64), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    selectors_payload = Column(Text, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=False, index=True)
+    source_candidate_id = Column(Integer, ForeignKey("selector_repair_candidates.id"), nullable=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+    activated_at = Column(DateTime, nullable=True)
+
+    source_candidate = relationship("SelectorRepairCandidate")
+
+
+class TranslationSuggestion(Base):
+    """
+    Candidate EN translations generated by the media worker for a Product.
+
+    One Suggestion row captures a single enqueued job. The UI polls `status`
+    until the job reaches a terminal state, then either applies the result
+    to the Product or discards it.
+    """
+    __tablename__ = "translation_suggestions"
+    __table_args__ = (
+        Index(
+            "ix_translation_suggestions_product_lookup",
+            "product_id",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    job_id = Column(String(64), unique=True, nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    # "title" = title only, "description" = description only,
+    # "full" = both title and description in one suggestion.
+    scope = Column(String(16), nullable=False, default="full")
+
+    # Identifier of the backend that produced the translation
+    # (e.g. "argos", "deepl"). Stored for auditability and to allow
+    # Phase 2 to swap providers without re-applying old suggestions.
+    provider = Column(String(32), nullable=False, default="argos")
+
+    # Source text captured at enqueue time so that re-running or reviewing
+    # a suggestion is deterministic even if the Product is edited later.
+    source_title = Column(Text)
+    source_description = Column(Text)
+    source_title_hash = Column(String(64))
+    source_description_hash = Column(String(64))
+
+    # Populated on completion.
+    translated_title = Column(Text)
+    translated_description = Column(Text)
+
+    # queued -> running -> succeeded | failed | applied | rejected
+    status = Column(String(16), nullable=False, default="queued", index=True)
+    error_message = Column(Text)
+
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+    completed_at = Column(DateTime)
+
+    product = relationship("Product")
+    user = relationship("User")
+
+
+class ImageProcessingJob(Base):
+    """
+    Background image processing job (currently: background removal via rembg).
+
+    One row per user-initiated operation. The media worker reads this row,
+    downloads the source image, runs the configured backend (e.g. rembg),
+    and posts the processed bytes back to an internal HMAC-authenticated
+    endpoint on the web service. The UI polls ``status`` until the job
+    reaches a terminal state and then lets the operator accept or reject
+    the result image.
+    """
+
+    __tablename__ = "image_processing_jobs"
+    __table_args__ = (
+        Index(
+            "ix_image_processing_jobs_product_lookup",
+            "product_id",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    job_id = Column(String(64), unique=True, nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    # "bg_remove" is the only operation in Phase 1. Kept as a string so
+    # Phase 2 can introduce e.g. "upscale", "compress" without a migration.
+    operation = Column(String(32), nullable=False, default="bg_remove")
+
+    # Backend that produced (or will produce) the result; e.g. "rembg",
+    # "remove_bg", "photoroom". Stored for auditability.
+    provider = Column(String(32), nullable=False, default="rembg")
+
+    # URL of the image the operator chose to process. Captured at enqueue
+    # time so replaying the job is deterministic. The URL may be an
+    # absolute http(s) URL (scraped marketplace image) or a managed
+    # ``/media/product_images/...`` path.
+    source_image_url = Column(String, nullable=False)
+
+    # URL of the processed image once the worker has uploaded it back.
+    # Populated by the internal upload endpoint.
+    result_image_url = Column(String)
+
+    # queued -> running -> succeeded | failed | applied | rejected
+    status = Column(String(16), nullable=False, default="queued", index=True)
+    error_message = Column(Text)
+
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+    completed_at = Column(DateTime)
+
+    product = relationship("Product")
+    user = relationship("User")

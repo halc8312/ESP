@@ -1,13 +1,51 @@
 """
 Filter Service
 
-Filters out unwanted products based on user-defined exclusion keywords.
+Filters out unwanted products based on user-defined exclusion keywords
+and numeric price ranges.
 """
 import logging
 from database import SessionLocal
 from models import ExclusionKeyword
 
 logger = logging.getLogger("filter")
+
+
+def _coerce_price_value(value):
+    """Convert a raw price-like value to int, or None when unavailable."""
+    if value is None:
+        return None
+
+    if isinstance(value, bool):
+        return None
+
+    if isinstance(value, (int, float)):
+        numeric_value = int(value)
+        return numeric_value if numeric_value >= 0 else None
+
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    if not digits:
+        return None
+
+    numeric_value = int(digits)
+    return numeric_value if numeric_value >= 0 else None
+
+
+def normalize_price_bounds(price_min=None, price_max=None) -> tuple:
+    """
+    Normalize optional price bounds.
+
+    Returns:
+        (min_value, max_value) as integers or None.
+        When min > max, the values are swapped.
+    """
+    min_value = _coerce_price_value(price_min)
+    max_value = _coerce_price_value(price_max)
+
+    if min_value is not None and max_value is not None and min_value > max_value:
+        min_value, max_value = max_value, min_value
+
+    return min_value, max_value
 
 
 def get_user_exclusion_keywords(user_id: int) -> list:
@@ -86,4 +124,42 @@ def filter_excluded_items(items: list, user_id: int) -> tuple:
     if excluded_count > 0:
         logger.info(f"Filtered {excluded_count} items based on exclusion keywords")
     
+    return filtered, excluded_count
+
+
+def filter_items_by_price(items: list, price_min=None, price_max=None) -> tuple:
+    """
+    Filter scraped items by numeric price range.
+
+    Items with missing/unparseable prices are excluded when any price bound is set,
+    because they cannot be verified against the requested range.
+    """
+    min_value, max_value = normalize_price_bounds(price_min, price_max)
+    if min_value is None and max_value is None:
+        return items, 0
+
+    filtered = []
+    excluded_count = 0
+
+    for item in items:
+        price_value = _coerce_price_value(item.get("price"))
+        if price_value is None:
+            excluded_count += 1
+            continue
+        if min_value is not None and price_value < min_value:
+            excluded_count += 1
+            continue
+        if max_value is not None and price_value > max_value:
+            excluded_count += 1
+            continue
+        filtered.append(item)
+
+    if excluded_count > 0:
+        logger.info(
+            "Filtered %s items outside requested price range min=%s max=%s",
+            excluded_count,
+            min_value,
+            max_value,
+        )
+
     return filtered, excluded_count
