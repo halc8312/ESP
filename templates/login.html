@@ -25,10 +25,12 @@
             </div>
             <button type="submit">Log In</button>
         </form>
+        {% if config.ALLOW_PUBLIC_SIGNUP %}
         <div class="link" style="text-align: center; margin-top: 1rem;">
             Don't have an account? <a href="{{ url_for('register') }}"
                 style="color: #007bff; text-decoration: none;">Create Account</a>
         </div>
+        {% endif %}
     </div>
 </body>
 

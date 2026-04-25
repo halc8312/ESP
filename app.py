@@ -8,20 +8,21 @@ This module serves as the main application facade that:
 - Registers CLI commands
 """
 import os
-from flask import Flask, send_from_directory
+from flask import Flask, redirect, request, send_from_directory
 from flask_login import LoginManager
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from database import SessionLocal, init_db
 from models import User
 from services.image_service import IMAGE_STORAGE_PATH
+from security_config import build_hsts_header, configure_app_security, parse_bool
 
 # ============================== 
 # Flask アプリ設定
 # ============================== 
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-this")
+configure_app_security(app)
 
 
 # ==============================
@@ -117,6 +118,23 @@ def trash_purge_job():
 
 # Render/Herokuなどのプロキシ環境下で正しいURLスキーム(https)を取得するための設定
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+
+@app.before_request
+def enforce_https():
+    if app.config.get("FORCE_HTTPS") and not request.is_secure:
+        return redirect(request.url.replace("http://", "https://", 1), code=301)
+    return None
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if app.config.get("HSTS_ENABLED") and request.is_secure:
+        response.headers["Strict-Transport-Security"] = build_hsts_header(app)
+    return response
 
 # ==============================
 # Flask-Login setup
@@ -224,4 +242,5 @@ with app.app_context():
 # Entry Point
 # ==============================
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    debug_enabled = parse_bool(os.environ.get("FLASK_DEBUG"), default=False) and not app.config.get("IS_PRODUCTION")
+    app.run(debug=debug_enabled, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

@@ -574,12 +574,28 @@ class TestPriceListRoutes:
         assert response.json['title'] == 'Catalog Layout Product'
         assert response.json['price'] == 3200
         assert response.json['description'] == 'Catalog description'
-        assert response.json['site'] == 'manual'
+        assert 'site' not in response.json
+        assert 'source_url' not in response.json
         assert response.json['in_stock'] is True
         assert response.json['image_urls'] == [
             'https://img.example.com/catalog-layout.jpg',
             'https://img.example.com/catalog-layout-2.jpg',
         ]
+
+    def test_catalog_view_does_not_expose_internal_source_fields(self, client, db_session):
+        """Public catalog HTML must not leak procurement source fields."""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogleakregression',
+            layout='editorial'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+
+        assert response.status_code == 200
+        assert product.source_url.encode('utf-8') not in response.data
+        assert b'data-site=' not in response.data
+        assert b'View Source' not in response.data
 
     def test_catalog_product_detail_returns_404_for_missing_item(self, client, db_session):
         """Test catalog detail endpoint rejects products outside the price list"""

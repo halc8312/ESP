@@ -521,20 +521,6 @@
             min-height: 120px;
         }
 
-        .modal-source-link {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            padding: 12px 16px;
-            border-radius: 999px;
-            background: linear-gradient(135deg, rgba(217, 119, 6, 0.18), rgba(251, 191, 36, 0.12));
-            border: 1px solid rgba(251, 191, 36, 0.28);
-            color: var(--text-primary);
-            text-decoration: none;
-            font-weight: 600;
-            width: fit-content;
-        }
-
         .modal-loading {
             color: var(--text-secondary);
             font-size: 14px;
@@ -746,9 +732,6 @@
 </head>
 
 <body class="catalog-layout-{{ pricelist.layout or 'grid' }}">
-    {% set site_display = {'mercari': 'Mercari', 'yahuoku': 'Yahoo Auctions', 'yahoo': 'Yahoo Shopping', 'snkrdunk':
-    'SNKRDUNK', 'surugaya': 'Surugaya', 'rakuma': 'Rakuma', 'offmall': 'Off Mall', 'manual': 'Manual'} %}
-
     <header class="catalog-header">
         <div class="header-inner">
             <h1 class="catalog-title" style="display: flex; align-items: center; gap: 8px;">
@@ -763,18 +746,6 @@
 
             <div class="filters-bar">
                 <input type="text" id="searchInput" placeholder="Search products..." onkeyup="filterProducts()">
-                <select id="categorySelect" onchange="filterProducts()">
-                    <option value="">All Categories</option>
-                    {% set unique_sites = [] %}
-                    {% for item in items %}
-                    {% if item.site not in unique_sites %}
-                    {% set _ = unique_sites.append(item.site) %}
-                    {% endif %}
-                    {% endfor %}
-                    {% for site in unique_sites|sort %}
-                    <option value="{{ site }}">{{ site_display.get(site, site|title) }}</option>
-                    {% endfor %}
-                </select>
             </div>
 
             <div style="display: flex; gap: 12px; align-items: center;">
@@ -817,7 +788,7 @@
 
     <section class="catalog-grid">
         {% for item in items %}
-        <article class="product-card" data-product-id="{{ item.product_id }}" data-site="{{ item.site }}"
+        <article class="product-card" data-product-id="{{ item.product_id }}"
             data-title="{{ item.title|lower }} {{ item.title_en|lower }}">
             <div class="product-card-media">
                 {% if item.thumb_url %}
@@ -828,7 +799,7 @@
             </div>
             <div class="product-card-body">
                 {% if pricelist.layout == 'editorial' %}
-                <div class="product-card-kicker">{{ site_display.get(item.site, item.site|title) }}</div>
+                <div class="product-card-kicker">Featured Product</div>
                 <div class="product-card-meta">
                     <span class="meta-pill">{{ item.image_urls|length }} images</span>
                     <span class="meta-pill">{{ 'Available' if item.in_stock else 'Unavailable' }}</span>
@@ -876,8 +847,6 @@
                     <div id="modalDescription" class="modal-description">
                         <span class="modal-loading">Loading product details...</span>
                     </div>
-                    <a id="modalSourceLink" class="modal-source-link" href="#" target="_blank" rel="noopener"
-                        hidden>View Source</a>
                 </div>
             </div>
         </div>
@@ -916,16 +885,13 @@
         // Filtering Logic
         function filterProducts() {
             const query = document.getElementById('searchInput').value.toLowerCase();
-            const category = document.getElementById('categorySelect').value;
             const cards = document.querySelectorAll('.product-card');
 
             cards.forEach(card => {
                 const title = card.getAttribute('data-title') || '';
-                const site = card.getAttribute('data-site') || '';
                 const matchesQuery = !query || title.includes(query);
-                const matchesCategory = !category || site === category;
 
-                if (matchesQuery && matchesCategory) {
+                if (matchesQuery) {
                     card.style.display = '';
                 } else {
                     card.style.display = 'none';
@@ -936,17 +902,6 @@
         const SYMBOLS = {
             'JPY': '¥', 'USD': '$', 'EUR': '€', 'GBP': '£',
             'AUD': 'A$', 'CAD': 'C$', 'CNY': '¥', 'KRW': '₩'
-        };
-
-        const SITE_LABELS = {
-            mercari: 'Mercari',
-            yahuoku: 'Yahoo Auctions',
-            yahoo: 'Yahoo Shopping',
-            snkrdunk: 'SNKRDUNK',
-            surugaya: 'Surugaya',
-            rakuma: 'Rakuma',
-            offmall: 'Off Mall',
-            manual: 'Manual'
         };
 
         const DECIMALS = { 'JPY': 0, 'KRW': 0 };
@@ -1130,9 +1085,8 @@
             const price = document.getElementById('modalPrice');
             const stock = document.getElementById('modalStock');
             const description = document.getElementById('modalDescription');
-            const sourceLink = document.getElementById('modalSourceLink');
 
-            if (!modal || !title || !titleEn || !kicker || !price || !stock || !description || !sourceLink) {
+            if (!modal || !title || !titleEn || !kicker || !price || !stock || !description) {
                 return;
             }
 
@@ -1145,7 +1099,7 @@
                 titleEn.textContent = '';
             }
 
-            kicker.textContent = SITE_LABELS[data.site] || data.site || 'Product';
+            kicker.textContent = 'Product';
             price.dataset.jpyPrice = String(data.price || 0);
             price.textContent = formatPriceFromJpy(data.price || 0, currentCurrency());
 
@@ -1166,15 +1120,6 @@
                 description.textContent = data.description_en;
             } else {
                 description.textContent = 'No description available.';
-            }
-
-            if (data.source_url) {
-                sourceLink.hidden = false;
-                sourceLink.href = data.source_url;
-                sourceLink.textContent = 'View Source';
-            } else {
-                sourceLink.hidden = true;
-                sourceLink.removeAttribute('href');
             }
 
             renderModalGallery(data.image_urls || [], data.title || 'product image');

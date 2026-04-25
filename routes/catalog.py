@@ -57,8 +57,6 @@ def _build_catalog_item(item):
         "image_urls": image_urls,
         "stock": total_stock,
         "in_stock": total_stock > 0,
-        "source_url": p.source_url,
-        "site": p.site,
         "description": p.custom_description or (snapshot.description if snapshot else "") or "",
         "description_en": p.custom_description_en or "",
     }

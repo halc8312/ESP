@@ -62,7 +62,7 @@ if __name__ == "__main__":
     # 1. Login
     s = requests.Session()
     login_url = f"{base_url}/login"
-    login_data = {"username": "admin", "password": "password"}
+    login_data = {"username": "admin", "password": "AdminPassword123"}
     print(f"Logging in to {login_url}...")
     try:
         r = s.post(login_url, data=login_data)

@@ -8,7 +8,7 @@ from flask_login import login_required, current_user
 
 from database import SessionLocal
 from models import Product, Variant, ProductSnapshot
-from services.image_service import cache_mercari_image
+from services.image_service import cache_mercari_image, download_external_image, ImageValidationError
 
 export_bp = Blueprint('export', __name__)
 
@@ -371,19 +371,10 @@ def export_images():
                 
                 for i, img_url in enumerate(image_urls):
                     try:
-                        resp = requests.get(img_url, timeout=10)
-                        if resp.status_code == 200:
-                            # Determine extension from content type
-                            content_type = resp.headers.get('Content-Type', '')
-                            ext = '.jpg'
-                            if 'png' in content_type:
-                                ext = '.png'
-                            elif 'webp' in content_type:
-                                ext = '.webp'
-                            
-                            filename = f"{product_folder}/image_{i+1}{ext}"
-                            zip_file.writestr(filename, resp.content)
-                    except Exception as e:
+                        image_bytes, ext = download_external_image(img_url)
+                        filename = f"{product_folder}/image_{i+1}{ext}"
+                        zip_file.writestr(filename, image_bytes)
+                    except (ImageValidationError, requests.RequestException) as e:
                         print(f"Error downloading image: {e}")
                         continue
 

@@ -1,15 +1,20 @@
 import pytest
 import os
 import sys
+import tempfile
+import uuid
 
 # Add the application root to the path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Set test database URL before importing database module
-os.environ["DATABASE_URL"] = "sqlite:///test_mercari.db"
+TEST_DB_PATH = os.path.join(tempfile.gettempdir(), f"esp_test_mercari_{uuid.uuid4().hex}.db")
+TEST_DB_URL_PATH = TEST_DB_PATH.replace(os.sep, "/")
+os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_URL_PATH}"
 
 from app import app
 from database import init_db, SessionLocal, Base, engine
+from services.rate_limit_service import reset_rate_limiter_for_tests
 
 @pytest.fixture
 def client():
@@ -28,11 +33,23 @@ def client():
     
     with app.test_client() as client:
         with app.app_context():
+            reset_rate_limiter_for_tests()
+            app.config.update(
+                ALLOW_PUBLIC_SIGNUP=True,
+                FORCE_HTTPS=False,
+                HSTS_ENABLED=False,
+                SESSION_COOKIE_SECURE=False,
+                LOGIN_RATE_LIMIT=5,
+                LOGIN_RATE_WINDOW_SECONDS=900,
+                REGISTER_RATE_LIMIT=3,
+                REGISTER_RATE_WINDOW_SECONDS=3600,
+            )
             # Ensure clean state
             Base.metadata.drop_all(bind=engine)
             # Create tables
             Base.metadata.create_all(bind=engine)
             yield client
+            reset_rate_limiter_for_tests()
             # Cleanup
             Base.metadata.drop_all(bind=engine)
 

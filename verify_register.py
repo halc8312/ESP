@@ -8,7 +8,7 @@ def verify_registration():
     
     # 1. Register new user (Random ID)
     username = f"user_{uuid.uuid4().hex[:8]}"
-    password = "password123"
+    password = "RegisterPassword123"
     
     print(f"Registering user {username}...")
     register_url = f"{base_url}/register"

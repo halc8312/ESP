@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-audit:
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: test
+      DATABASE_URL: sqlite:///test_mercari.db
+      SECRET_KEY: ci-test-secret-key-32-characters-minimum
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Dependency consistency
+        run: python -m pip check
+
+      - name: Dependency vulnerability audit
+        run: python -m pip_audit -r requirements.txt
+
+      - name: Test
+        run: python -m pytest -q
+
+      - name: Production configuration smoke check
+        env:
+          APP_ENV: production
+          RUNTIME_ROLE: web
+          SECRET_KEY: ci-production-secret-key-32-characters-minimum
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          python - <<'PY'
+          from flask import Flask
+          from security_config import configure_app_security
+          app = Flask(__name__)
+          configure_app_security(app)
+          assert app.config["SESSION_COOKIE_SECURE"] is True
+          assert app.config["FORCE_HTTPS"] is True
+          assert app.config["HSTS_ENABLED"] is True
+          assert app.config["ALLOW_PUBLIC_SIGNUP"] is False
+          PY

@@ -28,11 +28,30 @@ wheels/
 
 # SQLite
 *.db
+*.sqlite
+*.sqlite3
+*.backup
+*.bak
 *.db-shm
 *.db-wal
 
+# Scraping dumps and generated verification artifacts
+dump*.html
+*_dump*.html
+mercari_page_dump*.html
+scrape_test_results*.json
+scraping_test_report*.json
+pytest_test.log
+test_stdout.log
+test_stderr.log
+out.txt
+shopify_products*.csv
+exports/
+downloads/
+
 # Virtual Environment
 venv/
+.venv/
 ENV/
 env/
 
