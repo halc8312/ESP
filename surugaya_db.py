@@ -464,7 +464,7 @@ def _extract_status(soup: BeautifulSoup, ld_product: dict) -> str:
         return "active"
 
     availability = ld_product.get("availability") or ""
-    if "outofstock" in availability or "soldout" in availability:
+    if "outofstock" in availability or "soldout" in availability or "discontinued" in availability:
         return "sold"
     if "instock" in availability:
         return "active"

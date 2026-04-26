@@ -35,6 +35,13 @@ _ACTIVE_PURCHASE_SELECTORS = (
     "a[href*='ref_action=btn_buy']",
 )
 
+_SOLD_TEXT_MARKERS = (
+    "SOLD",
+    "sold",
+    "売り切れ",
+    "販売終了",
+)
+
 
 def _clean_text(text) -> str:
     if not isinstance(text, str):
@@ -502,6 +509,10 @@ def parse_rakuma_item_page(page, url: str, body_text: str | None = None) -> dict
         status = "sold"
     elif status != "sold" and _has_any_selector(page, _ACTIVE_PURCHASE_SELECTORS):
         status = "on_sale"
+
+    if status == "unknown" and body_text:
+        if any(m in body_text for m in _SOLD_TEXT_MARKERS):
+            status = "sold"
 
     return {
         "url": url,

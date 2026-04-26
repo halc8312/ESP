@@ -132,6 +132,12 @@ def _stock_entry_is_unavailable(stock: dict) -> bool:
 
 
 def _infer_detail_status(item: dict, page_text: str = "") -> tuple[str, str]:
+    # Order/sale stop flags take precedence over raw stock data
+    if item.get("isOrderStop") is True or item.get("orderStopFlag") is True:
+        return "sold", "next_data"
+    if item.get("discontinue") is True or item.get("isDiscontinued") is True:
+        return "sold", "next_data"
+
     variant_stocks = list(_iter_variant_stocks(item))
     if any(_stock_entry_is_available(stock) for stock in variant_stocks):
         return "on_sale", "next_data"
