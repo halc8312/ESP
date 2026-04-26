@@ -774,11 +774,11 @@ def _extract_global_product_detail(source_url: str, global_url: str):
         availability = ld_product.get("availability") or ""
         if "instock" in availability:
             status = "active"
-        elif "outofstock" in availability or "soldout" in availability:
+        elif "outofstock" in availability or "soldout" in availability or "discontinued" in availability:
             status = "sold"
         else:
             body_text = soup.get_text(" ", strip=True)
-            if any(k in body_text for k in ("売り切れ", "在庫なし", "品切れ")):
+            if any(k in body_text for k in ("売り切れ", "在庫なし", "品切れ", "販売終了")):
                 status = "sold"
             elif any(k in body_text for k in ("カートに入れる", "注文する")):
                 status = "active"
