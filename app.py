@@ -6,9 +6,7 @@ import tempfile
 import threading
 from typing import Any
 
-import logging
-
-from flask import Flask, render_template, send_from_directory
+from flask import Flask, redirect, render_template, request, send_from_directory
 from flask_wtf.csrf import CSRFProtect
 from flask_apscheduler import APScheduler
 from flask_login import LoginManager
@@ -16,6 +14,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from database import SessionLocal, bootstrap_schema, ensure_additive_schema_ready
 from models import User
+from security_config import build_hsts_header, configure_app_security, parse_bool
 from services.image_service import IMAGE_STORAGE_PATH
 
 try:
@@ -239,16 +238,22 @@ def _resolve_web_scheduler_enabled(app: Flask) -> bool:
     return queue_backend == "inmemory"
 
 
+def _register_https_enforcement(app: Flask) -> None:
+    @app.before_request
+    def enforce_https():
+        if app.config.get("FORCE_HTTPS") and not request.is_secure:
+            return redirect(request.url.replace("http://", "https://", 1), code=301)
+        return None
+
+
 def _register_security_headers(app: Flask) -> None:
     @app.after_request
     def set_security_headers(response):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        if app.config.get("SESSION_COOKIE_SECURE"):
-            response.headers.setdefault(
-                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
-            )
+        if app.config.get("HSTS_ENABLED") and request.is_secure:
+            response.headers["Strict-Transport-Security"] = build_hsts_header(app)
         return response
 
 
@@ -263,20 +268,12 @@ def _register_error_handlers(app: Flask) -> None:
 
 
 def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | None = None) -> Flask:
-    logger = logging.getLogger("esp.app")
     app = Flask(__name__)
     app.config.from_object(SchedulerConfig())
     app.config.update(_get_runtime_defaults(runtime_role))
-    secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-this")
-    if secret_key == "dev-secret-key-change-this" and runtime_role in ("web", "worker"):
-        logger.warning(
-            "SECRET_KEY is using the insecure default value. "
-            "Set the SECRET_KEY environment variable to a random string in production."
-        )
     app.config.update(
         {
             "ESP_RUNTIME_ROLE": runtime_role,
-            "SECRET_KEY": secret_key,
             "SCRAPE_QUEUE_BACKEND": os.environ.get("SCRAPE_QUEUE_BACKEND", "inmemory"),
             "REDIS_URL": os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
             "SCRAPE_QUEUE_NAME": os.environ.get("SCRAPE_QUEUE_NAME", "scrape"),
@@ -308,11 +305,9 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
                 "SELECTOR_REPAIR_CANARY_URLS_SNKRDUNK_DETAIL",
                 "",
             ),
-            "SESSION_COOKIE_HTTPONLY": True,
-            "SESSION_COOKIE_SAMESITE": "Lax",
-            "SESSION_COOKIE_SECURE": _as_bool(os.environ.get("SESSION_COOKIE_SECURE", "")),
         }
     )
+    configure_app_security(app)
     if config_overrides:
         app.config.update(config_overrides)
     if runtime_role == "web" and not (config_overrides and "ENABLE_SCHEDULER" in config_overrides):
@@ -330,6 +325,7 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
     def shutdown_session(exception=None):
         SessionLocal.remove()
 
+    _register_https_enforcement(app)
     _register_security_headers(app)
     _register_error_handlers(app)
 
@@ -584,4 +580,5 @@ app = create_app(runtime_role="base")
 
 if __name__ == "__main__":
     runtime_app = create_web_app()
-    runtime_app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    debug_enabled = parse_bool(os.environ.get("FLASK_DEBUG"), default=False) and not runtime_app.config.get("IS_PRODUCTION")
+    runtime_app.run(debug=debug_enabled, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

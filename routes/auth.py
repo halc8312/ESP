@@ -2,53 +2,22 @@
 Authentication routes: login, register, logout, account.
 """
 import logging
-import threading
-import time
 
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 
 from database import SessionLocal
 from models import Shop, User
+from services.password_policy import validate_password_strength
+from services.rate_limit_service import (
+    get_client_ip,
+    is_limited,
+    record_attempt,
+    reset_attempts,
+)
 
 auth_bp = Blueprint('auth', __name__)
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Simple in-memory login rate limiter
-# ---------------------------------------------------------------------------
-_MAX_ATTEMPTS = 5
-_WINDOW_SECONDS = 900  # 15 minutes
-_login_attempts: dict[str, list[float]] = {}
-_login_lock = threading.Lock()
-
-
-def _client_ip() -> str:
-    forwarded = request.headers.get("X-Forwarded-For", "")
-    return forwarded.split(",")[0].strip() if forwarded else (request.remote_addr or "unknown")
-
-
-def _is_rate_limited() -> bool:
-    ip = _client_ip()
-    now = time.monotonic()
-    with _login_lock:
-        timestamps = _login_attempts.get(ip, [])
-        timestamps = [t for t in timestamps if now - t < _WINDOW_SECONDS]
-        _login_attempts[ip] = timestamps
-        return len(timestamps) >= _MAX_ATTEMPTS
-
-
-def _record_failed_attempt() -> None:
-    ip = _client_ip()
-    with _login_lock:
-        _login_attempts.setdefault(ip, []).append(time.monotonic())
-
-
-def _clear_attempts() -> None:
-    ip = _client_ip()
-    with _login_lock:
-        _login_attempts.pop(ip, None)
-
 
 def _build_account_context(session_db):
     all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
@@ -58,30 +27,43 @@ def _build_account_context(session_db):
     }
 
 
+def _login_identifiers(username):
+    client_ip = get_client_ip(request)
+    normalized_username = (username or "").strip().lower() or "unknown"
+    return client_ip, normalized_username
+
+
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('main.index'))
 
     if request.method == 'POST':
-        if _is_rate_limited():
-            return render_template(
-                'login.html',
-                error="ログイン試行回数が上限に達しました。しばらく経ってから再度お試しください。",
-            )
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        client_ip, normalized_username = _login_identifiers(username)
+        limit = current_app.config["LOGIN_RATE_LIMIT"]
+        window = current_app.config["LOGIN_RATE_WINDOW_SECONDS"]
 
-        username = request.form['username'].strip()
-        password = request.form['password']
+        for scope, identifier in (
+            ("login-ip", client_ip),
+            ("login-user", normalized_username),
+        ):
+            decision = is_limited(scope, identifier, limit, window)
+            if not decision.allowed:
+                return render_template('login.html', error=decision.message), decision.status_code
 
         session_db = SessionLocal()
         try:
             user = session_db.query(User).filter_by(username=username).first()
             if user and user.check_password(password):
-                _clear_attempts()
                 login_user(user)
+                reset_attempts("login-ip", client_ip)
+                reset_attempts("login-user", normalized_username)
                 return redirect(url_for('main.index'))
             else:
-                _record_failed_attempt()
+                record_attempt("login-ip", client_ip, window)
+                record_attempt("login-user", normalized_username, window)
                 return render_template('login.html', error="ユーザー名またはパスワードが違います")
         except Exception:
             session_db.rollback()
@@ -97,17 +79,36 @@ def register():
     if current_user.is_authenticated:
         return redirect(url_for('main.index'))
 
+    if not current_app.config.get("ALLOW_PUBLIC_SIGNUP", False):
+        return render_template(
+            'register.html',
+            error="Public signup is disabled. Ask an administrator to create an account.",
+        ), 403
+
     if request.method == 'POST':
-        username = request.form['username'].strip()
-        password = request.form['password']
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        client_ip = get_client_ip(request)
+        limit = current_app.config["REGISTER_RATE_LIMIT"]
+        window = current_app.config["REGISTER_RATE_WINDOW_SECONDS"]
+        decision = is_limited("register-ip", client_ip, limit, window)
+        if not decision.allowed:
+            return render_template('register.html', error=decision.message), decision.status_code
 
         session_db = SessionLocal()
         try:
-            if not username or not password:
-                return render_template('register.html', error="ユーザー名とパスワードを入力してください。")
+            if not username:
+                record_attempt("register-ip", client_ip, window)
+                return render_template('register.html', error="Username is required."), 400
 
             if session_db.query(User).filter_by(username=username).first():
+                record_attempt("register-ip", client_ip, window)
                 return render_template('register.html', error="このユーザー名はすでに使われています。")
+
+            password_errors = validate_password_strength(password, username=username)
+            if password_errors:
+                record_attempt("register-ip", client_ip, window)
+                return render_template('register.html', error=" ".join(password_errors)), 400
 
             new_user = User(username=username)
             new_user.set_password(password)
@@ -150,8 +151,9 @@ def account():
                 flash('今のパスワードが違います。', 'error')
                 return redirect(url_for('auth.account'))
 
-            if len(new_password) < 8:
-                flash('新しいパスワードは8文字以上にしてください。', 'error')
+            password_errors = validate_password_strength(new_password, username=user.username)
+            if password_errors:
+                flash(' '.join(password_errors), 'error')
                 return redirect(url_for('auth.account'))
 
             if new_password != confirm_password:
@@ -196,6 +198,10 @@ def register_cli_commands(app):
         import getpass
         username = input("Username: ")
         password = getpass.getpass("Password: ")
+        password_errors = validate_password_strength(password, username=username)
+        if password_errors:
+            print("Password rejected: " + " ".join(password_errors))
+            return
 
         session_db = SessionLocal()
         try:

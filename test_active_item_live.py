@@ -24,10 +24,15 @@ def find_active_mercari_link():
     print(f"Found {len(links)} links. First link: {links[0] if links else 'None'}")
     return links[0] if links else None
 
-url = find_active_mercari_link()
-if url:
-    full_url = "https://jp.mercari.com" + url if url.startswith('/') else url
-    print(f"Testing patrol on {full_url}")
-    patrol = MercariPatrol()
-    result = patrol.fetch(full_url)
-    print("Patrol Result:", result)
+def main():
+    url = find_active_mercari_link()
+    if url:
+        full_url = "https://jp.mercari.com" + url if url.startswith('/') else url
+        print(f"Testing patrol on {full_url}")
+        patrol = MercariPatrol()
+        result = patrol.fetch(full_url)
+        print("Patrol Result:", result)
+
+
+if __name__ == "__main__":
+    main()

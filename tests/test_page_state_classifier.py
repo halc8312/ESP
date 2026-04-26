@@ -6,7 +6,7 @@ from services.page_state_classifier import classify_page_state
 
 
 def test_classify_mercari_deleted_fixture_disallows_healing():
-    fixture_path = Path(__file__).resolve().parents[1] / "mercari_page_dump.html"
+    fixture_path = Path(__file__).resolve().parent / "fixtures" / "html" / "mercari_deleted_detail.html"
     page_url = "https://jp.mercari.com/item/m71383569733"
     html = fixture_path.read_text(encoding="utf-8")
     page = HtmlPageAdapter(html, url=page_url)

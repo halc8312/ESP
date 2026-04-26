@@ -6,7 +6,7 @@ import snkrdunk_db
 
 
 def test_parse_snkrdunk_detail_dump_fixture_preserves_strategy_and_fields():
-    fixture_path = Path(__file__).resolve().parents[1] / "dump.html"
+    fixture_path = Path(__file__).resolve().parent / "fixtures" / "html" / "snkrdunk_active_detail.html"
     page_url = "https://snkrdunk.com/products/HM4740-001"
     html = fixture_path.read_text(encoding="utf-8")
     page = HtmlPageAdapter(html, url=page_url)

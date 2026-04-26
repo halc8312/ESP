@@ -141,8 +141,8 @@ class TestAuthenticationRoutes:
 
         response = client.post('/account', data={
             'current_password': 'testpassword',
-            'new_password': 'newtestpassword',
-            'confirm_password': 'newtestpassword',
+            'new_password': 'NewTestPassword123',
+            'confirm_password': 'NewTestPassword123',
         }, follow_redirects=True)
         assert response.status_code == 200
         assert "変更しました".encode("utf-8") in response.data
@@ -1115,6 +1115,21 @@ class TestPriceListRoutes:
         # Information boundary: source/supplier data must not leak
         assert 'source_url' not in data
         assert 'site' not in data
+
+    def test_catalog_view_does_not_expose_internal_source_fields(self, client, db_session):
+        """Public catalog HTML must not leak procurement source fields."""
+        user, product, pricelist, item = self._create_catalog_fixture(
+            db_session,
+            username='catalogleakregression',
+            layout='editorial'
+        )
+
+        response = client.get(f'/catalog/{pricelist.token}')
+
+        assert response.status_code == 200
+        assert product.source_url.encode('utf-8') not in response.data
+        assert b'data-site=' not in response.data
+        assert b'View Source' not in response.data
 
     def test_catalog_product_detail_returns_404_for_missing_item(self, client, db_session):
         """Test catalog detail endpoint rejects products outside the price list"""

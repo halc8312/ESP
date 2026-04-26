@@ -20,6 +20,10 @@ services:
       mountPath: /var/data
       sizeGB: 10
     envVars:
+      - key: APP_ENV
+        value: production
+      - key: RUNTIME_ROLE
+        value: web
       - key: SECRET_KEY
         sync: false
       - key: DATABASE_URL
@@ -67,6 +71,10 @@ services:
     numInstances: 1
     maxShutdownDelaySeconds: 300
     envVars:
+      - key: APP_ENV
+        value: production
+      - key: RUNTIME_ROLE
+        value: worker
       - key: SECRET_KEY
         sync: false
       - key: DATABASE_URL

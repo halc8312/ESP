@@ -8,7 +8,7 @@ def create_admin():
         session = SessionLocal()
         try:
             username = "admin"
-            password = "password"
+            password = "TestUserPassword123"
             
             existing = session.query(User).filter_by(username=username).first()
             if existing:

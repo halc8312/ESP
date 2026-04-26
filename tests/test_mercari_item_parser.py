@@ -182,7 +182,7 @@ def test_parse_mercari_item_page_normalizes_embedded_html_urls_with_escaped_trai
 
 
 def test_parse_mercari_item_page_deleted_fixture_omits_broken_description():
-    fixture_path = Path(__file__).resolve().parents[1] / "mercari_page_dump.html"
+    fixture_path = Path(__file__).resolve().parent / "fixtures" / "html" / "mercari_deleted_detail.html"
     page_url = "https://jp.mercari.com/item/m71383569733"
     html = fixture_path.read_text(encoding="utf-8")
     page = HtmlPageAdapter(html, url=page_url)
@@ -195,7 +195,7 @@ def test_parse_mercari_item_page_deleted_fixture_omits_broken_description():
 
 
 def test_parse_mercari_item_page_live_fixture_preserves_price_source_and_strategy():
-    fixture_path = Path(__file__).resolve().parents[1] / "mercari_page_dump_live.html"
+    fixture_path = Path(__file__).resolve().parent / "fixtures" / "html" / "mercari_active_detail.html"
     page_url = "https://jp.mercari.com/item/m56789324689"
     html = fixture_path.read_text(encoding="utf-8")
     page = HtmlPageAdapter(html, url=page_url)

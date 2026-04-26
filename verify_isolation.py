@@ -7,7 +7,7 @@ BASE_URL = "http://localhost:5000"
 def register_and_login():
     session = requests.Session()
     username = f"user_{uuid.uuid4().hex[:8]}"
-    password = "password123"
+    password = "IsolationPassword123"
     
     # Register/Login
     session.post(f"{BASE_URL}/register", data={"username": username, "password": password})

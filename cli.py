@@ -150,16 +150,37 @@ def _response_contains_title(page_body: str, title: str) -> bool:
     return title in html.unescape(page_body)
 
 
-def _parse_detail_fixture(site: str, fixture_path: str, *, target_url: str = "") -> dict:
-    normalized_site = str(site or "").strip().lower()
+_SANITIZED_HTML_FIXTURE_ALIASES = {
+    "mercari_page_dump.html": "mercari_deleted_detail.html",
+    "mercari_page_dump_live.html": "mercari_active_detail.html",
+    "dump.html": "snkrdunk_active_detail.html",
+    "search_dump.html": "mercari_search_skeleton.html",
+}
+
+
+def _resolve_html_fixture_path(fixture_path: str) -> Path:
     resolved_path = Path(fixture_path).expanduser()
     if not resolved_path.is_absolute():
         resolved_path = (Path.cwd() / resolved_path).resolve()
     else:
         resolved_path = resolved_path.resolve()
 
-    if not resolved_path.exists():
-        raise FileNotFoundError(f"Fixture not found: {resolved_path}")
+    if resolved_path.exists():
+        return resolved_path
+
+    fixture_name = Path(fixture_path).name
+    alias = _SANITIZED_HTML_FIXTURE_ALIASES.get(fixture_name)
+    if alias:
+        candidate = (Path(__file__).resolve().parent / "tests" / "fixtures" / "html" / alias).resolve()
+        if candidate.exists():
+            return candidate
+
+    raise FileNotFoundError(f"Fixture not found: {resolved_path}")
+
+
+def _parse_detail_fixture(site: str, fixture_path: str, *, target_url: str = "") -> dict:
+    normalized_site = str(site or "").strip().lower()
+    resolved_path = _resolve_html_fixture_path(fixture_path)
 
     if normalized_site == "mercari":
         item_url = str(target_url or "https://jp.mercari.com/item/m-fixture-smoke").strip()
@@ -193,14 +214,7 @@ def _parse_detail_fixture(site: str, fixture_path: str, *, target_url: str = "")
 
 def _parse_search_fixture(site: str, fixture_path: str, *, target_url: str = "") -> dict:
     normalized_site = str(site or "").strip().lower()
-    resolved_path = Path(fixture_path).expanduser()
-    if not resolved_path.is_absolute():
-        resolved_path = (Path.cwd() / resolved_path).resolve()
-    else:
-        resolved_path = resolved_path.resolve()
-
-    if not resolved_path.exists():
-        raise FileNotFoundError(f"Fixture not found: {resolved_path}")
+    resolved_path = _resolve_html_fixture_path(fixture_path)
 
     if normalized_site != "mercari":
         raise ValueError(f"Unsupported search fixture site: {site}")
@@ -2084,8 +2098,11 @@ def run_local_verification_suite(
         )
         _append_step("detail-mercari-deleted", mercari_deleted)
 
-        search_fixture_path = Path("search_dump.html")
-        if search_fixture_path.exists():
+        try:
+            search_fixture_path = _resolve_html_fixture_path("search_dump.html")
+        except FileNotFoundError:
+            search_fixture_path = None
+        if search_fixture_path is not None:
             mercari_search = run_search_fixture_smoke(
                 "mercari",
                 str(search_fixture_path),
@@ -2378,10 +2395,16 @@ def run_single_web_smoke(
 
     config_keys = ("SCRAPE_QUEUE_BACKEND", "SCRAPE_QUEUE_NAME")
     original_config = {key: app.config.get(key) for key in config_keys}
+    original_rate_limit_env = {key: os.environ.get(key) for key in ("REDIS_URL", "VALKEY_URL")}
     user_id = None
     job_id = None
 
     try:
+        from services.rate_limit_service import reset_rate_limiter_for_tests
+
+        for key in original_rate_limit_env:
+            os.environ.pop(key, None)
+        reset_rate_limiter_for_tests()
         app.config.update(
             {
                 "SCRAPE_QUEUE_BACKEND": "inmemory",
@@ -2534,8 +2557,16 @@ def run_single_web_smoke(
         result["ready"] = not result["blockers"]
         return result
     finally:
+        from services.rate_limit_service import reset_rate_limiter_for_tests
+
         for key, value in original_config.items():
             app.config[key] = value
+        for key, value in original_rate_limit_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        reset_rate_limiter_for_tests()
 
         if not keep_artifacts:
             cleanup_session = SessionLocal()

@@ -15,6 +15,7 @@ os.environ["DATABASE_URL"] = "sqlite:///test_mercari.db"
 import database
 from app import create_app
 from database import SessionLocal, Base
+from services.rate_limit_service import reset_rate_limiter_for_tests
 
 
 def _reset_sqlite_test_database_schema(target_engine):
@@ -62,6 +63,18 @@ def _reset_feature_flag_env(monkeypatch):
         "OPERATIONAL_ALERT_COOLDOWN_SECONDS",
         "OPERATIONAL_ALERT_MAX_PER_WINDOW",
         "OPERATIONAL_ALERT_WINDOW_SECONDS",
+        "APP_ENV",
+        "ENVIRONMENT",
+        "PYTHON_ENV",
+        "RENDER",
+        "RUNTIME_ROLE",
+        "SECRET_KEY",
+        "REDIS_URL",
+        "VALKEY_URL",
+        "ALLOW_PUBLIC_SIGNUP",
+        "FORCE_HTTPS",
+        "HSTS_ENABLED",
+        "SESSION_COOKIE_SECURE",
     ):
         monkeypatch.delenv(env_name, raising=False)
 
@@ -88,9 +101,11 @@ def app(monkeypatch):
 
     app = create_app(runtime_role="test", config_overrides={"TESTING": True, "WTF_CSRF_ENABLED": False})
     with app.app_context():
+        reset_rate_limiter_for_tests()
         _reset_sqlite_test_database_schema(test_engine)
         Base.metadata.create_all(bind=test_engine)
         yield app
+        reset_rate_limiter_for_tests()
         _reset_sqlite_test_database_schema(test_engine)
 
     SessionLocal.remove()

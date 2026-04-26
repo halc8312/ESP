@@ -36,9 +36,11 @@
             </div>
             <button type="submit">ログイン</button>
         </form>
+        {% if config.ALLOW_PUBLIC_SIGNUP %}
         <div class="link">
             はじめての方は <a href="{{ url_for('register') }}">新規登録</a>
         </div>
+        {% endif %}
     </div>
 </body>
 

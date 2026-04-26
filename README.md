@@ -312,7 +312,7 @@ scrapling install
 patchright install chromium
 
 # 3. 管理者ユーザーの作成
-flask add-user
+flask create-user
 
 # 4. DB マイグレーション適用
 py -3 -m alembic upgrade head
@@ -427,11 +427,18 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 
 | 変数名 | デフォルト | 説明 |
 |--------|----------|------|
-| `SECRET_KEY` | `dev-secret-key-change-this` | Flask セッション署名キー。本番では必ず明示設定し、web / worker で同じ値を使う |
+| `APP_ENV` | `development` | `production` の場合は本番セキュリティ設定を fail-closed で検証する |
+| `RUNTIME_ROLE` | 空 | Render では `web` / `worker` を設定し、`APP_ENV=production` と合わせて本番起動条件を明示する |
+| `SECRET_KEY` | `dev-secret-key-change-this` | Flask セッション署名キー。本番では未設定・既知デフォルト・32文字未満を起動時に拒否する。web / worker で同じ値を使う |
 | `DATABASE_URL` | `sqlite:///mercari.db` | DB 接続文字列 |
 | `SCHEMA_BOOTSTRAP_MODE` | `auto` (`web`/`cli`) | `alembic` 優先で schema を適用。Alembic 未導入時は `legacy` にフォールバック |
 | `SCRAPE_QUEUE_BACKEND` | `inmemory` | `inmemory` または `rq`。`rq` はローカル Redis で先行検証可能 |
-| `REDIS_URL` | `redis://localhost:6379/0` | `SCRAPE_QUEUE_BACKEND=rq` 時の接続先 |
+| `REDIS_URL` | `redis://localhost:6379/0` | `SCRAPE_QUEUE_BACKEND=rq` と本番ログイン/登録レート制限の共有ストア接続先 |
+| `VALKEY_URL` | 空 | `REDIS_URL` の代替。本番レート制限用の共有ストアとして利用可能 |
+| `ALLOW_PUBLIC_SIGNUP` | development: `true`, production: `false` | 本番では明示的に `true` にしない限り `/register` を拒否する |
+| `FORCE_HTTPS` | production: `true` | 本番 HTTP リクエストを HTTPS へ 301 redirect する |
+| `HSTS_ENABLED` | production: `true` | HTTPS 応答へ HSTS を付与する |
+| `SESSION_COOKIE_SECURE` | production: `true` | 本番セッション Cookie を Secure に固定する |
 | `SCRAPE_QUEUE_NAME` | `scrape` | RQ queue 名 |
 | `RQ_BURST` | `false` | `worker.py` を burst モードで1回だけ動かすか |
 | `RQ_WITH_SCHEDULER` | `false` | RQ の scheduler 機能を worker に有効化するか。通常は `false` |
@@ -477,6 +484,9 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 
 - `SECRET_KEY` を十分長いランダム文字列で設定する
 - split 構成では `esp-web` / `esp-worker` の `SECRET_KEY` を一致させる
+- `REDIS_URL` または `VALKEY_URL` を設定し、ログイン/登録レート制限を共有ストアで有効化する
+- `APP_ENV=production` と `RUNTIME_ROLE=web` / `worker` を Render の各サービスに設定する
+- public signup は原則閉じ、必要な場合だけ `ALLOW_PUBLIC_SIGNUP=true` を明示する
 - `SCHEMA_BOOTSTRAP_MODE=auto` を維持する
 - 画像アップロードを保持したい環境では永続ストレージ付きの `IMAGE_STORAGE_PATH` を使う
 
@@ -596,6 +606,10 @@ APScheduler により **15 分おきに全登録商品を巡回**し、価格・
 ```bash
 # テスト全体を実行
 python -m pytest tests/ -v
+
+# 依存関係の整合性と脆弱性監査
+python -m pip check
+python -m pip_audit -r requirements.txt
 
 # 特定のテストファイルのみ
 python -m pytest tests/test_scrape_queue.py -v
@@ -747,7 +761,7 @@ root ユーザーと実行ユーザー（myuser）で Playwright ブラウザを
 
 - `worker.py` は起動時に schema bootstrap / additive patchset / drift verify を実行します
 - Render の worker が web より先に起動しても self-heal できる想定ですが、初回 deploy では DB ユーザーに schema 変更権限が必要です
-- `SECRET_KEY` を未設定のままにすると開発用デフォルト値で起動し、警告が出ます。本番では必ず web / worker の両方に同じ値を設定してください
+- 本番では `SECRET_KEY` の未設定、開発用デフォルト値、短すぎる値、共有レート制限ストア未設定を起動時に拒否します。必ず web / worker の両方に同じ `SECRET_KEY` と `REDIS_URL` / `VALKEY_URL` を設定してください
 - `price_lists.theme` など additive column を含む deploy では、worker crash-loop の有無を post-deploy で必ず確認してください
 
 ---
