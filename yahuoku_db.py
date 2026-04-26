@@ -179,15 +179,6 @@ def _infer_auction_status(item_detail: dict, page_text: str = "") -> str:
     if item_detail.get("isEndValid") is True:
         return "sold"
 
-    bid_count = item_detail.get("bidCount")
-    end_time = item_detail.get("endTime") or item_detail.get("endtime")
-    if bid_count is not None and end_time:
-        try:
-            if int(bid_count) > 0:
-                return "sold"
-        except (TypeError, ValueError):
-            pass
-
     if any(marker in page_text for marker in _CLOSED_PAGE_MARKERS):
         return "sold"
     if any(marker in page_text for marker in _OPEN_PAGE_MARKERS):
