@@ -176,6 +176,8 @@ def _infer_auction_status(item_detail: dict, page_text: str = "") -> str:
 
     if item_detail.get("isFinished") is True or item_detail.get("isClosed") is True:
         return "sold"
+    if item_detail.get("isEndValid") is True:
+        return "sold"
 
     if any(marker in page_text for marker in _CLOSED_PAGE_MARKERS):
         return "sold"

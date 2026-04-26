@@ -49,6 +49,9 @@ _SNKRDUNK_SOLD_STATUS_VALUES = {
     "soldout",
     "outofstock",
     "out_of_stock",
+    "discontinued",
+    "closed",
+    "unavailable",
 }
 
 

@@ -1051,6 +1051,7 @@ def _extract_status(page, body_text: str, availability: str, deleted: bool) -> t
     """
     hard_positives: list[str] = []
     hard_negatives: list[str] = []
+    soft_positives: list[str] = []
     soft_negatives: list[str] = []
     reasons: list[str] = []
 
@@ -1115,15 +1116,17 @@ def _extract_status(page, body_text: str, availability: str, deleted: bool) -> t
     if any(m in body_text for m in _SOLD_MARKERS):
         soft_negatives.append("body-sold-marker")
     if any(m in body_text for m in _ACTIVE_BUTTON_MARKERS):
-        hard_positives.append("body-purchase-marker")
+        soft_positives.append("body-purchase-marker")
 
     # ── Aggregate and decide ──────────────────────────────────────────
     reasons.extend(hard_positives)
     reasons.extend(hard_negatives)
+    reasons.extend(soft_positives)
     reasons.extend(soft_negatives)
 
     has_hard_positive = bool(hard_positives)
     has_hard_negative = bool(hard_negatives)
+    has_soft_positive = bool(soft_positives)
     has_soft_negative = bool(soft_negatives)
 
     # Hard positive beats soft negative — protect active items
@@ -1131,6 +1134,7 @@ def _extract_status(page, body_text: str, availability: str, deleted: bool) -> t
         return "on_sale", reasons, "hard"
 
     # Hard negative with no hard positive → sold
+    # Soft positives (e.g. body text) do NOT override hard negatives
     if has_hard_negative and not has_hard_positive:
         return "sold", reasons, "hard"
 
@@ -1139,9 +1143,18 @@ def _extract_status(page, body_text: str, availability: str, deleted: bool) -> t
         reasons.append("conflict-positive-wins")
         return "on_sale", reasons, "hard"
 
-    # Only soft negatives, no hard evidence either way → do NOT confirm sold
-    if has_soft_negative and not has_hard_positive:
+    # Only soft evidence — no hard signals either way
+    if has_soft_negative and not has_soft_positive:
         return "sold", reasons, "soft"
+
+    # Soft positive without any negative → on_sale (soft)
+    if has_soft_positive and not has_soft_negative:
+        return "on_sale", reasons, "soft"
+
+    # Both soft positive and soft negative — ambiguous, fail closed
+    if has_soft_positive and has_soft_negative:
+        reasons.append("soft-conflict-unknown")
+        return "unknown", reasons, "none"
 
     return "unknown", reasons, "none"
 

@@ -145,12 +145,12 @@ def _extract_visible_price(page, page_text: str = ""):
 def _infer_offmall_status(page_text: str, offers=None) -> str:
     availability = ""
     if isinstance(offers, dict):
-        availability = str(offers.get("availability", "") or "")
+        availability = str(offers.get("availability", "") or "").lower()
 
-    if "InStock" in availability:
-        return "active"
-    if "OutOfStock" in availability:
+    if "outofstock" in availability or "soldout" in availability or "discontinued" in availability:
         return "sold"
+    if "instock" in availability:
+        return "active"
 
     if "対象の商品はございません" in page_text or "ページが見つかりません" in page_text:
         return "sold"
