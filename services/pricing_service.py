@@ -72,16 +72,24 @@ def update_product_selling_price(product_id: int, session=None) -> bool:
         if not product:
             logger.warning(f"Product {product_id} not found")
             return False
-        
-        if not product.pricing_rule_id:
-            # No pricing rule assigned
+
+        has_manual_override = (
+            product.manual_margin_rate is not None
+            or product.manual_shipping_cost is not None
+        )
+
+        if not product.pricing_rule_id and not has_manual_override:
+            # No pricing rule assigned and no manual overrides — nothing to recalc
             return False
-        
-        rule = session.query(PricingRule).filter_by(id=product.pricing_rule_id).first()
-        if not rule:
-            logger.warning(f"PricingRule {product.pricing_rule_id} not found")
-            return False
-        
+
+        rule = None
+        if product.pricing_rule_id:
+            rule = session.query(PricingRule).filter_by(id=product.pricing_rule_id).first()
+            if not rule:
+                logger.warning(f"PricingRule {product.pricing_rule_id} not found")
+                if not has_manual_override:
+                    return False
+
         old_price = product.selling_price
         new_price = calculate_selling_price(
             product.last_price,
