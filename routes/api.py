@@ -214,7 +214,7 @@ def inline_update_product(product_id):
         session_db.close()
 
 
-@api_bp.route("/product/<int:product_id>/recalc-price", methods=["POST"])
+@api_bp.route("/products/<int:product_id>/recalc-price", methods=["POST"])
 @login_required
 def recalc_product_price(product_id):
     """

@@ -2000,7 +2000,7 @@
                     manual_margin_rate: marginInput && marginInput.value !== '' ? Number(marginInput.value) : null,
                     manual_shipping_cost: shippingInput && shippingInput.value !== '' ? Number(shippingInput.value) : null
                 };
-                fetch('/api/product/' + encodeURIComponent(productId) + '/recalc-price', {
+                fetch('/api/products/' + encodeURIComponent(productId) + '/recalc-price', {
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json' },
