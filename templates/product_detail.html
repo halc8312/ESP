@@ -2000,10 +2000,15 @@
                     manual_margin_rate: marginInput && marginInput.value !== '' ? Number(marginInput.value) : null,
                     manual_shipping_cost: shippingInput && shippingInput.value !== '' ? Number(shippingInput.value) : null
                 };
+                var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+                var csrfToken = csrfMeta ? csrfMeta.content : '';
                 fetch('/api/products/' + encodeURIComponent(productId) + '/recalc-price', {
                     method: 'POST',
                     credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
                     body: JSON.stringify(payload)
                 }).then(function (resp) {
                     return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
