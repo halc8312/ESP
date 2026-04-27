@@ -83,7 +83,12 @@ def update_product_selling_price(product_id: int, session=None) -> bool:
             return False
         
         old_price = product.selling_price
-        new_price = calculate_selling_price(product.last_price, rule)
+        new_price = calculate_selling_price(
+            product.last_price,
+            rule,
+            manual_margin_rate=product.manual_margin_rate,
+            manual_shipping_cost=product.manual_shipping_cost,
+        )
         
         if old_price != new_price:
             product.selling_price = new_price
@@ -127,7 +132,12 @@ def update_all_products_with_rule(rule_id: int, session=None) -> int:
         
         products = session.query(Product).filter_by(pricing_rule_id=rule_id).all()
         for product in products:
-            new_price = calculate_selling_price(product.last_price, rule)
+            new_price = calculate_selling_price(
+                product.last_price,
+                rule,
+                manual_margin_rate=product.manual_margin_rate,
+                manual_shipping_cost=product.manual_shipping_cost,
+            )
             if product.selling_price != new_price:
                 product.selling_price = new_price
                 updated_count += 1
