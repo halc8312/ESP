@@ -11,6 +11,27 @@ from models import Product, PricingRule
 logger = logging.getLogger("pricing")
 
 
+def product_has_pricing_config(product: Product) -> bool:
+    """
+    Return True if the product is eligible for selling-price recalculation.
+
+    A product is eligible when it either has a pricing rule assigned OR has
+    at least one per-product manual override (margin% / shipping¥) set.
+    Callers (patrol, scrape ingest, CLI) use this to gate the trigger of
+    `update_product_selling_price`, so manual-override-only products are not
+    silently skipped when their cost price changes.
+    """
+    if product is None:
+        return False
+    if getattr(product, "pricing_rule_id", None):
+        return True
+    if getattr(product, "manual_margin_rate", None) is not None:
+        return True
+    if getattr(product, "manual_shipping_cost", None) is not None:
+        return True
+    return False
+
+
 def calculate_selling_price(
     cost_price: int,
     rule: PricingRule,

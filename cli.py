@@ -39,7 +39,7 @@ from services.database_migration import (
 )
 from services.html_page_adapter import HtmlPageAdapter
 from services.mercari_item_parser import parse_mercari_item_page
-from services.pricing_service import update_product_selling_price
+from services.pricing_service import product_has_pricing_config, update_product_selling_price
 from services.repair_store import inspect_repair_store_state
 from services.repair_worker import preview_pending_repair_candidates, process_pending_repair_candidates
 from services.rich_text_maintenance import run_rich_text_maintenance
@@ -3026,7 +3026,7 @@ def register_cli_commands(app):
                         session_db.add(snapshot)
                         updated_count += 1
 
-                        if price_changed and product.pricing_rule_id:
+                        if price_changed and product_has_pricing_config(product):
                             repricing_product_ids.add(product.id)
 
                     time.sleep(2)

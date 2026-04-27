@@ -8,7 +8,7 @@ from datetime import timedelta
 from sqlalchemy import asc
 from database import SessionLocal
 from models import Product, Variant
-from services.pricing_service import update_product_selling_price
+from services.pricing_service import product_has_pricing_config, update_product_selling_price
 from services.scrape_result_policy import normalize_status_for_persistence
 from time_utils import utc_now
 from utils import is_valid_detail_url
@@ -191,7 +191,7 @@ class MonitorService:
                         logger.info(f"Updated {product.id}: {changes} changes")
                         
                         # Recalculate selling price if needed
-                        if product.pricing_rule_id:
+                        if product_has_pricing_config(product):
                             update_product_selling_price(product.id, session=session_db)
                     
                     # Always update timestamp even if no changes
