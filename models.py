@@ -76,6 +76,8 @@ class Product(Base):
     # Pricing
     pricing_rule_id = Column(Integer, ForeignKey("pricing_rules.id"), nullable=True)
     selling_price = Column(Integer)  # Calculated selling price
+    manual_margin_rate = Column(Integer, nullable=True)
+    manual_shipping_cost = Column(Integer, nullable=True)
 
     # Archive (SOLD Stacking)
     archived = Column(Boolean, default=False)

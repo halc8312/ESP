@@ -11,29 +11,44 @@ from models import Product, PricingRule
 logger = logging.getLogger("pricing")
 
 
-def calculate_selling_price(cost_price: int, rule: PricingRule) -> int:
+def calculate_selling_price(
+    cost_price: int,
+    rule: PricingRule,
+    *,
+    manual_margin_rate: int | None = None,
+    manual_shipping_cost: int | None = None,
+) -> int:
     """
     Calculate selling price based on cost price and pricing rule.
-    
+
     Args:
         cost_price: The scraped cost price (JPY)
         rule: The PricingRule to apply
-        
+        manual_margin_rate: Optional per-product override for margin% (replaces rule.margin_rate)
+        manual_shipping_cost: Optional per-product override for shipping JPY (replaces rule.shipping_cost)
+
     Returns:
         Calculated selling price (JPY, rounded to integer)
     """
     if cost_price is None or cost_price <= 0:
         return 0
-    
-    if rule is None:
+
+    rule_margin = (rule.margin_rate if rule is not None else None) or 0
+    rule_shipping = (rule.shipping_cost if rule is not None else None) or 0
+    rule_fixed_fee = (rule.fixed_fee if rule is not None else None) or 0
+
+    margin_rate = manual_margin_rate if manual_margin_rate is not None else rule_margin
+    shipping_cost = manual_shipping_cost if manual_shipping_cost is not None else rule_shipping
+
+    if rule is None and manual_margin_rate is None and manual_shipping_cost is None:
         # No rule, return cost as-is (or apply default margin)
         return cost_price
-    
+
     # Formula: (cost + shipping) * (1 + margin%) + fixed_fee
-    base = cost_price + (rule.shipping_cost or 0)
-    margin_multiplier = 1 + (rule.margin_rate or 0) / 100
-    result = base * margin_multiplier + (rule.fixed_fee or 0)
-    
+    base = cost_price + shipping_cost
+    margin_multiplier = 1 + margin_rate / 100
+    result = base * margin_multiplier + rule_fixed_fee
+
     return int(round(result))
 
 

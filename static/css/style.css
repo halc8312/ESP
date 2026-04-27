@@ -961,6 +961,231 @@ tr.changed {
     margin-bottom: 1rem;
 }
 
+.tag-pill-field {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: #fff;
+    min-height: 42px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tag-pill-field:focus-within {
+    border-color: var(--primary-color, #2563eb);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.tag-pill-list {
+    display: contents;
+}
+
+.tag-pill-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 4px 3px 10px;
+    background: rgba(37, 99, 235, 0.08);
+    border: 1px solid rgba(37, 99, 235, 0.25);
+    color: #1d4ed8;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.tag-pill-chip-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    border: 0;
+    background: rgba(37, 99, 235, 0.18);
+    color: #1d4ed8;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0;
+}
+
+.tag-pill-chip-remove:hover,
+.tag-pill-chip-remove:focus-visible {
+    background: rgba(37, 99, 235, 0.32);
+    outline: none;
+}
+
+.tag-pill-input {
+    flex: 1 1 140px;
+    min-width: 140px;
+    border: 0;
+    outline: 0;
+    padding: 4px 6px;
+    font-size: 13px;
+    background: transparent;
+    color: inherit;
+}
+
+.tag-pill-input::placeholder {
+    color: var(--text-muted, #94a3b8);
+}
+
+.product-image-thumb {
+    cursor: zoom-in;
+}
+
+.image-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    background: rgba(2, 6, 23, 0.86);
+    backdrop-filter: blur(4px);
+}
+
+.image-lightbox.is-open {
+    display: flex;
+}
+
+body.image-lightbox-open {
+    overflow: hidden;
+}
+
+.image-lightbox-img {
+    max-width: min(92vw, 1280px);
+    max-height: 88vh;
+    object-fit: contain;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
+.image-lightbox-close,
+.image-lightbox-nav {
+    position: absolute;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(15, 23, 42, 0.6);
+    color: #fff;
+    border-radius: 999px;
+    cursor: pointer;
+    line-height: 1;
+    font-size: 24px;
+    padding: 0;
+    transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.image-lightbox-close:hover,
+.image-lightbox-nav:hover {
+    background: rgba(15, 23, 42, 0.85);
+}
+
+.image-lightbox-close {
+    top: 16px;
+    right: 16px;
+    width: 40px;
+    height: 40px;
+}
+
+.image-lightbox-nav {
+    top: 50%;
+    transform: translateY(-50%);
+    width: 48px;
+    height: 48px;
+    font-size: 32px;
+}
+
+.image-lightbox-prev {
+    left: 16px;
+}
+
+.image-lightbox-next {
+    right: 16px;
+}
+
+.image-lightbox-counter {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 13px;
+    background: rgba(15, 23, 42, 0.6);
+    padding: 4px 12px;
+    border-radius: 999px;
+}
+
+.manual-price-override {
+    margin: 16px 0;
+    padding: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: rgba(37, 99, 235, 0.04);
+}
+
+.manual-price-override-header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 0;
+}
+
+.manual-price-override-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: #1d4ed8;
+    cursor: pointer;
+}
+
+.manual-price-override-note {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.manual-price-override-body {
+    margin-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.manual-price-override-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.manual-price-override-row .form-group {
+    margin-bottom: 0;
+}
+
+.manual-price-override-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.manual-price-override-result {
+    color: #1d4ed8;
+    font-size: 13px;
+    font-weight: 600;
+    min-height: 1em;
+}
+
+.manual-price-override-result.is-error {
+    color: #b42318;
+}
+
 .images {
     display: flex;
     flex-wrap: wrap;
