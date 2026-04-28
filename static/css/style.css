@@ -827,6 +827,11 @@ tr.changed {
     border-radius: 6px;
 }
 
+.product-image-bg-status[hidden],
+.product-image-bg-actions[hidden] {
+    display: none !important;
+}
+
 .product-image-add-tile {
     aspect-ratio: 1 / 1;
     border: 1px dashed var(--border-color);
