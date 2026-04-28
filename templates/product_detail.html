@@ -998,7 +998,7 @@
         color: #166534;
     }
 
-    .product-edit-checklist-popover .check-mark {
+    .product-edit-checklist-popover .product-edit-check-icon {
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -1012,10 +1012,27 @@
         font-weight: 700;
     }
 
-    .product-edit-checklist-popover li.is-complete .check-mark {
+    .product-edit-checklist-popover li.is-complete .product-edit-check-icon {
         background: #ecfdf3;
         color: #166534;
         border-color: #bbf7d0;
+    }
+
+    .product-edit-checklist-popover .product-edit-check-content {
+        display: grid;
+        gap: 2px;
+        font-size: 0.78rem;
+    }
+
+    .product-edit-checklist-popover .product-edit-check-content strong {
+        font-size: 0.82rem;
+    }
+
+    .product-edit-checklist-popover .product-edit-check-note {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 0.74rem;
+        line-height: 1.4;
     }
 
     /* Source-info read-only consolidated card (replaces hero + internal source panel) */
@@ -1114,7 +1131,7 @@
             aria-haspopup="true"
             data-ready="{% if edit_summary.completed_count >= edit_summary.total_count %}ok{% else %}todo{% endif %}"
             title="保存前チェックの状態">
-            チェック {{ edit_summary.completed_count }}/{{ edit_summary.total_count }}
+            <span id="heroReadinessText">チェック {{ edit_summary.completed_count }}/{{ edit_summary.total_count }}</span>
             <span class="product-edit-checklist-popover" role="tooltip">
                 <ul>
                     {% for item in edit_summary.checklist %}
@@ -2483,7 +2500,11 @@
         });
 
         if (heroReadinessBadge) {
-            heroReadinessBadge.textContent = 'チェック ' + completedCount + '/5';
+            heroReadinessBadge.setAttribute('data-ready', completedCount >= 5 ? 'ok' : 'todo');
+            var heroReadinessText = document.getElementById('heroReadinessText');
+            if (heroReadinessText) {
+                heroReadinessText.textContent = 'チェック ' + completedCount + '/5';
+            }
         }
 
         if (checklistCountBadge) {
