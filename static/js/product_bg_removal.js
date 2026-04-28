@@ -58,9 +58,11 @@
         if (!btn) return;
         if (busy) {
             btn.setAttribute("disabled", "disabled");
+            btn.setAttribute("aria-busy", "true");
             btn.dataset.originalLabel = btn.dataset.originalLabel || btn.textContent;
-            btn.textContent = "処理中";
+            btn.textContent = "⟳";
         } else {
+            btn.removeAttribute("aria-busy");
             btn.removeAttribute("disabled");
             if (btn.dataset.originalLabel) {
                 btn.textContent = btn.dataset.originalLabel;
