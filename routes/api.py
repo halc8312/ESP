@@ -5,7 +5,8 @@ from flask import Blueprint, jsonify, request, url_for
 from flask_login import login_required, current_user
 
 from database import SessionLocal
-from models import Product
+from models import PricingRule, Product
+from services.pricing_service import calculate_selling_price
 from services.queue_backend import get_queue_backend, serialize_scrape_job_for_api
 from services.scrape_job_store import dismiss_job_record, dismiss_job_records, list_dismissed_job_ids_for_user
 from time_utils import utc_now
@@ -209,6 +210,81 @@ def inline_update_product(product_id):
     except Exception:
         session_db.rollback()
         raise
+    finally:
+        session_db.close()
+
+
+@api_bp.route("/products/<int:product_id>/recalc-price", methods=["POST"])
+@login_required
+def recalc_product_price(product_id):
+    """
+    商品編集画面の「個別の利益率/送料」プレビュー計算用エンドポイント。
+
+    Request JSON:
+        {
+            "manual_margin_rate": int | null,
+            "manual_shipping_cost": int | null
+        }
+
+    Returns the recalculated selling_price using the product's pricing rule
+    (if any) overridden by the supplied manual values. Does NOT persist
+    anything to the database — frontend uses this to populate variant price
+    inputs as a preview only.
+    """
+    payload = request.get_json(silent=True) or {}
+
+    def _coerce_optional_int(raw, field_name):
+        if raw is None or raw == "":
+            return None
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"{field_name} must be an integer")
+        if value < 0:
+            raise ValueError(f"{field_name} must be >= 0")
+        return value
+
+    try:
+        manual_margin = _coerce_optional_int(payload.get("manual_margin_rate"), "manual_margin_rate")
+        manual_shipping = _coerce_optional_int(payload.get("manual_shipping_cost"), "manual_shipping_cost")
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+    session_db = SessionLocal()
+    try:
+        product = (
+            session_db.query(Product)
+            .filter_by(id=product_id, user_id=current_user.id)
+            .one_or_none()
+        )
+        if not product:
+            return jsonify({"success": False, "error": "Product not found"}), 404
+
+        if product.last_price is None or product.last_price <= 0:
+            return jsonify({"success": False, "error": "仕入価格が未取得のため計算できません"}), 400
+
+        rule = None
+        if product.pricing_rule_id:
+            rule = session_db.query(PricingRule).filter_by(id=product.pricing_rule_id).first()
+
+        selling_price = calculate_selling_price(
+            product.last_price,
+            rule,
+            manual_margin_rate=manual_margin,
+            manual_shipping_cost=manual_shipping,
+        )
+
+        return jsonify(
+            {
+                "success": True,
+                "product_id": product.id,
+                "cost_price": product.last_price,
+                "selling_price": selling_price,
+                "manual_margin_rate": manual_margin,
+                "manual_shipping_cost": manual_shipping,
+                "rule_id": rule.id if rule else None,
+            }
+        )
     finally:
         session_db.close()
 

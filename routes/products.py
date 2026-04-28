@@ -362,6 +362,27 @@ def product_detail(product_id):
             product.seo_title = request.form.get("seo_title")
             product.seo_description = request.form.get("seo_description")
 
+            # --- 個別の利益率/送料オーバーライド ---
+            manual_price_enabled = request.form.get("manual_price_enabled") == "on"
+            if manual_price_enabled:
+                manual_margin_raw = (request.form.get("manual_margin_rate") or "").strip()
+                manual_shipping_raw = (request.form.get("manual_shipping_cost") or "").strip()
+                try:
+                    product.manual_margin_rate = (
+                        int(manual_margin_raw) if manual_margin_raw != "" else None
+                    )
+                except ValueError:
+                    product.manual_margin_rate = None
+                try:
+                    product.manual_shipping_cost = (
+                        int(manual_shipping_raw) if manual_shipping_raw != "" else None
+                    )
+                except ValueError:
+                    product.manual_shipping_cost = None
+            else:
+                product.manual_margin_rate = None
+                product.manual_shipping_cost = None
+
             submitted_images = _parse_image_urls_json(
                 request.form.get("image_urls_json"),
                 current_images,

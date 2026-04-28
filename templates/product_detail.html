@@ -1187,6 +1187,39 @@
                     </div>
                     <p class="field-helper-text">色やサイズがない商品は、1行だけ残して価格と在庫を入れれば運用できます。</p>
 
+                    <section class="manual-price-override" data-product-id="{{ product.id }}">
+                        <header class="manual-price-override-header">
+                            <label class="manual-price-override-toggle">
+                                <input type="checkbox" id="manual_price_toggle" name="manual_price_enabled"
+                                    {% if product.manual_margin_rate is not none or product.manual_shipping_cost is not none %}checked{% endif %}>
+                                <span>個別の利益率・送料を有効にする</span>
+                            </label>
+                            <p class="manual-price-override-note">この商品だけ既定の価格ルールを上書きしたい場合に使います。空欄ならルール側の値を使用します。</p>
+                        </header>
+                        <div class="manual-price-override-body" id="manual_price_settings"
+                            {% if product.manual_margin_rate is none and product.manual_shipping_cost is none %}hidden{% endif %}>
+                            <div class="manual-price-override-row">
+                                <div class="form-group">
+                                    <label for="manual_margin_rate">個別の利益率 (%)</label>
+                                    <input type="number" id="manual_margin_rate" name="manual_margin_rate"
+                                        value="{{ product.manual_margin_rate if product.manual_margin_rate is not none else '' }}"
+                                        min="0" step="1" placeholder="例: 20">
+                                </div>
+                                <div class="form-group">
+                                    <label for="manual_shipping_cost">個別の追加送料 (¥)</label>
+                                    <input type="number" id="manual_shipping_cost" name="manual_shipping_cost"
+                                        value="{{ product.manual_shipping_cost if product.manual_shipping_cost is not none else '' }}"
+                                        min="0" step="1" placeholder="例: 1500">
+                                </div>
+                            </div>
+                            <div class="manual-price-override-actions">
+                                <button type="button" class="btn-secondary" id="manual_price_recalc_btn">再計算して価格に反映</button>
+                                <output id="manual_price_recalc_result" class="manual-price-override-result" aria-live="polite"></output>
+                            </div>
+                            <p class="field-helper-text">仕入価格 ¥<strong id="manualPriceCostValue">{{ product.last_price or 0 }}</strong> を元に計算します。再計算ボタンを押すとバリエーション価格欄に反映されますが、保存するまで確定しません。</p>
+                        </div>
+                    </section>
+
                     <details class="mobile-collapsible product-edit-accent-panel">
                         <summary class="mobile-collapsible-header">
                             <span class="mobile-collapsible-title">一括でバリエーションを作る</span>
@@ -1359,9 +1392,16 @@
                         <p class="field-helper-text">ブランド名やショップ名を入れたい場合に使います。</p>
                     </div>
                     <div class="form-group">
-                        <label for="tags">タグ（検索キーワード）</label>
-                        <input type="text" id="tags" name="tags" value="{{ product.tags or '' }}" placeholder="カンマ区切りで入力">
-                        <p class="field-helper-text">検索や整理に使う補助ラベルです。例: vintage,camera,black</p>
+                        <label for="tag_input">タグ（検索キーワード）</label>
+                        <div class="tag-pill-field" id="tagPillField">
+                            <div class="tag-pill-list" id="tagPillList" aria-live="polite"></div>
+                            <input type="text" id="tag_input" class="tag-pill-input"
+                                placeholder="Enterで追加（例: vintage, camera, black）"
+                                autocomplete="off"
+                                aria-describedby="tagPillHelp">
+                        </div>
+                        <input type="hidden" id="tags" name="tags" value="{{ product.tags or '' }}">
+                        <p id="tagPillHelp" class="field-helper-text">Enter または カンマ で確定して追加。× をクリックで削除できます。</p>
                     </div>
                     <div class="form-group">
                         <label for="handle">URLスラッグ（Handle）</label>
@@ -1434,6 +1474,14 @@
         <button type="submit">この内容で保存</button>
     </div>
 </form>
+
+<div id="imageLightbox" class="image-lightbox" aria-hidden="true" role="dialog" aria-modal="true" aria-label="画像プレビュー">
+    <button type="button" class="image-lightbox-close" aria-label="閉じる" data-image-lightbox-close>×</button>
+    <button type="button" class="image-lightbox-nav image-lightbox-prev" aria-label="前の画像" data-image-lightbox-prev>‹</button>
+    <img class="image-lightbox-img" id="imageLightboxImg" alt="" src="">
+    <button type="button" class="image-lightbox-nav image-lightbox-next" aria-label="次の画像" data-image-lightbox-next>›</button>
+    <div class="image-lightbox-counter" id="imageLightboxCounter"></div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -1516,6 +1564,9 @@
         imageUrls = safeParseImageUrls(imageHiddenInput ? imageHiddenInput.value : '[]');
         renderImageList();
         setSaveState('saved');
+        setupTagPillField();
+        setupImageLightbox();
+        setupManualPriceOverride();
         updateProductEditSummary();
 
         if (productForm) {
@@ -1616,6 +1667,366 @@
     function markFormDirty() {
         formDirty = true;
         setSaveState('dirty');
+    }
+
+    var tagPillState = {
+        list: null,
+        input: null,
+        hidden: null,
+        tags: []
+    };
+
+    function parseTagsString(raw) {
+        if (!raw) {
+            return [];
+        }
+        return String(raw)
+            .split(',')
+            .map(function (item) { return item.trim(); })
+            .filter(function (item) { return item.length > 0; });
+    }
+
+    function renderTagPills() {
+        if (!tagPillState.list) {
+            return;
+        }
+        tagPillState.list.innerHTML = '';
+        tagPillState.tags.forEach(function (tag, idx) {
+            var chip = document.createElement('span');
+            chip.className = 'tag-pill-chip';
+            chip.textContent = tag;
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'tag-pill-chip-remove';
+            btn.setAttribute('aria-label', 'タグ「' + tag + '」を削除');
+            btn.innerHTML = '&times;';
+            btn.addEventListener('click', function () {
+                tagPillState.tags.splice(idx, 1);
+                syncTagsHidden();
+                renderTagPills();
+                markFormDirty();
+                if (tagPillState.input) {
+                    tagPillState.input.focus();
+                }
+            });
+            chip.appendChild(btn);
+            tagPillState.list.appendChild(chip);
+        });
+    }
+
+    function syncTagsHidden() {
+        if (tagPillState.hidden) {
+            tagPillState.hidden.value = tagPillState.tags.join(',');
+        }
+    }
+
+    function commitTagInput() {
+        if (!tagPillState.input) {
+            return false;
+        }
+        var raw = tagPillState.input.value;
+        var pieces = parseTagsString(raw);
+        var changed = false;
+        pieces.forEach(function (tag) {
+            var lower = tag.toLowerCase();
+            var exists = tagPillState.tags.some(function (existing) {
+                return existing.toLowerCase() === lower;
+            });
+            if (!exists) {
+                tagPillState.tags.push(tag);
+                changed = true;
+            }
+        });
+        tagPillState.input.value = '';
+        if (changed) {
+            syncTagsHidden();
+            renderTagPills();
+            markFormDirty();
+        }
+        return changed;
+    }
+
+    function setupTagPillField() {
+        var field = document.getElementById('tagPillField');
+        tagPillState.list = document.getElementById('tagPillList');
+        tagPillState.input = document.getElementById('tag_input');
+        tagPillState.hidden = document.getElementById('tags');
+        if (!field || !tagPillState.list || !tagPillState.input || !tagPillState.hidden) {
+            return;
+        }
+
+        tagPillState.tags = parseTagsString(tagPillState.hidden.value);
+        renderTagPills();
+
+        tagPillState.input.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' || event.key === ',') {
+                event.preventDefault();
+                commitTagInput();
+                return;
+            }
+            if (event.key === 'Backspace' && tagPillState.input.value === '' && tagPillState.tags.length > 0) {
+                tagPillState.tags.pop();
+                syncTagsHidden();
+                renderTagPills();
+                markFormDirty();
+            }
+        });
+
+        tagPillState.input.addEventListener('blur', function () {
+            commitTagInput();
+        });
+
+        field.addEventListener('click', function (event) {
+            if (event.target === field || event.target === tagPillState.list) {
+                tagPillState.input.focus();
+            }
+        });
+
+        if (productForm) {
+            productForm.addEventListener('submit', function () {
+                commitTagInput();
+            }, true);
+        }
+    }
+
+    var imageLightboxState = {
+        modal: null,
+        img: null,
+        counter: null,
+        index: 0,
+        boundKey: null
+    };
+
+    function getLightboxUrls() {
+        if (Array.isArray(imageUrls) && imageUrls.length > 0) {
+            return imageUrls.slice();
+        }
+        if (!imageGrid) {
+            return [];
+        }
+        var thumbs = imageGrid.querySelectorAll('img.product-image-thumb');
+        var urls = [];
+        for (var i = 0; i < thumbs.length; i += 1) {
+            urls.push(thumbs[i].getAttribute('src') || thumbs[i].src);
+        }
+        return urls;
+    }
+
+    function updateLightbox() {
+        var urls = getLightboxUrls();
+        if (!imageLightboxState.modal || !imageLightboxState.img || urls.length === 0) {
+            return;
+        }
+        if (imageLightboxState.index < 0) {
+            imageLightboxState.index = urls.length - 1;
+        }
+        if (imageLightboxState.index >= urls.length) {
+            imageLightboxState.index = 0;
+        }
+        imageLightboxState.img.src = urls[imageLightboxState.index];
+        imageLightboxState.img.alt = '画像 ' + (imageLightboxState.index + 1);
+        if (imageLightboxState.counter) {
+            imageLightboxState.counter.textContent = (imageLightboxState.index + 1) + ' / ' + urls.length;
+        }
+    }
+
+    function openImageLightbox(startIndex) {
+        if (!imageLightboxState.modal) {
+            return;
+        }
+        var urls = getLightboxUrls();
+        if (urls.length === 0) {
+            return;
+        }
+        imageLightboxState.index = Math.max(0, Math.min(startIndex || 0, urls.length - 1));
+        updateLightbox();
+        imageLightboxState.modal.classList.add('is-open');
+        imageLightboxState.modal.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('image-lightbox-open');
+    }
+
+    function closeImageLightbox() {
+        if (!imageLightboxState.modal) {
+            return;
+        }
+        imageLightboxState.modal.classList.remove('is-open');
+        imageLightboxState.modal.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('image-lightbox-open');
+        if (imageLightboxState.img) {
+            imageLightboxState.img.src = '';
+        }
+    }
+
+    function setupImageLightbox() {
+        imageLightboxState.modal = document.getElementById('imageLightbox');
+        imageLightboxState.img = document.getElementById('imageLightboxImg');
+        imageLightboxState.counter = document.getElementById('imageLightboxCounter');
+        if (!imageLightboxState.modal || !imageLightboxState.img) {
+            return;
+        }
+
+        if (imageGrid) {
+            imageGrid.addEventListener('click', function (event) {
+                var target = event.target;
+                if (!target) {
+                    return;
+                }
+                if (target.closest && target.closest('.product-image-action-btn, .image-sort-handle, .product-image-bg-actions, .image-upload-tile')) {
+                    return;
+                }
+                var thumb = target.closest && target.closest('img.product-image-thumb');
+                if (!thumb) {
+                    return;
+                }
+                event.preventDefault();
+                var card = thumb.closest('.product-image-card');
+                var idx = 0;
+                if (card && card.parentNode) {
+                    var cards = card.parentNode.querySelectorAll('.product-image-card');
+                    for (var i = 0; i < cards.length; i += 1) {
+                        if (cards[i] === card) {
+                            idx = i;
+                            break;
+                        }
+                    }
+                }
+                openImageLightbox(idx);
+            });
+        }
+
+        imageLightboxState.modal.addEventListener('click', function (event) {
+            if (event.target === imageLightboxState.modal) {
+                closeImageLightbox();
+            }
+        });
+
+        var closeBtn = imageLightboxState.modal.querySelector('[data-image-lightbox-close]');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', function (event) {
+                event.preventDefault();
+                closeImageLightbox();
+            });
+        }
+        var prevBtn = imageLightboxState.modal.querySelector('[data-image-lightbox-prev]');
+        if (prevBtn) {
+            prevBtn.addEventListener('click', function (event) {
+                event.preventDefault();
+                imageLightboxState.index -= 1;
+                updateLightbox();
+            });
+        }
+        var nextBtn = imageLightboxState.modal.querySelector('[data-image-lightbox-next]');
+        if (nextBtn) {
+            nextBtn.addEventListener('click', function (event) {
+                event.preventDefault();
+                imageLightboxState.index += 1;
+                updateLightbox();
+            });
+        }
+
+        imageLightboxState.boundKey = function (event) {
+            if (!imageLightboxState.modal.classList.contains('is-open')) {
+                return;
+            }
+            if (event.key === 'Escape') {
+                closeImageLightbox();
+            } else if (event.key === 'ArrowLeft') {
+                imageLightboxState.index -= 1;
+                updateLightbox();
+            } else if (event.key === 'ArrowRight') {
+                imageLightboxState.index += 1;
+                updateLightbox();
+            }
+        };
+        document.addEventListener('keydown', imageLightboxState.boundKey);
+    }
+
+    function setupManualPriceOverride() {
+        var section = document.querySelector('.manual-price-override');
+        if (!section) {
+            return;
+        }
+        var toggle = section.querySelector('#manual_price_toggle');
+        var body = section.querySelector('#manual_price_settings');
+        var marginInput = section.querySelector('#manual_margin_rate');
+        var shippingInput = section.querySelector('#manual_shipping_cost');
+        var recalcBtn = section.querySelector('#manual_price_recalc_btn');
+        var resultEl = section.querySelector('#manual_price_recalc_result');
+        var productId = section.getAttribute('data-product-id');
+
+        function setResult(message, isError) {
+            if (!resultEl) {
+                return;
+            }
+            resultEl.textContent = message || '';
+            resultEl.classList.toggle('is-error', !!isError);
+        }
+
+        if (toggle && body) {
+            toggle.addEventListener('change', function () {
+                if (toggle.checked) {
+                    body.removeAttribute('hidden');
+                } else {
+                    body.setAttribute('hidden', '');
+                    if (marginInput) marginInput.value = '';
+                    if (shippingInput) shippingInput.value = '';
+                    setResult('');
+                }
+                markFormDirty();
+            });
+        }
+
+        function applyToVariantInputs(price) {
+            var inputs = document.querySelectorAll('input[name^="v_price_"], input[name^="new_v_price_"]');
+            var changed = 0;
+            inputs.forEach(function (input) {
+                if (input.closest('.deleted-row')) {
+                    return;
+                }
+                input.value = price;
+                changed += 1;
+            });
+            return changed;
+        }
+
+        if (recalcBtn) {
+            recalcBtn.addEventListener('click', function () {
+                if (!productId) {
+                    setResult('商品IDが取得できません', true);
+                    return;
+                }
+                setResult('計算中...', false);
+                var payload = {
+                    manual_margin_rate: marginInput && marginInput.value !== '' ? Number(marginInput.value) : null,
+                    manual_shipping_cost: shippingInput && shippingInput.value !== '' ? Number(shippingInput.value) : null
+                };
+                var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+                var csrfToken = csrfMeta ? csrfMeta.content : '';
+                fetch('/api/products/' + encodeURIComponent(productId) + '/recalc-price', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify(payload)
+                }).then(function (resp) {
+                    return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
+                }).then(function (result) {
+                    if (!result.ok || !result.data || result.data.success === false) {
+                        var msg = (result.data && (result.data.error || result.data.message)) || '再計算に失敗しました';
+                        setResult(msg, true);
+                        return;
+                    }
+                    var price = result.data.selling_price;
+                    var changed = applyToVariantInputs(price);
+                    setResult('再計算結果: ¥' + price + ' を ' + changed + ' 件のバリエーション欄に反映しました（保存で確定）', false);
+                    markFormDirty();
+                }).catch(function () {
+                    setResult('再計算リクエストに失敗しました', true);
+                });
+            });
+        }
     }
 
     function showInlineNotice(message, type) {

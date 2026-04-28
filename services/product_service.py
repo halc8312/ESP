@@ -7,7 +7,7 @@ from flask import has_request_context, session
 
 from database import SessionLocal
 from models import Product, ProductSnapshot, Variant
-from services.pricing_service import update_product_selling_price
+from services.pricing_service import product_has_pricing_config, update_product_selling_price
 from services.scrape_result_policy import (
     evaluate_persistence,
     normalize_item_for_persistence,
@@ -289,7 +289,7 @@ def save_scraped_items_to_db(
 
                 if title_changed or price_changed or status_changed:
                     updated_count += 1
-                if price_changed and product.pricing_rule_id:
+                if price_changed and product_has_pricing_config(product):
                     repricing_product_ids.add(product.id)
 
                 existing_variants = session_db.query(Variant).filter_by(product_id=product.id).all()
