@@ -11,7 +11,7 @@ from sqlalchemy import or_
 from werkzeug.utils import secure_filename
 
 from database import SessionLocal
-from models import Shop, Product, Variant, ProductSnapshot, DescriptionTemplate
+from models import Shop, Product, Variant, ProductSnapshot, DescriptionTemplate, PricingRule
 from services.image_service import IMAGE_STORAGE_PATH
 from services.rich_text import normalize_rich_text
 from time_utils import utc_now
@@ -277,6 +277,12 @@ def _render_product_detail(session_db, product, snapshot, images, *, error=None,
         .all()
     )
     all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
+    pricing_rules = (
+        session_db.query(PricingRule)
+        .filter_by(user_id=current_user.id)
+        .order_by(PricingRule.name)
+        .all()
+    )
     current_shop_id = session.get('current_shop_id')
     variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
     edit_summary = _build_product_edit_summary(product, snapshot, images, variants)
@@ -309,6 +315,7 @@ def _render_product_detail(session_db, product, snapshot, images, *, error=None,
         images=images,
         templates=templates,
         all_shops=all_shops,
+        pricing_rules=pricing_rules,
         current_shop_id=current_shop_id,
         variants=variants,
         edit_summary=edit_summary,
@@ -352,6 +359,25 @@ def product_detail(product_id):
             product.option1_name = request.form.get("option1_name")
             product.option2_name = request.form.get("option2_name")
             product.option3_name = request.form.get("option3_name")
+
+            # --- 価格ルール (Product) ---
+            pricing_rule_id_str = request.form.get("pricing_rule_id")
+            if pricing_rule_id_str:
+                try:
+                    pricing_rule_id = int(pricing_rule_id_str)
+                except ValueError:
+                    pricing_rule_id = None
+                if pricing_rule_id is not None:
+                    rule = (
+                        session_db.query(PricingRule)
+                        .filter_by(id=pricing_rule_id, user_id=current_user.id)
+                        .first()
+                    )
+                    product.pricing_rule_id = rule.id if rule else None
+                else:
+                    product.pricing_rule_id = None
+            else:
+                product.pricing_rule_id = None
 
             # --- 分類 (Product) ---
             product.custom_vendor = request.form.get("vendor")

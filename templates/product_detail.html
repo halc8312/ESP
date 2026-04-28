@@ -806,6 +806,97 @@
         word-break: break-all;
     }
 
+    .product-sales-section .content-card-body {
+        display: grid;
+        gap: 16px;
+    }
+
+    .product-sales-single-fields {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        padding: 16px;
+        border: 1px solid #dbeafe;
+        border-radius: 12px;
+        background: #f8fbff;
+    }
+
+    .product-sales-single-fields input {
+        font-size: 1.08rem;
+        font-weight: 700;
+    }
+
+    .product-sales-section.has-multiple-variants [data-single-variant-fields] {
+        display: none;
+    }
+
+    .product-sales-rule-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 12px;
+    }
+
+    .product-sales-multi-note {
+        margin-top: -6px;
+    }
+
+    .variant-detail-disclosure,
+    .variant-detail-panel {
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        background: #fff;
+        overflow: hidden;
+    }
+
+    .variant-detail-disclosure {
+        margin: 0;
+    }
+
+    .variant-detail-disclosure > summary.variant-detail-summary {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 16px;
+        background: #f8fafc;
+        cursor: pointer;
+        list-style: none;
+    }
+
+    .variant-detail-disclosure > summary.variant-detail-summary::-webkit-details-marker {
+        display: none;
+    }
+
+    .variant-detail-summary span,
+    .variant-detail-heading strong {
+        font-weight: 700;
+        color: var(--text-color);
+    }
+
+    .variant-detail-summary small,
+    .variant-detail-heading p {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 0.78rem;
+        line-height: 1.5;
+    }
+
+    .variant-detail-heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--border-color);
+        background: #f8fafc;
+    }
+
+    .variant-detail-content {
+        display: grid;
+        gap: 16px;
+        padding: 16px;
+    }
+
     .product-edit-variant-col-opt,
     .product-edit-variant-col-price,
     .product-edit-variant-col-sku {
@@ -862,6 +953,7 @@
         .image-entry-grid,
         .product-locale-meta-grid,
         .locale-editor-grid,
+        .product-sales-single-fields,
         .product-variant-overview,
         .product-edit-overview-grid {
             grid-template-columns: 1fr;
@@ -1190,6 +1282,8 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <input type="hidden" name="delete_v_ids" id="delete_v_ids" value="">
     <input type="hidden" name="image_urls_json" id="image_urls_json" value='{{ images|tojson|safe }}'>
+    {% set single_variant = variants|length == 1 %}
+    {% set single_variant_item = variants[0] if single_variant else none %}
 
     <section class="content-card product-edit-panel product-source-summary-card" id="productSourcePanel">
         <header class="content-card-header">
@@ -1335,6 +1429,239 @@
                 </div>
             </section>
 
+            <!-- ③ Sales Settings -->
+            <section class="content-card product-edit-panel product-sales-section" id="productSalesPanel"
+                data-single-variant="{% if single_variant %}true{% else %}false{% endif %}">
+                <header class="content-card-header product-edit-summary">
+                    <div class="product-edit-summary-copy">
+                        <h2>販売設定</h2>
+                        <p>販売価格、在庫、価格ルールをここでまとめて調整します</p>
+                    </div>
+                    <span class="product-edit-summary-side">
+                        <span class="product-edit-summary-meta">{{ variants|length }}件</span>
+                    </span>
+                </header>
+                <div class="content-card-body">
+                    <div class="product-variant-overview">
+                        <article class="product-variant-overview-card">
+                            <span>登録件数</span>
+                            <strong id="variantCountValue">{{ edit_summary.variant_count }}件</strong>
+                        </article>
+                        <article class="product-variant-overview-card">
+                            <span>在庫あり</span>
+                            <strong id="variantStockValue">{{ edit_summary.in_stock_count }}件</strong>
+                        </article>
+                        <article class="product-variant-overview-card">
+                            <span>価格の目安</span>
+                            <strong id="variantPriceValue">{{ edit_summary.price_label }}</strong>
+                        </article>
+                    </div>
+
+                    {% if single_variant and single_variant_item %}
+                    <div class="product-sales-single-fields" data-single-variant-fields>
+                        <div class="form-group">
+                            <label for="single_variant_price">販売価格 (¥)</label>
+                            <input type="number" id="single_variant_price" name="v_price_{{ single_variant_item.id }}"
+                                value="{{ single_variant_item.price if single_variant_item.price is not none else '' }}"
+                                min="0" step="1" inputmode="numeric" data-single-variant-master="price"
+                                data-variant-id="{{ single_variant_item.id }}">
+                            <p class="field-helper-text">自動計算した価格を手直しできます。保存するとこの商品の代表価格にも反映されます。</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="single_variant_qty">在庫数</label>
+                            <input type="number" id="single_variant_qty" name="v_qty_{{ single_variant_item.id }}"
+                                value="{{ single_variant_item.inventory_qty if single_variant_item.inventory_qty is not none else 0 }}"
+                                min="0" step="1" inputmode="numeric" data-single-variant-master="qty"
+                                data-variant-id="{{ single_variant_item.id }}">
+                            <p class="field-helper-text">単一商品では通常 1 のままで運用できます。</p>
+                        </div>
+                    </div>
+                    {% else %}
+                    <p class="field-helper-text product-sales-multi-note">複数バリエーションの商品は、下の詳細テーブルで行ごとに価格と在庫を編集します。</p>
+                    {% endif %}
+
+                    <div class="product-sales-rule-grid">
+                        <div class="form-group">
+                            <label for="pricing_rule_id">適用ルール</label>
+                            <select id="pricing_rule_id" name="pricing_rule_id">
+                                <option value="">(ルールなし / 共通ルールに従う)</option>
+                                {% for rule in pricing_rules %}
+                                <option value="{{ rule.id }}" {% if product.pricing_rule_id == rule.id %}selected{% endif %}>
+                                    {{ rule.name }} (利益率 {{ rule.margin_rate or 0 }}% / 送料 ¥{{ '{:,}'.format(rule.shipping_cost or 0) }} / 固定 ¥{{ '{:,}'.format(rule.fixed_fee or 0) }})
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <p class="field-helper-text">再計算時の基本ルールです。個別設定を有効にすると、この商品だけ利益率や送料を上書きできます。</p>
+                        </div>
+                    </div>
+
+                    <section class="manual-price-override" data-product-id="{{ product.id }}">
+                        <header class="manual-price-override-header">
+                            <label class="manual-price-override-toggle">
+                                <input type="checkbox" id="manual_price_toggle" name="manual_price_enabled"
+                                    {% if product.manual_margin_rate is not none or product.manual_shipping_cost is not none %}checked{% endif %}>
+                                <span>個別の利益率・送料を有効にする</span>
+                            </label>
+                            <p class="manual-price-override-note">この商品だけ既定の価格ルールを上書きしたい場合に使います。空欄ならルール側の値を使用します。</p>
+                        </header>
+                        <div class="manual-price-override-body" id="manual_price_settings"
+                            {% if product.manual_margin_rate is none and product.manual_shipping_cost is none %}hidden{% endif %}>
+                            <div class="manual-price-override-row">
+                                <div class="form-group">
+                                    <label for="manual_margin_rate">個別の利益率 (%)</label>
+                                    <input type="number" id="manual_margin_rate" name="manual_margin_rate"
+                                        value="{{ product.manual_margin_rate if product.manual_margin_rate is not none else '' }}"
+                                        min="0" step="1" placeholder="例: 20">
+                                </div>
+                                <div class="form-group">
+                                    <label for="manual_shipping_cost">個別の追加送料 (¥)</label>
+                                    <input type="number" id="manual_shipping_cost" name="manual_shipping_cost"
+                                        value="{{ product.manual_shipping_cost if product.manual_shipping_cost is not none else '' }}"
+                                        min="0" step="1" placeholder="例: 1500">
+                                </div>
+                            </div>
+                            <div class="manual-price-override-actions">
+                                <button type="button" class="btn-secondary" id="manual_price_recalc_btn">再計算して価格に反映</button>
+                                <output id="manual_price_recalc_result" class="manual-price-override-result" aria-live="polite"></output>
+                            </div>
+                            <p class="field-helper-text">仕入価格 ¥<strong id="manualPriceCostValue">{{ product.last_price or 0 }}</strong> を元に計算します。再計算ボタンを押すと販売価格欄に反映されますが、保存するまで確定しません。</p>
+                        </div>
+                    </section>
+
+                    {% if single_variant %}
+                    <details class="variant-detail-disclosure product-edit-accent-panel" id="variantDetailsDisclosure" data-variant-detail-shell>
+                        <summary class="variant-detail-summary">
+                            <span>詳細バリエーション設定</span>
+                            <small>SKU、重量、税、HS code、原産国を編集</small>
+                        </summary>
+                        <div class="variant-detail-content">
+                    {% else %}
+                    <div class="variant-detail-panel" id="variantDetailsDisclosure" data-variant-detail-shell>
+                        <div class="variant-detail-heading">
+                            <div>
+                                <strong>詳細バリエーション設定</strong>
+                                <p>複数バリエーションの商品は、価格・在庫・SKU を行ごとに編集します。</p>
+                            </div>
+                        </div>
+                        <div class="variant-detail-content">
+                    {% endif %}
+                            <details class="mobile-collapsible product-edit-accent-panel">
+                                <summary class="mobile-collapsible-header">
+                                    <span class="mobile-collapsible-title">一括でバリエーションを作る</span>
+                                    <span class="mobile-collapsible-icon">▶</span>
+                                </summary>
+                                <div class="mobile-collapsible-content">
+                                    <p class="text-small text-muted mb-1">カンマ区切りで入力してください（例: S, M, L）。「生成」を押すと既存行を残したまま候補を追加します。</p>
+                                    <div class="bulk-generator">
+                                        <div class="filter-group">
+                                            <label>オプション1の値（例: 赤, 青, 白）</label>
+                                            <input type="text" id="bulk_opt1" placeholder="例: Red, Blue">
+                                        </div>
+                                        <div class="filter-group">
+                                            <label>オプション2の値（例: S, M, L）</label>
+                                            <input type="text" id="bulk_opt2" placeholder="例: S, M, L">
+                                        </div>
+                                        <div class="filter-group">
+                                            <label>共通の販売価格（円）</label>
+                                            <input type="number" id="bulk_price" placeholder="">
+                                        </div>
+                                        <div class="filter-group">
+                                            <label>SKU接頭辞（例: MY-ITEM-）</label>
+                                            <input type="text" id="bulk_sku" placeholder="MER-ITEM-">
+                                        </div>
+                                    </div>
+                                    <button type="button" onclick="generateVariants()" class="mt-1 variant-generate-button">この内容で生成</button>
+                                    <div id="variantGenerationSummary" class="variant-generation-summary" hidden aria-live="polite"></div>
+                                </div>
+                            </details>
+
+                            <div class="option-names-section">
+                                <div class="filter-group">
+                                    <label>オプション1の名前（例: 色）</label>
+                                    <input type="text" name="option1_name" value="{{ product.option1_name or 'Title' }}">
+                                </div>
+                                <div class="filter-group">
+                                    <label>オプション2の名前（例: サイズ）</label>
+                                    <input type="text" name="option2_name" value="{{ product.option2_name or '' }}"
+                                        placeholder="(例: Size)">
+                                </div>
+                                <div class="filter-group">
+                                    <label>オプション3の名前</label>
+                                    <input type="text" name="option3_name" value="{{ product.option3_name or '' }}">
+                                </div>
+                            </div>
+                            <p class="field-helper-text">例: 色 / サイズ / 状態。1つしか使わない場合は項目名1だけでも大丈夫です。</p>
+
+                            <div class="table-responsive">
+                                <table class="variant-table" id="variantTable" role="table">
+                                    <thead>
+                                        <tr>
+                                            <th class="product-edit-variant-col-opt">オプション1</th>
+                                            <th class="product-edit-variant-col-opt">オプション2</th>
+                                            <th class="product-edit-variant-col-price">販売価格</th>
+                                            <th class="product-edit-variant-col-sku">SKU</th>
+                                            <th class="product-edit-variant-col-stock">在庫</th>
+                                            <th class="hide-mobile product-edit-variant-col-weight">重量(g)</th>
+                                            <th class="hide-mobile">税 / HS / 原産国</th>
+                                            <th class="product-edit-variant-col-actions">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for v in variants %}
+                                        <tr id="row-{{ v.id }}">
+                                            <td data-label="Opt1">
+                                                <input type="hidden" name="v_ids" value="{{ v.id }}">
+                                                <input type="text" name="v_opt1_{{ v.id }}" value="{{ v.option1_value or '' }}">
+                                            </td>
+                                            <td data-label="Opt2">
+                                                <input type="text" name="v_opt2_{{ v.id }}" value="{{ v.option2_value or '' }}">
+                                            </td>
+                                            <td data-label="価格">
+                                                <input type="number" {% if not single_variant %}name="v_price_{{ v.id }}"{% endif %}
+                                                    value="{{ v.price if v.price is not none else '' }}"
+                                                    data-variant-price-input data-variant-id="{{ v.id }}"
+                                                    {% if single_variant %}data-single-variant-mirror="price"{% endif %}>
+                                            </td>
+                                            <td data-label="SKU">
+                                                <input type="text" name="v_sku_{{ v.id }}" value="{{ v.sku or '' }}">
+                                            </td>
+                                            <td data-label="在庫">
+                                                <input type="number" {% if not single_variant %}name="v_qty_{{ v.id }}"{% endif %}
+                                                    value="{{ v.inventory_qty if v.inventory_qty is not none else 0 }}"
+                                                    class="short" data-variant-qty-input data-variant-id="{{ v.id }}"
+                                                    {% if single_variant %}data-single-variant-mirror="qty"{% endif %}>
+                                            </td>
+                                            <td data-label="重量" class="hide-mobile">
+                                                <input type="number" name="v_grams_{{ v.id }}" value="{{ v.grams or '' }}"
+                                                    class="short">
+                                            </td>
+                                            <td data-label="税/HS/Origin" class="hide-mobile product-edit-variant-tax-cell">
+                                                <label><input type="checkbox" name="v_tax_{{ v.id }}" {% if v.taxable %}checked{% endif %}> 課税</label><br>
+                                                HS: <input type="text" name="v_hs_{{ v.id }}" value="{{ v.hs_code or '' }}"
+                                                    class="product-edit-variant-hs-input"><br>
+                                                Org: <input type="text" name="v_org_{{ v.id }}" value="{{ v.country_of_origin or '' }}"
+                                                    class="product-edit-variant-origin-input">
+                                            </td>
+                                            <td data-label="操作">
+                                                <button type="button" class="del-btn" onclick="markDelete({{ v.id }})">削除</button>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    {% if single_variant %}
+                    </details>
+                    {% else %}
+                    </div>
+                    {% endif %}
+
+                    <button type="button" class="add-btn mt-1 product-edit-full-width-button" onclick="addVariantRow()" data-add-variant-button>＋
+                        バリエーションを追加する</button>
+                </div>
+            </section>
+
             <!-- ② Public Title / Description / English -->
             <section class="content-card product-edit-panel" id="productDescriptionPanel">
                 <header class="content-card-header product-edit-summary">
@@ -1456,173 +1783,6 @@
                             <p class="editor-helper-text">翻訳は GPT API を使用しています。候補を確認してから英語欄に反映できます。</p>
                         </section>
                     </div>
-                </div>
-            </section>
-
-            <!-- ③ Price & Stock (Variants) -->
-            <section class="content-card product-edit-panel" id="productVariantsPanel">
-                <header class="content-card-header product-edit-summary">
-                    <div class="product-edit-summary-copy">
-                        <h2>バリエーション設定</h2>
-                        <p>価格、SKU、在庫数をここでまとめて整えます。1種類だけの商品でも1行あれば十分です</p>
-                    </div>
-                    <span class="product-edit-summary-side">
-                        <span class="product-edit-summary-meta">{{ variants|length }}件</span>
-                    </span>
-                </header>
-                <div class="content-card-body">
-                    <div class="product-variant-overview">
-                        <article class="product-variant-overview-card">
-                            <span>登録件数</span>
-                            <strong id="variantCountValue">{{ edit_summary.variant_count }}件</strong>
-                        </article>
-                        <article class="product-variant-overview-card">
-                            <span>在庫あり</span>
-                            <strong id="variantStockValue">{{ edit_summary.in_stock_count }}件</strong>
-                        </article>
-                        <article class="product-variant-overview-card">
-                            <span>価格の目安</span>
-                            <strong id="variantPriceValue">{{ edit_summary.price_label }}</strong>
-                        </article>
-                    </div>
-                    <p class="field-helper-text">色やサイズがない商品は、1行だけ残して価格と在庫を入れれば運用できます。</p>
-
-                    <section class="manual-price-override" data-product-id="{{ product.id }}">
-                        <header class="manual-price-override-header">
-                            <label class="manual-price-override-toggle">
-                                <input type="checkbox" id="manual_price_toggle" name="manual_price_enabled"
-                                    {% if product.manual_margin_rate is not none or product.manual_shipping_cost is not none %}checked{% endif %}>
-                                <span>個別の利益率・送料を有効にする</span>
-                            </label>
-                            <p class="manual-price-override-note">この商品だけ既定の価格ルールを上書きしたい場合に使います。空欄ならルール側の値を使用します。</p>
-                        </header>
-                        <div class="manual-price-override-body" id="manual_price_settings"
-                            {% if product.manual_margin_rate is none and product.manual_shipping_cost is none %}hidden{% endif %}>
-                            <div class="manual-price-override-row">
-                                <div class="form-group">
-                                    <label for="manual_margin_rate">個別の利益率 (%)</label>
-                                    <input type="number" id="manual_margin_rate" name="manual_margin_rate"
-                                        value="{{ product.manual_margin_rate if product.manual_margin_rate is not none else '' }}"
-                                        min="0" step="1" placeholder="例: 20">
-                                </div>
-                                <div class="form-group">
-                                    <label for="manual_shipping_cost">個別の追加送料 (¥)</label>
-                                    <input type="number" id="manual_shipping_cost" name="manual_shipping_cost"
-                                        value="{{ product.manual_shipping_cost if product.manual_shipping_cost is not none else '' }}"
-                                        min="0" step="1" placeholder="例: 1500">
-                                </div>
-                            </div>
-                            <div class="manual-price-override-actions">
-                                <button type="button" class="btn-secondary" id="manual_price_recalc_btn">再計算して価格に反映</button>
-                                <output id="manual_price_recalc_result" class="manual-price-override-result" aria-live="polite"></output>
-                            </div>
-                            <p class="field-helper-text">仕入価格 ¥<strong id="manualPriceCostValue">{{ product.last_price or 0 }}</strong> を元に計算します。再計算ボタンを押すとバリエーション価格欄に反映されますが、保存するまで確定しません。</p>
-                        </div>
-                    </section>
-
-                    <details class="mobile-collapsible product-edit-accent-panel">
-                        <summary class="mobile-collapsible-header">
-                            <span class="mobile-collapsible-title">一括でバリエーションを作る</span>
-                            <span class="mobile-collapsible-icon">▶</span>
-                        </summary>
-                        <div class="mobile-collapsible-content">
-                            <p class="text-small text-muted mb-1">カンマ区切りで入力してください（例: S, M, L）。「生成」を押すと既存行を残したまま候補を追加します。</p>
-                            <div class="bulk-generator">
-                                <div class="filter-group">
-                                    <label>オプション1の値（例: 赤, 青, 白）</label>
-                                    <input type="text" id="bulk_opt1" placeholder="例: Red, Blue">
-                                </div>
-                                <div class="filter-group">
-                                    <label>オプション2の値（例: S, M, L）</label>
-                                    <input type="text" id="bulk_opt2" placeholder="例: S, M, L">
-                                </div>
-                                <div class="filter-group">
-                                    <label>共通の販売価格（円）</label>
-                                    <input type="number" id="bulk_price" placeholder="">
-                                </div>
-                                <div class="filter-group">
-                                    <label>SKU接頭辞（例: MY-ITEM-）</label>
-                                    <input type="text" id="bulk_sku" placeholder="MER-ITEM-">
-                                </div>
-                            </div>
-                            <button type="button" onclick="generateVariants()" class="mt-1 variant-generate-button">この内容で生成</button>
-                            <div id="variantGenerationSummary" class="variant-generation-summary" hidden aria-live="polite"></div>
-                        </div>
-                    </details>
-
-                    <div class="option-names-section">
-                        <div class="filter-group">
-                            <label>オプション1の名前（例: 色）</label>
-                            <input type="text" name="option1_name" value="{{ product.option1_name or 'Title' }}">
-                        </div>
-                        <div class="filter-group">
-                            <label>オプション2の名前（例: サイズ）</label>
-                            <input type="text" name="option2_name" value="{{ product.option2_name or '' }}"
-                                placeholder="(例: Size)">
-                        </div>
-                        <div class="filter-group">
-                            <label>オプション3の名前</label>
-                            <input type="text" name="option3_name" value="{{ product.option3_name or '' }}">
-                        </div>
-                    </div>
-                    <p class="field-helper-text">例: 色 / サイズ / 状態。1つしか使わない場合は項目名1だけでも大丈夫です。</p>
-
-                    <div class="table-responsive">
-                        <table class="variant-table" id="variantTable">
-                            <thead>
-                                <tr>
-                                    <th class="product-edit-variant-col-opt">オプション1</th>
-                                    <th class="product-edit-variant-col-opt">オプション2</th>
-                                    <th class="product-edit-variant-col-price">販売価格</th>
-                                    <th class="product-edit-variant-col-sku">SKU</th>
-                                    <th class="product-edit-variant-col-stock">在庫</th>
-                                    <th class="hide-mobile product-edit-variant-col-weight">重量(g)</th>
-                                    <th class="hide-mobile">税 / HS / 原産国</th>
-                                    <th class="product-edit-variant-col-actions">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for v in variants %}
-                                <tr id="row-{{ v.id }}">
-                                    <td data-label="Opt1">
-                                        <input type="hidden" name="v_ids" value="{{ v.id }}">
-                                        <input type="text" name="v_opt1_{{ v.id }}" value="{{ v.option1_value or '' }}">
-                                    </td>
-                                    <td data-label="Opt2">
-                                        <input type="text" name="v_opt2_{{ v.id }}" value="{{ v.option2_value or '' }}">
-                                    </td>
-                                    <td data-label="価格">
-                                        <input type="number" name="v_price_{{ v.id }}" value="{{ v.price or '' }}">
-                                    </td>
-                                    <td data-label="SKU">
-                                        <input type="text" name="v_sku_{{ v.id }}" value="{{ v.sku or '' }}">
-                                    </td>
-                                    <td data-label="在庫">
-                                        <input type="number" name="v_qty_{{ v.id }}" value="{{ v.inventory_qty }}"
-                                            class="short">
-                                    </td>
-                                    <td data-label="重量" class="hide-mobile">
-                                        <input type="number" name="v_grams_{{ v.id }}" value="{{ v.grams or '' }}"
-                                            class="short">
-                                    </td>
-                                    <td data-label="税/HS/Origin" class="hide-mobile product-edit-variant-tax-cell">
-                                        <label><input type="checkbox" name="v_tax_{{ v.id }}" {% if v.taxable %}checked{% endif %}> 課税</label><br>
-                                        HS: <input type="text" name="v_hs_{{ v.id }}" value="{{ v.hs_code or '' }}"
-                                            class="product-edit-variant-hs-input"><br>
-                                        Org: <input type="text" name="v_org_{{ v.id }}" value="{{ v.country_of_origin or '' }}"
-                                            class="product-edit-variant-origin-input">
-                                    </td>
-                                    <td data-label="操作">
-                                        <button type="button" class="del-btn" onclick="markDelete({{ v.id }})">削除</button>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <button type="button" class="add-btn mt-1 product-edit-full-width-button" onclick="addVariantRow()">＋
-                        バリエーションを追加する</button>
                 </div>
             </section>
 
@@ -1779,11 +1939,13 @@
         setSaveState('saved');
         setupTagPillField();
         setupImageLightbox();
+        setupSingleVariantSalesFields();
         setupManualPriceOverride();
         updateProductEditSummary();
 
         if (productForm) {
             productForm.addEventListener('submit', function () {
+                syncSingleVariantSalesFields();
                 if (typeof tinymce !== 'undefined') {
                     tinymce.triggerSave();
                 }
@@ -1882,6 +2044,64 @@
     function markFormDirty() {
         formDirty = true;
         setSaveState('dirty');
+    }
+
+    function getSingleVariantField(kind, variantId, role) {
+        if (!variantId) {
+            return null;
+        }
+        return document.querySelector(
+            '[data-single-variant-' + role + '="' + kind + '"][data-variant-id="' + variantId + '"]'
+        );
+    }
+
+    function syncSingleVariantSalesFields() {
+        var masters = document.querySelectorAll('[data-single-variant-master]');
+        masters.forEach(function (master) {
+            var kind = master.getAttribute('data-single-variant-master');
+            var variantId = master.getAttribute('data-variant-id');
+            var mirror = getSingleVariantField(kind, variantId, 'mirror');
+            if (mirror && mirror.value !== master.value) {
+                mirror.value = master.value;
+            }
+        });
+    }
+
+    function activateVariantDetailMode() {
+        var section = document.getElementById('productSalesPanel');
+        if (!section) {
+            return;
+        }
+        section.classList.add('has-multiple-variants');
+        var detailShell = document.getElementById('variantDetailsDisclosure');
+        if (detailShell && detailShell.tagName && detailShell.tagName.toLowerCase() === 'details') {
+            detailShell.open = true;
+        }
+    }
+
+    function setupSingleVariantSalesFields() {
+        var masters = document.querySelectorAll('[data-single-variant-master]');
+        masters.forEach(function (master) {
+            var kind = master.getAttribute('data-single-variant-master');
+            var variantId = master.getAttribute('data-variant-id');
+            var mirror = getSingleVariantField(kind, variantId, 'mirror');
+            if (!mirror) {
+                return;
+            }
+
+            var syncMasterToMirror = function () {
+                mirror.value = master.value;
+            };
+            var syncMirrorToMaster = function () {
+                master.value = mirror.value;
+            };
+
+            syncMasterToMirror();
+            master.addEventListener('input', syncMasterToMirror);
+            master.addEventListener('change', syncMasterToMirror);
+            mirror.addEventListener('input', syncMirrorToMaster);
+            mirror.addEventListener('change', syncMirrorToMaster);
+        });
     }
 
     var tagPillState = {
@@ -2199,6 +2419,13 @@
                     return;
                 }
                 input.value = price;
+                if (input.hasAttribute('data-single-variant-master')) {
+                    var variantId = input.getAttribute('data-variant-id');
+                    var mirror = getSingleVariantField('price', variantId, 'mirror');
+                    if (mirror) {
+                        mirror.value = price;
+                    }
+                }
                 changed += 1;
             });
             return changed;
@@ -2427,8 +2654,8 @@
         var inStockCount = 0;
 
         rows.forEach(function (row) {
-            var priceInput = row.querySelector('input[name^="v_price_"], input[name^="new_v_price_"]');
-            var qtyInput = row.querySelector('input[name^="v_qty_"], input[name^="new_v_qty_"]');
+            var priceInput = row.querySelector('input[name^="v_price_"], input[name^="new_v_price_"], [data-variant-price-input]');
+            var qtyInput = row.querySelector('input[name^="v_qty_"], input[name^="new_v_qty_"], [data-variant-qty-input]');
             var priceValue = parseInteger(priceInput ? priceInput.value : '');
             var qtyValue = parseInteger(qtyInput ? qtyInput.value : '');
 
@@ -2717,6 +2944,7 @@
     var newIndex = 0;
 
     function addVariantRow(opt1 = '', opt2 = '', price = '', sku = '') {
+        activateVariantDetailMode();
         newIndex++;
         var idx = newIndex;
         var table = document.getElementById('variantTable').getElementsByTagName('tbody')[0];
