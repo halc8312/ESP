@@ -853,15 +853,310 @@
             justify-content: flex-start;
         }
     }
+
+    /* === PR1 product edit refactor: flat sections + consolidated header === */
+    /* Override the shared two-column .product-edit-layout to a single column on
+       this page only — the sidebar div was removed in the refactor.
+       (templates/product_manual_add.html still relies on the shared two-column layout.) */
+    .product-edit-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .product-edit-page-header {
+        position: sticky;
+        top: 0;
+        z-index: 30;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 12px 16px;
+        margin: -16px -16px 16px;
+        background: var(--card-bg);
+        border-bottom: 1px solid var(--border-color);
+        flex-wrap: wrap;
+    }
+
+    .product-edit-page-header-main {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+    }
+
+    .product-edit-page-header-main h1 {
+        margin: 0;
+        font-size: 1.15rem;
+        line-height: 1.3;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .product-edit-back-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        border-radius: 999px;
+        border: 1px solid var(--border-color);
+        background: var(--card-bg);
+        color: var(--text-color);
+        text-decoration: none;
+        font-size: 1rem;
+        flex-shrink: 0;
+    }
+
+    .product-edit-back-icon:hover {
+        background: #f4f7fb;
+        text-decoration: none;
+    }
+
+    .product-edit-page-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .product-edit-header-save {
+        background: var(--primary-color);
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        padding: 9px 18px;
+        font-size: 0.92rem;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .product-edit-header-save:hover {
+        background: var(--primary-hover);
+    }
+
+    .product-edit-header-readiness {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: #f4f7fb;
+        border: 1px solid var(--border-color);
+        font-size: 0.78rem;
+        color: var(--text-color);
+        cursor: pointer;
+        position: relative;
+    }
+
+    .product-edit-header-readiness[data-ready="ok"] {
+        background: #ecfdf3;
+        border-color: #bbf7d0;
+        color: #166534;
+    }
+
+    .product-edit-header-readiness[data-ready="todo"] {
+        background: #fff8e8;
+        border-color: #f7d58b;
+        color: #9a6700;
+    }
+
+    .product-edit-checklist-popover {
+        position: absolute;
+        top: calc(100% + 6px);
+        right: 0;
+        min-width: 280px;
+        max-width: 360px;
+        padding: 12px 14px;
+        border-radius: 10px;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        box-shadow: var(--shadow-md);
+        display: none;
+        text-align: left;
+        z-index: 40;
+    }
+
+    .product-edit-header-readiness:hover .product-edit-checklist-popover,
+    .product-edit-header-readiness:focus-within .product-edit-checklist-popover {
+        display: block;
+    }
+
+    .product-edit-checklist-popover ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 8px;
+    }
+
+    .product-edit-checklist-popover li {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 8px;
+        align-items: start;
+        font-size: 0.8rem;
+        color: var(--text-color);
+        line-height: 1.5;
+    }
+
+    .product-edit-checklist-popover li.is-complete {
+        color: #166534;
+    }
+
+    .product-edit-checklist-popover .product-edit-check-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        min-width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        background: #fff8e8;
+        color: #9a6700;
+        border: 1px solid #f7d58b;
+        font-size: 0.7rem;
+        font-weight: 700;
+    }
+
+    .product-edit-checklist-popover li.is-complete .product-edit-check-icon {
+        background: #ecfdf3;
+        color: #166534;
+        border-color: #bbf7d0;
+    }
+
+    .product-edit-checklist-popover .product-edit-check-content {
+        display: grid;
+        gap: 2px;
+        font-size: 0.78rem;
+    }
+
+    .product-edit-checklist-popover .product-edit-check-content strong {
+        font-size: 0.82rem;
+    }
+
+    .product-edit-checklist-popover .product-edit-check-note {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 0.74rem;
+        line-height: 1.4;
+    }
+
+    /* Source-info read-only consolidated card (replaces hero + internal source panel) */
+    .product-source-summary-card .content-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+    }
+
+    .product-source-summary-card .content-card-header h2 {
+        margin: 0;
+        font-size: 1.05rem;
+    }
+
+    .product-source-summary-card .content-card-header p {
+        margin: 4px 0 0;
+        color: var(--text-muted);
+        font-size: 0.8rem;
+    }
+
+    .product-source-summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+    }
+
+    .product-source-summary-row {
+        display: grid;
+        gap: 4px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: #f8fafc;
+        border: 1px solid var(--border-color);
+        min-width: 0;
+    }
+
+    .product-source-summary-row span {
+        font-size: 0.74rem;
+        color: var(--text-muted);
+    }
+
+    .product-source-summary-row strong {
+        font-size: 0.92rem;
+        color: var(--text-color);
+        word-break: break-word;
+    }
+
+    .product-source-summary-row a {
+        font-size: 0.82rem;
+        word-break: break-all;
+    }
+
+    .product-source-summary-row.is-wide {
+        grid-column: 1 / -1;
+    }
+
+    /* Section header replaces previous <summary> usage */
+    .product-edit-panel > .product-edit-summary {
+        cursor: default;
+    }
+
+    @media (max-width: 640px) {
+        .product-edit-page-header {
+            padding: 10px 12px;
+            margin: -12px -12px 12px;
+        }
+
+        .product-edit-page-header-main h1 {
+            font-size: 1rem;
+        }
+
+        .product-edit-header-save {
+            padding: 8px 14px;
+            font-size: 0.86rem;
+        }
+    }
 </style>
 {% endblock %}
 
 {% block content %}
-<a href="{{ url_for('index') }}" class="back-link">&laquo; 一覧に戻る</a>
-
-<div class="page-header">
-    <h1>商品編集</h1>
-</div>
+<header class="product-edit-page-header">
+    <div class="product-edit-page-header-main">
+        <a href="{{ url_for('index') }}" class="product-edit-back-icon" aria-label="一覧に戻る" title="一覧に戻る">‹</a>
+        <h1 id="productSummaryTitle">{{ edit_summary.public_title or '商品編集' }}</h1>
+    </div>
+    <div class="product-edit-page-header-actions">
+        <span class="product-edit-chip product-edit-dirty-chip" id="saveStateBadge">保存済み</span>
+        <span
+            class="product-edit-chip product-edit-status-chip {% if product.status == 'active' %}is-active{% else %}is-draft{% endif %}"
+            id="heroStatusBadge">
+            {{ edit_summary.status_label }}
+        </span>
+        <button type="button" class="product-edit-header-readiness"
+            id="heroReadinessBadge"
+            aria-haspopup="true"
+            data-ready="{% if edit_summary.completed_count >= edit_summary.total_count %}ok{% else %}todo{% endif %}"
+            title="保存前チェックの状態">
+            <span id="heroReadinessText">チェック {{ edit_summary.completed_count }}/{{ edit_summary.total_count }}</span>
+            <span class="product-edit-checklist-popover" role="tooltip">
+                <ul>
+                    {% for item in edit_summary.checklist %}
+                    <li class="product-edit-checklist-popover-item{% if item.done %} is-complete{% endif %}" data-check-key="{{ item.key }}">
+                        <span class="product-edit-check-icon">{% if item.done %}OK{% else %}要{% endif %}</span>
+                        <span class="product-edit-check-content">
+                            <strong>{{ item.label }}</strong>
+                            <span class="product-edit-check-note">{{ item.done_text if item.done else item.todo_text }}</span>
+                        </span>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </span>
+        </button>
+        <button type="submit" form="productEditForm" class="product-edit-header-save">保存する</button>
+    </div>
+</header>
 
 {% if error %}
 <div class="product-edit-error">
@@ -869,36 +1164,44 @@
 </div>
 {% endif %}
 
-<form method="POST" enctype="multipart/form-data" class="product-edit-form">
+<form id="productEditForm" method="POST" enctype="multipart/form-data" class="product-edit-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <input type="hidden" name="delete_v_ids" id="delete_v_ids" value="">
     <input type="hidden" name="image_urls_json" id="image_urls_json" value='{{ images|tojson|safe }}'>
 
-    <section class="content-card product-edit-hero">
+    <section class="content-card product-edit-panel product-source-summary-card" id="productSourcePanel">
+        <header class="content-card-header">
+            <div>
+                <h2>仕入設定 (自動取得)</h2>
+                <p>このページの上部にあるデータは自動取得されたもので、編集できません</p>
+            </div>
+            <span class="product-edit-summary-meta">読み取り専用</span>
+        </header>
         <div class="content-card-body">
-            <div class="product-edit-hero-grid">
-                <div class="product-edit-hero-main">
-                    <p class="product-edit-eyebrow">Beginner-Friendly Flow</p>
-                    <h2 id="productSummaryTitle">{{ edit_summary.public_title }}</h2>
-                    <p class="product-edit-hero-copy">{{ edit_summary.status_help }}</p>
-                    <div class="product-edit-step-list">
-                        <a href="#basicSettingsPanel" class="product-edit-step-link">1. 基本設定</a>
-                        <a href="#productImagesPanel" class="product-edit-step-link">2. 商品画像</a>
-                        <a href="#productDescriptionPanel" class="product-edit-step-link">3. 商品説明</a>
-                        <a href="#productVariantsPanel" class="product-edit-step-link">4. 価格・在庫</a>
-                        <a href="#productSeoPanel" class="product-edit-step-link">5. 検索設定</a>
-                    </div>
+            <div class="product-source-summary-grid">
+                <div class="product-source-summary-row">
+                    <span>取得元サイト</span>
+                    <strong>{{ product.site or edit_summary.source_site or '—' }}</strong>
                 </div>
-                <div class="product-edit-hero-meta">
-                    <span class="product-edit-chip product-edit-dirty-chip" id="saveStateBadge">保存済み</span>
-                    <span class="product-edit-chip">商品ID #{{ product.id }}</span>
-                    <span class="product-edit-chip" id="heroShopBadge">{{ edit_summary.shop_name }}</span>
-                    <span
-                        class="product-edit-chip product-edit-status-chip {% if product.status == 'active' %}is-active{% else %}is-draft{% endif %}"
-                        id="heroStatusBadge">
-                        {{ edit_summary.status_label }}
-                    </span>
-                    <span class="product-edit-chip" id="heroReadinessBadge">チェック {{ edit_summary.completed_count }}/{{ edit_summary.total_count }}</span>
+                <div class="product-source-summary-row">
+                    <span>仕入れ価格 (記録)</span>
+                    <strong>{% if product.last_price is not none %}¥{{ '{:,}'.format(product.last_price) }}{% else %}{{ edit_summary.source_price_label }}{% endif %}</strong>
+                </div>
+                <div class="product-source-summary-row">
+                    <span>仕入れ元の状態</span>
+                    <strong>{{ product.last_status or edit_summary.source_status_label or '—' }}</strong>
+                </div>
+                <div class="product-source-summary-row is-wide">
+                    <span>最後に取得したタイトル</span>
+                    <strong>{{ product.last_title or '—' }}</strong>
+                </div>
+                <div class="product-source-summary-row is-wide">
+                    <span>取得元URL</span>
+                    {% if product.source_url %}
+                    <a href="{{ product.source_url }}" target="_blank" rel="noreferrer">{{ product.source_url }}</a>
+                    {% else %}
+                    <strong>—</strong>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -906,17 +1209,16 @@
 
     <div class="product-edit-layout">
         <div class="product-edit-main">
-            <details class="content-card product-edit-panel" id="basicSettingsPanel" open>
-                <summary class="content-card-header product-edit-summary">
+            <section class="content-card product-edit-panel" id="basicSettingsPanel">
+                <header class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
                         <h2>基本設定</h2>
                         <p>どのショップで扱うか、今は下書きか公開中かを最初に決めます</p>
                     </div>
                     <span class="product-edit-summary-side">
                         <span class="product-edit-summary-meta">{{ edit_summary.status_label }}</span>
-                        <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
                     </span>
-                </summary>
+                </header>
                 <div class="content-card-body">
                     <div class="product-basic-grid">
                         <div class="form-group">
@@ -940,37 +1242,21 @@
                         </div>
                     </div>
 
-                    <p class="product-basic-note">右側の「保存前チェック」を見ながら、上から順に入力すれば最低限必要な項目を揃えやすくしています。</p>
-
-                    <div class="product-source-grid">
-                        <article class="product-source-card">
-                            <span>取得元サイト</span>
-                            <strong>{{ edit_summary.source_site }}</strong>
-                        </article>
-                        <article class="product-source-card">
-                            <span>仕入れ価格の記録</span>
-                            <strong>{{ edit_summary.source_price_label }}</strong>
-                        </article>
-                        <article class="product-source-card">
-                            <span>仕入れ元の状態</span>
-                            <strong>{{ edit_summary.source_status_label }}</strong>
-                        </article>
-                    </div>
+                    <p class="product-basic-note">ヘッダー右の「チェック」バッジで未入力の必須項目を確認できます。上から順に入力すれば最低限必要な項目を揃えやすくしています。</p>
                 </div>
-            </details>
+            </section>
 
             <!-- ① Images (top priority for sales content) -->
-            <details class="content-card product-edit-panel" id="productImagesPanel" open>
-                <summary class="content-card-header product-edit-summary">
+            <section class="content-card product-edit-panel" id="productImagesPanel">
+                <header class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
                         <h2>商品画像</h2>
                         <p>購入者が最初に見る部分です。並べ替え、削除、追加をここでまとめて行えます</p>
                     </div>
                     <span class="product-edit-summary-side">
                         <span class="product-edit-summary-meta" id="imageCountBadge">{{ images|length }}枚</span>
-                        <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
                     </span>
-                </summary>
+                </header>
                 <div class="content-card-body">
                     <div class="product-image-manager">
                         <div class="image-manager-toolbar">
@@ -1031,20 +1317,19 @@
                         </div>
                     </div>
                 </div>
-            </details>
+            </section>
 
             <!-- ② Public Title / Description / English -->
-            <details class="content-card product-edit-panel" id="productDescriptionPanel" open>
-                <summary class="content-card-header product-edit-summary">
+            <section class="content-card product-edit-panel" id="productDescriptionPanel">
+                <header class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
                         <h2>商品説明</h2>
                         <p>公開ページに出る名前と説明です。迷ったら日本語から埋めていけば十分です</p>
                     </div>
                     <span class="product-edit-summary-side">
                         <span class="product-edit-summary-meta">必須</span>
-                        <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
                     </span>
-                </summary>
+                </header>
                 <div class="content-card-body">
                     <div class="product-locale-meta-grid">
                         <div class="sync-pill-row">
@@ -1156,20 +1441,19 @@
                         </section>
                     </div>
                 </div>
-            </details>
- 
+            </section>
+
             <!-- ③ Price & Stock (Variants) -->
-            <details class="content-card product-edit-panel" id="productVariantsPanel" open>
-                <summary class="content-card-header product-edit-summary">
+            <section class="content-card product-edit-panel" id="productVariantsPanel">
+                <header class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
                         <h2>バリエーション設定</h2>
                         <p>価格、SKU、在庫数をここでまとめて整えます。1種類だけの商品でも1行あれば十分です</p>
                     </div>
                     <span class="product-edit-summary-side">
                         <span class="product-edit-summary-meta">{{ variants|length }}件</span>
-                        <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
                     </span>
-                </summary>
+                </header>
                 <div class="content-card-body">
                     <div class="product-variant-overview">
                         <article class="product-variant-overview-card">
@@ -1324,66 +1608,19 @@
                     <button type="button" class="add-btn mt-1 product-edit-full-width-button" onclick="addVariantRow()">＋
                         バリエーションを追加する</button>
                 </div>
-            </details>
-        </div>
-
-        <div class="product-edit-side">
-            <section class="content-card product-edit-checklist-card">
-                <div class="content-card-header">
-                    <div>
-                        <h2>保存前チェック</h2>
-                        <p>まずは画像、商品名、説明、価格がそろっていれば迷いにくくなります。</p>
-                    </div>
-                    <span class="product-edit-summary-meta" id="checklistCountBadge">{{ edit_summary.completed_count }}/{{ edit_summary.total_count }}</span>
-                </div>
-                <div class="content-card-body">
-                    <div class="product-edit-overview-grid">
-                        <article class="product-edit-overview-card">
-                            <span>商品画像</span>
-                            <strong id="summaryImageValue">{{ edit_summary.image_count }}枚</strong>
-                        </article>
-                        <article class="product-edit-overview-card">
-                            <span>公開状態</span>
-                            <strong id="summaryStatusValue">{{ edit_summary.status_label }}</strong>
-                        </article>
-                        <article class="product-edit-overview-card">
-                            <span>バリエーション</span>
-                            <strong id="summaryVariantValue">{{ edit_summary.variant_count }}件</strong>
-                        </article>
-                        <article class="product-edit-overview-card">
-                            <span>価格の目安</span>
-                            <strong id="summaryPriceValue">{{ edit_summary.price_label }}</strong>
-                        </article>
-                    </div>
-
-                    <ul class="product-edit-checklist-list">
-                        {% for item in edit_summary.checklist %}
-                        <li class="product-edit-checklist-item{% if item.done %} is-complete{% endif %}" data-check-key="{{ item.key }}">
-                            <span class="product-edit-check-icon">{% if item.done %}OK{% else %}要{% endif %}</span>
-                            <div class="product-edit-check-content">
-                                <strong>{{ item.label }}</strong>
-                                <p class="product-edit-check-note">{{ item.done_text if item.done else item.todo_text }}</p>
-                            </div>
-                        </li>
-                        {% endfor %}
-                    </ul>
-
-                    <p class="product-edit-side-note">途中で迷ったら <code>下書き</code> のまま保存して、あとから追記しても問題ありません。</p>
-                </div>
             </section>
 
             <!-- ⑤ SEO & Tags -->
-            <details class="content-card product-edit-panel" id="productSeoPanel" open>
-                <summary class="content-card-header product-edit-summary">
+            <section class="content-card product-edit-panel" id="productSeoPanel">
+                <header class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
                         <h2>販売メモ・検索設定</h2>
                         <p>あとからでも調整できる項目です。分からない場合は空欄でも保存できます</p>
                     </div>
                     <span class="product-edit-summary-side">
                         <span class="product-edit-summary-meta">任意</span>
-                        <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
                     </span>
-                </summary>
+                </header>
                 <div class="content-card-body">
                     <div class="form-group">
                         <label for="vendor">ブランド名・販売元</label>
@@ -1422,47 +1659,7 @@
                         <p class="field-help-text">検索結果に表示される説明文です。120〜160文字程度で商品の魅力を簡潔にまとめてください。</p>
                     </div>
                 </div>
-            </details>
-
-            <!-- ⑥ Internal Sourcing Details (admin user only, visually separated) -->
-            <details class="content-card product-edit-panel internal-source-panel">
-                <summary class="content-card-header product-edit-summary">
-                    <div class="product-edit-summary-copy">
-                        <h2>内部仕入れメモ</h2>
-                        <p>公開カタログには出ない管理用の情報です</p>
-                    </div>
-                    <span class="product-edit-summary-side">
-                        <span class="product-edit-summary-meta">内部</span>
-                        <span class="product-edit-summary-icon" aria-hidden="true">▶</span>
-                    </span>
-                </summary>
-                <div class="content-card-body">
-                    <div class="form-group">
-                        <label>取得元サイト</label>
-                        <input type="text" value="{{ product.site or '' }}" readonly disabled class="product-edit-readonly">
-                    </div>
-                    <div class="form-group">
-                        <label>取得元URL</label>
-                        <input type="text" value="{{ product.source_url or '' }}" readonly disabled class="product-edit-readonly word-break">
-                        {% if product.source_url %}
-                        <p class="field-helper-text"><a href="{{ product.source_url }}" target="_blank" rel="noreferrer">取得元ページを開く</a></p>
-                        {% endif %}
-                    </div>
-                    <div class="form-group">
-                        <label>最後に取得したタイトル</label>
-                        <input type="text" value="{{ product.last_title or '' }}" readonly disabled class="product-edit-readonly">
-                    </div>
-                    <div class="form-group">
-                        <label>最後に取得した価格</label>
-                        <input type="text" value="{{ product.last_price or '' }}" readonly disabled class="product-edit-readonly">
-                    </div>
-                    <div class="form-group">
-                        <label>最後に取得した状態</label>
-                        <input type="text" value="{{ product.last_status or '' }}" readonly disabled class="product-edit-readonly">
-                    </div>
-                </div>
-            </details>
-
+            </section>
         </div>
     </div>
 
@@ -2311,7 +2508,11 @@
         });
 
         if (heroReadinessBadge) {
-            heroReadinessBadge.textContent = 'チェック ' + completedCount + '/5';
+            heroReadinessBadge.setAttribute('data-ready', completedCount >= 5 ? 'ok' : 'todo');
+            var heroReadinessText = document.getElementById('heroReadinessText');
+            if (heroReadinessText) {
+                heroReadinessText.textContent = 'チェック ' + completedCount + '/5';
+            }
         }
 
         if (checklistCountBadge) {
