@@ -401,27 +401,49 @@
 
     .product-image-card {
         position: relative;
+        aspect-ratio: 1 / 1;
+        cursor: grab;
+    }
+
+    .product-image-card:active {
+        cursor: grabbing;
     }
 
     .product-image-card-actions {
         position: absolute;
-        top: 10px;
-        right: 10px;
+        top: 6px;
+        right: 6px;
         display: flex;
-        gap: 8px;
-        z-index: 1;
+        gap: 4px;
+        z-index: 2;
+        opacity: 0;
+        transform: translateY(-2px);
+        transition: opacity 0.15s ease, transform 0.15s ease;
+        pointer-events: none;
+    }
+
+    .product-image-card:hover .product-image-card-actions,
+    .product-image-card:focus-within .product-image-card-actions {
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
     }
 
     .product-image-action-btn {
-        width: 36px;
-        height: 36px;
+        width: 24px;
+        height: 24px;
+        min-width: 24px;
+        min-height: 24px;
+        padding: 0;
         border: none;
         border-radius: 999px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
-        font-size: 0.78rem;
+        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.32);
+        font-size: 0.72rem;
+        line-height: 1;
+        cursor: pointer;
     }
 
     .product-image-action-btn.remove-bg {
@@ -432,11 +454,11 @@
     .product-image-action-btn.delete {
         background: #ef4444;
         color: white;
-        cursor: pointer;
     }
 
-    .product-image-card-body {
-        gap: 10px;
+    .product-image-action-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
     }
 
     .product-locale-meta-grid {
@@ -1260,10 +1282,7 @@
                 <div class="content-card-body">
                     <div class="product-image-manager">
                         <div class="image-manager-toolbar">
-                            <div class="product-edit-inline-stack">
-                                <p class="product-image-note">ドラッグで並べ替え、不要な画像は削除できます。URL追加と画像アップロードに対応しています。</p>
-                                <p class="product-edit-mock-note"><strong>白抜き</strong>ボタンで背景を透過PNGに変換できます。処理完了後にプレビューを確認して反映/破棄を選択してください。</p>
-                            </div>
+                            <p class="product-image-note">ドラッグで並べ替え。画像をクリックすると拡大表示されます。<strong>白抜き</strong>ボタンで背景を透過PNGに変換できます。</p>
                             <div class="image-toolbar-actions">
                                 <button type="button" class="btn-secondary" onclick="focusImageUrlInput()">URLから追加</button>
                                 <button type="button" class="btn-secondary" data-bg-remove-bulk-btn title="全ての画像の背景を白抜きします">まとめて白抜き</button>
@@ -1274,25 +1293,22 @@
                         <div id="imageSortGrid" class="image-sort-grid" data-product-id="{{ product.id }}">
                             {% for url in images %}
                             <article class="product-image-card" data-image-url="{{ url }}">
+                                <img src="{{ url }}" alt="image {{ loop.index }}" class="product-image-thumb" data-bg-thumb loading="lazy">
+                                <div class="product-image-bg-status" data-bg-status hidden></div>
                                 <div class="product-image-card-actions">
-                                    <button type="button" class="product-image-action-btn remove-bg" data-bg-remove-btn title="背景を白抜きして透過PNGを生成します">白抜き</button>
-                                    <button type="button" class="product-image-action-btn delete image-delete-btn-icon" title="削除">✕</button>
+                                    <button type="button" class="product-image-action-btn remove-bg" data-bg-remove-btn title="背景を白抜きして透過PNGを生成します" aria-label="背景を白抜き">✦</button>
+                                    <button type="button" class="product-image-action-btn delete image-delete-btn-icon" title="削除" aria-label="削除">✕</button>
                                 </div>
-                                <img src="{{ url }}" alt="image {{ loop.index }}" class="product-image-thumb" data-bg-thumb>
-                                <div class="product-image-card-body">
-                                    <div class="product-image-card-top">
-                                        <span class="product-image-order">{{ loop.index }}枚目</span>
-                                        <button type="button" class="image-sort-handle" aria-label="画像の並び順を変更">≡ 並べ替え</button>
-                                    </div>
-                                    <div class="product-image-url">{{ url }}</div>
-                                    <div class="product-image-bg-status" data-bg-status hidden></div>
-                                    <div class="product-image-bg-actions" data-bg-actions hidden>
-                                        <button type="button" class="btn-secondary btn-sm" data-bg-apply>反映</button>
-                                        <button type="button" class="btn-secondary btn-sm" data-bg-reject>破棄</button>
-                                    </div>
+                                <div class="product-image-bg-actions" data-bg-actions hidden>
+                                    <button type="button" class="btn-secondary btn-sm" data-bg-apply>反映</button>
+                                    <button type="button" class="btn-secondary btn-sm" data-bg-reject>破棄</button>
                                 </div>
                             </article>
                             {% endfor %}
+                            <button type="button" class="product-image-add-tile" id="imageAddTile" onclick="focusImageUpload()" aria-label="画像を追加">
+                                <span class="product-image-add-tile-icon" aria-hidden="true">＋</span>
+                                <span class="product-image-add-tile-label">追加</span>
+                            </button>
                         </div>
 
                         <div id="imageEmptyState" class="image-empty-state" {% if images %}hidden{% endif %}>
@@ -1781,7 +1797,9 @@
         if (imageGrid && typeof Sortable !== 'undefined') {
             Sortable.create(imageGrid, {
                 animation: 150,
-                handle: '.image-sort-handle',
+                draggable: '.product-image-card',
+                filter: '.product-image-action-btn, .product-image-bg-actions, .product-image-add-tile',
+                preventOnFilter: false,
                 ghostClass: 'image-sortable-ghost',
                 onEnd: function (evt) {
                     if (evt.oldIndex === undefined || evt.newIndex === undefined || evt.oldIndex === evt.newIndex) {
@@ -2068,7 +2086,7 @@
                 if (!target) {
                     return;
                 }
-                if (target.closest && target.closest('.product-image-action-btn, .image-sort-handle, .product-image-bg-actions, .image-upload-tile')) {
+                if (target.closest && target.closest('.product-image-action-btn, .product-image-bg-actions, .product-image-add-tile')) {
                     return;
                 }
                 var thumb = target.closest && target.closest('img.product-image-thumb');
@@ -2550,31 +2568,6 @@
             card.className = 'product-image-card';
             card.setAttribute('data-image-url', url);
 
-            var actions = document.createElement('div');
-            actions.className = 'product-image-card-actions';
-
-            var backgroundButton = document.createElement('button');
-            backgroundButton.type = 'button';
-            backgroundButton.className = 'product-image-action-btn remove-bg';
-            backgroundButton.textContent = '白抜き';
-            backgroundButton.title = '背景を白抜きして透過PNGを生成します';
-            backgroundButton.setAttribute('data-bg-remove-btn', '');
-            actions.appendChild(backgroundButton);
-
-            var iconDeleteButton = document.createElement('button');
-            iconDeleteButton.type = 'button';
-            iconDeleteButton.className = 'product-image-action-btn delete image-delete-btn-icon';
-            iconDeleteButton.textContent = '✕';
-            iconDeleteButton.title = '削除';
-            iconDeleteButton.addEventListener('click', function () {
-                imageUrls.splice(index, 1);
-                markFormDirty();
-                renderImageList();
-            });
-            actions.appendChild(iconDeleteButton);
-
-            card.appendChild(actions);
-
             var thumb = document.createElement('img');
             thumb.className = 'product-image-thumb';
             thumb.src = url;
@@ -2583,36 +2576,38 @@
             thumb.setAttribute('data-bg-thumb', '');
             card.appendChild(thumb);
 
-            var body = document.createElement('div');
-            body.className = 'product-image-card-body';
-
-            var topRow = document.createElement('div');
-            topRow.className = 'product-image-card-top';
-
-            var orderBadge = document.createElement('span');
-            orderBadge.className = 'product-image-order';
-            orderBadge.textContent = (index + 1) + '枚目';
-            topRow.appendChild(orderBadge);
-
-            var handleButton = document.createElement('button');
-            handleButton.type = 'button';
-            handleButton.className = 'image-sort-handle';
-            handleButton.textContent = '≡ 並べ替え';
-            handleButton.setAttribute('aria-label', '画像の並び順を変更');
-            topRow.appendChild(handleButton);
-
-            body.appendChild(topRow);
-
-            var urlText = document.createElement('div');
-            urlText.className = 'product-image-url';
-            urlText.textContent = url;
-            body.appendChild(urlText);
-
             var bgStatus = document.createElement('div');
             bgStatus.className = 'product-image-bg-status';
             bgStatus.setAttribute('data-bg-status', '');
             bgStatus.hidden = true;
-            body.appendChild(bgStatus);
+            card.appendChild(bgStatus);
+
+            var actions = document.createElement('div');
+            actions.className = 'product-image-card-actions';
+
+            var backgroundButton = document.createElement('button');
+            backgroundButton.type = 'button';
+            backgroundButton.className = 'product-image-action-btn remove-bg';
+            backgroundButton.textContent = '✦';
+            backgroundButton.title = '背景を白抜きして透過PNGを生成します';
+            backgroundButton.setAttribute('aria-label', '背景を白抜き');
+            backgroundButton.setAttribute('data-bg-remove-btn', '');
+            actions.appendChild(backgroundButton);
+
+            var iconDeleteButton = document.createElement('button');
+            iconDeleteButton.type = 'button';
+            iconDeleteButton.className = 'product-image-action-btn delete image-delete-btn-icon';
+            iconDeleteButton.textContent = '✕';
+            iconDeleteButton.title = '削除';
+            iconDeleteButton.setAttribute('aria-label', '削除');
+            iconDeleteButton.addEventListener('click', function () {
+                imageUrls.splice(index, 1);
+                markFormDirty();
+                renderImageList();
+            });
+            actions.appendChild(iconDeleteButton);
+
+            card.appendChild(actions);
 
             var bgActions = document.createElement('div');
             bgActions.className = 'product-image-bg-actions';
@@ -2633,17 +2628,17 @@
             rejectBtn.setAttribute('data-bg-reject', '');
             bgActions.appendChild(rejectBtn);
 
-            body.appendChild(bgActions);
-
-            card.appendChild(body);
+            card.appendChild(bgActions);
             imageGrid.appendChild(card);
         });
 
         var addTile = document.createElement('button');
         addTile.type = 'button';
-        addTile.className = 'image-upload-tile';
+        addTile.className = 'product-image-add-tile';
+        addTile.id = 'imageAddTile';
+        addTile.setAttribute('aria-label', '画像を追加');
         addTile.addEventListener('click', focusImageUpload);
-        addTile.innerHTML = '<span class="image-upload-tile-copy"><span class="image-upload-tile-icon">+</span><strong>追加</strong><span>アップロード</span></span>';
+        addTile.innerHTML = '<span class="product-image-add-tile-icon" aria-hidden="true">＋</span><span class="product-image-add-tile-label">追加</span>';
         imageGrid.appendChild(addTile);
 
         syncImageUrls();
