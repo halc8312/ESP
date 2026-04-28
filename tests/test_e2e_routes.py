@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from datetime import datetime
-from models import User, Shop, Product, Variant, ProductSnapshot, DescriptionTemplate, PriceList, PriceListItem, CatalogPageView
+from models import User, Shop, Product, Variant, ProductSnapshot, DescriptionTemplate, PriceList, PriceListItem, CatalogPageView, PricingRule
 from time_utils import utc_now
 
 
@@ -1398,10 +1398,80 @@ class TestProductRoutes:
         response = client.get(f'/product/{product.id}')
         assert response.status_code == 200
         html = response.data.decode('utf-8')
+        assert '販売設定' in html
+        assert '詳細バリエーション設定' in html
+        assert 'name="pricing_rule_id"' in html
         assert 'まとめて白抜き' in html
         assert 'タイトル翻訳' in html
         assert '自動翻訳' in html
         assert 'URLから追加' in html
+
+    def test_product_detail_single_variant_sales_fields_update_variant_and_rule(self, client, db_session):
+        """Single-variant sales fields should save through the existing Variant contract."""
+        user, product, variant = self._setup_user_with_product(client, db_session, 'productsalessingle')
+        rule = PricingRule(
+            user_id=user.id,
+            name='Default Sales Rule',
+            margin_rate=25,
+            shipping_cost=500,
+            fixed_fee=100,
+        )
+        db_session.add(rule)
+        db_session.commit()
+
+        response = client.get(f'/product/{product.id}')
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'id="single_variant_price"' in html
+        assert 'id="single_variant_qty"' in html
+        assert html.count(f'name="v_price_{variant.id}"') == 1
+        assert html.count(f'name="v_qty_{variant.id}"') == 1
+        assert 'variant-detail-disclosure' in html
+
+        response = client.post(f'/product/{product.id}', data={
+            'title': 'Sales Updated Title',
+            'description': 'Sales Updated Description',
+            'title_en': 'Sales Updated English Title',
+            'description_en': 'Sales Updated English Description',
+            'status': 'active',
+            'pricing_rule_id': str(rule.id),
+            'vendor': 'Test Vendor',
+            'tags': 'tag1,tag2',
+            'handle': 'sales-updated-handle',
+            'v_ids': [str(variant.id)],
+            f'v_opt1_{variant.id}': 'Default Title',
+            f'v_price_{variant.id}': '3450',
+            f'v_sku_{variant.id}': 'UPDATED-SALES-SKU',
+            f'v_qty_{variant.id}': '7',
+        }, follow_redirects=True)
+
+        assert response.status_code == 200
+
+        db_session.refresh(product)
+        db_session.refresh(variant)
+        assert product.pricing_rule_id == rule.id
+        assert product.selling_price == 3450
+        assert variant.price == 3450
+        assert variant.inventory_qty == 7
+
+    def test_product_detail_does_not_expose_other_users_pricing_rules(self, client, db_session):
+        """Product edit pricing rule choices must stay scoped to the current user."""
+        user, product, _ = self._setup_user_with_product(client, db_session, 'productsalesrulescope')
+        owner_rule = PricingRule(user_id=user.id, name='Owner Rule', margin_rate=20, shipping_cost=0, fixed_fee=0)
+        other_user = User(username='productsalesruleother')
+        other_user.set_password('testpassword')
+        db_session.add(other_user)
+        db_session.commit()
+        other_rule = PricingRule(user_id=other_user.id, name='Other Rule', margin_rate=50, shipping_cost=0, fixed_fee=0)
+        db_session.add_all([owner_rule, other_rule])
+        db_session.commit()
+
+        response = client.get(f'/product/{product.id}')
+
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'Owner Rule' in html
+        assert 'Other Rule' not in html
 
     def test_product_detail_shows_only_current_users_templates(self, client, db_session):
         """Product edit should not expose other users' description templates."""
