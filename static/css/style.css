@@ -686,12 +686,13 @@ tr.changed {
 /* Product Detail Specifics */
 .product-edit-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
     gap: 16px;
     align-items: start;
 }
 
-.product-edit-main {
+.product-edit-main,
+.product-edit-side {
     display: grid;
     gap: 16px;
 }
@@ -852,12 +853,20 @@ tr.changed {
     opacity: 0.45;
 }
 
+@media (min-width: 1024px) {
+    .product-edit-side {
+        position: sticky;
+        top: 88px;
+    }
+}
+
 @media (max-width: 1023px) {
     .product-edit-layout {
         grid-template-columns: 1fr;
     }
 
-    .product-edit-main {
+    .product-edit-main,
+    .product-edit-side {
         gap: 12px;
     }
 

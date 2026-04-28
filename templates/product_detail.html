@@ -855,6 +855,13 @@
     }
 
     /* === PR1 product edit refactor: flat sections + consolidated header === */
+    /* Override the shared two-column .product-edit-layout to a single column on
+       this page only — the sidebar div was removed in the refactor.
+       (templates/product_manual_add.html still relies on the shared two-column layout.) */
+    .product-edit-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
     .product-edit-page-header {
         position: sticky;
         top: 0;
