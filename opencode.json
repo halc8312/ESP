@@ -1,0 +1,30 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "stepfun/step-3.5-flash-2603",
+  "provider": {
+    "stepfun": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "StepFun",
+      "options": {
+        "baseURL": "https://api.stepfun.ai/step_plan/v1",
+        "apiKey": "{env:STEPFUN_API_KEY}"
+      },
+      "models": {
+        "step-3.5-flash-2603": {
+          "name": "Step 3.5 Flash 2603",
+          "limit": {
+            "context": 262144,
+            "output": 65536
+          }
+        },
+        "step-3.5-flash": {
+          "name": "Step 3.5 Flash",
+          "limit": {
+            "context": 262144,
+            "output": 65536
+          }
+        }
+      }
+    }
+  }
+}
