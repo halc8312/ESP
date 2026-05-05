@@ -9,4 +9,16 @@ def test_healthz_returns_runtime_snapshot(client):
         "runtime_role": "test",
         "queue_backend": "inmemory",
         "scheduler_enabled": False,
+        "scheduler": {
+            "enabled": False,
+            "started": False,
+            "start_attempted": False,
+            "running": False,
+            "jobs_registered": False,
+            "job_ids": [],
+            "job_lookup_error": None,
+            "lock_backend": None,
+            "lock_acquired": None,
+            "lock_reason": None,
+        },
     }

@@ -2,7 +2,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from app import _should_try_redis_scheduler_lock, create_web_app, create_worker_app
+from app import (
+    _record_scheduler_lock_status,
+    _should_try_redis_scheduler_lock,
+    create_app,
+    create_web_app,
+    create_worker_app,
+    get_scheduler_health_snapshot,
+    start_scheduler,
+)
 from services.worker_runtime import (
     build_worker_runtime,
     emit_backlog_operational_alert,
@@ -153,6 +161,38 @@ def test_create_worker_app_can_start_scheduler_when_enabled(monkeypatch):
 
     assert captured["app"] is app
     assert app.extensions["esp_scheduler_started"] is True
+
+
+def test_start_scheduler_records_lock_failure(monkeypatch):
+    app = create_app(
+        runtime_role="worker",
+        config_overrides={
+            "ENABLE_SCHEDULER": True,
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "REGISTER_CLI_COMMANDS": False,
+        },
+    )
+
+    def fake_acquire_scheduler_lock(current_app):
+        _record_scheduler_lock_status(
+            current_app,
+            backend="redis",
+            acquired=False,
+            reason="lock_not_acquired",
+        )
+        return False, None
+
+    monkeypatch.setattr("app._acquire_scheduler_lock", fake_acquire_scheduler_lock)
+
+    assert start_scheduler(app) is False
+
+    snapshot = get_scheduler_health_snapshot(app)
+    assert snapshot["enabled"] is True
+    assert snapshot["started"] is False
+    assert snapshot["start_attempted"] is True
+    assert snapshot["lock_backend"] == "redis"
+    assert snapshot["lock_acquired"] is False
+    assert snapshot["lock_reason"] == "lock_not_acquired"
 
 
 def test_load_worker_runtime_settings_requires_rq_backend():
@@ -719,6 +759,8 @@ def test_get_worker_health_snapshot_reports_rq_state(monkeypatch):
     assert snapshot["worker_runtime_supported"] is True
     assert snapshot["redis_ok"] is True
     assert snapshot["queue_name"] == "worker-q"
+    assert snapshot["scheduler"]["enabled"] is False
+    assert snapshot["rq_with_scheduler"] is False
     assert snapshot["backlog_issues"] == ["queued_count>=2", "oldest_queued_age_seconds>=300"]
     assert snapshot["repair_issues"] == ["pending_selector_repairs=2"]
     assert snapshot["selector_repairs"]["pending_count"] == 2
@@ -752,6 +794,7 @@ def test_get_worker_health_snapshot_for_inmemory_skips_redis(monkeypatch):
 
     assert snapshot["worker_runtime_supported"] is False
     assert snapshot["queue_backend"] == "inmemory"
+    assert snapshot["scheduler"]["enabled"] is True
     assert snapshot["redis_ok"] is None
     assert snapshot["redis_error"] is None
     assert snapshot["selector_repairs"] is None
