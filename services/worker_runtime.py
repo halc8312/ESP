@@ -10,6 +10,7 @@ from typing import Any
 from flask import Flask
 from redis import Redis
 
+from app import get_scheduler_health_snapshot
 from database import ensure_additive_schema_ready
 from services.alerts import get_alert_dispatcher
 from services.rq_compat import import_rq_queue, import_rq_simple_worker
@@ -155,6 +156,8 @@ def get_worker_health_snapshot(app: Flask) -> dict[str, Any]:
         "queue_name": settings.queue_name,
         "redis_url": settings.redis_url,
         "scheduler_enabled": bool(app.config.get("ENABLE_SCHEDULER", False)),
+        "scheduler": get_scheduler_health_snapshot(app),
+        "rq_with_scheduler": settings.with_scheduler,
         "warm_browser_pool": bool(settings.warm_browser_pool),
         "backlog": backlog,
         "backlog_issues": backlog_issues,

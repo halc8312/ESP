@@ -1,6 +1,7 @@
 """
 Flask application assembly and runtime bootstrap helpers.
 """
+import logging
 import os
 import tempfile
 import threading
@@ -88,6 +89,46 @@ RUNTIME_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 
 _SCHEDULER_LOCK_PATH = os.path.join(tempfile.gettempdir(), "esp_scheduler.lock")
+logger = logging.getLogger("app_runtime")
+
+
+def _record_scheduler_lock_status(
+    app: Flask,
+    *,
+    backend: str,
+    acquired: bool | None,
+    reason: str | None = None,
+) -> None:
+    app.extensions["esp_scheduler_lock_backend"] = backend
+    app.extensions["esp_scheduler_lock_acquired"] = acquired
+    app.extensions["esp_scheduler_lock_reason"] = reason
+
+
+def get_scheduler_health_snapshot(app: Flask) -> dict[str, Any]:
+    scheduler = app.extensions.get("esp_scheduler")
+    job_ids: list[str] = []
+    job_lookup_error = None
+    scheduler_running = False
+
+    if scheduler is not None:
+        try:
+            scheduler_running = bool(scheduler.running)
+            job_ids = sorted(job.id for job in scheduler.get_jobs())
+        except Exception as exc:
+            job_lookup_error = type(exc).__name__
+
+    return {
+        "enabled": bool(app.config.get("ENABLE_SCHEDULER", False)),
+        "started": bool(app.extensions.get("esp_scheduler_started", False)),
+        "start_attempted": bool(app.extensions.get("esp_scheduler_start_attempted", False)),
+        "running": scheduler_running,
+        "jobs_registered": bool(app.extensions.get("esp_scheduler_jobs_registered", False)),
+        "job_ids": job_ids,
+        "job_lookup_error": job_lookup_error,
+        "lock_backend": app.extensions.get("esp_scheduler_lock_backend"),
+        "lock_acquired": app.extensions.get("esp_scheduler_lock_acquired"),
+        "lock_reason": app.extensions.get("esp_scheduler_lock_reason"),
+    }
 
 
 @login_manager.user_loader
@@ -208,6 +249,7 @@ def _register_health_route(app: Flask) -> None:
             "runtime_role": app.config.get("ESP_RUNTIME_ROLE", "base"),
             "queue_backend": str(app.config.get("SCRAPE_QUEUE_BACKEND", "inmemory") or "inmemory").strip().lower(),
             "scheduler_enabled": bool(app.config.get("ENABLE_SCHEDULER", False)),
+            "scheduler": get_scheduler_health_snapshot(app),
         }
 
 
@@ -393,6 +435,11 @@ def _register_scheduler_jobs(app: Flask) -> None:
         replace_existing=True,
     )
     app.extensions["esp_scheduler_jobs_registered"] = True
+    logger.info(
+        "Scheduler jobs registered: runtime_role=%s job_ids=%s",
+        app.config.get("ESP_RUNTIME_ROLE", "base"),
+        ",".join(sorted(job.id for job in scheduler.get_jobs())),
+    )
 
 
 class _FileSchedulerLockHandle:
@@ -452,12 +499,19 @@ def _try_acquire_redis_scheduler_lock(app: Flask):
 
     redis_url = str(app.config.get("REDIS_URL", "") or "").strip()
     if not redis_url:
-        return None
+        _record_scheduler_lock_status(app, backend="redis", acquired=False, reason="missing_redis_url")
+        logger.warning(
+            "Scheduler Redis lock unavailable: missing REDIS_URL runtime_role=%s",
+            app.config.get("ESP_RUNTIME_ROLE", "base"),
+        )
+        return False
 
     try:
         from redis import Redis
     except ImportError:
-        return None
+        _record_scheduler_lock_status(app, backend="redis", acquired=False, reason="redis_import_error")
+        logger.warning("Scheduler Redis lock unavailable: redis package import failed")
+        return False
 
     ttl_seconds = max(30, int(app.config.get("SCHEDULER_LOCK_TTL_SECONDS", 120) or 120))
     renew_every_seconds = max(10.0, ttl_seconds / 3)
@@ -466,9 +520,31 @@ def _try_acquire_redis_scheduler_lock(app: Flask):
         connection = Redis.from_url(redis_url)
         lock = connection.lock(lock_key, timeout=ttl_seconds, blocking=False, thread_local=False)
         if not lock.acquire(blocking=False):
+            _record_scheduler_lock_status(app, backend="redis", acquired=False, reason="lock_not_acquired")
+            logger.warning(
+                "Scheduler Redis lock not acquired: runtime_role=%s lock_key=%s ttl_seconds=%s",
+                app.config.get("ESP_RUNTIME_ROLE", "base"),
+                lock_key,
+                ttl_seconds,
+            )
             return False
-    except Exception:
+    except Exception as exc:
+        _record_scheduler_lock_status(app, backend="redis", acquired=False, reason=type(exc).__name__)
+        logger.warning(
+            "Scheduler Redis lock failed: runtime_role=%s lock_key=%s error=%s",
+            app.config.get("ESP_RUNTIME_ROLE", "base"),
+            lock_key,
+            type(exc).__name__,
+        )
         return False
+
+    _record_scheduler_lock_status(app, backend="redis", acquired=True)
+    logger.info(
+        "Scheduler Redis lock acquired: runtime_role=%s lock_key=%s ttl_seconds=%s",
+        app.config.get("ESP_RUNTIME_ROLE", "base"),
+        lock_key,
+        ttl_seconds,
+    )
 
     stop_event = threading.Event()
 
@@ -476,7 +552,14 @@ def _try_acquire_redis_scheduler_lock(app: Flask):
         while not stop_event.wait(renew_every_seconds):
             try:
                 lock.extend(ttl_seconds)
-            except Exception:
+            except Exception as exc:
+                _record_scheduler_lock_status(app, backend="redis", acquired=False, reason=type(exc).__name__)
+                logger.warning(
+                    "Scheduler Redis lock renewal failed: runtime_role=%s lock_key=%s error=%s",
+                    app.config.get("ESP_RUNTIME_ROLE", "base"),
+                    lock_key,
+                    type(exc).__name__,
+                )
                 break
 
     renew_thread = threading.Thread(
@@ -496,6 +579,11 @@ def _acquire_scheduler_lock(app: Flask):
         return True, redis_lock_handle
 
     if _fcntl is None:
+        _record_scheduler_lock_status(app, backend="none", acquired=True)
+        logger.info(
+            "Scheduler lock bypassed: fcntl unavailable runtime_role=%s",
+            app.config.get("ESP_RUNTIME_ROLE", "base"),
+        )
         return True, None
 
     lock_fd = open(_SCHEDULER_LOCK_PATH, "w")
@@ -503,18 +591,48 @@ def _acquire_scheduler_lock(app: Flask):
         _fcntl.flock(lock_fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
     except (IOError, OSError):
         lock_fd.close()
+        _record_scheduler_lock_status(app, backend="file", acquired=False, reason="file_lock_not_acquired")
+        logger.warning(
+            "Scheduler file lock not acquired: runtime_role=%s path=%s",
+            app.config.get("ESP_RUNTIME_ROLE", "base"),
+            _SCHEDULER_LOCK_PATH,
+        )
         return False, None
 
+    _record_scheduler_lock_status(app, backend="file", acquired=True)
+    logger.info(
+        "Scheduler file lock acquired: runtime_role=%s path=%s",
+        app.config.get("ESP_RUNTIME_ROLE", "base"),
+        _SCHEDULER_LOCK_PATH,
+    )
     return True, _FileSchedulerLockHandle(lock_fd)
 
 
 def start_scheduler(app: Flask) -> bool:
     scheduler: APScheduler = app.extensions["esp_scheduler"]
     if app.extensions.get("esp_scheduler_started"):
+        logger.info(
+            "Scheduler already started: runtime_role=%s",
+            app.config.get("ESP_RUNTIME_ROLE", "base"),
+        )
         return True
+
+    app.extensions["esp_scheduler_start_attempted"] = True
+    logger.info(
+        "Scheduler start requested: runtime_role=%s queue_backend=%s lock_backend=%s",
+        app.config.get("ESP_RUNTIME_ROLE", "base"),
+        app.config.get("SCRAPE_QUEUE_BACKEND", "inmemory"),
+        app.config.get("SCHEDULER_LOCK_BACKEND", "auto"),
+    )
 
     acquired, lock_handle = _acquire_scheduler_lock(app)
     if not acquired:
+        logger.warning(
+            "Scheduler start skipped: runtime_role=%s lock_backend=%s lock_reason=%s",
+            app.config.get("ESP_RUNTIME_ROLE", "base"),
+            app.extensions.get("esp_scheduler_lock_backend"),
+            app.extensions.get("esp_scheduler_lock_reason"),
+        )
         return False
 
     try:
@@ -523,10 +641,19 @@ def start_scheduler(app: Flask) -> bool:
     except Exception:
         if lock_handle is not None:
             lock_handle.close()
+        logger.exception(
+            "Scheduler start failed: runtime_role=%s",
+            app.config.get("ESP_RUNTIME_ROLE", "base"),
+        )
         raise
 
     app.extensions["esp_scheduler_started"] = True
     app.extensions["esp_scheduler_lock_handle"] = lock_handle
+    logger.info(
+        "Scheduler started: runtime_role=%s health=%s",
+        app.config.get("ESP_RUNTIME_ROLE", "base"),
+        get_scheduler_health_snapshot(app),
+    )
     return True
 
 
@@ -550,7 +677,13 @@ def initialize_app_runtime(app: Flask) -> Flask:
                 app.extensions["esp_schema_drift_snapshot"] = schema_snapshot
 
     if app.config.get("ENABLE_SCHEDULER"):
-        start_scheduler(app)
+        scheduler_started = start_scheduler(app)
+        if not scheduler_started:
+            logger.warning(
+                "Scheduler enabled but not started: runtime_role=%s health=%s",
+                app.config.get("ESP_RUNTIME_ROLE", "base"),
+                get_scheduler_health_snapshot(app),
+            )
 
     app.extensions["esp_runtime_initialized"] = True
     return app
