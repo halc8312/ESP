@@ -994,68 +994,65 @@ tr.changed {
 .tag-pill-field {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
-    align-items: center;
-    padding: 6px 8px;
-    border: 1px solid var(--border-color);
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px solid #cbd5e1;
     border-radius: 8px;
-    background: #fff;
+    background-color: #fff;
+    align-items: center;
     min-height: 42px;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    cursor: text;
+    transition: border-color 0.2s, box-shadow 0.2s;
 }
 
 .tag-pill-field:focus-within {
     border-color: var(--primary-color, #2563eb);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
 .tag-pill-list {
-    display: contents;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
 .tag-pill-chip {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 3px 4px 3px 10px;
-    background: rgba(37, 99, 235, 0.08);
-    border: 1px solid rgba(37, 99, 235, 0.25);
-    color: #1d4ed8;
+    background-color: #e0f2fe;
+    color: #1e3a8a;
+    border: 1px solid #bae6fd;
     border-radius: 999px;
-    font-size: 12px;
+    padding: 2px 10px;
+    font-size: 0.85rem;
     font-weight: 600;
-    line-height: 1.4;
 }
 
 .tag-pill-chip-remove {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    border-radius: 999px;
-    border: 0;
-    background: rgba(37, 99, 235, 0.18);
-    color: #1d4ed8;
-    cursor: pointer;
-    font-size: 12px;
-    line-height: 1;
+    background: none;
+    border: none;
+    color: #3b82f6;
+    margin-left: 6px;
+    margin-right: -4px;
     padding: 0;
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
 }
 
 .tag-pill-chip-remove:hover,
 .tag-pill-chip-remove:focus-visible {
-    background: rgba(37, 99, 235, 0.32);
+    color: #1d4ed8;
     outline: none;
 }
 
 .tag-pill-input {
-    flex: 1 1 140px;
-    min-width: 140px;
-    border: 0;
-    outline: 0;
-    padding: 4px 6px;
-    font-size: 13px;
+    flex: 1;
+    min-width: 150px;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0;
     background: transparent;
     color: inherit;
 }

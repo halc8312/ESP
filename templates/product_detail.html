@@ -968,12 +968,27 @@
         }
     }
 
-    /* === PR1 product edit refactor: flat sections + consolidated header === */
-    /* Override the shared two-column .product-edit-layout to a single column on
-       this page only — the sidebar div was removed in the refactor.
-       (templates/product_manual_add.html still relies on the shared two-column layout.) */
+    .product-edit-form {
+        padding: 0 32px 32px;
+    }
+
     .product-edit-layout {
-        grid-template-columns: minmax(0, 1fr);
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 340px;
+        gap: 24px;
+        align-items: start;
+    }
+
+    .product-edit-main,
+    .product-edit-sidebar {
+        display: grid;
+        gap: 24px;
+        align-content: start;
+    }
+
+    .product-edit-main > .content-card,
+    .product-edit-sidebar > .content-card {
+        margin-bottom: 0 !important;
     }
 
     .product-edit-page-header {
@@ -981,50 +996,54 @@
         top: 0;
         z-index: 30;
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 16px;
-        padding: 12px 16px;
-        margin: -16px -16px 16px;
-        background: var(--card-bg);
+        padding: 16px 32px;
+        margin: 0 0 24px;
+        background: rgba(255, 255, 255, 0.95);
         border-bottom: 1px solid var(--border-color);
-        flex-wrap: wrap;
+        backdrop-filter: blur(8px);
     }
 
     .product-edit-page-header-main {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: 12px;
         min-width: 0;
     }
 
     .product-edit-page-header-main h1 {
         margin: 0;
-        font-size: 1.15rem;
-        line-height: 1.3;
+        font-size: 1.25rem;
+        line-height: 36px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
     }
 
-    .product-edit-back-icon {
+    .pc-hamburger {
         display: inline-flex;
         align-items: center;
         justify-content: center;
         width: 36px;
         height: 36px;
-        border-radius: 999px;
+        border-radius: 8px;
         border: 1px solid var(--border-color);
         background: var(--card-bg);
         color: var(--text-color);
-        text-decoration: none;
-        font-size: 1rem;
+        cursor: pointer;
         flex-shrink: 0;
     }
 
-    .product-edit-back-icon:hover {
+    .pc-hamburger:hover {
         background: #f4f7fb;
-        text-decoration: none;
+    }
+
+    .pc-hamburger .hamburger-icon,
+    .pc-hamburger .hamburger-icon::before,
+    .pc-hamburger .hamburger-icon::after {
+        background: currentColor;
     }
 
     .product-edit-page-header-actions {
@@ -1074,6 +1093,17 @@
         background: #fff8e8;
         border-color: #f7d58b;
         color: #9a6700;
+    }
+
+    @media (min-width: 1024px) {
+        body.sidebar-collapsed .sidebar {
+            transform: translateX(-100%);
+        }
+
+        body.sidebar-collapsed .main-content {
+            margin-left: 0;
+            width: 100%;
+        }
     }
 
     .product-edit-checklist-popover {
@@ -1212,15 +1242,67 @@
         grid-column: 1 / -1;
     }
 
+    .source-summary-grid {
+        display: grid;
+        gap: 10px;
+    }
+
+    .source-summary-item {
+        display: grid;
+        gap: 4px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: #f8fafc;
+        border: 1px solid var(--border-color);
+        min-width: 0;
+    }
+
+    .source-summary-wide {
+        grid-column: 1 / -1;
+    }
+
+    .source-summary-label {
+        font-size: 0.74rem;
+        color: var(--text-muted);
+    }
+
+    .source-summary-value,
+    .source-summary-link {
+        font-size: 0.92rem;
+        color: var(--text-color);
+        font-weight: 700;
+        word-break: break-word;
+    }
+
+    .source-summary-link {
+        color: var(--primary-color);
+        font-weight: 600;
+    }
+
     /* Section header replaces previous <summary> usage */
     .product-edit-panel > .product-edit-summary {
         cursor: default;
     }
 
+    @media (max-width: 1023px) {
+        .product-edit-form {
+            padding: 0 16px 24px;
+        }
+
+        .product-edit-layout {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .pc-hamburger {
+            display: none;
+        }
+    }
+
     @media (max-width: 640px) {
         .product-edit-page-header {
-            padding: 10px 12px;
-            margin: -12px -12px 12px;
+            padding: 10px 16px;
+            margin: 0 0 12px;
+            flex-wrap: wrap;
         }
 
         .product-edit-page-header-main h1 {
@@ -1238,7 +1320,9 @@
 {% block content %}
 <header class="product-edit-page-header">
     <div class="product-edit-page-header-main">
-        <a href="{{ url_for('index') }}" class="product-edit-back-icon" aria-label="一覧に戻る" title="一覧に戻る">‹</a>
+        <button type="button" class="pc-hamburger" data-action="toggle-pc-sidebar" aria-label="メニューを切り替える" title="メニューを切り替える">
+            <span class="hamburger-icon"></span>
+        </button>
         <h1 id="productSummaryTitle">{{ edit_summary.public_title or '商品編集' }}</h1>
     </div>
     <div class="product-edit-page-header-actions">
@@ -1285,89 +1369,13 @@
     {% set single_variant = variants|length == 1 %}
     {% set single_variant_item = variants[0] if single_variant else none %}
 
-    <section class="content-card product-edit-panel product-source-summary-card" id="productSourcePanel">
-        <header class="content-card-header">
-            <div>
-                <h2>仕入設定 (自動取得)</h2>
-                <p>このページの上部にあるデータは自動取得されたもので、編集できません</p>
-            </div>
-            <span class="product-edit-summary-meta">読み取り専用</span>
-        </header>
-        <div class="content-card-body">
-            <div class="product-source-summary-grid">
-                <div class="product-source-summary-row">
-                    <span>取得元サイト</span>
-                    <strong>{{ product.site or edit_summary.source_site or '—' }}</strong>
-                </div>
-                <div class="product-source-summary-row">
-                    <span>仕入れ価格 (記録)</span>
-                    <strong>{% if product.last_price is not none %}¥{{ '{:,}'.format(product.last_price) }}{% else %}{{ edit_summary.source_price_label }}{% endif %}</strong>
-                </div>
-                <div class="product-source-summary-row">
-                    <span>仕入れ元の状態</span>
-                    <strong>{{ product.last_status or edit_summary.source_status_label or '—' }}</strong>
-                </div>
-                <div class="product-source-summary-row is-wide">
-                    <span>最後に取得したタイトル</span>
-                    <strong>{{ product.last_title or '—' }}</strong>
-                </div>
-                <div class="product-source-summary-row is-wide">
-                    <span>取得元URL</span>
-                    {% if product.source_url %}
-                    <a href="{{ product.source_url }}" target="_blank" rel="noreferrer">{{ product.source_url }}</a>
-                    {% else %}
-                    <strong>—</strong>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-    </section>
-
     <div class="product-edit-layout">
         <div class="product-edit-main">
-            <section class="content-card product-edit-panel" id="basicSettingsPanel">
-                <header class="content-card-header product-edit-summary">
-                    <div class="product-edit-summary-copy">
-                        <h2>基本設定</h2>
-                        <p>どのショップで扱うか、今は下書きか公開中かを最初に決めます</p>
-                    </div>
-                    <span class="product-edit-summary-side">
-                        <span class="product-edit-summary-meta">{{ edit_summary.status_label }}</span>
-                    </span>
-                </header>
-                <div class="content-card-body">
-                    <div class="product-basic-grid">
-                        <div class="form-group">
-                            <label for="shop_id">所属ショップ</label>
-                            <select id="shop_id" name="shop_id">
-                                <option value="">(共通 / 未所属)</option>
-                                {% for s in all_shops %}
-                                <option value="{{ s.id }}" {% if product.shop_id==s.id %}selected{% endif %}>{{ s.name }}</option>
-                                {% endfor %}
-                            </select>
-                            <p class="field-helper-text">この商品をどのショップの商品として扱うかを選びます。未所属のままでも保存できます。</p>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="status">公開ステータス</label>
-                            <select id="status" name="status">
-                                <option value="active" {% if product.status=='active' %}selected{% endif %}>有効 (Active)</option>
-                                <option value="draft" {% if product.status=='draft' %}selected{% endif %}>下書き (Draft)</option>
-                            </select>
-                            <p class="field-helper-text">初めてなら <code>下書き</code> のまま整えて、最後に <code>有効</code> に切り替えるのがおすすめです。</p>
-                        </div>
-                    </div>
-
-                    <p class="product-basic-note">ヘッダー右の「チェック」バッジで未入力の必須項目を確認できます。上から順に入力すれば最低限必要な項目を揃えやすくしています。</p>
-                </div>
-            </section>
-
             <!-- ① Images (top priority for sales content) -->
             <section class="content-card product-edit-panel" id="productImagesPanel">
                 <header class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
                         <h2>商品画像</h2>
-                        <p>購入者が最初に見る部分です。並べ替え、削除、追加をここでまとめて行えます</p>
                     </div>
                     <span class="product-edit-summary-side">
                         <span class="product-edit-summary-meta" id="imageCountBadge">{{ images|length }}枚</span>
@@ -1376,10 +1384,9 @@
                 <div class="content-card-body">
                     <div class="product-image-manager">
                         <div class="image-manager-toolbar">
-                            <p class="product-image-note">ドラッグで並べ替え。画像をクリックすると拡大表示されます。<strong>白抜き</strong>ボタンで背景を透過PNGに変換できます。</p>
+                            <p class="product-image-note">ドラッグで並べ替え。画像クリックで拡大。<strong>白抜き</strong>ボタンで背景を白抜き画像にできます。</p>
                             <div class="image-toolbar-actions">
-                                <button type="button" class="btn-secondary" onclick="focusImageUrlInput()">URLから追加</button>
-                                <button type="button" class="btn-secondary" data-bg-remove-bulk-btn title="全ての画像の背景を白抜きします">まとめて白抜き</button>
+                                <button type="button" class="btn-secondary btn-compact" data-bg-remove-bulk-btn title="全ての画像の背景を白抜きします">まとめて白抜き</button>
                                 <button type="button" class="btn-secondary" data-bg-apply-bulk-btn title="プレビュー済みの白抜き結果をまとめて反映します" hidden>まとめて反映</button>
                             </div>
                         </div>
@@ -1414,7 +1421,7 @@
                                 <label for="image_url_input">画像 URL を追加</label>
                                 <div class="image-add-row">
                                     <input type="url" id="image_url_input" placeholder="https://example.com/image.jpg">
-                                    <button type="button" class="btn-secondary" onclick="addImageUrl()">URLを追加</button>
+                                    <button type="button" class="btn-secondary" onclick="addImageUrl()" title="URLから追加">追加</button>
                                 </div>
                                 <p class="text-small text-muted mb-0"><code>http(s)</code> または <code>/media/...</code> 形式の画像URLを追加できます。例: <code>https://example.com/image.jpg</code></p>
                             </div>
@@ -1425,6 +1432,126 @@
                                 <p id="imageUploadHint" class="text-small text-muted mb-0">選択した画像は保存時に現在の一覧の末尾へ追加されます。</p>
                             </div>
                         </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ② Public Title / Description / English -->
+            <section class="content-card product-edit-panel" id="productDescriptionPanel">
+                <header class="content-card-header product-edit-summary">
+                    <div class="product-edit-summary-copy">
+                        <h2>商品説明</h2>
+                    </div>
+                </header>
+                <div class="content-card-body">
+                    <div class="product-locale-meta-grid">
+                        <div class="sync-pill-row">
+                            <span class="sync-pill">まず日本語を入力</span>
+                            <span class="sync-pill">英語欄はあとからでも可</span>
+                        </div>
+
+                        <div class="product-template-card">
+                            <div class="product-template-row">
+                                <div class="form-group image-add-group">
+                                    <label for="template">説明文テンプレート</label>
+                                    <select id="template" onchange="applyTemplate()">
+                                        <option value="">(テンプレートを選択)</option>
+                                        {% for t in templates %}
+                                        <option value="{{ t.content | e }}">{{ t.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <p class="field-helper-text">よく使う説明文がある場合はここから呼び出せます。あとで手直しも可能です。</p>
+                                </div>
+                                <button type="button" class="btn-secondary" onclick="applyTemplate()">適用する</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="locale-editor-grid">
+                        <section class="locale-editor-column">
+                            <div class="locale-editor-header">
+                                <div class="locale-editor-heading">
+                                    <h3>日本語</h3>
+                                    <p>公開用のタイトルと説明文</p>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="title">商品名 (日本語)</label>
+                                <input type="text" id="title" name="title"
+                                    value="{{ product.custom_title or product.last_title or '' }}">
+                                <p class="field-helper-text">一覧や公開ページで最初に見える名前です。短く分かりやすい表現がおすすめです。</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="description">説明文 (日本語 / HTML可)</label>
+                                <textarea id="description" name="description"
+                                    rows="8">{{ product.custom_description or (snapshot.description if snapshot else '') }}</textarea>
+                                <p class="field-helper-text">状態、サイズ、付属品、注意点の順で書くと読みやすくなります。</p>
+                            </div>
+                        </section>
+
+                        <section class="locale-editor-column locale-editor-column-en">
+                            <div class="locale-editor-header">
+                                <div class="locale-editor-heading">
+                                    <h3>英語</h3>
+                                    <p>国際顧客向け。手動修正も可能です。</p>
+                                </div>
+                                <div class="locale-editor-actions" data-translation-actions>
+                                    <button type="button" class="translate-trigger" data-translate-scope="title"
+                                        title="商品名のみ自動翻訳します">タイトル翻訳</button>
+                                    <button type="button" class="translate-trigger" data-translate-scope="full"
+                                        title="商品名と説明文を自動翻訳します">自動翻訳</button>
+                                </div>
+                            </div>
+
+                            {% if not product.custom_title_en and not product.custom_description_en %}
+                            <div class="translation-callout">
+                                <strong>英語情報はまだ未入力です</strong>
+                                <p>公開カタログで英語表記を使う場合は、まず英語タイトルか英語説明のどちらかを入れておくと運用しやすくなります。</p>
+                                <button type="button" class="btn btn-primary btn-compact" onclick="focusEnglishFields()">英語欄へ移動</button>
+                            </div>
+                            {% endif %}
+
+                            <div class="form-group">
+                                <label for="title_en">商品名 (英語)</label>
+                                <input type="text" id="title_en" name="title_en" value="{{ product.custom_title_en or '' }}"
+                                    placeholder="e.g. Vintage Camera Body">
+                                <p class="field-helper-text">海外向け販売では自動翻訳で下書きを作れます。英語販売しない場合は後回しでも問題ありません。</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="description_en">説明文 (英語 / HTML可)</label>
+                                <textarea id="description_en" name="description_en"
+                                    rows="8">{{ product.custom_description_en or '' }}</textarea>
+                                <p class="field-helper-text">自動翻訳後に手動で調整できます。まずは短い要点だけでも十分です。</p>
+                            </div>
+
+                            <div id="translationPanel" class="translation-panel"
+                                data-product-id="{{ product.id }}"
+                                data-translate-url="/api/products/{{ product.id }}/translate"
+                                data-suggestions-url="/api/products/{{ product.id }}/translation-suggestions"
+                                data-apply-url-template="/api/translation-suggestions/{job_id}/apply"
+                                data-reject-url-template="/api/translation-suggestions/{job_id}/reject">
+                                {% if translation_state and (translation_state.title_stale or translation_state.description_stale) %}
+                                <div class="translation-stale-banner" role="status">
+                                    <strong>日本語が更新されました。</strong>
+                                    {% if translation_state.title_stale and translation_state.description_stale %}
+                                        商品名と説明文の英訳が古い可能性があります。再翻訳をおすすめします。
+                                    {% elif translation_state.title_stale %}
+                                        商品名の英訳が古い可能性があります。再翻訳をおすすめします。
+                                    {% else %}
+                                        説明文の英訳が古い可能性があります。再翻訳をおすすめします。
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+                                <div class="translation-panel-status" data-translation-status aria-live="polite"></div>
+                                <div class="translation-panel-suggestions" data-translation-suggestions></div>
+                            </div>
+
+                            <p class="editor-helper-text">「自動翻訳」ボタンで日本語から英語へ自動翻訳し、英語欄へ直接反映します。保存前に内容を確認・修正できます。</p>
+                            <p class="editor-helper-text">翻訳は GPT API を使用しています。</p>
+                        </section>
                     </div>
                 </div>
             </section>
@@ -1662,130 +1789,6 @@
                 </div>
             </section>
 
-            <!-- ② Public Title / Description / English -->
-            <section class="content-card product-edit-panel" id="productDescriptionPanel">
-                <header class="content-card-header product-edit-summary">
-                    <div class="product-edit-summary-copy">
-                        <h2>商品説明</h2>
-                        <p>公開ページに出る名前と説明です。迷ったら日本語から埋めていけば十分です</p>
-                    </div>
-                    <span class="product-edit-summary-side">
-                        <span class="product-edit-summary-meta">必須</span>
-                    </span>
-                </header>
-                <div class="content-card-body">
-                    <div class="product-locale-meta-grid">
-                        <div class="sync-pill-row">
-                            <span class="sync-pill">まず日本語を入力</span>
-                            <span class="sync-pill">英語欄はあとからでも可</span>
-                        </div>
-
-                        <div class="product-template-card">
-                            <div class="product-template-row">
-                                <div class="form-group image-add-group">
-                                    <label for="template">説明文テンプレート</label>
-                                    <select id="template" onchange="applyTemplate()">
-                                        <option value="">(テンプレートを選択)</option>
-                                        {% for t in templates %}
-                                        <option value="{{ t.content | e }}">{{ t.name }}</option>
-                                        {% endfor %}
-                                    </select>
-                                    <p class="field-helper-text">よく使う説明文がある場合はここから呼び出せます。あとで手直しも可能です。</p>
-                                </div>
-                                <button type="button" class="btn-secondary" onclick="applyTemplate()">適用する</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="locale-editor-grid">
-                        <section class="locale-editor-column">
-                            <div class="locale-editor-header">
-                                <div class="locale-editor-heading">
-                                    <h3>日本語</h3>
-                                    <p>公開用のタイトルと説明文</p>
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="title">商品名 (日本語)</label>
-                                <input type="text" id="title" name="title"
-                                    value="{{ product.custom_title or product.last_title or '' }}">
-                                <p class="field-helper-text">一覧や公開ページで最初に見える名前です。短く分かりやすい表現がおすすめです。</p>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="description">説明文 (日本語 / HTML可)</label>
-                                <textarea id="description" name="description"
-                                    rows="8">{{ product.custom_description or (snapshot.description if snapshot else '') }}</textarea>
-                                <p class="field-helper-text">状態、サイズ、付属品、注意点の順で書くと読みやすくなります。</p>
-                            </div>
-                        </section>
-
-                        <section class="locale-editor-column locale-editor-column-en">
-                            <div class="locale-editor-header">
-                                <div class="locale-editor-heading">
-                                    <h3>英語</h3>
-                                    <p>国際顧客向け。手動修正も可能です。</p>
-                                </div>
-                                <div class="locale-editor-actions" data-translation-actions>
-                                    <button type="button" class="translate-trigger" data-translate-scope="title"
-                                        title="商品名のみ自動翻訳します">タイトル翻訳</button>
-                                    <button type="button" class="translate-trigger" data-translate-scope="full"
-                                        title="商品名と説明文を自動翻訳します">自動翻訳</button>
-                                </div>
-                            </div>
-
-                            {% if not product.custom_title_en and not product.custom_description_en %}
-                            <div class="translation-callout">
-                                <strong>英語情報はまだ未入力です</strong>
-                                <p>公開カタログで英語表記を使う場合は、まず英語タイトルか英語説明のどちらかを入れておくと運用しやすくなります。</p>
-                                <button type="button" class="btn btn-primary btn-compact" onclick="focusEnglishFields()">英語欄へ移動</button>
-                            </div>
-                            {% endif %}
-
-                            <div class="form-group">
-                                <label for="title_en">商品名 (英語)</label>
-                                <input type="text" id="title_en" name="title_en" value="{{ product.custom_title_en or '' }}"
-                                    placeholder="e.g. Vintage Camera Body">
-                                <p class="field-helper-text">海外向け販売では自動翻訳で下書きを作れます。英語販売しない場合は後回しでも問題ありません。</p>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="description_en">説明文 (英語 / HTML可)</label>
-                                <textarea id="description_en" name="description_en"
-                                    rows="8">{{ product.custom_description_en or '' }}</textarea>
-                                <p class="field-helper-text">自動翻訳後に手動で調整できます。まずは短い要点だけでも十分です。</p>
-                            </div>
-
-                            <div id="translationPanel" class="translation-panel"
-                                data-product-id="{{ product.id }}"
-                                data-translate-url="/api/products/{{ product.id }}/translate"
-                                data-suggestions-url="/api/products/{{ product.id }}/translation-suggestions"
-                                data-apply-url-template="/api/translation-suggestions/{job_id}/apply"
-                                data-reject-url-template="/api/translation-suggestions/{job_id}/reject">
-                                {% if translation_state and (translation_state.title_stale or translation_state.description_stale) %}
-                                <div class="translation-stale-banner" role="status">
-                                    <strong>日本語が更新されました。</strong>
-                                    {% if translation_state.title_stale and translation_state.description_stale %}
-                                        商品名と説明文の英訳が古い可能性があります。再翻訳をおすすめします。
-                                    {% elif translation_state.title_stale %}
-                                        商品名の英訳が古い可能性があります。再翻訳をおすすめします。
-                                    {% else %}
-                                        説明文の英訳が古い可能性があります。再翻訳をおすすめします。
-                                    {% endif %}
-                                </div>
-                                {% endif %}
-                                <div class="translation-panel-status" data-translation-status aria-live="polite"></div>
-                                <div class="translation-panel-suggestions" data-translation-suggestions></div>
-                            </div>
-
-                            <p class="editor-helper-text">「自動翻訳」ボタンで日本語から英語へ自動翻訳します。翻訳後に内容を確認・修正してから「反映」してください。</p>
-                            <p class="editor-helper-text">翻訳は GPT API を使用しています。候補を確認してから英語欄に反映できます。</p>
-                        </section>
-                    </div>
-                </div>
-            </section>
-
             <!-- ⑤ SEO & Tags -->
             <section class="content-card product-edit-panel" id="productSeoPanel">
                 <header class="content-card-header product-edit-summary">
@@ -1805,18 +1808,6 @@
                         <p class="field-helper-text">ブランド名やショップ名を入れたい場合に使います。</p>
                     </div>
                     <div class="form-group">
-                        <label for="tag_input">タグ（検索キーワード）</label>
-                        <div class="tag-pill-field" id="tagPillField">
-                            <div class="tag-pill-list" id="tagPillList" aria-live="polite"></div>
-                            <input type="text" id="tag_input" class="tag-pill-input"
-                                placeholder="Enterで追加（例: vintage, camera, black）"
-                                autocomplete="off"
-                                aria-describedby="tagPillHelp">
-                        </div>
-                        <input type="hidden" id="tags" name="tags" value="{{ product.tags or '' }}">
-                        <p id="tagPillHelp" class="field-helper-text">Enter または カンマ で確定して追加。× をクリックで削除できます。</p>
-                    </div>
-                    <div class="form-group">
                         <label for="handle">URLスラッグ（Handle）</label>
                         <input type="text" id="handle" name="handle"
                             value="{{ product.custom_handle or '' }}">
@@ -1833,6 +1824,103 @@
                         <textarea id="seo_description" name="seo_description"
                             rows="3">{{ product.seo_description or '' }}</textarea>
                         <p class="field-help-text">検索結果に表示される説明文です。120〜160文字程度で商品の魅力を簡潔にまとめてください。</p>
+                    </div>
+                </div>
+            </section>
+        </div>
+        <div class="product-edit-sidebar">
+            <section class="content-card product-edit-panel" id="statusPanel">
+                <header class="content-card-header product-edit-summary">
+                    <div class="product-edit-summary-copy">
+                        <h2>公開ステータス</h2>
+                    </div>
+                </header>
+                <div class="content-card-body">
+                    <div class="form-group">
+                        <label for="status">ステータス</label>
+                        <select id="status" name="status">
+                            {% set current_status = product.status or 'draft' %}
+                            <option value="active" {% if current_status == 'active' %}selected{% endif %}>有効 (Active)</option>
+                            <option value="draft" {% if current_status == 'draft' %}selected{% endif %}>下書き (Draft)</option>
+                        </select>
+                    </div>
+                </div>
+            </section>
+
+            <section class="content-card product-edit-panel" id="organizationPanel">
+                <header class="content-card-header product-edit-summary">
+                    <div class="product-edit-summary-copy">
+                        <h2>所属ショップ</h2>
+                    </div>
+                </header>
+                <div class="content-card-body">
+                    <div class="form-group">
+                        <label for="shop_id">ショップ</label>
+                        <select id="shop_id" name="shop_id">
+                            <option value="">(共通 / 未所属)</option>
+                            {% for shop in all_shops %}
+                            <option value="{{ shop.id }}" {% if product.shop_id == shop.id %}selected{% endif %}>{{ shop.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+            </section>
+
+            <section class="content-card product-edit-panel" id="tagPanel">
+                <header class="content-card-header product-edit-summary">
+                    <div class="product-edit-summary-copy">
+                        <h2>タグ（検索キーワード）</h2>
+                    </div>
+                </header>
+                <div class="content-card-body">
+                    <div class="form-group">
+                        <div class="tag-pill-field" id="tagPillField">
+                            <div class="tag-pill-list" id="tagPillList" aria-live="polite"></div>
+                            <input type="text" id="tag_input" class="tag-pill-input"
+                                placeholder="Enterで追加"
+                                autocomplete="off"
+                                aria-describedby="tagPillHelp">
+                        </div>
+                        <input type="hidden" id="tags" name="tags" value="{{ product.tags or '' }}">
+                    </div>
+                </div>
+            </section>
+
+            <section class="content-card product-edit-panel product-source-summary-card" id="productSourcePanel">
+                <header class="content-card-header product-edit-summary">
+                    <div class="product-edit-summary-copy">
+                        <h2>仕入設定 (自動取得)</h2>
+                    </div>
+                    <span class="product-edit-summary-side">
+                        <span class="product-edit-summary-meta">読み取り専用</span>
+                    </span>
+                </header>
+                <div class="content-card-body">
+                    <div class="source-summary-grid">
+                        <div class="source-summary-item">
+                            <span class="source-summary-label">仕入れ元サイト</span>
+                            <span class="source-summary-value">{{ product.site or edit_summary.source_site or '—' }}</span>
+                        </div>
+                        <div class="source-summary-item">
+                            <span class="source-summary-label">仕入れ価格</span>
+                            <span class="source-summary-value">{% if product.last_price is not none %}¥{{ '{:,}'.format(product.last_price) }}{% else %}{{ edit_summary.source_price_label }}{% endif %}</span>
+                        </div>
+                        <div class="source-summary-item">
+                            <span class="source-summary-label">仕入れ元の状態</span>
+                            <span class="source-summary-value">{{ edit_summary.source_status_label or '—' }}</span>
+                        </div>
+                        <div class="source-summary-item source-summary-wide">
+                            <span class="source-summary-label">最後に取得したタイトル</span>
+                            <span class="source-summary-value">{{ product.last_title or '—' }}</span>
+                        </div>
+                        {% if product.source_url %}
+                        <div class="source-summary-item source-summary-wide">
+                            <span class="source-summary-label">仕入れ元リンク</span>
+                            <a href="{{ product.source_url }}" target="_blank" rel="noopener" class="source-summary-link">
+                                元ページを開く
+                            </a>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
             </section>
@@ -1937,6 +2025,7 @@
         imageUrls = safeParseImageUrls(imageHiddenInput ? imageHiddenInput.value : '[]');
         renderImageList();
         setSaveState('saved');
+        setupPcSidebarToggle();
         setupTagPillField();
         setupImageLightbox();
         setupSingleVariantSalesFields();
@@ -2101,6 +2190,16 @@
             master.addEventListener('change', syncMasterToMirror);
             mirror.addEventListener('input', syncMirrorToMaster);
             mirror.addEventListener('change', syncMirrorToMaster);
+        });
+    }
+
+    function setupPcSidebarToggle() {
+        var toggle = document.querySelector('[data-action="toggle-pc-sidebar"]');
+        if (!toggle) {
+            return;
+        }
+        toggle.addEventListener('click', function () {
+            document.body.classList.toggle('sidebar-collapsed');
         });
     }
 
