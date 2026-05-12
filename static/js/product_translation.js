@@ -48,7 +48,7 @@
             case "running":
                 return "翻訳中";
             case "succeeded":
-                return "確認待ち";
+                return "反映済み";
             case "failed":
                 return "失敗";
             case "applied":
@@ -66,8 +66,7 @@
         var status = item.status || "queued";
         var errorMessage = item.error_message || "";
         var scope = item.scope || "full";
-        var showApply =
-            status === "succeeded" && (translatedTitle || translatedDescription);
+        var showApply = false;
         var showReject =
             status === "queued" || status === "running" || status === "succeeded";
 
@@ -211,7 +210,8 @@
                     }
                     stopPolling();
                     if (target.status === "succeeded") {
-                        setStatus("翻訳が完了しました。内容を確認して反映してください。", "success");
+                        applySuggestionToFormFields(target);
+                        setStatus("翻訳を英語欄へ反映しました。保存ボタンで確定してください。", "success");
                     } else if (target.status === "failed") {
                         setStatus(
                             "翻訳に失敗しました: " + (target.error_message || "不明なエラー"),
@@ -257,7 +257,8 @@
                 var suggestion = result.body.suggestion || {};
                 renderSuggestions([suggestion]);
                 if (suggestion.status === "succeeded") {
-                    setStatus("翻訳が完了しました。内容を確認して反映してください。", "success");
+                    applySuggestionToFormFields(suggestion);
+                    setStatus("翻訳を英語欄へ反映しました。保存ボタンで確定してください。", "success");
                 } else if (suggestion.status === "failed") {
                     setStatus(
                         "翻訳に失敗しました: " + (suggestion.error_message || "不明なエラー"),
@@ -327,6 +328,9 @@
                 if (editor) {
                     editor.setContent(suggestion.translated_description);
                     editor.save();
+                    if (textarea) {
+                        textarea.dispatchEvent(new Event("change", {bubbles: true}));
+                    }
                     return;
                 }
             }
