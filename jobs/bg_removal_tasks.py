@@ -47,6 +47,7 @@ logger = logging.getLogger("jobs.bg_removal_tasks")
 
 DEFAULT_SOURCE_FETCH_TIMEOUT_SECONDS = 30
 DEFAULT_UPLOAD_TIMEOUT_SECONDS = 60
+MAX_SOURCE_FETCH_REDIRECTS = 5
 
 
 def _uses_internal_http_port(url: str) -> bool:
@@ -83,6 +84,10 @@ def _normalize_internal_http_url(url: str) -> str:
     if not _uses_internal_http_port(url):
         return url
     return urlunparse(urlparse(url)._replace(scheme="http"))
+
+
+def _resolve_redirect_url(current_url: str, location: str) -> str:
+    return _normalize_internal_http_url(urljoin(current_url, location))
 
 
 def _resolve_web_base_url() -> str:
@@ -160,13 +165,31 @@ def _fetch_source_bytes(source_image_url: str) -> bytes:
     from services.bg_remover.image_fetch import build_image_fetch_headers
 
     headers = build_image_fetch_headers(resolved)
+    timeout = _resolve_source_fetch_timeout()
+    current_url = resolved
     try:
-        response = requests.get(
-            resolved,
-            timeout=_resolve_source_fetch_timeout(),
-            headers=headers,
-            stream=True,
-        )
+        for _attempt in range(MAX_SOURCE_FETCH_REDIRECTS + 1):
+            request_headers = dict(headers)
+            if _uses_internal_http_port(f"https://{urlparse(current_url).netloc}"):
+                request_headers["X-Forwarded-Proto"] = "https"
+            response = requests.get(
+                current_url,
+                timeout=timeout,
+                headers=request_headers,
+                stream=True,
+                allow_redirects=False,
+            )
+            if not response.is_redirect:
+                break
+
+            location = response.headers.get("Location", "")
+            if not location:
+                response.raise_for_status()
+                break
+            current_url = _resolve_redirect_url(current_url, location)
+        else:
+            raise BackgroundRemovalError("source image fetch exceeded redirects")
+
         response.raise_for_status()
         data = response.content
     except requests.RequestException as exc:
