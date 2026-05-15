@@ -2034,6 +2034,12 @@ body.has-bottom-nav .main-content {
         max-width: calc(1200px + 60px);
     }
 
+    /* Product edit page uses full-width layout per client spec */
+    body.product-edit-page .main-content {
+        max-width: none;
+        width: calc(100% - var(--sidebar-width));
+    }
+
     /* Hide legacy nav on desktop when using new layout */
     body.has-bottom-nav .nav:not(.sidebar-nav) {
         display: none;
@@ -4839,6 +4845,21 @@ button.is-busy {
     body.has-sticky-save .main-content {
         padding-bottom: 120px;
     }
+
+    /* Product edit page hides the sticky save FAB per client spec
+       (a non-sticky "変更を保存" button is shown at the bottom of the form). */
+    body.product-edit-page .sticky-save-container {
+        display: none;
+    }
+
+    body.product-edit-page.has-sticky-save .main-content {
+        padding-bottom: 24px;
+    }
+}
+
+/* Hide sticky save FAB on mobile for the product edit page too. */
+body.product-edit-page .sticky-save-container {
+    display: none;
 }
 
 /* ── P0: Scrape form ── */
