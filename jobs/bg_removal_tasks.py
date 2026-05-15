@@ -120,9 +120,10 @@ def _resolve_source_url(source_image_url: str) -> str:
 
 def _fetch_source_bytes(source_image_url: str) -> bytes:
     resolved = _resolve_source_url(source_image_url)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; esp-worker/1.0)",
-    }
+
+    from services.bg_remover.image_fetch import build_image_fetch_headers
+
+    headers = build_image_fetch_headers(resolved)
     try:
         response = requests.get(
             resolved,

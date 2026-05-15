@@ -164,3 +164,47 @@ def test_resolve_web_base_url_explicit_url_wins_over_host(monkeypatch):
     monkeypatch.setenv("WEB_INTERNAL_PORT", "8080")
     monkeypatch.setenv("WEB_INTERNAL_URL", "http://debug-host:7777")
     assert bg_removal_tasks._resolve_web_base_url() == "http://debug-host:7777"
+
+
+# --- image_fetch header builder tests ---
+
+
+class TestBuildImageFetchHeaders:
+    """Verify that ``build_image_fetch_headers`` supplies browser-like
+    headers so marketplace CDNs do not reject source-image fetches."""
+
+    def test_mercari_cdn_gets_referer(self):
+        from services.bg_remover.image_fetch import build_image_fetch_headers
+
+        h = build_image_fetch_headers(
+            "https://static.mercdn.net/item/detail/orig/photos/m123_1.jpg"
+        )
+        assert "User-Agent" in h
+        assert h["Referer"] == "https://jp.mercari.com/"
+
+    def test_snkrdunk_gets_referer(self):
+        from services.bg_remover.image_fetch import build_image_fetch_headers
+
+        h = build_image_fetch_headers("https://cdn.snkrdunk.com/img/abc.jpg")
+        assert h["Referer"] == "https://snkrdunk.com/"
+
+    def test_surugaya_gets_referer(self):
+        from services.bg_remover.image_fetch import build_image_fetch_headers
+
+        h = build_image_fetch_headers(
+            "https://www.suruga-ya.jp/database/photo/123.jpg"
+        )
+        assert h["Referer"] == "https://www.suruga-ya.jp/"
+
+    def test_unknown_domain_still_gets_user_agent(self):
+        from services.bg_remover.image_fetch import build_image_fetch_headers
+
+        h = build_image_fetch_headers("https://example.com/photo.png")
+        assert "User-Agent" in h
+        assert "Referer" not in h
+
+    def test_local_media_url_gets_user_agent(self):
+        from services.bg_remover.image_fetch import build_image_fetch_headers
+
+        h = build_image_fetch_headers("/media/product_images/test.jpg")
+        assert "User-Agent" in h

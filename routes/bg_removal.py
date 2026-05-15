@@ -231,8 +231,14 @@ def _load_source_bytes_for_inline(source_url: str) -> bytes:
     if source_url.startswith(("http://", "https://")):
         import requests
 
+        from services.bg_remover.image_fetch import build_image_fetch_headers
+
         try:
-            response = requests.get(source_url, timeout=30)
+            response = requests.get(
+                source_url,
+                timeout=30,
+                headers=build_image_fetch_headers(source_url),
+            )
             response.raise_for_status()
             return response.content
         except requests.RequestException as exc:
