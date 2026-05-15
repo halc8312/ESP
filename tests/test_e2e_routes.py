@@ -1399,11 +1399,10 @@ class TestProductRoutes:
         assert response.status_code == 200
         html = response.data.decode('utf-8')
         assert '販売設定' in html
-        assert '詳細バリエーション設定' in html
+        assert 'バリエーション設定' in html
         assert 'name="pricing_rule_id"' in html
         assert 'まとめて白抜き' in html
-        assert 'タイトル翻訳' in html
-        assert '自動翻訳' in html
+        assert '翻訳する' in html
         assert 'URLから追加' in html
 
     def test_product_detail_single_variant_sales_fields_update_variant_and_rule(self, client, db_session):

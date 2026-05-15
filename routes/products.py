@@ -14,6 +14,7 @@ from database import SessionLocal
 from models import Shop, Product, Variant, ProductSnapshot, DescriptionTemplate, PricingRule
 from services.image_service import IMAGE_STORAGE_PATH
 from services.rich_text import normalize_rich_text
+from services.scrape_request import SITE_LABELS
 from time_utils import utc_now
 
 products_bp = Blueprint('products', __name__)
@@ -174,13 +175,22 @@ def _product_status_label(status):
 
 def _source_status_label(status):
     mapping = {
-        "on_sale": "仕入れ元: 販売中",
-        "sold": "仕入れ元: 売り切れ",
-        "deleted": "仕入れ元: 削除済み",
+        "on_sale": "在庫あり",
+        "sold": "売り切れ",
+        "deleted": "削除済み",
     }
     if not status:
-        return "仕入れ元: 未確認"
-    return mapping.get(status, f"仕入れ元: {status}")
+        return "未確認"
+    return mapping.get(status, status)
+
+
+def _source_site_label(site):
+    if not site:
+        return "未設定"
+    return SITE_LABELS.get(site, site)
+
+
+_IN_STOCK_STATUS_LABELS = {"在庫あり"}
 
 
 def _build_product_edit_summary(product, snapshot, images, variants):
@@ -249,8 +259,9 @@ def _build_product_edit_summary(product, snapshot, images, variants):
             if product.status != "active"
             else "現在は公開中です。保存すると販売ページ側の情報にも反映しやすくなります。"
         ),
-        "source_site": product.site or "未設定",
+        "source_site": _source_site_label(product.site),
         "source_status_label": _source_status_label(product.last_status),
+        "source_status_in_stock": _source_status_label(product.last_status) in _IN_STOCK_STATUS_LABELS,
         "source_price_label": _format_currency(product.last_price),
         "image_count": len(images),
         "variant_count": variant_count,

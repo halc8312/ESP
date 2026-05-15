@@ -148,15 +148,14 @@
     }
 
     function renderSuggestions(items) {
+        // Translation results are applied directly to the English fields; the
+        // suggestion card UI is intentionally suppressed so that the editor
+        // only sees the updated English title / description fields.
         if (!suggestionsNode) return;
-        if (!items || !items.length) {
-            suggestionsNode.innerHTML = "";
-            return;
-        }
-        suggestionsNode.innerHTML = items.map(renderSuggestionCard).join("");
+        suggestionsNode.innerHTML = "";
     }
 
-    function fetchSuggestions() {
+    function fetchSuggestionsRaw() {
         var url = panel.dataset.suggestionsUrl;
         return fetch(url, {
             method: "GET",
@@ -168,9 +167,15 @@
                 return res.json();
             })
             .then(function (payload) {
-                renderSuggestions(payload.items || []);
                 return payload.items || [];
             });
+    }
+
+    function fetchSuggestions() {
+        return fetchSuggestionsRaw().then(function (items) {
+            renderSuggestions(items);
+            return items;
+        });
     }
 
     function stopPolling() {
@@ -191,7 +196,7 @@
             return;
         }
         pollTimer = setTimeout(function () {
-            fetchSuggestions()
+            fetchSuggestionsRaw()
                 .then(function (items) {
                     var target = null;
                     for (var i = 0; i < items.length; i += 1) {
@@ -255,7 +260,6 @@
                     return;
                 }
                 var suggestion = result.body.suggestion || {};
-                renderSuggestions([suggestion]);
                 if (suggestion.status === "succeeded") {
                     applySuggestionToFormFields(suggestion);
                     setStatus("翻訳を英語欄へ反映しました。保存ボタンで確定してください。", "success");
