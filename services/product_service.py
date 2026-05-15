@@ -3,6 +3,8 @@ Product service for database operations related to scraped items.
 """
 import hashlib
 import logging
+import os
+
 from flask import has_request_context, session
 
 from database import SessionLocal
@@ -18,6 +20,11 @@ from utils import normalize_url
 
 
 logger = logging.getLogger(__name__)
+
+_IMAGE_CACHE_ENABLED = (
+    os.environ.get("SCRAPE_IMAGE_CACHE_ENABLED", "1").strip().lower()
+    not in {"0", "false", "no", "off"}
+)
 
 
 def _empty_save_summary(input_count: int = 0):
@@ -122,6 +129,33 @@ def _find_product_for_source(session_db, *, url: str, user_id: int, shop_id):
         .order_by(Product.id.asc())
         .first()
     )
+
+
+def _cache_external_images(
+    image_urls: list[str],
+    product_id: int,
+) -> list[str]:
+    """Try to download external images and return local ``/media/`` URLs.
+
+    For each external URL, attempt to cache it locally via
+    :func:`~services.image_service.cache_product_image`. If caching
+    succeeds the local URL replaces the external one; otherwise the
+    original URL is kept so the product still displays the image via the
+    browser (which can often reach CDNs that the server cannot).
+    """
+    if not _IMAGE_CACHE_ENABLED:
+        return image_urls
+
+    from services.image_service import cache_product_image
+
+    result: list[str] = []
+    for idx, url in enumerate(image_urls):
+        if not url.startswith(("http://", "https://")):
+            result.append(url)
+            continue
+        local_url = cache_product_image(url, product_id, idx)
+        result.append(local_url if local_url else url)
+    return result
 
 
 def save_scraped_items_to_db(
@@ -302,6 +336,9 @@ def save_scraped_items_to_db(
                         existing_variant.inventory_qty = existing_variant.inventory_qty or 1
                 processed_count += 1
 
+            cached_image_urls = _cache_external_images(
+                image_urls, product.id
+            )
             snapshot = ProductSnapshot(
                 product_id=product.id,
                 scraped_at=now,
@@ -309,7 +346,7 @@ def save_scraped_items_to_db(
                 price=price,
                 status=status,
                 description=description,
-                image_urls=image_urls_str,
+                image_urls="|".join(cached_image_urls),
             )
             session_db.add(snapshot)
 

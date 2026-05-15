@@ -343,3 +343,128 @@ def test_save_scraped_items_keeps_same_source_url_isolated_by_shop(client, db_se
     assert db_session.query(Product).filter_by(shop_id=source_shop.id).one().last_title == 'Existing Shop Item'
     assert db_session.query(Product).filter_by(shop_id=target_shop.id).one().last_title == 'Target Shop Item'
 
+
+# ---------- image caching during scrape ----------
+
+
+def test_save_scraped_items_caches_external_images_locally(
+    client, db_session, monkeypatch, tmp_path
+):
+    """When SCRAPE_IMAGE_CACHE_ENABLED is on (default), external image
+    URLs should be replaced with local ``/media/…`` paths in the
+    snapshot."""
+    from services import image_service
+
+    storage_dir = tmp_path / "images"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(image_service, "IMAGE_STORAGE_PATH", str(storage_dir))
+
+    fake_jpeg = (
+        b"\xff\xd8\xff\xe0\x00\x10JFIF\x00"
+        + b"\x00" * 50
+    )
+
+    def fake_cache(url, product_id, index):
+        return f"/media/product_images/prod_{product_id}_{index}.jpg"
+
+    monkeypatch.setattr(image_service, "cache_product_image", fake_cache)
+
+    user = _create_user(db_session, "product_service_image_cache_user")
+
+    items = [
+        {
+            "url": "https://jp.mercari.com/item/m-cache-test",
+            "title": "Cache Test",
+            "price": 500,
+            "status": "on_sale",
+            "image_urls": [
+                "https://static.mercdn.net/item/detail/orig/photos/m123_1.jpg",
+                "https://static.mercdn.net/item/detail/orig/photos/m123_2.jpg",
+            ],
+        }
+    ]
+    save_scraped_items_to_db(items, user_id=user.id, site="mercari")
+
+    db_session.expire_all()
+    product = db_session.query(Product).filter_by(user_id=user.id).one()
+    snapshot = (
+        db_session.query(ProductSnapshot)
+        .filter_by(product_id=product.id)
+        .one()
+    )
+    urls = snapshot.image_urls.split("|")
+    assert len(urls) == 2
+    assert all(u.startswith("/media/product_images/") for u in urls)
+
+
+def test_save_scraped_items_keeps_original_url_on_cache_failure(
+    client, db_session, monkeypatch, tmp_path
+):
+    """If image download fails, the original external URL must be
+    preserved so the browser can still load it directly."""
+    from services import image_service
+
+    storage_dir = tmp_path / "images"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(image_service, "IMAGE_STORAGE_PATH", str(storage_dir))
+
+    def failing_cache(url, product_id, index):
+        return None
+
+    monkeypatch.setattr(image_service, "cache_product_image", failing_cache)
+
+    user = _create_user(db_session, "product_service_image_fail_user")
+
+    external_url = "https://static.mercdn.net/item/detail/orig/photos/m999_1.jpg"
+    items = [
+        {
+            "url": "https://jp.mercari.com/item/m-fail-test",
+            "title": "Fail Cache Test",
+            "price": 700,
+            "status": "on_sale",
+            "image_urls": [external_url],
+        }
+    ]
+    save_scraped_items_to_db(items, user_id=user.id, site="mercari")
+
+    db_session.expire_all()
+    product = db_session.query(Product).filter_by(user_id=user.id).one()
+    snapshot = (
+        db_session.query(ProductSnapshot)
+        .filter_by(product_id=product.id)
+        .one()
+    )
+    assert snapshot.image_urls == external_url
+
+
+def test_save_scraped_items_respects_cache_disabled_flag(
+    client, db_session, monkeypatch, tmp_path
+):
+    """When SCRAPE_IMAGE_CACHE_ENABLED=0, images must not be cached."""
+    import services.product_service as ps
+
+    monkeypatch.setattr(ps, "_IMAGE_CACHE_ENABLED", False)
+
+    user = _create_user(db_session, "product_service_cache_off_user")
+
+    external_url = "https://static.mercdn.net/item/detail/orig/photos/m_off.jpg"
+    items = [
+        {
+            "url": "https://jp.mercari.com/item/m-off-test",
+            "title": "Cache Off Test",
+            "price": 900,
+            "status": "on_sale",
+            "image_urls": [external_url],
+        }
+    ]
+    save_scraped_items_to_db(items, user_id=user.id, site="mercari")
+
+    db_session.expire_all()
+    product = db_session.query(Product).filter_by(user_id=user.id).one()
+    snapshot = (
+        db_session.query(ProductSnapshot)
+        .filter_by(product_id=product.id)
+        .one()
+    )
+    assert snapshot.image_urls == external_url
+
