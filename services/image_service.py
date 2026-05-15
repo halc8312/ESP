@@ -3,12 +3,15 @@ Image caching and validation service for external product images.
 """
 from __future__ import annotations
 
+import logging
 import os
 from io import BytesIO
 from urllib.parse import urlparse
 
 import requests
 from PIL import Image, UnidentifiedImageError
+
+logger = logging.getLogger("services.image_service")
 
 # 画像保存設定
 IMAGE_STORAGE_PATH = os.environ.get("IMAGE_STORAGE_PATH", os.path.join('static', 'images'))
@@ -137,3 +140,47 @@ def cache_mercari_image(mercari_url, product_id, index):
     except Exception as e:
         print(f"Image download failed: {e}")
     return None
+
+
+PRODUCT_IMAGES_SUBDIR = "product_images"
+
+
+def cache_product_image(
+    image_url: str,
+    product_id: int,
+    index: int,
+) -> str | None:
+    """Download an external image and cache it under ``IMAGE_STORAGE_PATH``.
+
+    Returns the ``/media/…`` URL for the cached file on success, or
+    ``None`` if the download or validation fails (the caller should keep
+    the original external URL as a fallback).
+    """
+    if not image_url or not image_url.startswith(("http://", "https://")):
+        return None
+
+    from services.bg_remover.image_fetch import build_image_fetch_headers
+
+    dest_dir = os.path.join(IMAGE_STORAGE_PATH, PRODUCT_IMAGES_SUBDIR)
+    os.makedirs(dest_dir, exist_ok=True)
+
+    filename_base = f"prod_{product_id}_{index}"
+
+    try:
+        headers = build_image_fetch_headers(image_url)
+        data, ext = download_external_image(image_url, headers=headers)
+    except Exception:
+        logger.debug("image cache download failed for %s", image_url, exc_info=True)
+        return None
+
+    filename = f"{filename_base}{ext}"
+    dest_path = os.path.join(dest_dir, filename)
+
+    try:
+        with open(dest_path, "wb") as fh:
+            fh.write(data)
+    except OSError:
+        logger.debug("image cache write failed for %s", dest_path, exc_info=True)
+        return None
+
+    return f"/media/{PRODUCT_IMAGES_SUBDIR}/{filename}"
