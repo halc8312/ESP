@@ -200,6 +200,83 @@ def test_resolve_source_url_keeps_public_https(monkeypatch):
     assert bg_removal_tasks._resolve_source_url(source_url) == source_url
 
 
+def test_fetch_source_bytes_marks_internal_request_secure(monkeypatch):
+    from jobs import bg_removal_tasks
+
+    monkeypatch.setenv("WEB_INTERNAL_HOST", "esp-1-kend")
+    monkeypatch.setenv("WEB_INTERNAL_PORT", "8080")
+
+    captured = {}
+
+    class Response:
+        is_redirect = False
+        headers = {}
+        content = b"image-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, **kwargs):
+        captured["url"] = url
+        captured["headers"] = kwargs["headers"]
+        return Response()
+
+    monkeypatch.setattr(bg_removal_tasks.requests, "get", fake_get)
+
+    assert (
+        bg_removal_tasks._fetch_source_bytes(
+            "https://esp-1-kend:8080/media/product_images/source.jpg"
+        )
+        == b"image-bytes"
+    )
+    assert captured["url"] == "http://esp-1-kend:8080/media/product_images/source.jpg"
+    assert captured["headers"]["X-Forwarded-Proto"] == "https"
+
+
+def test_fetch_source_bytes_rewrites_internal_redirect(monkeypatch):
+    from jobs import bg_removal_tasks
+
+    monkeypatch.setenv("WEB_INTERNAL_HOST", "esp-1-kend")
+    monkeypatch.setenv("WEB_INTERNAL_PORT", "8080")
+
+    seen_urls = []
+
+    class RedirectResponse:
+        is_redirect = True
+        headers = {
+            "Location": "https://esp-1-kend:8080/media/product_images/final.jpg"
+        }
+        content = b""
+
+        def raise_for_status(self):
+            return None
+
+    class FinalResponse:
+        is_redirect = False
+        headers = {}
+        content = b"final-image"
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, **kwargs):
+        seen_urls.append(url)
+        return RedirectResponse() if len(seen_urls) == 1 else FinalResponse()
+
+    monkeypatch.setattr(bg_removal_tasks.requests, "get", fake_get)
+
+    assert (
+        bg_removal_tasks._fetch_source_bytes(
+            "/media/product_images/source.jpg"
+        )
+        == b"final-image"
+    )
+    assert seen_urls == [
+        "http://esp-1-kend:8080/media/product_images/source.jpg",
+        "http://esp-1-kend:8080/media/product_images/final.jpg",
+    ]
+
+
 # --- image_fetch header builder tests ---
 
 
