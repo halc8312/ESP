@@ -166,6 +166,40 @@ def test_resolve_web_base_url_explicit_url_wins_over_host(monkeypatch):
     assert bg_removal_tasks._resolve_web_base_url() == "http://debug-host:7777"
 
 
+def test_resolve_web_base_url_downgrades_https_internal_port(monkeypatch):
+    from jobs import bg_removal_tasks
+
+    monkeypatch.setenv("WEB_INTERNAL_HOST", "esp-1-kend")
+    monkeypatch.setenv("WEB_INTERNAL_PORT", "8080")
+    monkeypatch.setenv("WEB_INTERNAL_URL", "https://esp-1-kend:8080")
+
+    assert bg_removal_tasks._resolve_web_base_url() == "http://esp-1-kend:8080"
+
+
+def test_resolve_source_url_downgrades_https_internal_port(monkeypatch):
+    from jobs import bg_removal_tasks
+
+    monkeypatch.setenv("WEB_INTERNAL_HOST", "esp-1-kend")
+    monkeypatch.setenv("WEB_INTERNAL_PORT", "8080")
+
+    assert (
+        bg_removal_tasks._resolve_source_url(
+            "https://esp-1-kend:8080/media/product_images/source.jpg"
+        )
+        == "http://esp-1-kend:8080/media/product_images/source.jpg"
+    )
+
+
+def test_resolve_source_url_keeps_public_https(monkeypatch):
+    from jobs import bg_removal_tasks
+
+    monkeypatch.setenv("WEB_INTERNAL_HOST", "esp-1-kend")
+    monkeypatch.setenv("WEB_INTERNAL_PORT", "8080")
+
+    source_url = "https://example.com:8080/media/product_images/source.jpg"
+    assert bg_removal_tasks._resolve_source_url(source_url) == source_url
+
+
 # --- image_fetch header builder tests ---
 
 

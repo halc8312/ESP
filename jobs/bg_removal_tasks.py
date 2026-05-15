@@ -23,7 +23,7 @@ import logging
 import os
 import time
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import requests
 
@@ -47,6 +47,42 @@ logger = logging.getLogger("jobs.bg_removal_tasks")
 
 DEFAULT_SOURCE_FETCH_TIMEOUT_SECONDS = 30
 DEFAULT_UPLOAD_TIMEOUT_SECONDS = 60
+
+
+def _uses_internal_http_port(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        return False
+
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+
+    expected_port_raw = (os.environ.get("WEB_INTERNAL_PORT") or "8080").strip()
+    try:
+        expected_port = int(expected_port_raw)
+    except ValueError:
+        expected_port = 8080
+    if port != expected_port:
+        return False
+
+    hostname = (parsed.hostname or "").lower()
+    configured_host = (os.environ.get("WEB_INTERNAL_HOST") or "").strip().lower()
+    return bool(
+        hostname
+        and (
+            hostname == configured_host
+            or "." not in hostname
+            or hostname in {"localhost", "127.0.0.1", "::1"}
+        )
+    )
+
+
+def _normalize_internal_http_url(url: str) -> str:
+    if not _uses_internal_http_port(url):
+        return url
+    return urlunparse(urlparse(url)._replace(scheme="http"))
 
 
 def _resolve_web_base_url() -> str:
@@ -74,7 +110,7 @@ def _resolve_web_base_url() -> str:
         or ""
     ).strip()
     if configured:
-        return configured.rstrip("/")
+        return _normalize_internal_http_url(configured.rstrip("/"))
 
     host = (os.environ.get("WEB_INTERNAL_HOST") or "").strip()
     if host:
@@ -107,7 +143,7 @@ def _resolve_upload_timeout() -> int:
 def _resolve_source_url(source_image_url: str) -> str:
     """Turn a stored source image URL into something ``requests`` can GET."""
     if source_image_url.startswith(("http://", "https://")):
-        return source_image_url
+        return _normalize_internal_http_url(source_image_url)
 
     if source_image_url.startswith("/"):
         base = _resolve_web_base_url()
