@@ -133,7 +133,9 @@ def _serialize_scheduler_heartbeat_value(value: Any) -> str:
         return ""
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, (dict, list, tuple, set)):
+    if isinstance(value, set):
+        return json.dumps(sorted(value), ensure_ascii=False)
+    if isinstance(value, (dict, list, tuple)):
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
     return str(value)
 

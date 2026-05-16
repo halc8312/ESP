@@ -4,6 +4,7 @@ import pytest
 
 from app import (
     _record_scheduler_lock_status,
+    _serialize_scheduler_heartbeat_value,
     _should_try_redis_scheduler_lock,
     _write_scheduler_heartbeat,
     create_app,
@@ -223,6 +224,12 @@ class FakeHeartbeatRedis:
 
     def close(self):
         pass
+
+
+def test_serialize_scheduler_heartbeat_value_handles_sets():
+    assert _serialize_scheduler_heartbeat_value({"trash_purge_job", "patrol_job"}) == (
+        '["patrol_job", "trash_purge_job"]'
+    )
 
 
 def test_scheduler_health_snapshot_reads_heartbeat(monkeypatch):
