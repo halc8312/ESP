@@ -277,6 +277,80 @@ def test_fetch_source_bytes_rewrites_internal_redirect(monkeypatch):
     ]
 
 
+def test_upload_result_bytes_marks_internal_request_secure(monkeypatch):
+    from jobs import bg_removal_tasks
+
+    monkeypatch.setenv("WEB_INTERNAL_HOST", "esp-1-kend")
+    monkeypatch.setenv("WEB_INTERNAL_PORT", "8080")
+
+    captured = {}
+
+    class Response:
+        is_redirect = False
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {}
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured["headers"] = kwargs["headers"]
+        captured["allow_redirects"] = kwargs["allow_redirects"]
+        return Response()
+
+    monkeypatch.setattr(bg_removal_tasks.requests, "post", fake_post)
+
+    assert bg_removal_tasks._upload_result_bytes(
+        job_id="job-1", result_bytes=b"png-bytes"
+    ) == {}
+    assert captured["url"] == "http://esp-1-kend:8080/internal/bg-removal/job-1/upload"
+    assert captured["headers"]["X-Forwarded-Proto"] == "https"
+    assert captured["allow_redirects"] is False
+
+
+def test_upload_result_bytes_rewrites_internal_redirect(monkeypatch):
+    from jobs import bg_removal_tasks
+
+    monkeypatch.setenv("WEB_INTERNAL_HOST", "esp-1-kend")
+    monkeypatch.setenv("WEB_INTERNAL_PORT", "8080")
+
+    seen_urls = []
+
+    class RedirectResponse:
+        is_redirect = True
+        headers = {
+            "Location": "https://esp-1-kend:8080/internal/bg-removal/job-1/upload"
+        }
+        status_code = 301
+        text = ""
+
+        def raise_for_status(self):
+            return None
+
+    class FinalResponse:
+        is_redirect = False
+        status_code = 200
+        content = b'{"ok": true}'
+
+        def json(self):
+            return {"ok": True}
+
+    def fake_post(url, **kwargs):
+        seen_urls.append(url)
+        return RedirectResponse() if len(seen_urls) == 1 else FinalResponse()
+
+    monkeypatch.setattr(bg_removal_tasks.requests, "post", fake_post)
+
+    assert bg_removal_tasks._upload_result_bytes(
+        job_id="job-1", result_bytes=b"png-bytes"
+    ) == {"ok": True}
+    assert seen_urls == [
+        "http://esp-1-kend:8080/internal/bg-removal/job-1/upload",
+        "http://esp-1-kend:8080/internal/bg-removal/job-1/upload",
+    ]
+
+
 # --- image_fetch header builder tests ---
 
 
