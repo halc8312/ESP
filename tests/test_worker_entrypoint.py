@@ -53,7 +53,7 @@ def test_worker_main_passes_scheduler_flag(monkeypatch):
     monkeypatch.setenv("SCHEMA_BOOTSTRAP_MODE", "alembic")
 
     assert worker.main() == 0
-    assert captured["config_overrides"]["ENABLE_SCHEDULER"] == "1"
+    assert captured["config_overrides"]["ENABLE_SCHEDULER"] is True
     assert captured["config_overrides"]["SCHEMA_BOOTSTRAP_MODE"] == "alembic"
     assert captured["config_overrides"]["WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP"] == "0"
     assert captured["config_overrides"]["WORKER_SELECTOR_REPAIR_LIMIT"] == "3"

@@ -1,10 +1,14 @@
 """
 Flask application assembly and runtime bootstrap helpers.
 """
+import json
 import logging
 import os
+import socket
 import tempfile
 import threading
+import time
+from datetime import datetime, timezone
 from typing import Any
 
 from flask import Flask, redirect, render_template, request, send_from_directory
@@ -92,6 +96,104 @@ _SCHEDULER_LOCK_PATH = os.path.join(tempfile.gettempdir(), "esp_scheduler.lock")
 logger = logging.getLogger("app_runtime")
 
 
+def _utc_iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _get_scheduler_heartbeat_key(app: Flask) -> str:
+    return str(app.config.get("SCHEDULER_HEARTBEAT_KEY", "esp:scheduler:heartbeat") or "esp:scheduler:heartbeat")
+
+
+def _get_scheduler_heartbeat_connection(app: Flask):
+    if not _as_bool(app.config.get("SCHEDULER_HEARTBEAT_ENABLED", False)):
+        app.extensions["esp_scheduler_heartbeat_error"] = "disabled"
+        return None
+
+    redis_url = str(app.config.get("REDIS_URL", "") or "").strip()
+    if not redis_url:
+        app.extensions["esp_scheduler_heartbeat_error"] = "missing_redis_url"
+        return None
+
+    try:
+        from redis import Redis
+
+        return Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=1, socket_timeout=1)
+    except Exception as exc:
+        app.extensions["esp_scheduler_heartbeat_error"] = type(exc).__name__
+        logger.warning(
+            "Scheduler heartbeat Redis unavailable: runtime_role=%s error=%s",
+            app.config.get("ESP_RUNTIME_ROLE", "base"),
+            type(exc).__name__,
+        )
+        return None
+
+
+def _serialize_scheduler_heartbeat_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return str(value)
+
+
+def _write_scheduler_heartbeat(app: Flask, **fields: Any) -> None:
+    redis_client = _get_scheduler_heartbeat_connection(app)
+    if redis_client is None:
+        return
+
+    key = _get_scheduler_heartbeat_key(app)
+    payload = {
+        "recorded_at": _utc_iso_now(),
+        "runtime_role": app.config.get("ESP_RUNTIME_ROLE", "base"),
+        "hostname": socket.gethostname(),
+        "pid": os.getpid(),
+        **fields,
+    }
+    try:
+        redis_client.hset(
+            key,
+            mapping={name: _serialize_scheduler_heartbeat_value(value) for name, value in payload.items()},
+        )
+        app.extensions["esp_scheduler_heartbeat_key"] = key
+        app.extensions["esp_scheduler_heartbeat_error"] = None
+    except Exception as exc:
+        app.extensions["esp_scheduler_heartbeat_error"] = type(exc).__name__
+        logger.warning(
+            "Scheduler heartbeat write failed: runtime_role=%s key=%s error=%s",
+            app.config.get("ESP_RUNTIME_ROLE", "base"),
+            key,
+            type(exc).__name__,
+        )
+    finally:
+        redis_client.close()
+
+
+def _read_scheduler_heartbeat(app: Flask) -> dict[str, str] | None:
+    redis_client = _get_scheduler_heartbeat_connection(app)
+    if redis_client is None:
+        return None
+
+    key = _get_scheduler_heartbeat_key(app)
+    try:
+        heartbeat = redis_client.hgetall(key)
+        app.extensions["esp_scheduler_heartbeat_key"] = key
+        app.extensions["esp_scheduler_heartbeat_error"] = None
+        return heartbeat or None
+    except Exception as exc:
+        app.extensions["esp_scheduler_heartbeat_error"] = type(exc).__name__
+        logger.warning(
+            "Scheduler heartbeat read failed: runtime_role=%s key=%s error=%s",
+            app.config.get("ESP_RUNTIME_ROLE", "base"),
+            key,
+            type(exc).__name__,
+        )
+        return None
+    finally:
+        redis_client.close()
+
+
 def _record_scheduler_lock_status(
     app: Flask,
     *,
@@ -117,8 +219,9 @@ def get_scheduler_health_snapshot(app: Flask) -> dict[str, Any]:
         except Exception as exc:
             job_lookup_error = type(exc).__name__
 
+    heartbeat = _read_scheduler_heartbeat(app)
     return {
-        "enabled": bool(app.config.get("ENABLE_SCHEDULER", False)),
+        "enabled": _as_bool(app.config.get("ENABLE_SCHEDULER", False)),
         "started": bool(app.extensions.get("esp_scheduler_started", False)),
         "start_attempted": bool(app.extensions.get("esp_scheduler_start_attempted", False)),
         "running": scheduler_running,
@@ -128,6 +231,9 @@ def get_scheduler_health_snapshot(app: Flask) -> dict[str, Any]:
         "lock_backend": app.extensions.get("esp_scheduler_lock_backend"),
         "lock_acquired": app.extensions.get("esp_scheduler_lock_acquired"),
         "lock_reason": app.extensions.get("esp_scheduler_lock_reason"),
+        "heartbeat_key": _get_scheduler_heartbeat_key(app),
+        "heartbeat_error": app.extensions.get("esp_scheduler_heartbeat_error"),
+        "heartbeat": heartbeat,
     }
 
 
@@ -248,7 +354,7 @@ def _register_health_route(app: Flask) -> None:
             "status": "ok",
             "runtime_role": app.config.get("ESP_RUNTIME_ROLE", "base"),
             "queue_backend": str(app.config.get("SCRAPE_QUEUE_BACKEND", "inmemory") or "inmemory").strip().lower(),
-            "scheduler_enabled": bool(app.config.get("ENABLE_SCHEDULER", False)),
+            "scheduler_enabled": _as_bool(app.config.get("ENABLE_SCHEDULER", False)),
             "scheduler": get_scheduler_health_snapshot(app),
         }
 
@@ -331,6 +437,11 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
             "SCHEDULER_LOCK_BACKEND": os.environ.get("SCHEDULER_LOCK_BACKEND", "auto"),
             "SCHEDULER_LOCK_KEY": os.environ.get("SCHEDULER_LOCK_KEY", "esp:scheduler:lock"),
             "SCHEDULER_LOCK_TTL_SECONDS": os.environ.get("SCHEDULER_LOCK_TTL_SECONDS", "120"),
+            "SCHEDULER_HEARTBEAT_ENABLED": os.environ.get(
+                "SCHEDULER_HEARTBEAT_ENABLED",
+                "1" if os.environ.get("REDIS_URL") else "0",
+            ),
+            "SCHEDULER_HEARTBEAT_KEY": os.environ.get("SCHEDULER_HEARTBEAT_KEY", "esp:scheduler:heartbeat"),
             "WARM_BROWSER_POOL": os.environ.get("WARM_BROWSER_POOL", ""),
             "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP": os.environ.get(
                 "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP",
@@ -407,7 +518,56 @@ def _register_scheduler_jobs(app: Flask) -> None:
         from services.monitor_service import MonitorService
 
         with app.app_context():
-            MonitorService.check_stale_products(limit=15)
+            limit = 15
+            started_at = _utc_iso_now()
+            started_monotonic = time.monotonic()
+            _write_scheduler_heartbeat(
+                app,
+                event="patrol_started",
+                last_patrol_started_at=started_at,
+                last_patrol_limit=limit,
+            )
+            logger.info(
+                "Scheduler patrol run started: runtime_role=%s limit=%s",
+                app.config.get("ESP_RUNTIME_ROLE", "base"),
+                limit,
+            )
+            try:
+                summary = MonitorService.check_stale_products(limit=limit) or {}
+            except Exception as exc:
+                duration_seconds = round(time.monotonic() - started_monotonic, 3)
+                _write_scheduler_heartbeat(
+                    app,
+                    event="patrol_failed",
+                    last_patrol_failed_at=_utc_iso_now(),
+                    last_patrol_duration_seconds=duration_seconds,
+                    last_patrol_error=type(exc).__name__,
+                )
+                logger.exception(
+                    "Scheduler patrol run failed: runtime_role=%s duration_seconds=%s",
+                    app.config.get("ESP_RUNTIME_ROLE", "base"),
+                    duration_seconds,
+                )
+                raise
+
+            duration_seconds = round(time.monotonic() - started_monotonic, 3)
+            _write_scheduler_heartbeat(
+                app,
+                event="patrol_completed",
+                last_patrol_completed_at=_utc_iso_now(),
+                last_patrol_duration_seconds=duration_seconds,
+                last_patrol_status=summary.get("status", "completed"),
+                last_patrol_selected_count=summary.get("selected_count", ""),
+                last_patrol_updated_count=summary.get("updated_count", ""),
+                last_patrol_error_count=summary.get("error_count", ""),
+                last_patrol_site_counts=summary.get("site_counts", {}),
+            )
+            logger.info(
+                "Scheduler patrol run completed: runtime_role=%s duration_seconds=%s summary=%s",
+                app.config.get("ESP_RUNTIME_ROLE", "base"),
+                duration_seconds,
+                summary,
+            )
 
     def trash_purge_job():
         import logging
@@ -615,9 +775,22 @@ def start_scheduler(app: Flask) -> bool:
             "Scheduler already started: runtime_role=%s",
             app.config.get("ESP_RUNTIME_ROLE", "base"),
         )
+        _write_scheduler_heartbeat(
+            app,
+            event="scheduler_already_started",
+            scheduler_already_started_at=_utc_iso_now(),
+        )
         return True
 
     app.extensions["esp_scheduler_start_attempted"] = True
+    _write_scheduler_heartbeat(
+        app,
+        event="scheduler_start_requested",
+        scheduler_start_requested_at=_utc_iso_now(),
+        scheduler_enabled=_as_bool(app.config.get("ENABLE_SCHEDULER", False)),
+        queue_backend=app.config.get("SCRAPE_QUEUE_BACKEND", "inmemory"),
+        lock_backend_config=app.config.get("SCHEDULER_LOCK_BACKEND", "auto"),
+    )
     logger.info(
         "Scheduler start requested: runtime_role=%s queue_backend=%s lock_backend=%s",
         app.config.get("ESP_RUNTIME_ROLE", "base"),
@@ -627,6 +800,14 @@ def start_scheduler(app: Flask) -> bool:
 
     acquired, lock_handle = _acquire_scheduler_lock(app)
     if not acquired:
+        _write_scheduler_heartbeat(
+            app,
+            event="scheduler_start_skipped",
+            scheduler_start_skipped_at=_utc_iso_now(),
+            lock_backend=app.extensions.get("esp_scheduler_lock_backend"),
+            lock_acquired=app.extensions.get("esp_scheduler_lock_acquired"),
+            lock_reason=app.extensions.get("esp_scheduler_lock_reason"),
+        )
         logger.warning(
             "Scheduler start skipped: runtime_role=%s lock_backend=%s lock_reason=%s",
             app.config.get("ESP_RUNTIME_ROLE", "base"),
@@ -638,9 +819,15 @@ def start_scheduler(app: Flask) -> bool:
     try:
         _register_scheduler_jobs(app)
         scheduler.start()
-    except Exception:
+    except Exception as exc:
         if lock_handle is not None:
             lock_handle.close()
+        _write_scheduler_heartbeat(
+            app,
+            event="scheduler_start_failed",
+            scheduler_start_failed_at=_utc_iso_now(),
+            scheduler_start_error=type(exc).__name__,
+        )
         logger.exception(
             "Scheduler start failed: runtime_role=%s",
             app.config.get("ESP_RUNTIME_ROLE", "base"),
@@ -649,6 +836,15 @@ def start_scheduler(app: Flask) -> bool:
 
     app.extensions["esp_scheduler_started"] = True
     app.extensions["esp_scheduler_lock_handle"] = lock_handle
+    _write_scheduler_heartbeat(
+        app,
+        event="scheduler_started",
+        scheduler_started_at=_utc_iso_now(),
+        lock_backend=app.extensions.get("esp_scheduler_lock_backend"),
+        lock_acquired=app.extensions.get("esp_scheduler_lock_acquired"),
+        lock_reason=app.extensions.get("esp_scheduler_lock_reason"),
+        job_ids=sorted(job.id for job in scheduler.get_jobs()),
+    )
     logger.info(
         "Scheduler started: runtime_role=%s health=%s",
         app.config.get("ESP_RUNTIME_ROLE", "base"),
@@ -676,7 +872,7 @@ def initialize_app_runtime(app: Flask) -> Flask:
                 schema_snapshot = ensure_additive_schema_ready()
                 app.extensions["esp_schema_drift_snapshot"] = schema_snapshot
 
-    if app.config.get("ENABLE_SCHEDULER"):
+    if _as_bool(app.config.get("ENABLE_SCHEDULER", False)):
         scheduler_started = start_scheduler(app)
         if not scheduler_started:
             logger.warning(

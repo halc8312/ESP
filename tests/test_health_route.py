@@ -20,5 +20,8 @@ def test_healthz_returns_runtime_snapshot(client):
             "lock_backend": None,
             "lock_acquired": None,
             "lock_reason": None,
+            "heartbeat_key": "esp:scheduler:heartbeat",
+            "heartbeat_error": "disabled",
+            "heartbeat": None,
         },
     }

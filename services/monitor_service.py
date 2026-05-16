@@ -83,6 +83,14 @@ class MonitorService:
         logger.info(f"--- Starting Lightweight Patrol (Limit: {limit}) ---")
         session_db = SessionLocal()
         driver = None
+        summary = {
+            "status": "started",
+            "limit": limit,
+            "selected_count": 0,
+            "updated_count": 0,
+            "error_count": 0,
+            "site_counts": {},
+        }
         
         try:
             # Find products sorted by updated_at ascending (oldest first)
@@ -93,9 +101,16 @@ class MonitorService:
                 Product.deleted_at == None,
             ).order_by(asc(Product.updated_at)).limit(limit).all()
 
+            summary["selected_count"] = len(products)
+            summary["site_counts"] = {
+                site: sum(1 for product in products if product.site == site)
+                for site in sorted({product.site for product in products})
+            }
+
             if not products:
+                summary["status"] = "no_products"
                 logger.info("No products to monitor.")
-                return
+                return summary
 
             updated_count = 0
             error_count = 0
@@ -207,11 +222,18 @@ class MonitorService:
                     error_count += 1
                     continue
             
+            summary["status"] = "completed"
+            summary["updated_count"] = updated_count
+            summary["error_count"] = error_count
             logger.info(f"Patrol complete: {updated_count} updated, {error_count} errors")
+            return summary
                     
         except Exception as e:
+            summary["status"] = "fatal_error"
+            summary["fatal_error"] = type(e).__name__
             logger.error(f"Patrol fatal error: {e}")
             session_db.rollback()
+            return summary
         finally:
             session_db.close()
             logger.info("--- Patrol Finished ---")

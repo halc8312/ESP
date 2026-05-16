@@ -5,6 +5,7 @@ import pytest
 from app import (
     _record_scheduler_lock_status,
     _should_try_redis_scheduler_lock,
+    _write_scheduler_heartbeat,
     create_app,
     create_web_app,
     create_worker_app,
@@ -163,6 +164,21 @@ def test_create_worker_app_can_start_scheduler_when_enabled(monkeypatch):
     assert app.extensions["esp_scheduler_started"] is True
 
 
+def test_create_worker_app_treats_string_zero_scheduler_flag_as_disabled(monkeypatch):
+    monkeypatch.setattr("app.start_scheduler", lambda app: (_ for _ in ()).throw(AssertionError("should not start")))
+
+    app = create_worker_app(
+        config_overrides={
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "ENABLE_SCHEDULER": "0",
+        }
+    )
+
+    snapshot = get_scheduler_health_snapshot(app)
+    assert snapshot["enabled"] is False
+    assert app.extensions.get("esp_scheduler_started") is None
+
+
 def test_start_scheduler_records_lock_failure(monkeypatch):
     app = create_app(
         runtime_role="worker",
@@ -193,6 +209,49 @@ def test_start_scheduler_records_lock_failure(monkeypatch):
     assert snapshot["lock_backend"] == "redis"
     assert snapshot["lock_acquired"] is False
     assert snapshot["lock_reason"] == "lock_not_acquired"
+
+
+class FakeHeartbeatRedis:
+    def __init__(self):
+        self.data = {}
+
+    def hset(self, key, mapping):
+        self.data.setdefault(key, {}).update(mapping)
+
+    def hgetall(self, key):
+        return dict(self.data.get(key, {}))
+
+    def close(self):
+        pass
+
+
+def test_scheduler_health_snapshot_reads_heartbeat(monkeypatch):
+    redis_client = FakeHeartbeatRedis()
+    monkeypatch.setattr("app._get_scheduler_heartbeat_connection", lambda current_app: redis_client)
+
+    app = create_app(
+        runtime_role="worker",
+        config_overrides={
+            "ENABLE_SCHEDULER": True,
+            "REGISTER_CLI_COMMANDS": False,
+            "SCHEDULER_HEARTBEAT_ENABLED": True,
+            "SCHEDULER_HEARTBEAT_KEY": "test:scheduler:heartbeat",
+        },
+    )
+
+    _write_scheduler_heartbeat(
+        app,
+        event="scheduler_started",
+        job_ids=["patrol_job", "trash_purge_job"],
+        lock_acquired=True,
+    )
+
+    snapshot = get_scheduler_health_snapshot(app)
+    assert snapshot["heartbeat_key"] == "test:scheduler:heartbeat"
+    assert snapshot["heartbeat_error"] is None
+    assert snapshot["heartbeat"]["event"] == "scheduler_started"
+    assert snapshot["heartbeat"]["job_ids"] == '["patrol_job", "trash_purge_job"]'
+    assert snapshot["heartbeat"]["lock_acquired"] == "true"
 
 
 def test_load_worker_runtime_settings_requires_rq_backend():

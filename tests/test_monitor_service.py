@@ -62,7 +62,13 @@ def test_monitor_service_skips_deleted_products(client, db_session, monkeypatch)
     fake_patrol = FakePatrol(PatrolResult(price=1500, status='sold', variants=[]))
     monkeypatch.setattr(MonitorService, '_patrols', {'mercari': fake_patrol})
 
-    MonitorService.check_stale_products(limit=10)
+    summary = MonitorService.check_stale_products(limit=10)
+
+    assert summary["status"] == "completed"
+    assert summary["selected_count"] == 1
+    assert summary["updated_count"] == 1
+    assert summary["error_count"] == 0
+    assert summary["site_counts"] == {"mercari": 1}
 
     db_session.expire_all()
     refreshed_active = db_session.query(Product).filter_by(id=active_product.id).one()
