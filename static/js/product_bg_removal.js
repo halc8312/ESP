@@ -50,6 +50,7 @@
         var el = card.querySelector("[data-bg-actions]");
         if (!el) return;
         el.hidden = !visible;
+        card.classList.toggle("is-bg-removal-preview", visible);
     }
 
     function setButtonBusy(card, busy) {
@@ -169,7 +170,7 @@
             setCardActionsVisible(card, false);
             setButtonBusy(card, true);
         } else if (job.status === "succeeded") {
-            setCardStatus(card, "プレビュー: 背景を白抜きしました", "success");
+            setCardStatus(card, "白抜きプレビュー", "success");
             if (job.result_image_url) {
                 setThumbPreview(card, job.result_image_url);
             }
