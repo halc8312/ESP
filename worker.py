@@ -6,12 +6,15 @@ from __future__ import annotations
 import logging
 import os
 
-from app import create_worker_app
+from app import create_worker_app, get_scheduler_health_snapshot
 from services.worker_runtime import run_worker
 
 
-def _env_to_bool_text(env_name: str) -> str:
-    return os.environ.get(env_name, "")
+logger = logging.getLogger("worker_entrypoint")
+
+
+def _env_to_bool(env_name: str) -> bool:
+    return str(os.environ.get(env_name, "") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _configure_logging() -> None:
@@ -25,6 +28,11 @@ def _configure_logging() -> None:
 
 def main() -> int:
     _configure_logging()
+    logger.info(
+        "Worker entrypoint starting: queue_backend=%s scheduler_env=%s",
+        os.environ.get("SCRAPE_QUEUE_BACKEND", "rq"),
+        os.environ.get("WORKER_ENABLE_SCHEDULER", ""),
+    )
     os.environ.setdefault("ENABLE_SHARED_BROWSER_RUNTIME", "1")
     os.environ.setdefault("BROWSER_POOL_WARM_SITES", "mercari")
     os.environ.setdefault("MERCARI_USE_BROWSER_POOL_DETAIL", "1")
@@ -39,7 +47,7 @@ def main() -> int:
             "SCHEMA_BOOTSTRAP_MODE": os.environ.get("SCHEMA_BOOTSTRAP_MODE", "auto"),
             "ENABLE_LEGACY_SCHEMA_PATCHSET": True,
             "VERIFY_SCHEMA_DRIFT_ON_STARTUP": True,
-            "ENABLE_SCHEDULER": _env_to_bool_text("WORKER_ENABLE_SCHEDULER"),
+            "ENABLE_SCHEDULER": _env_to_bool("WORKER_ENABLE_SCHEDULER"),
             "WARM_BROWSER_POOL": os.environ.get("WARM_BROWSER_POOL", "1"),
             "WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP": os.environ.get(
                 "WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP",
@@ -54,6 +62,13 @@ def main() -> int:
                 "1",
             ),
         }
+    )
+    scheduler_enabled = getattr(app, "config", {}).get("ENABLE_SCHEDULER", False)
+    scheduler_health = get_scheduler_health_snapshot(app) if hasattr(app, "extensions") else {}
+    logger.info(
+        "Worker app created: scheduler_enabled=%s scheduler_health=%s",
+        scheduler_enabled,
+        scheduler_health,
     )
     return run_worker(app)
 
