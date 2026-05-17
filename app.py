@@ -8,7 +8,7 @@ import socket
 import tempfile
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from flask import Flask, redirect, render_template, request, send_from_directory
@@ -98,6 +98,10 @@ logger = logging.getLogger("app_runtime")
 
 def _utc_iso_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _utc_iso_after(seconds: float) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
 
 
 def _get_scheduler_heartbeat_key(app: Flask) -> str:
@@ -208,6 +212,14 @@ def _record_scheduler_lock_status(
     app.extensions["esp_scheduler_lock_reason"] = reason
 
 
+def _as_positive_float(value: Any, default: float, minimum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, parsed)
+
+
 def get_scheduler_health_snapshot(app: Flask) -> dict[str, Any]:
     scheduler = app.extensions.get("esp_scheduler")
     job_ids: list[str] = []
@@ -233,6 +245,13 @@ def get_scheduler_health_snapshot(app: Flask) -> dict[str, Any]:
         "lock_backend": app.extensions.get("esp_scheduler_lock_backend"),
         "lock_acquired": app.extensions.get("esp_scheduler_lock_acquired"),
         "lock_reason": app.extensions.get("esp_scheduler_lock_reason"),
+        "retry_enabled": _as_bool(app.config.get("SCHEDULER_LOCK_RETRY_ENABLED", False)),
+        "retry_scheduled": bool(app.extensions.get("esp_scheduler_retry_scheduled", False)),
+        "retry_attempts": int(app.extensions.get("esp_scheduler_retry_attempts", 0) or 0),
+        "retry_next_at": app.extensions.get("esp_scheduler_retry_next_at"),
+        "retry_succeeded_at": app.extensions.get("esp_scheduler_retry_succeeded_at"),
+        "retry_exhausted_at": app.extensions.get("esp_scheduler_retry_exhausted_at"),
+        "retry_last_error": app.extensions.get("esp_scheduler_retry_last_error"),
         "heartbeat_key": _get_scheduler_heartbeat_key(app),
         "heartbeat_error": app.extensions.get("esp_scheduler_heartbeat_error"),
         "heartbeat": heartbeat,
@@ -439,6 +458,12 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
             "SCHEDULER_LOCK_BACKEND": os.environ.get("SCHEDULER_LOCK_BACKEND", "auto"),
             "SCHEDULER_LOCK_KEY": os.environ.get("SCHEDULER_LOCK_KEY", "esp:scheduler:lock"),
             "SCHEDULER_LOCK_TTL_SECONDS": os.environ.get("SCHEDULER_LOCK_TTL_SECONDS", "120"),
+            "SCHEDULER_LOCK_RETRY_ENABLED": os.environ.get(
+                "SCHEDULER_LOCK_RETRY_ENABLED",
+                "1" if os.environ.get("APP_ENV") == "production" else "0",
+            ),
+            "SCHEDULER_LOCK_RETRY_SECONDS": os.environ.get("SCHEDULER_LOCK_RETRY_SECONDS", "30"),
+            "SCHEDULER_LOCK_RETRY_MAX_SECONDS": os.environ.get("SCHEDULER_LOCK_RETRY_MAX_SECONDS", "300"),
             "SCHEDULER_HEARTBEAT_ENABLED": os.environ.get(
                 "SCHEDULER_HEARTBEAT_ENABLED",
                 "1" if os.environ.get("REDIS_URL") else "0",
@@ -770,7 +795,129 @@ def _acquire_scheduler_lock(app: Flask):
     return True, _FileSchedulerLockHandle(lock_fd)
 
 
-def start_scheduler(app: Flask) -> bool:
+def _run_scheduler_lock_retry(app: Flask, retry_seconds: float, max_seconds: float) -> None:
+    deadline = time.monotonic() + max_seconds
+    while not app.extensions.get("esp_scheduler_started"):
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            exhausted_at = _utc_iso_now()
+            app.extensions["esp_scheduler_retry_exhausted_at"] = exhausted_at
+            app.extensions["esp_scheduler_retry_next_at"] = None
+            _write_scheduler_heartbeat(
+                app,
+                event="scheduler_retry_exhausted",
+                scheduler_retry_exhausted_at=exhausted_at,
+                scheduler_retry_attempts=app.extensions.get("esp_scheduler_retry_attempts", 0),
+                lock_backend=app.extensions.get("esp_scheduler_lock_backend"),
+                lock_reason=app.extensions.get("esp_scheduler_lock_reason"),
+            )
+            logger.warning(
+                "Scheduler lock retry exhausted: runtime_role=%s attempts=%s lock_backend=%s lock_reason=%s",
+                app.config.get("ESP_RUNTIME_ROLE", "base"),
+                app.extensions.get("esp_scheduler_retry_attempts", 0),
+                app.extensions.get("esp_scheduler_lock_backend"),
+                app.extensions.get("esp_scheduler_lock_reason"),
+            )
+            return
+
+        sleep_seconds = min(retry_seconds, remaining_seconds)
+        app.extensions["esp_scheduler_retry_next_at"] = _utc_iso_after(sleep_seconds)
+        time.sleep(sleep_seconds)
+        if app.extensions.get("esp_scheduler_started"):
+            return
+
+        attempts = int(app.extensions.get("esp_scheduler_retry_attempts", 0) or 0) + 1
+        app.extensions["esp_scheduler_retry_attempts"] = attempts
+        attempted_at = _utc_iso_now()
+        _write_scheduler_heartbeat(
+            app,
+            event="scheduler_retry_attempt",
+            scheduler_retry_attempted_at=attempted_at,
+            scheduler_retry_attempts=attempts,
+            lock_backend=app.extensions.get("esp_scheduler_lock_backend"),
+            lock_reason=app.extensions.get("esp_scheduler_lock_reason"),
+        )
+        logger.info(
+            "Scheduler lock retry attempt: runtime_role=%s attempt=%s lock_backend=%s lock_reason=%s",
+            app.config.get("ESP_RUNTIME_ROLE", "base"),
+            attempts,
+            app.extensions.get("esp_scheduler_lock_backend"),
+            app.extensions.get("esp_scheduler_lock_reason"),
+        )
+        try:
+            if start_scheduler(app, schedule_retry=False):
+                succeeded_at = _utc_iso_now()
+                app.extensions["esp_scheduler_retry_succeeded_at"] = succeeded_at
+                app.extensions["esp_scheduler_retry_next_at"] = None
+                _write_scheduler_heartbeat(
+                    app,
+                    event="scheduler_retry_succeeded",
+                    scheduler_retry_succeeded_at=succeeded_at,
+                    scheduler_retry_attempts=attempts,
+                    lock_backend=app.extensions.get("esp_scheduler_lock_backend"),
+                    lock_reason=app.extensions.get("esp_scheduler_lock_reason"),
+                )
+                logger.info(
+                    "Scheduler lock retry succeeded: runtime_role=%s attempts=%s",
+                    app.config.get("ESP_RUNTIME_ROLE", "base"),
+                    attempts,
+                )
+                return
+        except Exception as exc:
+            app.extensions["esp_scheduler_retry_last_error"] = type(exc).__name__
+            logger.exception(
+                "Scheduler lock retry failed: runtime_role=%s attempt=%s error=%s",
+                app.config.get("ESP_RUNTIME_ROLE", "base"),
+                attempts,
+                type(exc).__name__,
+            )
+
+
+def _schedule_scheduler_lock_retry(app: Flask) -> None:
+    if not _as_bool(app.config.get("SCHEDULER_LOCK_RETRY_ENABLED", False)):
+        return
+    if app.extensions.get("esp_scheduler_started") or app.extensions.get("esp_scheduler_retry_scheduled"):
+        return
+
+    retry_seconds = _as_positive_float(app.config.get("SCHEDULER_LOCK_RETRY_SECONDS", 30), 30.0, 1.0)
+    max_seconds = _as_positive_float(
+        app.config.get("SCHEDULER_LOCK_RETRY_MAX_SECONDS", 300),
+        300.0,
+        retry_seconds,
+    )
+    scheduled_at = _utc_iso_now()
+    app.extensions["esp_scheduler_retry_scheduled"] = True
+    app.extensions["esp_scheduler_retry_scheduled_at"] = scheduled_at
+    app.extensions["esp_scheduler_retry_attempts"] = 0
+    app.extensions["esp_scheduler_retry_next_at"] = _utc_iso_after(retry_seconds)
+    _write_scheduler_heartbeat(
+        app,
+        event="scheduler_retry_scheduled",
+        scheduler_retry_scheduled_at=scheduled_at,
+        scheduler_retry_seconds=retry_seconds,
+        scheduler_retry_max_seconds=max_seconds,
+        lock_backend=app.extensions.get("esp_scheduler_lock_backend"),
+        lock_reason=app.extensions.get("esp_scheduler_lock_reason"),
+    )
+    retry_thread = threading.Thread(
+        target=_run_scheduler_lock_retry,
+        args=(app, retry_seconds, max_seconds),
+        name="esp-scheduler-lock-retry",
+        daemon=True,
+    )
+    app.extensions["esp_scheduler_retry_thread"] = retry_thread
+    retry_thread.start()
+    logger.warning(
+        "Scheduler lock retry scheduled: runtime_role=%s retry_seconds=%s max_seconds=%s lock_backend=%s lock_reason=%s",
+        app.config.get("ESP_RUNTIME_ROLE", "base"),
+        retry_seconds,
+        max_seconds,
+        app.extensions.get("esp_scheduler_lock_backend"),
+        app.extensions.get("esp_scheduler_lock_reason"),
+    )
+
+
+def start_scheduler(app: Flask, *, schedule_retry: bool = True) -> bool:
     scheduler: APScheduler = app.extensions["esp_scheduler"]
     if app.extensions.get("esp_scheduler_started"):
         logger.info(
@@ -816,6 +963,8 @@ def start_scheduler(app: Flask) -> bool:
             app.extensions.get("esp_scheduler_lock_backend"),
             app.extensions.get("esp_scheduler_lock_reason"),
         )
+        if schedule_retry:
+            _schedule_scheduler_lock_retry(app)
         return False
 
     try:

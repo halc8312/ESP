@@ -4,6 +4,7 @@ import pytest
 
 from app import (
     _record_scheduler_lock_status,
+    _run_scheduler_lock_retry,
     _serialize_scheduler_heartbeat_value,
     _should_try_redis_scheduler_lock,
     _write_scheduler_heartbeat,
@@ -210,6 +211,88 @@ def test_start_scheduler_records_lock_failure(monkeypatch):
     assert snapshot["lock_backend"] == "redis"
     assert snapshot["lock_acquired"] is False
     assert snapshot["lock_reason"] == "lock_not_acquired"
+    assert snapshot["retry_enabled"] is False
+    assert snapshot["retry_scheduled"] is False
+
+
+def test_start_scheduler_schedules_lock_retry_on_lock_failure(monkeypatch):
+    app = create_app(
+        runtime_role="worker",
+        config_overrides={
+            "ENABLE_SCHEDULER": True,
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "REGISTER_CLI_COMMANDS": False,
+            "SCHEDULER_LOCK_RETRY_ENABLED": True,
+            "SCHEDULER_LOCK_RETRY_SECONDS": 5,
+            "SCHEDULER_LOCK_RETRY_MAX_SECONDS": 20,
+        },
+    )
+    captured = {}
+
+    def fake_acquire_scheduler_lock(current_app):
+        _record_scheduler_lock_status(
+            current_app,
+            backend="redis",
+            acquired=False,
+            reason="lock_not_acquired",
+        )
+        return False, None
+
+    class FakeThread:
+        def __init__(self, *, target, args, name, daemon):
+            captured["target"] = target
+            captured["args"] = args
+            captured["name"] = name
+            captured["daemon"] = daemon
+
+        def start(self):
+            captured["started"] = True
+
+    monkeypatch.setattr("app._acquire_scheduler_lock", fake_acquire_scheduler_lock)
+    monkeypatch.setattr("app.threading.Thread", FakeThread)
+
+    assert start_scheduler(app) is False
+
+    snapshot = get_scheduler_health_snapshot(app)
+    assert snapshot["retry_enabled"] is True
+    assert snapshot["retry_scheduled"] is True
+    assert snapshot["retry_attempts"] == 0
+    assert snapshot["retry_next_at"] is not None
+    assert captured["name"] == "esp-scheduler-lock-retry"
+    assert captured["daemon"] is True
+    assert captured["args"] == (app, 5.0, 20.0)
+    assert captured["started"] is True
+
+
+def test_scheduler_lock_retry_loop_starts_scheduler(monkeypatch):
+    app = create_app(
+        runtime_role="worker",
+        config_overrides={
+            "ENABLE_SCHEDULER": True,
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "REGISTER_CLI_COMMANDS": False,
+        },
+    )
+    attempts = []
+    monotonic_values = iter([0.0, 0.0])
+
+    def fake_start_scheduler(current_app, *, schedule_retry=True):
+        attempts.append(schedule_retry)
+        current_app.extensions["esp_scheduler_started"] = True
+        return True
+
+    monkeypatch.setattr("app.start_scheduler", fake_start_scheduler)
+    monkeypatch.setattr("app.time.monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr("app.time.sleep", lambda seconds: None)
+
+    _run_scheduler_lock_retry(app, retry_seconds=0.0, max_seconds=60.0)
+
+    snapshot = get_scheduler_health_snapshot(app)
+    assert attempts == [False]
+    assert snapshot["started"] is True
+    assert snapshot["retry_attempts"] == 1
+    assert snapshot["retry_succeeded_at"] is not None
+    assert snapshot["retry_next_at"] is None
 
 
 class FakeHeartbeatRedis:
