@@ -181,6 +181,18 @@ def test_create_worker_app_treats_string_zero_scheduler_flag_as_disabled(monkeyp
     assert app.extensions.get("esp_scheduler_started") is None
 
 
+def test_worker_scheduler_lock_retry_defaults_on_for_worker_runtime():
+    app = create_app(
+        runtime_role="worker",
+        config_overrides={
+            "REGISTER_CLI_COMMANDS": False,
+        },
+    )
+
+    assert get_scheduler_health_snapshot(app)["retry_enabled"] is True
+
+
+
 def test_start_scheduler_records_lock_failure(monkeypatch):
     app = create_app(
         runtime_role="worker",
@@ -188,6 +200,7 @@ def test_start_scheduler_records_lock_failure(monkeypatch):
             "ENABLE_SCHEDULER": True,
             "SCRAPE_QUEUE_BACKEND": "rq",
             "REGISTER_CLI_COMMANDS": False,
+            "SCHEDULER_LOCK_RETRY_ENABLED": False,
         },
     )
 

@@ -460,7 +460,7 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
             "SCHEDULER_LOCK_TTL_SECONDS": os.environ.get("SCHEDULER_LOCK_TTL_SECONDS", "120"),
             "SCHEDULER_LOCK_RETRY_ENABLED": os.environ.get(
                 "SCHEDULER_LOCK_RETRY_ENABLED",
-                "1" if os.environ.get("APP_ENV") == "production" else "0",
+                "1" if runtime_role == "worker" or os.environ.get("APP_ENV") == "production" else "0",
             ),
             "SCHEDULER_LOCK_RETRY_SECONDS": os.environ.get("SCHEDULER_LOCK_RETRY_SECONDS", "30"),
             "SCHEDULER_LOCK_RETRY_MAX_SECONDS": os.environ.get("SCHEDULER_LOCK_RETRY_MAX_SECONDS", "300"),
