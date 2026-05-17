@@ -385,6 +385,38 @@ def test_redis_scheduler_lock_clears_stale_lock_without_ttl(monkeypatch):
 
 
 
+def test_redis_scheduler_lock_clears_stale_lock_with_overlong_ttl(monkeypatch):
+    app = create_app(
+        runtime_role="worker",
+        config_overrides={
+            "REDIS_URL": "redis://example.invalid/0",
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "SCHEDULER_LOCK_BACKEND": "auto",
+            "SCHEDULER_LOCK_KEY": "test:scheduler:lock",
+            "SCHEDULER_LOCK_TTL_SECONDS": 120,
+            "REGISTER_CLI_COMMANDS": False,
+        },
+    )
+    fake_lock = FakeRedisLock([False, True])
+    FakeRedisFactory.connection = FakeSchedulerRedis(fake_lock, [816087])
+
+    monkeypatch.setattr("redis.Redis", FakeRedisFactory)
+
+    lock_handle = _try_acquire_redis_scheduler_lock(app)
+
+    assert lock_handle is not False
+    assert lock_handle is not None
+    assert FakeRedisFactory.connection.lock_timeout == 120
+    assert FakeRedisFactory.connection.deleted_keys == ["test:scheduler:lock"]
+    snapshot = get_scheduler_health_snapshot(app)
+    assert snapshot["lock_acquired"] is True
+    assert snapshot["lock_stale_cleared"] is True
+    assert snapshot["lock_ttl_seconds"] is None
+    lock_handle.close()
+    assert fake_lock.released is True
+
+
+
 def test_redis_scheduler_lock_records_ttl_when_not_acquired(monkeypatch):
     app = create_app(
         runtime_role="worker",
