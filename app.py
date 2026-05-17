@@ -206,10 +206,14 @@ def _record_scheduler_lock_status(
     backend: str,
     acquired: bool | None,
     reason: str | None = None,
+    ttl_seconds: int | None = None,
+    stale_cleared: bool = False,
 ) -> None:
     app.extensions["esp_scheduler_lock_backend"] = backend
     app.extensions["esp_scheduler_lock_acquired"] = acquired
     app.extensions["esp_scheduler_lock_reason"] = reason
+    app.extensions["esp_scheduler_lock_ttl_seconds"] = ttl_seconds
+    app.extensions["esp_scheduler_lock_stale_cleared"] = stale_cleared
 
 
 def _as_positive_float(value: Any, default: float, minimum: float) -> float:
@@ -245,6 +249,8 @@ def get_scheduler_health_snapshot(app: Flask) -> dict[str, Any]:
         "lock_backend": app.extensions.get("esp_scheduler_lock_backend"),
         "lock_acquired": app.extensions.get("esp_scheduler_lock_acquired"),
         "lock_reason": app.extensions.get("esp_scheduler_lock_reason"),
+        "lock_ttl_seconds": app.extensions.get("esp_scheduler_lock_ttl_seconds"),
+        "lock_stale_cleared": bool(app.extensions.get("esp_scheduler_lock_stale_cleared", False)),
         "retry_enabled": _as_bool(app.config.get("SCHEDULER_LOCK_RETRY_ENABLED", False)),
         "retry_scheduled": bool(app.extensions.get("esp_scheduler_retry_scheduled", False)),
         "retry_attempts": int(app.extensions.get("esp_scheduler_retry_attempts", 0) or 0),
@@ -706,13 +712,38 @@ def _try_acquire_redis_scheduler_lock(app: Flask):
     try:
         connection = Redis.from_url(redis_url)
         lock = connection.lock(lock_key, timeout=ttl_seconds, blocking=False, thread_local=False)
-        if not lock.acquire(blocking=False):
-            _record_scheduler_lock_status(app, backend="redis", acquired=False, reason="lock_not_acquired")
+        acquired = lock.acquire(blocking=False)
+        lock_ttl_seconds = None
+        stale_cleared = False
+        if not acquired:
+            lock_ttl_seconds = connection.ttl(lock_key)
+            if lock_ttl_seconds == -1:
+                stale_cleared = bool(connection.delete(lock_key))
+                if stale_cleared:
+                    logger.warning(
+                        "Scheduler Redis lock without TTL cleared: runtime_role=%s lock_key=%s",
+                        app.config.get("ESP_RUNTIME_ROLE", "base"),
+                        lock_key,
+                    )
+            if lock_ttl_seconds == -2 or stale_cleared:
+                acquired = lock.acquire(blocking=False)
+                lock_ttl_seconds = None if acquired else connection.ttl(lock_key)
+        if not acquired:
+            _record_scheduler_lock_status(
+                app,
+                backend="redis",
+                acquired=False,
+                reason="lock_not_acquired",
+                ttl_seconds=lock_ttl_seconds,
+                stale_cleared=stale_cleared,
+            )
             logger.warning(
-                "Scheduler Redis lock not acquired: runtime_role=%s lock_key=%s ttl_seconds=%s",
+                "Scheduler Redis lock not acquired: runtime_role=%s lock_key=%s ttl_seconds=%s lock_ttl_seconds=%s stale_cleared=%s",
                 app.config.get("ESP_RUNTIME_ROLE", "base"),
                 lock_key,
                 ttl_seconds,
+                lock_ttl_seconds,
+                stale_cleared,
             )
             return False
     except Exception as exc:
@@ -725,7 +756,7 @@ def _try_acquire_redis_scheduler_lock(app: Flask):
         )
         return False
 
-    _record_scheduler_lock_status(app, backend="redis", acquired=True)
+    _record_scheduler_lock_status(app, backend="redis", acquired=True, stale_cleared=stale_cleared)
     logger.info(
         "Scheduler Redis lock acquired: runtime_role=%s lock_key=%s ttl_seconds=%s",
         app.config.get("ESP_RUNTIME_ROLE", "base"),
@@ -810,6 +841,8 @@ def _run_scheduler_lock_retry(app: Flask, retry_seconds: float, max_seconds: flo
                 scheduler_retry_attempts=app.extensions.get("esp_scheduler_retry_attempts", 0),
                 lock_backend=app.extensions.get("esp_scheduler_lock_backend"),
                 lock_reason=app.extensions.get("esp_scheduler_lock_reason"),
+                lock_ttl_seconds=app.extensions.get("esp_scheduler_lock_ttl_seconds"),
+                lock_stale_cleared=app.extensions.get("esp_scheduler_lock_stale_cleared"),
             )
             logger.warning(
                 "Scheduler lock retry exhausted: runtime_role=%s attempts=%s lock_backend=%s lock_reason=%s",
@@ -836,6 +869,8 @@ def _run_scheduler_lock_retry(app: Flask, retry_seconds: float, max_seconds: flo
             scheduler_retry_attempts=attempts,
             lock_backend=app.extensions.get("esp_scheduler_lock_backend"),
             lock_reason=app.extensions.get("esp_scheduler_lock_reason"),
+            lock_ttl_seconds=app.extensions.get("esp_scheduler_lock_ttl_seconds"),
+            lock_stale_cleared=app.extensions.get("esp_scheduler_lock_stale_cleared"),
         )
         logger.info(
             "Scheduler lock retry attempt: runtime_role=%s attempt=%s lock_backend=%s lock_reason=%s",
@@ -856,6 +891,8 @@ def _run_scheduler_lock_retry(app: Flask, retry_seconds: float, max_seconds: flo
                     scheduler_retry_attempts=attempts,
                     lock_backend=app.extensions.get("esp_scheduler_lock_backend"),
                     lock_reason=app.extensions.get("esp_scheduler_lock_reason"),
+                    lock_ttl_seconds=app.extensions.get("esp_scheduler_lock_ttl_seconds"),
+                    lock_stale_cleared=app.extensions.get("esp_scheduler_lock_stale_cleared"),
                 )
                 logger.info(
                     "Scheduler lock retry succeeded: runtime_role=%s attempts=%s",
@@ -898,6 +935,8 @@ def _schedule_scheduler_lock_retry(app: Flask) -> None:
         scheduler_retry_max_seconds=max_seconds,
         lock_backend=app.extensions.get("esp_scheduler_lock_backend"),
         lock_reason=app.extensions.get("esp_scheduler_lock_reason"),
+        lock_ttl_seconds=app.extensions.get("esp_scheduler_lock_ttl_seconds"),
+        lock_stale_cleared=app.extensions.get("esp_scheduler_lock_stale_cleared"),
     )
     retry_thread = threading.Thread(
         target=_run_scheduler_lock_retry,
@@ -956,6 +995,8 @@ def start_scheduler(app: Flask, *, schedule_retry: bool = True) -> bool:
             lock_backend=app.extensions.get("esp_scheduler_lock_backend"),
             lock_acquired=app.extensions.get("esp_scheduler_lock_acquired"),
             lock_reason=app.extensions.get("esp_scheduler_lock_reason"),
+            lock_ttl_seconds=app.extensions.get("esp_scheduler_lock_ttl_seconds"),
+            lock_stale_cleared=app.extensions.get("esp_scheduler_lock_stale_cleared"),
         )
         logger.warning(
             "Scheduler start skipped: runtime_role=%s lock_backend=%s lock_reason=%s",
@@ -994,6 +1035,8 @@ def start_scheduler(app: Flask, *, schedule_retry: bool = True) -> bool:
         lock_backend=app.extensions.get("esp_scheduler_lock_backend"),
         lock_acquired=app.extensions.get("esp_scheduler_lock_acquired"),
         lock_reason=app.extensions.get("esp_scheduler_lock_reason"),
+        lock_ttl_seconds=app.extensions.get("esp_scheduler_lock_ttl_seconds"),
+        lock_stale_cleared=app.extensions.get("esp_scheduler_lock_stale_cleared"),
         job_ids=sorted(job.id for job in scheduler.get_jobs()),
     )
     logger.info(

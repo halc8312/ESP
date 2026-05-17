@@ -20,6 +20,8 @@ def test_healthz_returns_runtime_snapshot(client):
             "lock_backend": None,
             "lock_acquired": None,
             "lock_reason": None,
+            "lock_ttl_seconds": None,
+            "lock_stale_cleared": False,
             "retry_enabled": False,
             "retry_scheduled": False,
             "retry_attempts": 0,
