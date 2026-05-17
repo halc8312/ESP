@@ -313,13 +313,15 @@ class FakeRedisLock:
     def __init__(self, acquire_results):
         self.acquire_results = list(acquire_results)
         self.acquire_calls = 0
+        self.extend_calls = []
         self.released = False
 
     def acquire(self, *, blocking):
         self.acquire_calls += 1
         return self.acquire_results.pop(0)
 
-    def extend(self, ttl_seconds):
+    def extend(self, ttl_seconds, *, replace_ttl=False):
+        self.extend_calls.append((ttl_seconds, replace_ttl))
         return True
 
     def release(self):
@@ -438,6 +440,33 @@ def test_redis_scheduler_lock_records_ttl_when_not_acquired(monkeypatch):
     assert snapshot["lock_acquired"] is False
     assert snapshot["lock_reason"] == "lock_not_acquired"
     assert snapshot["lock_ttl_seconds"] == 42
+    assert snapshot["lock_stale_cleared"] is False
+
+
+
+def test_redis_scheduler_lock_does_not_clear_renewed_active_lock(monkeypatch):
+    app = create_app(
+        runtime_role="worker",
+        config_overrides={
+            "REDIS_URL": "redis://example.invalid/0",
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "SCHEDULER_LOCK_BACKEND": "auto",
+            "SCHEDULER_LOCK_KEY": "test:scheduler:lock",
+            "SCHEDULER_LOCK_TTL_SECONDS": 120,
+            "REGISTER_CLI_COMMANDS": False,
+        },
+    )
+    FakeRedisFactory.connection = FakeSchedulerRedis(FakeRedisLock([False]), [200])
+
+    monkeypatch.setattr("redis.Redis", FakeRedisFactory)
+
+    assert _try_acquire_redis_scheduler_lock(app) is False
+
+    assert FakeRedisFactory.connection.deleted_keys == []
+    snapshot = get_scheduler_health_snapshot(app)
+    assert snapshot["lock_acquired"] is False
+    assert snapshot["lock_reason"] == "lock_not_acquired"
+    assert snapshot["lock_ttl_seconds"] == 200
     assert snapshot["lock_stale_cleared"] is False
 
 

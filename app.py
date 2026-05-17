@@ -720,7 +720,7 @@ def _try_acquire_redis_scheduler_lock(app: Flask):
             stale_lock_reason = None
             if lock_ttl_seconds == -1:
                 stale_lock_reason = "missing_ttl"
-            elif lock_ttl_seconds > ttl_seconds:
+            elif lock_ttl_seconds > ttl_seconds * 3:
                 stale_lock_reason = "ttl_exceeds_expected"
             if stale_lock_reason is not None:
                 stale_cleared = bool(connection.delete(lock_key))
@@ -777,7 +777,7 @@ def _try_acquire_redis_scheduler_lock(app: Flask):
     def renew_loop() -> None:
         while not stop_event.wait(renew_every_seconds):
             try:
-                lock.extend(ttl_seconds)
+                lock.extend(ttl_seconds, replace_ttl=True)
             except Exception as exc:
                 _record_scheduler_lock_status(app, backend="redis", acquired=False, reason=type(exc).__name__)
                 logger.warning(
