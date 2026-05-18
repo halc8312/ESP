@@ -30,7 +30,6 @@ BLOCK_MARKERS = (
     "challenges.cloudflare.com",
     "cf-browser-verification",
     "cf-chl",
-    "turnstile",
     "window._cf_chl_opt",
     "cf-challenge-running",
     "challenge-form",
