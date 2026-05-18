@@ -717,13 +717,21 @@ def _try_acquire_redis_scheduler_lock(app: Flask):
         stale_cleared = False
         if not acquired:
             lock_ttl_seconds = connection.ttl(lock_key)
+            stale_lock_reason = None
             if lock_ttl_seconds == -1:
+                stale_lock_reason = "missing_ttl"
+            elif lock_ttl_seconds > ttl_seconds * 3:
+                stale_lock_reason = "ttl_exceeds_expected"
+            if stale_lock_reason is not None:
                 stale_cleared = bool(connection.delete(lock_key))
                 if stale_cleared:
                     logger.warning(
-                        "Scheduler Redis lock without TTL cleared: runtime_role=%s lock_key=%s",
+                        "Scheduler Redis stale lock cleared: runtime_role=%s lock_key=%s ttl_seconds=%s lock_ttl_seconds=%s reason=%s",
                         app.config.get("ESP_RUNTIME_ROLE", "base"),
                         lock_key,
+                        ttl_seconds,
+                        lock_ttl_seconds,
+                        stale_lock_reason,
                     )
             if lock_ttl_seconds == -2 or stale_cleared:
                 acquired = lock.acquire(blocking=False)
@@ -769,7 +777,7 @@ def _try_acquire_redis_scheduler_lock(app: Flask):
     def renew_loop() -> None:
         while not stop_event.wait(renew_every_seconds):
             try:
-                lock.extend(ttl_seconds)
+                lock.extend(ttl_seconds, replace_ttl=True)
             except Exception as exc:
                 _record_scheduler_lock_status(app, backend="redis", acquired=False, reason=type(exc).__name__)
                 logger.warning(
