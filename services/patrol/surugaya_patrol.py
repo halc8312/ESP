@@ -10,6 +10,28 @@ from services.patrol.base_patrol import BasePatrol, PatrolResult
 
 logger = logging.getLogger("patrol.surugaya")
 
+_BLOCK_HTTP_STATUSES = {403, 429, 503}
+_BLOCK_MARKERS = (
+    "just a moment...",
+    "challenges.cloudflare.com",
+    "cf-chl",
+    "attention required! | cloudflare",
+)
+
+
+def _response_status(page) -> int | None:
+    try:
+        return int(page.status)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _body_text(page) -> str:
+    body = page.body
+    if isinstance(body, bytes):
+        return body.decode("utf-8", errors="ignore")
+    return str(body or "")
+
 
 class SurugayaPatrol(BasePatrol):
     """Lightweight patrol for suruga-ya.jp."""
@@ -32,7 +54,26 @@ class SurugayaPatrol(BasePatrol):
             from services.scraping_client import fetch_static
 
             page = fetch_static(url)
-            soup = BeautifulSoup(page.body, "html.parser")
+            response_status = _response_status(page)
+            html = _body_text(page)
+            lowered_html = html.lower()
+            blocked = response_status in _BLOCK_HTTP_STATUSES or any(marker in lowered_html for marker in _BLOCK_MARKERS)
+            if blocked:
+                return PatrolResult(
+                    status="blocked",
+                    error=f"HTTP {response_status}" if response_status is not None else "challenge_page",
+                    confidence="low",
+                    reason="blocked_http_status" if response_status is not None else "blocked_challenge_page",
+                )
+            if response_status is not None and response_status >= 400:
+                return PatrolResult(
+                    status="error",
+                    error=f"HTTP {response_status}",
+                    confidence="low",
+                    reason="http_status",
+                )
+
+            soup = BeautifulSoup(html, "html.parser")
 
             price = None
             for selector in self.SELECTORS["price"].split(", "):
