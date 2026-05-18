@@ -253,6 +253,44 @@ def test_surugaya_patrol_marks_ambiguous_inventory_unknown():
     assert result.status == "unknown"
 
 
+def test_surugaya_patrol_marks_http_block_as_error():
+    html = """
+    <html>
+      <head><title>Just a moment...</title></head>
+      <body><script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script></body>
+    </html>
+    """
+
+    page = type("SurugayaBlockedPage", (), {"body": html, "status": 403})()
+    with patch("services.scraping_client.fetch_static", return_value=page):
+        result = SurugayaPatrol().fetch("https://www.suruga-ya.jp/product/detail/1")
+
+    assert result.price is None
+    assert result.status == "blocked"
+    assert result.error == "HTTP 403"
+    assert result.reason == "blocked_http_status"
+    assert result.confidence == "low"
+
+
+def test_surugaya_patrol_marks_challenge_body_as_blocked():
+    html = """
+    <html>
+      <head><title>Just a moment...</title></head>
+      <body><script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script></body>
+    </html>
+    """
+
+    page = type("SurugayaChallengePage", (), {"body": html, "status": 200})()
+    with patch("services.scraping_client.fetch_static", return_value=page):
+        result = SurugayaPatrol().fetch("https://www.suruga-ya.jp/product/detail/1")
+
+    assert result.price is None
+    assert result.status == "blocked"
+    assert result.error == "challenge_page"
+    assert result.reason == "blocked_challenge_page"
+    assert result.confidence == "low"
+
+
 def test_offmall_patrol_marks_ambiguous_inventory_unknown():
     page = MockPage(
         css_map={
