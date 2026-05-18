@@ -61,9 +61,9 @@ class SurugayaPatrol(BasePatrol):
             if blocked:
                 return PatrolResult(
                     status="blocked",
-                    error=f"HTTP {response_status}" if response_status is not None else "challenge_page",
+                    error=f"HTTP {response_status}" if response_status in _BLOCK_HTTP_STATUSES else "challenge_page",
                     confidence="low",
-                    reason="blocked_http_status" if response_status is not None else "blocked_challenge_page",
+                    reason="blocked_http_status" if response_status in _BLOCK_HTTP_STATUSES else "blocked_challenge_page",
                 )
             if response_status is not None and response_status >= 400:
                 return PatrolResult(
