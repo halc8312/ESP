@@ -27,7 +27,10 @@ BASE_URL = "https://www.suruga-ya.jp"
 BLOCK_MARKERS = (
     "just a moment",
     "attention required",
+    "challenges.cloudflare.com",
     "cf-browser-verification",
+    "cf-chl",
+    "turnstile",
     "window._cf_chl_opt",
     "cf-challenge-running",
     "challenge-form",
@@ -591,6 +594,9 @@ def _looks_like_challenge_soup(soup: BeautifulSoup) -> bool:
 
     html_text = str(soup).lower()
     markers = (
+        "challenges.cloudflare.com",
+        "cf-chl",
+        "turnstile",
         "window._cf_chl_opt",
         "cf-challenge-running",
         "challenge-form",
@@ -611,6 +617,9 @@ def _looks_like_challenge_html(title_text: str, html_text: str) -> bool:
     if "just a moment" in title_l or "attention required" in title_l:
         return True
     markers = (
+        "challenges.cloudflare.com",
+        "cf-chl",
+        "turnstile",
         "window._cf_chl_opt",
         "cf-challenge-running",
         "challenge-form",

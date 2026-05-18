@@ -77,6 +77,29 @@ def test_surugaya_detail_marks_ambiguous_inventory_unknown(monkeypatch):
     assert result["status"] == "unknown"
 
 
+def test_surugaya_detail_marks_cloudflare_challenge_body_blocked(monkeypatch):
+    html = """
+    <html>
+      <head><title>Just a moment...</title></head>
+      <body><script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script></body>
+    </html>
+    """
+
+    monkeypatch.setattr(
+        surugaya_db,
+        "_fetch_with_retry",
+        lambda session, url, timeout=30, max_attempts=3: (MockResponse(html, url), None),
+    )
+    monkeypatch.setattr(surugaya_db, "_should_use_global_domain_fallback", lambda: False)
+
+    result = surugaya_db.scrape_item_detail(object(), "https://www.suruga-ya.jp/product/detail/1")
+
+    assert result["status"] == "blocked"
+    assert result["price"] is None
+    assert result["title"] == ""
+    assert result["_scrape_meta"]["strategy"] == "blocked"
+
+
 def test_yahoo_detail_marks_ambiguous_inventory_unknown(monkeypatch):
     page = MockPage(
         find_map={
@@ -251,6 +274,36 @@ def test_surugaya_patrol_marks_ambiguous_inventory_unknown():
 
     assert result.price == 1980
     assert result.status == "unknown"
+
+
+def test_surugaya_patrol_reads_json_ld_offer_when_dom_changes():
+    html = f"""
+    <html>
+      <head>
+        <script type="application/ld+json">
+          {json.dumps({
+              "@context": "https://schema.org",
+              "@type": "Product",
+              "name": "Surugaya Patrol JSON-LD",
+              "offers": {
+                  "@type": "Offer",
+                  "price": "1980",
+                  "availability": "https://schema.org/InStock",
+              },
+          })}
+        </script>
+      </head>
+      <body><h1>Surugaya Patrol</h1><div id="product_detail">detail text only</div></body>
+    </html>
+    """
+
+    page = type("SurugayaJsonLdPage", (), {"body": html, "status": 200})()
+    with patch("services.scraping_client.fetch_static", return_value=page):
+        result = SurugayaPatrol().fetch("https://www.suruga-ya.jp/product/detail/1")
+
+    assert result.price == 1980
+    assert result.status == "active"
+    assert result.variants == [{"name": "Default Title", "stock": 1, "price": 1980}]
 
 
 def test_surugaya_patrol_marks_http_block_as_error():

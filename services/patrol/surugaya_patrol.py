@@ -33,6 +33,63 @@ def _body_text(page) -> str:
     return str(body or "")
 
 
+def _parse_price(value) -> int | None:
+    if value is None:
+        return None
+    match = re.search(r"([\d,]+)", str(value))
+    if not match:
+        return None
+    try:
+        return int(match.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _json_ld_nodes(payload) -> list[dict]:
+    if isinstance(payload, list):
+        return [node for node in payload if isinstance(node, dict)]
+    if isinstance(payload, dict) and isinstance(payload.get("@graph"), list):
+        return [node for node in payload["@graph"] if isinstance(node, dict)]
+    if isinstance(payload, dict):
+        return [payload]
+    return []
+
+
+def _extract_json_ld_offer_fields(soup) -> tuple[int | None, str | None]:
+    price = None
+    status = None
+    for script in soup.select("script[type='application/ld+json']"):
+        raw = script.string or script.get_text()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw.strip())
+        except Exception:
+            continue
+
+        for node in _json_ld_nodes(payload):
+            offers = node.get("offers")
+            if isinstance(offers, dict):
+                offer_nodes = [offers]
+            elif isinstance(offers, list):
+                offer_nodes = [offer for offer in offers if isinstance(offer, dict)]
+            else:
+                offer_nodes = []
+
+            for offer in offer_nodes:
+                if price is None:
+                    price = _parse_price(offer.get("price") or offer.get("lowPrice"))
+                if status is None:
+                    availability = str(offer.get("availability") or "").lower()
+                    if "outofstock" in availability or "soldout" in availability:
+                        status = "sold"
+                    elif "instock" in availability:
+                        status = "active"
+                if price is not None and status is not None:
+                    return price, status
+    return price, status
+
+
 class SurugayaPatrol(BasePatrol):
     """Lightweight patrol for suruga-ya.jp."""
 
@@ -74,6 +131,7 @@ class SurugayaPatrol(BasePatrol):
                 )
 
             soup = BeautifulSoup(html, "html.parser")
+            json_ld_price, json_ld_status = _extract_json_ld_offer_fields(soup)
 
             price = None
             for selector in self.SELECTORS["price"].split(", "):
@@ -97,6 +155,8 @@ class SurugayaPatrol(BasePatrol):
                         price = int(match.group(1).replace(",", ""))
                     except ValueError:
                         pass
+            if price is None:
+                price = json_ld_price
 
             status = "unknown"
             for selector in self.SELECTORS["stock_sold"].split(", "):
@@ -113,34 +173,8 @@ class SurugayaPatrol(BasePatrol):
                     status = "sold"
                 elif any(keyword in body_text for keyword in self.ACTIVE_KEYWORDS):
                     status = "active"
-            if status == "unknown":
-                for script in soup.select("script[type='application/ld+json']"):
-                    raw = script.string or script.get_text()
-                    if not raw:
-                        continue
-                    try:
-                        payload = json.loads(raw.strip())
-                    except Exception:
-                        continue
-
-                    nodes = payload if isinstance(payload, list) else payload.get("@graph", [payload]) if isinstance(payload, dict) else []
-                    for node in nodes:
-                        if not isinstance(node, dict):
-                            continue
-                        offers = node.get("offers")
-                        if isinstance(offers, list) and offers:
-                            offers = offers[0]
-                        if not isinstance(offers, dict):
-                            continue
-                        availability = str(offers.get("availability") or "").lower()
-                        if "outofstock" in availability or "soldout" in availability:
-                            status = "sold"
-                            break
-                        if "instock" in availability:
-                            status = "active"
-                            break
-                    if status != "unknown":
-                        break
+            if status == "unknown" and json_ld_status:
+                status = json_ld_status
 
             variants = []
             if price is not None:
