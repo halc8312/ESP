@@ -27,7 +27,9 @@ BASE_URL = "https://www.suruga-ya.jp"
 BLOCK_MARKERS = (
     "just a moment",
     "attention required",
+    "challenges.cloudflare.com",
     "cf-browser-verification",
+    "cf-chl",
     "window._cf_chl_opt",
     "cf-challenge-running",
     "challenge-form",
@@ -280,6 +282,20 @@ def _fetch_with_retry(session, url: str, timeout: int = 30, max_attempts: int = 
             except Exception:
                 pass
             time.sleep(1.0 + (attempt * 0.8))
+
+    if last_response is not None and _is_cloudflare_block(last_response):
+        try:
+            from services.scraping_client import fetch_surugaya_external
+            external_response = fetch_surugaya_external(url, timeout=max(timeout, 60))
+            if (
+                external_response is not None
+                and not _is_cloudflare_block(external_response)
+                and external_response.status_code < 500
+            ):
+                logger.info("Surugaya external fetch recovered blocked response via %s", external_response.source)
+                return external_response, None
+        except Exception as exc:
+            logger.warning("Surugaya external fetch fallback failed: %s", exc)
 
     if last_response is not None:
         return last_response, None
@@ -591,6 +607,9 @@ def _looks_like_challenge_soup(soup: BeautifulSoup) -> bool:
 
     html_text = str(soup).lower()
     markers = (
+        "challenges.cloudflare.com",
+        "cf-chl",
+        "turnstile",
         "window._cf_chl_opt",
         "cf-challenge-running",
         "challenge-form",
@@ -611,6 +630,9 @@ def _looks_like_challenge_html(title_text: str, html_text: str) -> bool:
     if "just a moment" in title_l or "attention required" in title_l:
         return True
     markers = (
+        "challenges.cloudflare.com",
+        "cf-chl",
+        "turnstile",
         "window._cf_chl_opt",
         "cf-challenge-running",
         "challenge-form",
