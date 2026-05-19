@@ -90,6 +90,27 @@ def _extract_json_ld_offer_fields(soup) -> tuple[int | None, str | None]:
     return price, status
 
 
+def _is_blocked_response(response_status: int | None, html: str) -> bool:
+    lowered_html = html.lower()
+    return response_status in _BLOCK_HTTP_STATUSES or any(marker in lowered_html for marker in _BLOCK_MARKERS)
+
+
+def _blocked_result(response_status: int | None, html: str) -> PatrolResult:
+    if response_status in _BLOCK_HTTP_STATUSES:
+        return PatrolResult(
+            status="blocked",
+            error=f"HTTP {response_status}",
+            confidence="low",
+            reason="blocked_http_status",
+        )
+    return PatrolResult(
+        status="blocked",
+        error="challenge_page",
+        confidence="low",
+        reason="blocked_challenge_page",
+    )
+
+
 class SurugayaPatrol(BasePatrol):
     """Lightweight patrol for suruga-ya.jp."""
 
@@ -107,21 +128,29 @@ class SurugayaPatrol(BasePatrol):
 
     def _fetch_with_scrapling(self, url: str) -> PatrolResult:
         try:
-            from bs4 import BeautifulSoup
-            from services.scraping_client import fetch_static
+            from services.scraping_client import fetch_static, fetch_surugaya_external
 
             page = fetch_static(url)
             response_status = _response_status(page)
             html = _body_text(page)
-            lowered_html = html.lower()
-            blocked = response_status in _BLOCK_HTTP_STATUSES or any(marker in lowered_html for marker in _BLOCK_MARKERS)
-            if blocked:
-                return PatrolResult(
-                    status="blocked",
-                    error=f"HTTP {response_status}" if response_status in _BLOCK_HTTP_STATUSES else "challenge_page",
-                    confidence="low",
-                    reason="blocked_http_status" if response_status in _BLOCK_HTTP_STATUSES else "blocked_challenge_page",
-                )
+            if _is_blocked_response(response_status, html):
+                external_page = fetch_surugaya_external(url)
+                if external_page is None:
+                    return _blocked_result(response_status, html)
+                external_status = _response_status(external_page)
+                external_html = _body_text(external_page)
+                if _is_blocked_response(external_status, external_html):
+                    return _blocked_result(external_status, external_html)
+                if external_status is not None and external_status >= 400:
+                    return PatrolResult(
+                        status="error",
+                        error=f"HTTP {external_status}",
+                        confidence="low",
+                        reason="external_http_status",
+                    )
+                result = self._parse_html(external_html)
+                result.price_source = external_page.source
+                return result
             if response_status is not None and response_status >= 400:
                 return PatrolResult(
                     status="error",
@@ -129,58 +158,62 @@ class SurugayaPatrol(BasePatrol):
                     confidence="low",
                     reason="http_status",
                 )
-
-            soup = BeautifulSoup(html, "html.parser")
-            json_ld_price, json_ld_status = _extract_json_ld_offer_fields(soup)
-
-            price = None
-            for selector in self.SELECTORS["price"].split(", "):
-                for el in soup.select(selector.strip()):
-                    text = el.get_text(strip=True)
-                    match = re.search(r"([\d,]+)\s*円", text) or re.search(r"[¥￥]\s*([\d,]+)", text)
-                    if match:
-                        try:
-                            price = int(match.group(1).replace(",", ""))
-                            break
-                        except ValueError:
-                            pass
-                if price is not None:
-                    break
-
-            body_text = soup.get_text(" ", strip=True)
-            if price is None:
-                match = re.search(r"([\d,]+)\s*円\s*\(税込\)", body_text)
-                if match:
-                    try:
-                        price = int(match.group(1).replace(",", ""))
-                    except ValueError:
-                        pass
-            if price is None:
-                price = json_ld_price
-
-            status = "unknown"
-            for selector in self.SELECTORS["stock_sold"].split(", "):
-                if soup.select(selector.strip()):
-                    status = "sold"
-                    break
-            if status == "unknown":
-                for selector in self.SELECTORS["stock_available"].split(", "):
-                    if soup.select(selector.strip()):
-                        status = "active"
-                        break
-            if status == "unknown":
-                if any(keyword in body_text for keyword in self.SOLD_KEYWORDS):
-                    status = "sold"
-                elif any(keyword in body_text for keyword in self.ACTIVE_KEYWORDS):
-                    status = "active"
-            if status == "unknown" and json_ld_status:
-                status = json_ld_status
-
-            variants = []
-            if price is not None:
-                variants.append({"name": "Default Title", "stock": 1 if status == "active" else 0, "price": price})
-
-            return PatrolResult(price=price, status=status, variants=variants)
+            return self._parse_html(html)
         except Exception as exc:
             logger.debug("Surugaya patrol error: %s", exc)
             return PatrolResult(error=str(exc))
+
+    def _parse_html(self, html: str) -> PatrolResult:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html, "html.parser")
+        json_ld_price, json_ld_status = _extract_json_ld_offer_fields(soup)
+
+        price = None
+        for selector in self.SELECTORS["price"].split(", "):
+            for el in soup.select(selector.strip()):
+                text = el.get_text(strip=True)
+                match = re.search(r"([\d,]+)\s*円", text) or re.search(r"[¥￥]\s*([\d,]+)", text)
+                if match:
+                    try:
+                        price = int(match.group(1).replace(",", ""))
+                        break
+                    except ValueError:
+                        pass
+            if price is not None:
+                break
+
+        body_text = soup.get_text(" ", strip=True)
+        if price is None:
+            match = re.search(r"([\d,]+)\s*円\s*\(税込\)", body_text)
+            if match:
+                try:
+                    price = int(match.group(1).replace(",", ""))
+                except ValueError:
+                    pass
+        if price is None:
+            price = json_ld_price
+
+        status = "unknown"
+        for selector in self.SELECTORS["stock_sold"].split(", "):
+            if soup.select(selector.strip()):
+                status = "sold"
+                break
+        if status == "unknown":
+            for selector in self.SELECTORS["stock_available"].split(", "):
+                if soup.select(selector.strip()):
+                    status = "active"
+                    break
+        if status == "unknown":
+            if any(keyword in body_text for keyword in self.SOLD_KEYWORDS):
+                status = "sold"
+            elif any(keyword in body_text for keyword in self.ACTIVE_KEYWORDS):
+                status = "active"
+        if status == "unknown" and json_ld_status:
+            status = json_ld_status
+
+        variants = []
+        if price is not None:
+            variants.append({"name": "Default Title", "stock": 1 if status == "active" else 0, "price": price})
+
+        return PatrolResult(price=price, status=status, variants=variants)

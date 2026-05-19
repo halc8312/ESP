@@ -42,11 +42,19 @@ class MockPage:
 
 
 class MockResponse:
-    def __init__(self, html, url):
+    def __init__(self, html, url, status_code=200):
         self.content = html.encode("utf-8")
         self.text = html
-        self.status_code = 200
+        self.status_code = status_code
         self.url = url
+
+
+class MockSession:
+    def __init__(self, response):
+        self.response = response
+
+    def get(self, url, timeout=30):
+        return self.response
 
 
 def test_surugaya_detail_marks_ambiguous_inventory_unknown(monkeypatch):
@@ -98,6 +106,35 @@ def test_surugaya_detail_marks_cloudflare_challenge_body_blocked(monkeypatch):
     assert result["price"] is None
     assert result["title"] == ""
     assert result["_scrape_meta"]["strategy"] == "blocked"
+
+
+def test_surugaya_detail_uses_external_fetch_when_primary_blocked(monkeypatch):
+    blocked_html = """
+    <html>
+      <head><title>Just a moment...</title></head>
+      <body><script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script></body>
+    </html>
+    """
+    product_html = """
+    <html>
+      <head><meta property="og:image" content="https://img.example.com/surugaya.jpg" /></head>
+      <body>
+        <h1>External Surugaya Item</h1>
+        <div class="price_group"><span class="text-price-detail">2,980円(税込)</span></div>
+        <button class="btn_buy">カートに入れる</button>
+      </body>
+    </html>
+    """
+    blocked_response = MockResponse(blocked_html, "https://www.suruga-ya.jp/product/detail/1", status_code=403)
+    external_response = MockResponse(product_html, "https://www.suruga-ya.jp/product/detail/1", status_code=200)
+    external_response.source = "test_external"
+    monkeypatch.setattr("services.scraping_client.fetch_surugaya_external", lambda url, timeout=60: external_response)
+
+    result = surugaya_db.scrape_item_detail(MockSession(blocked_response), "https://www.suruga-ya.jp/product/detail/1")
+
+    assert result["title"] == "External Surugaya Item"
+    assert result["price"] == 2980
+    assert result["status"] == "active"
 
 
 def test_yahoo_detail_marks_ambiguous_inventory_unknown(monkeypatch):
@@ -315,7 +352,9 @@ def test_surugaya_patrol_marks_http_block_as_error():
     """
 
     page = type("SurugayaBlockedPage", (), {"body": html, "status": 403})()
-    with patch("services.scraping_client.fetch_static", return_value=page):
+    with patch("services.scraping_client.fetch_static", return_value=page), patch(
+        "services.scraping_client.fetch_surugaya_external", return_value=None
+    ):
         result = SurugayaPatrol().fetch("https://www.suruga-ya.jp/product/detail/1")
 
     assert result.price is None
@@ -323,6 +362,38 @@ def test_surugaya_patrol_marks_http_block_as_error():
     assert result.error == "HTTP 403"
     assert result.reason == "blocked_http_status"
     assert result.confidence == "low"
+
+
+def test_surugaya_patrol_uses_external_fetch_when_primary_blocked():
+    blocked_html = """
+    <html>
+      <head><title>Just a moment...</title></head>
+      <body><script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script></body>
+    </html>
+    """
+    product_html = """
+    <html>
+      <body>
+        <div class="price_group"><span class="text-price-detail">2,980円(税込)</span></div>
+        <button class="btn_buy">カートに入れる</button>
+      </body>
+    </html>
+    """
+
+    blocked_page = type("SurugayaBlockedPage", (), {"body": blocked_html, "status": 403})()
+    external_page = type(
+        "SurugayaExternalPage",
+        (),
+        {"body": product_html, "status": 200, "source": "test_external"},
+    )()
+    with patch("services.scraping_client.fetch_static", return_value=blocked_page), patch(
+        "services.scraping_client.fetch_surugaya_external", return_value=external_page
+    ):
+        result = SurugayaPatrol().fetch("https://www.suruga-ya.jp/product/detail/1")
+
+    assert result.price == 2980
+    assert result.status == "active"
+    assert result.price_source == "test_external"
 
 
 def test_surugaya_patrol_marks_challenge_body_as_blocked():
@@ -334,7 +405,9 @@ def test_surugaya_patrol_marks_challenge_body_as_blocked():
     """
 
     page = type("SurugayaChallengePage", (), {"body": html, "status": 200})()
-    with patch("services.scraping_client.fetch_static", return_value=page):
+    with patch("services.scraping_client.fetch_static", return_value=page), patch(
+        "services.scraping_client.fetch_surugaya_external", return_value=None
+    ):
         result = SurugayaPatrol().fetch("https://www.suruga-ya.jp/product/detail/1")
 
     assert result.price is None

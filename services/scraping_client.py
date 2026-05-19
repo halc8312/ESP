@@ -13,11 +13,13 @@ so existing curl_cffi-based code (surugaya_db.py) can be migrated with minimal c
 """
 
 import asyncio
+import base64
 import logging
 import os
 import queue
 import threading
 from dataclasses import dataclass
+from urllib.parse import quote_plus
 
 logger = logging.getLogger("scraping_client")
 
@@ -28,6 +30,26 @@ class AsyncFetchSettings:
     timeout: int
     retries: int
     backoff_seconds: float
+
+
+@dataclass(frozen=True)
+class ExternalFetchResponse:
+    url: str
+    status_code: int
+    text: str
+    source: str
+
+    @property
+    def status(self) -> int:
+        return self.status_code
+
+    @property
+    def body(self) -> str:
+        return self.text
+
+    @property
+    def content(self) -> bytes:
+        return self.text.encode("utf-8")
 
 
 _ASYNC_FETCH_DEFAULTS = {
@@ -146,6 +168,75 @@ def fetch_static(url: str, timeout: int = 30, **kwargs):
     """
     from scrapling import Fetcher
     return Fetcher.get(url, stealthy_headers=True, timeout=timeout, **kwargs)
+
+
+def fetch_surugaya_external(url: str, timeout: int = 60) -> ExternalFetchResponse | None:
+    from curl_cffi import requests
+
+    zyte_key = (os.environ.get("SURUGAYA_ZYTE_API_KEY") or "").strip()
+    if zyte_key:
+        token = base64.b64encode(f"{zyte_key}:".encode("utf-8")).decode("ascii")
+        response = requests.post(
+            "https://api.zyte.com/v1/extract",
+            headers={"Authorization": f"Basic {token}"},
+            json={"url": url, "browserHtml": True, "geolocation": "JP"},
+            timeout=timeout,
+        )
+        if response.status_code >= 400:
+            return ExternalFetchResponse(url=url, status_code=response.status_code, text=response.text, source="zyte")
+        data = response.json()
+        html = str(data.get("browserHtml") or data.get("httpResponseBody") or "")
+        if html:
+            status_code = data.get("browserHtmlStatusCode") or data.get("statusCode") or 200
+            return ExternalFetchResponse(url=url, status_code=int(status_code), text=html, source="zyte")
+
+    scraperapi_key = (os.environ.get("SURUGAYA_SCRAPERAPI_KEY") or "").strip()
+    if scraperapi_key:
+        response = requests.get(
+            "http://api.scraperapi.com",
+            params={
+                "api_key": scraperapi_key,
+                "url": url,
+                "render": "true",
+                "country_code": "jp",
+            },
+            timeout=timeout,
+        )
+        return ExternalFetchResponse(
+            url=response.url or url,
+            status_code=response.status_code,
+            text=response.text,
+            source="scraperapi",
+        )
+
+    template = (os.environ.get("SURUGAYA_FETCH_API_URL_TEMPLATE") or "").strip()
+    if template:
+        fetch_url = template.format(url=quote_plus(url), raw_url=url)
+        response = requests.get(fetch_url, timeout=timeout)
+        return ExternalFetchResponse(
+            url=response.url or url,
+            status_code=response.status_code,
+            text=response.text,
+            source="template",
+        )
+
+    proxy_url = (os.environ.get("SURUGAYA_PROXY_URL") or "").strip()
+    if proxy_url:
+        response = requests.get(
+            url,
+            timeout=timeout,
+            impersonate="chrome120",
+            proxies={"http": proxy_url, "https": proxy_url},
+            headers={"Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7"},
+        )
+        return ExternalFetchResponse(
+            url=response.url or url,
+            status_code=response.status_code,
+            text=response.text,
+            source="proxy",
+        )
+
+    return None
 
 
 async def fetch_static_async(

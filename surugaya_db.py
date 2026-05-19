@@ -283,6 +283,20 @@ def _fetch_with_retry(session, url: str, timeout: int = 30, max_attempts: int = 
                 pass
             time.sleep(1.0 + (attempt * 0.8))
 
+    if last_response is not None and _is_cloudflare_block(last_response):
+        try:
+            from services.scraping_client import fetch_surugaya_external
+            external_response = fetch_surugaya_external(url, timeout=max(timeout, 60))
+            if (
+                external_response is not None
+                and not _is_cloudflare_block(external_response)
+                and external_response.status_code < 500
+            ):
+                logger.info("Surugaya external fetch recovered blocked response via %s", external_response.source)
+                return external_response, None
+        except Exception as exc:
+            logger.warning("Surugaya external fetch fallback failed: %s", exc)
+
     if last_response is not None:
         return last_response, None
     return None, last_error
