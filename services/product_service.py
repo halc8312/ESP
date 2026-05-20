@@ -3,6 +3,7 @@ Product service for database operations related to scraped items.
 """
 import hashlib
 import logging
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from flask import has_request_context, session
 
 from database import SessionLocal
@@ -64,6 +65,32 @@ def _normalize_non_negative_int(value, default: int = 0) -> int:
     return normalized
 
 
+_SURUGAYA_SOURCE_QUERY_KEYS = ("branch_number", "tenpo_cd")
+
+
+def _normalize_source_url(raw_url: str, site: str) -> str:
+    if str(site or "").strip().lower() != "surugaya":
+        return normalize_url(raw_url)
+
+    try:
+        parts = urlsplit(raw_url)
+        query_items = []
+        source_query = dict(parse_qsl(parts.query, keep_blank_values=False))
+        for key in _SURUGAYA_SOURCE_QUERY_KEYS:
+            value = source_query.get(key)
+            if value:
+                query_items.append((key, value))
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items), ""))
+    except Exception:
+        return normalize_url(raw_url)
+
+
+def _source_url_candidates(raw_url: str, site: str) -> list[str]:
+    primary = _normalize_source_url(raw_url, site)
+    fallback = normalize_url(raw_url)
+    return [primary, fallback] if fallback and fallback != primary else [primary]
+
+
 def _default_inventory_for_status(status: str) -> int:
     return 1 if status == "on_sale" else 0
 
@@ -101,8 +128,8 @@ def _normalize_scraped_variants(raw_variants, *, fallback_price, status: str):
     return normalized_variants
 
 
-def _find_product_for_source(session_db, *, url: str, user_id: int, shop_id):
-    base_query = session_db.query(Product).filter_by(source_url=url, user_id=user_id)
+def _find_product_for_source(session_db, *, urls: list[str], user_id: int, shop_id):
+    base_query = session_db.query(Product).filter(Product.source_url.in_(urls), Product.user_id == user_id)
 
     if shop_id is None:
         return base_query.filter(Product.shop_id.is_(None)).order_by(Product.id.asc()).first()
@@ -161,7 +188,8 @@ def save_scraped_items_to_db(
                 rejected_count += 1
                 continue
 
-            url = normalize_url(raw_url)
+            source_urls = _source_url_candidates(raw_url, site)
+            url = source_urls[0]
             normalized_item = normalize_item_for_persistence(item, manual_selection=manual_selection)
             scrape_meta = item.get("_scrape_meta") or {}
 
@@ -174,7 +202,7 @@ def save_scraped_items_to_db(
 
             product = _find_product_for_source(
                 session_db,
-                url=url,
+                urls=source_urls,
                 user_id=user_id,
                 shop_id=resolved_shop_id,
             )
@@ -259,6 +287,9 @@ def save_scraped_items_to_db(
                     session_db.add(default_variant)
 
             else:
+                if product.source_url != url:
+                    product.source_url = url
+
                 if product.shop_id is None and resolved_shop_id is not None:
                     product.shop_id = resolved_shop_id
 

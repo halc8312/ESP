@@ -195,6 +195,48 @@ def test_patrol_success_resets_fail_count(client, db_session, monkeypatch):
     assert refreshed.updated_at <= utc_now() + timedelta(seconds=10)
 
 
+def test_single_variant_patrol_result_updates_surugaya_condition_variant(client, db_session):
+    user = _create_user(db_session, 'monitor_surugaya_single_variant_user')
+    product = Product(
+        user_id=user.id,
+        site='surugaya',
+        source_url='https://www.suruga-ya.jp/product/detail/GL111111?branch_number=0001',
+        last_title='Surugaya Item',
+        last_price=1980,
+        last_status='sold',
+        archived=False,
+        deleted_at=None,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(product)
+    db_session.flush()
+    variant = Variant(
+        product_id=product.id,
+        option1_value='中古',
+        sku='SUR-1',
+        price=1980,
+        inventory_qty=0,
+        position=1,
+    )
+    db_session.add(variant)
+    db_session.commit()
+
+    result = PatrolResult(
+        price=2480,
+        status='active',
+        variants=[{'name': 'Default Title', 'stock': 1, 'price': 2480}],
+    )
+
+    changes = MonitorService._apply_patrol_result(db_session, product, result)
+
+    assert changes >= 3
+    assert product.last_status == 'on_sale'
+    assert product.last_price == 2480
+    assert variant.inventory_qty == 1
+    assert variant.price == 2480
+
+
 def test_patrol_deleted_status_only_preserves_price_and_zeroes_inventory(client, db_session, monkeypatch):
     user = _create_user(db_session, 'monitor_deleted_status_user')
     old_time = utc_now() - timedelta(days=1)

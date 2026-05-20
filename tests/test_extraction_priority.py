@@ -33,10 +33,10 @@ class MockPage:
 
 
 class MockResponse:
-    def __init__(self, html, url):
+    def __init__(self, html, url, status_code=200):
         self.content = html.encode("utf-8")
         self.text = html
-        self.status_code = 200
+        self.status_code = status_code
         self.url = url
 
 
@@ -307,6 +307,7 @@ def test_surugaya_detail_rejects_page_chrome_description_from_healer(monkeypatch
         "_fetch_with_retry",
         lambda session, url, timeout=30, max_attempts=3: (MockResponse(html, url), None),
     )
+    monkeypatch.setattr(surugaya_db, "_fetch_dynamic_response", lambda *args, **kwargs: (None, RuntimeError("no browser")))
 
     result = surugaya_db.scrape_item_detail(object(), "https://www.suruga-ya.jp/product/detail/1")
 
@@ -376,6 +377,7 @@ def test_surugaya_detail_marks_javascript_disabled_page_unknown_and_alerts(monke
         "_fetch_with_retry",
         lambda session, url, timeout=30, max_attempts=3: (MockResponse(html, url), None),
     )
+    monkeypatch.setattr(surugaya_db, "_fetch_dynamic_response", lambda *args, **kwargs: (None, RuntimeError("no browser")))
 
     result = surugaya_db.scrape_item_detail(object(), "https://www.suruga-ya.jp/product/detail/1")
 
@@ -385,3 +387,105 @@ def test_surugaya_detail_marks_javascript_disabled_page_unknown_and_alerts(monke
     assert result["_scrape_meta"]["strategy"] == "degraded"
     assert "degraded-marker:javascript is disabled" in result["_scrape_meta"]["reasons"]
     assert alerts.events[-1]["event_type"] == "unknown_detail_result"
+
+
+def test_surugaya_detail_uses_dynamic_fallback_for_challenge_page(monkeypatch):
+    challenge_html = """
+    <html>
+      <head><title>Just a moment...</title></head>
+      <body><script>window._cf_chl_opt = {};</script><form id="challenge-form"></form></body>
+    </html>
+    """
+    product_html = """
+    <html>
+      <head>
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            "name": "Surugaya Dynamic Item",
+            "image": ["https://cdn.suruga-ya.jp/database/pics_webp/game/dynamic.jpg.webp"],
+            "offers": {
+              "@type": "Offer",
+              "price": "2480",
+              "availability": "https://schema.org/InStock"
+            }
+          }
+        </script>
+      </head>
+      <body>
+        <h1>Surugaya Dynamic Item</h1>
+        <div class="btn_buy">カートに入れる</div>
+        <p class="note text-break">Dynamic fallback description.</p>
+      </body>
+    </html>
+    """
+
+    monkeypatch.setattr(
+        surugaya_db,
+        "_fetch_with_retry",
+        lambda session, url, timeout=30, max_attempts=3: (MockResponse(challenge_html, url), None),
+    )
+    monkeypatch.setattr(
+        surugaya_db,
+        "_fetch_dynamic_response",
+        lambda url, headless=True, timeout=45: (MockResponse(product_html, url), None),
+    )
+
+    result = surugaya_db.scrape_item_detail(object(), "https://www.suruga-ya.jp/product/detail/1")
+
+    assert result["title"] == "Surugaya Dynamic Item"
+    assert result["price"] == 2480
+    assert result["status"] == "active"
+
+
+def test_surugaya_global_fallback_rejects_javascript_disabled_shell(monkeypatch):
+    html = """
+    <html>
+      <head><title>JavaScript is disabled</title></head>
+      <body>Please enable JavaScript to continue.</body>
+    </html>
+    """
+
+    monkeypatch.setattr(surugaya_db, "get_session", lambda: object())
+    monkeypatch.setattr(
+        surugaya_db,
+        "_fetch_with_retry",
+        lambda session, url, timeout=25, max_attempts=2: (MockResponse(html, url, status_code=202), None),
+    )
+
+    item, error = surugaya_db._extract_global_product_detail(
+        "https://www.suruga-ya.jp/product/detail/GL945178",
+        "https://www.suruga-ya.com/ja/product/GL945178",
+    )
+
+    assert item is None
+    assert "degraded-marker:javascript is disabled" in error
+
+
+def test_surugaya_detail_marks_maintenance_page_unknown(monkeypatch):
+    html = """
+    <html>
+      <head><title>メンテナンス作業のお知らせ | 中古・新品通販の駿河屋</title></head>
+      <body>
+        <h1>メンテナンス作業のお知らせ</h1>
+        <p>サーバーメンテナンスを実施いたします。</p>
+        <p>駿河屋の全てのサービスを一時停止させていただきます。</p>
+      </body>
+    </html>
+    """
+
+    monkeypatch.setattr(
+        surugaya_db,
+        "_fetch_with_retry",
+        lambda session, url, timeout=30, max_attempts=3: (MockResponse(html, url), None),
+    )
+    monkeypatch.setattr(surugaya_db, "_fetch_dynamic_response", lambda *args, **kwargs: (None, RuntimeError("no browser")))
+
+    result = surugaya_db.scrape_item_detail(object(), "https://www.suruga-ya.jp/product/detail/GL945178")
+
+    assert result["status"] == "unknown"
+    assert result["price"] is None
+    assert result["title"] == ""
+    assert result["_scrape_meta"]["strategy"] == "degraded"
+    assert "degraded-marker:メンテナンス作業のお知らせ" in result["_scrape_meta"]["reasons"]

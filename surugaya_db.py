@@ -7,8 +7,10 @@ BeautifulSoup after the page is fetched.
 import html
 import json
 import logging
+import os
 import re
 import time
+from dataclasses import dataclass
 from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
@@ -36,6 +38,9 @@ DEGRADED_PAGE_MARKERS = (
     "javascript is disabled",
     "please enable javascript",
     "enable javascript to continue",
+    "メンテナンス作業のお知らせ",
+    "サーバーメンテナンス",
+    "サービスを一時停止",
 )
 
 # CSS Selectors
@@ -117,6 +122,49 @@ def _is_cloudflare_block(resp) -> bool:
         return False
     text = (resp.text or "").lower()
     return resp.status_code in (403, 429, 503) or any(marker in text for marker in BLOCK_MARKERS)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _should_use_dynamic_fallback() -> bool:
+    return _env_flag("SURUGAYA_DYNAMIC_FALLBACK", True)
+
+
+@dataclass
+class _HtmlResponse:
+    content: bytes
+    text: str
+    status_code: int
+    url: str
+
+
+def _make_html_response(page, fallback_url: str) -> _HtmlResponse:
+    body = getattr(page, "body", "") or ""
+    if isinstance(body, bytes):
+        content = body
+        text = body.decode("utf-8", errors="ignore")
+    else:
+        text = str(body)
+        content = text.encode("utf-8")
+
+    status = int(getattr(page, "status", 200) or 200)
+    page_url = str(getattr(page, "url", "") or fallback_url)
+    return _HtmlResponse(content=content, text=text, status_code=status, url=page_url)
+
+
+def _fetch_dynamic_response(url: str, *, headless: bool = True, timeout: int = 45):
+    try:
+        from services.scraping_client import fetch_dynamic
+
+        page = fetch_dynamic(url, headless=headless, network_idle=True, timeout=timeout * 1000)
+        return _make_html_response(page, url), None
+    except Exception as exc:
+        return None, exc
 
 
 def _normalize_url(raw_url: str, base_url: str) -> str:
@@ -207,19 +255,26 @@ def _looks_like_degraded_detail_page(
     *,
     ld_product: dict,
 ) -> str:
-    page_title = soup.title.get_text(" ", strip=True).lower() if soup.title else ""
-    body_text = soup.get_text(" ", strip=True).lower()
-    marker = next((value for value in DEGRADED_PAGE_MARKERS if value in page_title or value in body_text), "")
+    marker = _find_degraded_marker(soup)
     if not marker:
         return ""
+
+    h1_el = soup.select_one("h1")
+    h1_text = h1_el.get_text(" ", strip=True).lower() if h1_el else ""
+    h1_is_product_signal = bool(h1_text) and not any(value in h1_text for value in DEGRADED_PAGE_MARKERS)
+    og_title = soup.select_one("meta[property='og:title']")
+    og_title_text = (og_title.get("content") or "").strip().lower() if og_title else ""
+    og_title_is_product_signal = bool(og_title_text) and not any(
+        value in og_title_text for value in DEGRADED_PAGE_MARKERS
+    )
 
     has_product_signal = bool(
         str(ld_product.get("name") or "").strip()
         or ld_product.get("price") is not None
         or ld_product.get("availability")
         or ld_product.get("images")
-        or soup.select_one("h1")
-        or soup.select_one("meta[property='og:title']")
+        or h1_is_product_signal
+        or og_title_is_product_signal
         or soup.select_one("meta[property='og:image']")
     )
     if has_product_signal:
@@ -227,8 +282,73 @@ def _looks_like_degraded_detail_page(
     return marker
 
 
+def _find_degraded_marker(soup: BeautifulSoup) -> str:
+    if soup is None:
+        return ""
+    page_title = soup.title.get_text(" ", strip=True).lower() if soup.title else ""
+    body_text = soup.get_text(" ", strip=True).lower()
+    return next((value for value in DEGRADED_PAGE_MARKERS if value in page_title or value in body_text), "")
+
+
+def _is_maintenance_marker(marker: str) -> bool:
+    return any(value in str(marker or "") for value in ("メンテナンス", "サービスを一時停止"))
+
+
+def _should_try_dynamic_for_problem(page_problem: str) -> bool:
+    if not page_problem:
+        return True
+    if page_problem.startswith("degraded-marker:") and _is_maintenance_marker(page_problem):
+        return False
+    return True
+
+
+def _parse_detail_response(resp, fallback_url: str):
+    if resp is None:
+        return None, fallback_url, {}, "no-response"
+    if _is_cloudflare_block(resp):
+        return None, resp.url or fallback_url, {}, "cloudflare-block"
+    if resp.status_code >= 400:
+        return None, resp.url or fallback_url, {}, f"http-{resp.status_code}"
+
+    soup = BeautifulSoup(resp.content, "html.parser")
+    page_url = resp.url or fallback_url
+    if _looks_like_challenge_soup(soup):
+        return soup, page_url, {}, "challenge"
+
+    ld_product = _extract_json_ld_product(soup)
+    degraded_marker = _looks_like_degraded_detail_page(soup, ld_product=ld_product)
+    if degraded_marker:
+        return soup, page_url, ld_product, f"degraded-marker:{degraded_marker}"
+    return soup, page_url, ld_product, ""
+
+
 def _is_usable_text(value) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def _is_plausible_title(value) -> bool:
+    title = str(value or "").strip()
+    if not title:
+        return False
+    if len(title) > 220:
+        return False
+
+    noise_markers = (
+        "メンテナンス作業のお知らせ",
+        "サーバーメンテナンス",
+        "サービスを一時停止",
+        "カートに入れる",
+        "注文手続きを行う",
+        "全商品",
+        "セーフサーチ",
+        "サインインはこちら",
+        "detail text",
+    )
+    if any(marker in title for marker in noise_markers):
+        return False
+    if re.search(r"[0-9][0-9,]{1,}\s*円", title):
+        return False
+    return True
 
 
 def _is_usable_price_value(value) -> bool:
@@ -601,8 +721,20 @@ def _looks_like_challenge_soup(soup: BeautifulSoup) -> bool:
         return False
 
     # Avoid false positives on normal pages that include generic scripts.
-    has_product_link = bool(soup.select("a[href*='/product/detail/']"))
-    return not has_product_link
+    has_page_signal = bool(
+        soup.select("a[href*='/product/detail/']")
+        or soup.select_one("h1")
+        or soup.select_one(".price_group")
+        or soup.select_one("#item_picture")
+        or soup.select_one("meta[property='og:title']")
+        or soup.select_one("meta[property='og:image']")
+    )
+    if has_page_signal:
+        return False
+    try:
+        return not bool(_extract_json_ld_product(soup))
+    except Exception:
+        return True
 
 
 def _looks_like_challenge_html(title_text: str, html_text: str) -> bool:
@@ -697,11 +829,11 @@ def _extract_global_product_detail(source_url: str, global_url: str):
     if resp.status_code >= 400:
         return None, f"Global domain HTTP {resp.status_code}"
 
-    soup = BeautifulSoup(resp.content, "html.parser")
-    if _looks_like_challenge_soup(soup):
-        return None, "Global domain challenge page"
-
-    ld_product = _extract_json_ld_product(soup)
+    soup, page_url, ld_product, page_problem = _parse_detail_response(resp, global_url)
+    if page_problem:
+        return None, f"Global domain {page_problem}"
+    if soup is None:
+        return None, "Global domain empty page"
 
     field_sources = {}
     title = ""
@@ -803,11 +935,11 @@ def _extract_global_product_detail(source_url: str, global_url: str):
         elif "新品" in cond_text:
             condition = "新品"
 
-    image_urls = _extract_image_urls(soup, resp.url or global_url, ld_product)
+    image_urls = _extract_image_urls(soup, page_url, ld_product)
     if not image_urls:
         og_image = soup.select_one("meta[property='og:image']")
         if og_image and og_image.get("content"):
-            og_url = _normalize_url(og_image.get("content"), resp.url or global_url)
+            og_url = _normalize_url(og_image.get("content"), page_url)
             if og_url and not _is_placeholder_image(og_url):
                 image_urls = [og_url]
                 field_sources["images"] = "meta"
@@ -876,18 +1008,51 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
 
     print(f"[SURUGAYA] Starting curl_cffi scrape for {url}")
 
-    soup = None
-    page_url = url
     resp, fetch_error = _fetch_with_retry(session, url, timeout=30, max_attempts=3)
 
-    if fetch_error is None and resp is not None and not _is_cloudflare_block(resp):
-        if resp.status_code >= 400:
-            print(f"[SURUGAYA] WARN: HTTP status {resp.status_code} for {url}")
+    soup = None
+    page_url = url
+    ld_product = {}
+    page_problem = ""
+
+    if fetch_error is None and resp is not None:
         try:
-            soup = BeautifulSoup(resp.content, "html.parser")
-            page_url = resp.url or url
+            soup, page_url, ld_product, page_problem = _parse_detail_response(resp, url)
+            if page_problem:
+                print(f"[SURUGAYA] WARN: HTTP detail page unusable ({page_problem}) for {url}")
         except Exception as exc:
-            print(f"[SURUGAYA] ERROR during page load: {exc}")
+            print(f"[SURUGAYA] ERROR during page parse: {exc}")
+            soup = None
+            page_problem = str(exc)
+
+    if (
+        (soup is None or page_problem)
+        and _should_try_dynamic_for_problem(page_problem)
+        and _should_use_dynamic_fallback()
+    ):
+        print(f"[SURUGAYA] INFO: Trying dynamic fallback for {url}")
+        dynamic_resp, dynamic_error = _fetch_dynamic_response(url, headless=headless)
+        if dynamic_resp is not None:
+            try:
+                dynamic_soup, dynamic_url, dynamic_ld, dynamic_problem = _parse_detail_response(dynamic_resp, url)
+            except Exception as exc:
+                dynamic_soup, dynamic_url, dynamic_ld, dynamic_problem = None, url, {}, str(exc)
+            if dynamic_soup is not None and not dynamic_problem:
+                soup = dynamic_soup
+                page_url = dynamic_url
+                ld_product = dynamic_ld
+                page_problem = ""
+            else:
+                logger.warning(
+                    "Surugaya dynamic detail fallback unusable for %s: %s",
+                    url,
+                    dynamic_problem or "empty page",
+                )
+        elif dynamic_error is not None:
+            logger.warning("Surugaya dynamic detail fallback failed for %s: %s", url, dynamic_error)
+
+    if page_problem and not page_problem.startswith("degraded-marker:"):
+        soup = None
 
     if soup is None:
         if _should_use_global_domain_fallback():
@@ -914,7 +1079,6 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
         report_detail_result("surugaya", url, result, dict(result.get("_scrape_meta") or {}) | meta, page_type="detail")
         return result
 
-    ld_product = _extract_json_ld_product(soup)
     degraded_marker = _looks_like_degraded_detail_page(soup, ld_product=ld_product)
     if degraded_marker:
         result["status"] = "unknown"
@@ -937,15 +1101,17 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
     css_title = ""
     if _healer:
         title_val, _ = _healer.extract_with_healing(soup, 'surugaya', 'detail', 'title', parser='bs4')
-        if title_val:
-            css_title = _normalize_surugaya_title(title_val)
+        normalized_title_val = _normalize_surugaya_title(title_val)
+        if _is_plausible_title(normalized_title_val):
+            css_title = normalized_title_val
     if not css_title:
         for selector in SELECTORS["title"]:
             title_el = soup.select_one(selector)
             if title_el:
                 text = title_el.get_text(" ", strip=True)
-                if text:
-                    css_title = _normalize_surugaya_title(text)
+                normalized_text = _normalize_surugaya_title(text)
+                if _is_plausible_title(normalized_text):
+                    css_title = normalized_text
                     break
     og_title = soup.select_one("meta[property='og:title']")
     og_title_text = _normalize_surugaya_title(og_title.get("content")) if og_title and og_title.get("content") else ""
@@ -954,7 +1120,7 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
         ("json_ld", ld_title),
         ("meta", og_title_text),
         ("css", css_title),
-        validator=_is_usable_text,
+        validator=_is_plausible_title,
         default="",
     )
     if title_source:
@@ -1147,6 +1313,19 @@ def scrape_search_result(
                     first_resp.status_code,
                 )
 
+        if (soup is None or _looks_like_challenge_soup(soup)) and _should_use_dynamic_fallback():
+            print("[SURUGAYA] Search: INFO: Trying dynamic fallback for search page...")
+            dynamic_resp, dynamic_error = _fetch_dynamic_response(search_url, headless=headless)
+            if dynamic_resp is not None and not _is_cloudflare_block(dynamic_resp):
+                dynamic_soup = BeautifulSoup(dynamic_resp.content, "html.parser")
+                if not _looks_like_challenge_soup(dynamic_soup):
+                    soup = dynamic_soup
+                    base_search_url = dynamic_resp.url or search_url
+                else:
+                    logger.warning("Surugaya dynamic search fallback returned a challenge page.")
+            elif dynamic_error is not None:
+                logger.warning("Surugaya dynamic search fallback failed: %s", dynamic_error)
+
         if soup is None:
             if first_resp is not None and _is_cloudflare_block(first_resp):
                 print(f"[SURUGAYA] Search: ERROR: Cloudflare block detected (Status: {first_resp.status_code})")
@@ -1160,46 +1339,58 @@ def scrape_search_result(
         else:
             print(f"[SURUGAYA] Search: Page title: {soup.title.string if soup.title else 'No Title'}")
 
+            degraded_marker = _find_degraded_marker(soup)
+            if degraded_marker:
+                logger.warning("Surugaya search page degraded: %s", degraded_marker)
+                return results
+
             if _looks_like_challenge_soup(soup):
                 logger.warning("Surugaya search page appears to be a challenge page.")
                 if _should_use_yahoo_search_fallback():
                     print("[SURUGAYA] Search: INFO: Trying Yahoo search fallback for product URLs...")
                     product_urls = _search_product_urls_via_yahoo(keyword, max_items=candidate_target)
+            else:
+                page_urls = _build_search_page_urls(base_search_url, soup, max_scroll=max_scroll)
 
-            page_urls = _build_search_page_urls(base_search_url, soup, max_scroll=max_scroll)
-
-            for index, page_url in enumerate(page_urls):
-                if len(product_urls) >= candidate_target:
-                    break
-
-                if index == 0:
-                    page_soup = soup
-                else:
-                    page_resp, page_error = _fetch_with_retry(session, page_url, timeout=30, max_attempts=2)
-                    page_soup = None
-                    if page_error is None and page_resp is not None and not _is_cloudflare_block(page_resp):
-                        page_soup = BeautifulSoup(page_resp.content, "html.parser")
-
-                    if page_soup is None:
-                        if page_error is not None:
-                            logger.warning(f"Surugaya page fetch failed: {page_url} ({page_error})")
-                        else:
-                            logger.warning(f"Surugaya page blocked/skipped: {page_url}")
-                        continue
-
-                    if _looks_like_challenge_soup(page_soup):
-                        logger.warning(f"Surugaya page challenge detected: {page_url}")
-                        continue
-
-                for product_url in _extract_product_urls(page_soup, page_url):
-                    if product_url in product_urls:
-                        continue
-                    product_urls.append(product_url)
+                for index, page_url in enumerate(page_urls):
                     if len(product_urls) >= candidate_target:
                         break
 
-                if len(product_urls) >= candidate_target:
-                    break
+                    if index == 0:
+                        page_soup = soup
+                    else:
+                        page_resp, page_error = _fetch_with_retry(session, page_url, timeout=30, max_attempts=2)
+                        page_soup = None
+                        if page_error is None and page_resp is not None and not _is_cloudflare_block(page_resp):
+                            page_soup = BeautifulSoup(page_resp.content, "html.parser")
+
+                        if page_soup is None and _should_use_dynamic_fallback():
+                            dynamic_page_resp, dynamic_page_error = _fetch_dynamic_response(page_url, headless=headless)
+                            if dynamic_page_resp is not None and not _is_cloudflare_block(dynamic_page_resp):
+                                page_soup = BeautifulSoup(dynamic_page_resp.content, "html.parser")
+                            elif dynamic_page_error is not None:
+                                logger.warning(f"Surugaya dynamic page fallback failed: {page_url} ({dynamic_page_error})")
+
+                        if page_soup is None:
+                            if page_error is not None:
+                                logger.warning(f"Surugaya page fetch failed: {page_url} ({page_error})")
+                            else:
+                                logger.warning(f"Surugaya page blocked/skipped: {page_url}")
+                            continue
+
+                        if _looks_like_challenge_soup(page_soup):
+                            logger.warning(f"Surugaya page challenge detected: {page_url}")
+                            continue
+
+                    for product_url in _extract_product_urls(page_soup, page_url):
+                        if product_url in product_urls:
+                            continue
+                        product_urls.append(product_url)
+                        if len(product_urls) >= candidate_target:
+                            break
+
+                    if len(product_urls) >= candidate_target:
+                        break
 
             if not product_urls and _should_use_yahoo_search_fallback():
                 print("[SURUGAYA] Search: INFO: Trying Yahoo search fallback (no product links found)...")

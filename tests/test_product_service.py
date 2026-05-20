@@ -252,6 +252,37 @@ def test_save_scraped_items_does_not_persist_scrape_meta_fields(client, db_sessi
     assert '_scrape_meta' not in snapshot.__dict__
 
 
+def test_save_scraped_items_preserves_surugaya_branch_source_params(client, db_session):
+    user = _create_user(db_session, 'product_service_surugaya_branch_user')
+
+    items = [
+        {
+            'url': 'https://www.suruga-ya.jp/product/detail/GL111111?utm_source=x&branch_number=0001&tenpo_cd=400464',
+            'title': 'Surugaya Branch Item',
+            'price': 1980,
+            'status': 'active',
+            'description': 'branch-specific description',
+            'image_urls': ['https://img.example.com/surugaya-branch.jpg'],
+        }
+    ]
+
+    new_count, updated_count = save_scraped_items_to_db(
+        items,
+        user_id=user.id,
+        site='surugaya',
+    )
+
+    assert new_count == 1
+    assert updated_count == 0
+
+    db_session.expire_all()
+    product = db_session.query(Product).filter_by(user_id=user.id).one()
+
+    assert product.source_url == (
+        'https://www.suruga-ya.jp/product/detail/GL111111?branch_number=0001&tenpo_cd=400464'
+    )
+
+
 def test_save_scraped_items_normalizes_string_prices_and_variant_quantities(client, db_session):
     user = _create_user(db_session, 'product_service_price_string_user')
 

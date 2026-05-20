@@ -253,6 +253,59 @@ def test_surugaya_patrol_marks_ambiguous_inventory_unknown():
     assert result.status == "unknown"
 
 
+def test_surugaya_patrol_uses_full_detail_fallback_for_challenge_page(monkeypatch):
+    challenge_html = """
+    <html>
+      <head><title>Just a moment...</title></head>
+      <body><script>window._cf_chl_opt = {};</script><form id="challenge-form"></form></body>
+    </html>
+    """
+    page = type("SurugayaPage", (), {"body": challenge_html, "status": 200})()
+
+    monkeypatch.setattr("services.scraping_client.fetch_static", lambda url: page)
+    monkeypatch.setattr(
+        surugaya_db,
+        "scrape_single_item",
+        lambda url, headless=True: [
+            {
+                "title": "Surugaya Fallback",
+                "price": 2480,
+                "status": "active",
+                "condition": "中古",
+                "variants": [{"option1_value": "中古", "inventory_qty": 1, "price": 2480}],
+            }
+        ],
+    )
+
+    result = SurugayaPatrol().fetch("https://www.suruga-ya.jp/product/detail/1")
+
+    assert result.price == 2480
+    assert result.status == "active"
+    assert result.variants == [{"name": "中古", "stock": 1, "price": 2480}]
+
+
+def test_surugaya_patrol_does_not_treat_maintenance_as_active(monkeypatch):
+    maintenance_html = """
+    <html>
+      <head><title>メンテナンス作業のお知らせ | 中古・新品通販の駿河屋</title></head>
+      <body>
+        <h1>メンテナンス作業のお知らせ</h1>
+        <p>サーバーメンテナンスを実施いたします。</p>
+      </body>
+    </html>
+    """
+    page = type("SurugayaPage", (), {"body": maintenance_html, "status": 200})()
+
+    monkeypatch.setattr("services.scraping_client.fetch_static", lambda url: page)
+    monkeypatch.setattr(surugaya_db, "scrape_single_item", lambda url, headless=True: [])
+
+    result = SurugayaPatrol().fetch("https://www.suruga-ya.jp/product/detail/1")
+
+    assert not result.success
+    assert result.status == "unknown"
+    assert result.reason == "degraded-marker:メンテナンス作業のお知らせ"
+
+
 def test_offmall_patrol_marks_ambiguous_inventory_unknown():
     page = MockPage(
         css_map={

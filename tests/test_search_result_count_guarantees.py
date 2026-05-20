@@ -32,10 +32,10 @@ class MockPage:
 
 
 class MockResponse:
-    def __init__(self, html, url):
+    def __init__(self, html, url, status_code=200):
         self.content = html.encode("utf-8")
         self.text = html
-        self.status_code = 200
+        self.status_code = status_code
         self.url = url
 
 
@@ -349,3 +349,114 @@ def test_surugaya_search_result_uses_extra_candidates_to_fill_requested_count(mo
 
     assert len(results) == 3
     assert [item["title"] for item in results] == ["Surugaya 3", "Surugaya 4", "Surugaya 5"]
+
+
+def test_surugaya_search_result_uses_dynamic_fallback_for_challenge_page(monkeypatch):
+    urls = [
+        "https://www.suruga-ya.jp/product/detail/GL111111?branch_number=0001",
+        "https://www.suruga-ya.jp/product/detail/GL222222?tenpo_cd=400464",
+    ]
+    challenge_html = """
+    <html>
+      <head><title>Just a moment...</title></head>
+      <body><script>window._cf_chl_opt = {};</script><form id="challenge-form"></form></body>
+    </html>
+    """
+    dynamic_html = f"""
+    <html>
+      <head><title>Surugaya Search</title></head>
+      <body>
+        <a href="{urls[0]}">Item 1</a>
+        <a href="{urls[1]}">Item 2</a>
+      </body>
+    </html>
+    """
+    detail_map = {
+        urls[0]: {"title": "Dynamic 1", "status": "on_sale", "url": urls[0]},
+        urls[1]: {"title": "Dynamic 2", "status": "on_sale", "url": urls[1]},
+    }
+
+    monkeypatch.setattr(surugaya_db, "get_session", lambda: object())
+    monkeypatch.setattr(
+        surugaya_db,
+        "_fetch_with_retry",
+        lambda session, url, timeout=30, max_attempts=3: (MockResponse(challenge_html, url), None),
+    )
+    monkeypatch.setattr(
+        surugaya_db,
+        "_fetch_dynamic_response",
+        lambda url, headless=True, timeout=45: (MockResponse(dynamic_html, url), None),
+    )
+    monkeypatch.setattr(surugaya_db, "_should_use_yahoo_search_fallback", lambda: False)
+    monkeypatch.setattr(surugaya_db, "scrape_item_detail", lambda session, url, headless=True: detail_map[url])
+
+    results = surugaya_db.scrape_search_result("https://www.suruga-ya.jp/search?search_word=game", max_items=2, max_scroll=1)
+
+    assert [item["title"] for item in results] == ["Dynamic 1", "Dynamic 2"]
+
+
+def test_surugaya_search_result_rejects_maintenance_detail_pages(monkeypatch):
+    urls = [
+        "https://www.suruga-ya.jp/product/detail/GL111111",
+        "https://www.suruga-ya.jp/product/detail/GL222222",
+    ]
+    search_html = f"""
+    <html>
+      <head><title>Surugaya Search</title></head>
+      <body>
+        <a href="{urls[0]}">Item 1</a>
+        <a href="{urls[1]}">Item 2</a>
+      </body>
+    </html>
+    """
+    maintenance_html = """
+    <html>
+      <head><title>メンテナンス作業のお知らせ | 中古・新品通販の駿河屋</title></head>
+      <body>
+        <h1>メンテナンス作業のお知らせ</h1>
+        <p>サーバーメンテナンスを実施いたします。</p>
+      </body>
+    </html>
+    """
+
+    def fake_fetch(session, url, timeout=30, max_attempts=3):
+        if "/search" in url:
+            return MockResponse(search_html, url), None
+        return MockResponse(maintenance_html, url), None
+
+    monkeypatch.setattr(surugaya_db, "get_session", lambda: object())
+    monkeypatch.setattr(surugaya_db, "_fetch_with_retry", fake_fetch)
+    monkeypatch.setattr(surugaya_db, "_fetch_dynamic_response", lambda *args, **kwargs: (None, RuntimeError("no browser")))
+    monkeypatch.setattr(surugaya_db, "_should_use_yahoo_search_fallback", lambda: False)
+
+    results = surugaya_db.scrape_search_result("https://www.suruga-ya.jp/search?search_word=game", max_items=2, max_scroll=1)
+
+    assert results == []
+
+
+def test_surugaya_search_result_stops_on_maintenance_search_page(monkeypatch):
+    maintenance_html = """
+    <html>
+      <head><title>メンテナンス作業のお知らせ | 中古・新品通販の駿河屋</title></head>
+      <body>
+        <h1>メンテナンス作業のお知らせ</h1>
+        <p>駿河屋の全てのサービスを一時停止させていただきます。</p>
+      </body>
+    </html>
+    """
+    calls = {"detail": 0, "fallback": 0}
+
+    monkeypatch.setattr(surugaya_db, "get_session", lambda: object())
+    monkeypatch.setattr(
+        surugaya_db,
+        "_fetch_with_retry",
+        lambda session, url, timeout=30, max_attempts=3: (MockResponse(maintenance_html, url), None),
+    )
+    monkeypatch.setattr(surugaya_db, "_fetch_dynamic_response", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("dynamic fallback should not run")))
+    monkeypatch.setattr(surugaya_db, "_search_product_urls_via_yahoo", lambda *args, **kwargs: calls.__setitem__("fallback", calls["fallback"] + 1) or [])
+    monkeypatch.setattr(surugaya_db, "scrape_item_detail", lambda *args, **kwargs: calls.__setitem__("detail", calls["detail"] + 1) or {})
+
+    results = surugaya_db.scrape_search_result("https://www.suruga-ya.jp/search?search_word=game", max_items=2, max_scroll=1)
+
+    assert results == []
+    assert calls == {"detail": 0, "fallback": 0}

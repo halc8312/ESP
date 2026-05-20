@@ -261,6 +261,7 @@ class MonitorService:
                 var_name = patrol_var.get("name", "")
                 var_stock = patrol_var.get("stock", 0)
                 var_price = patrol_var.get("price")
+                matched = False
                 
                 for existing in existing_variants:
                     # Match by option1_value or combined name
@@ -279,7 +280,21 @@ class MonitorService:
                         ):
                             existing.price = var_price
                             changes += 1
+                        matched = True
                         break
+
+                if not matched and len(existing_variants) == 1 and len(result.variants) == 1:
+                    existing = existing_variants[0]
+                    if existing.inventory_qty != var_stock:
+                        existing.inventory_qty = var_stock
+                        changes += 1
+                    if (
+                        var_price
+                        and str(result.confidence or "").lower() == "high"
+                        and existing.price != var_price
+                    ):
+                        existing.price = var_price
+                        changes += 1
         
         return changes
 
