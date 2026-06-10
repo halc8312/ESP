@@ -38,9 +38,9 @@ logger = logging.getLogger("jobs.translation_tasks")
 
 def _auto_apply_suggestion(job_id: str) -> None:
     """Apply a succeeded suggestion to the product when auto_apply is set."""
-    from database import SessionLocal
+    from database import create_isolated_session
 
-    session_db = SessionLocal()
+    session_db = create_isolated_session()
     try:
         refreshed = get_suggestion_by_job_id(job_id, session=session_db)
         if refreshed is None or refreshed.status != "succeeded":
