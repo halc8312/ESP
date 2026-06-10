@@ -12,7 +12,7 @@ from flask_login import login_required, current_user
 
 from database import SessionLocal
 from jobs.scrape_tasks import execute_scrape_job
-from models import PriceList, PriceListItem, Product, ProductSnapshot, Shop, TranslationSuggestion, User
+from models import PriceList, PriceListItem, PricingRule, Product, ProductSnapshot, Shop, TranslationSuggestion, User
 from services.media_queue import (
     enqueue_media_job,
     resolve_queue_backend_name,
@@ -396,6 +396,18 @@ def _apply_default_pricing(
     """Assign user's default pricing rule to products and recalculate. Returns count applied."""
     user = session_db.query(User).filter_by(id=user_id).one_or_none()
     if user is None or not user.default_pricing_rule_id:
+        return 0
+
+    rule_exists = session_db.query(PricingRule.id).filter(
+        PricingRule.id == user.default_pricing_rule_id,
+        PricingRule.user_id == user_id,
+    ).first()
+    if rule_exists is None:
+        logger.warning(
+            "default pricing rule %s missing for user %s; skipping",
+            user.default_pricing_rule_id,
+            user_id,
+        )
         return 0
 
     applied = 0
