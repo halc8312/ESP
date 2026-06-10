@@ -5,7 +5,7 @@ Non-Mercari sites use HTTP-only fetching (Scrapling) to avoid launching Chrome.
 """
 import logging
 from datetime import timedelta
-from sqlalchemy import asc
+from sqlalchemy import asc, func, or_
 from database import SessionLocal
 from models import Product, Variant
 from services.pricing_service import product_has_pricing_config, update_product_selling_price
@@ -63,11 +63,13 @@ class MonitorService:
     _MERCARI_SOFT_SOLD_THRESHOLD = 2
     
     @staticmethod
-    def _apply_backoff(product, session_db):
-        """Increment fail count and push updated_at into the future."""
+    def _apply_backoff(product, session_db, now=None):
+        """Increment fail count and schedule the next patrol attempt."""
+        now = now or utc_now()
         product.patrol_fail_count = (product.patrol_fail_count or 0) + 1
         backoff_minutes = min(product.patrol_fail_count * 15, _MAX_BACKOFF_MINUTES)
-        product.updated_at = utc_now() + timedelta(minutes=backoff_minutes)
+        product.last_patrolled_at = now
+        product.next_patrol_at = now + timedelta(minutes=backoff_minutes)
         session_db.commit()
 
     @staticmethod
@@ -93,13 +95,16 @@ class MonitorService:
         }
         
         try:
-            # Find products sorted by updated_at ascending (oldest first)
-            # Exclude archived products - include all supported sites
+            # Find due products by patrol cursor, independent from the
+            # product-list updated_at sort.
+            now = utc_now()
+            patrol_cursor = func.coalesce(Product.last_patrolled_at, Product.updated_at, Product.created_at)
             products = session_db.query(Product).filter(
                 Product.site.in_(list(MonitorService._patrols.keys())),
                 Product.archived != True,
                 Product.deleted_at == None,
-            ).order_by(asc(Product.updated_at)).limit(limit).all()
+                or_(Product.next_patrol_at == None, Product.next_patrol_at <= now),
+            ).order_by(asc(patrol_cursor), asc(Product.id)).limit(limit).all()
 
             summary["selected_count"] = len(products)
             summary["site_counts"] = {
@@ -159,6 +164,8 @@ class MonitorService:
                     
                     # ---- Success: reset fail counter ----
                     product.patrol_fail_count = 0
+                    product.last_patrolled_at = utc_now()
+                    product.next_patrol_at = None
 
                     # ── Mercari sold-hysteresis ──────────────────────────
                     # Soft-evidence "sold" from Mercari is not persisted
@@ -182,7 +189,7 @@ class MonitorService:
                                 result.reason or "",
                             )
                             # Treat as unknown for this cycle — do not persist
-                            product.updated_at = utc_now()
+                            product.updated_at = product.last_patrolled_at
                             session_db.commit()
                             continue
                         else:
@@ -210,7 +217,7 @@ class MonitorService:
                             update_product_selling_price(product.id, session=session_db)
                     
                     # Always update timestamp even if no changes
-                    product.updated_at = utc_now()
+                    product.updated_at = product.last_patrolled_at or utc_now()
                     session_db.commit()
                     
                 except Exception as e:

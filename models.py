@@ -87,6 +87,8 @@ class Product(Base):
 
     # Patrol failure tracking (exponential backoff)
     patrol_fail_count = Column(Integer, default=0)
+    last_patrolled_at = Column(DateTime, nullable=True, index=True)
+    next_patrol_at = Column(DateTime, nullable=True, index=True)
 
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now)
