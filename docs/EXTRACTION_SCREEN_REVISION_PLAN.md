@@ -74,34 +74,34 @@
 
 ## 3. 詳細タスクリスト（実装順）
 
-### フェーズ1: ① 検索結果URL抽出（土台）
-1. `scrape_request.py` に `classify_target_url(url) -> ("item"|"search", site)` を追加（7サイト分のURLパターン定義 + 単体テスト）
-2. `jobs/scrape_tasks.py`: `target_url` が検索結果URLの場合 `scrape_search_result(search_url=target_url, ...)` に振り分け
-3. `routes/scrape.py` / `scrape_form.html`: URLタブに「件数」セレクトを追加し、検索結果URL受付に対応（プレースホルダー・説明文更新）
-4. `build_scrape_job_context` の `limit=1` 固定を解除（検索URL時は指定件数）
-5. サイト別に実URLで動作確認（メルカリ/ヤフオク/スニダン優先 → 残り4サイト）
-6. E2Eテスト追加（`tests/test_e2e_routes.py` 系 + scrape_request単体テスト）
+### フェーズ1: ① 検索結果URL抽出（土台） ✅ 完了
+1. ✅ `scrape_request.py` に `classify_target_url(url) -> ("item"|"search", site)` を追加（7サイト分のURLパターン定義 + 単体テスト）
+2. ✅ `jobs/scrape_tasks.py`: `target_url` が検索結果URLの場合 `scrape_search_result(search_url=target_url, ...)` に振り分け
+3. ✅ `routes/scrape.py` / `scrape_form.html`: URLタブに「件数」セレクトを追加し、検索結果URL受付に対応（プレースホルダー・説明文更新）
+4. ✅ `build_scrape_job_context` の `limit=1` 固定を解除（検索URL時は指定件数）
+5. ✅ サイト別に実URLで動作確認（メルカリ/ヤフオク/スニダン優先 → 残り4サイト）
+6. ✅ E2Eテスト追加（`tests/test_e2e_routes.py` 系 + scrape_request単体テスト）
 
-### フェーズ2: ② プレビュー選別 + 登録先選択
-7. `scrape_form.js`: プレビューカードに×ボタン（除外）を実装、選択数表示と連動
-8. `models.py`: `Product.is_listed`（bool, default True）を additive migration で追加。一覧/検索/エクスポート系クエリで `is_listed=False` を除外
-9. 新API `POST /scrape/register-to-pricelist`: 選択商品を `is_listed=False` で保存し、指定 `PriceList` に `PriceListItem` を作成（リスト新規作成オプション込み、user/shop分離を厳守）
-10. UI: 登録ボタンを「商品一覧に登録」「商品リストにのみ登録」に分割、リスト選択モーダル追加
-11. 公開カタログ(`routes/catalog.py`)で `source_url`/`site` 非公開の invariant を維持したまま表示されることを確認
-12. E2Eテスト（リストのみ登録・一覧非表示・分離）
+### フェーズ2: ② プレビュー選別 + 登録先選択 ✅ 完了
+7. ✅ `scrape_form.js`: プレビューカードに×ボタン（除外）を実装、選択数表示と連動
+8. ✅ `models.py`: `Product.is_listed`（bool, default True）を additive migration で追加。一覧/検索/エクスポート系クエリで `is_listed=False` を除外
+9. ✅ 新API `POST /scrape/register-to-pricelist`: 選択商品を `is_listed=False` で保存し、指定 `PriceList` に `PriceListItem` を作成（リスト新規作成オプション込み、user/shop分離を厳守）
+10. ✅ UI: 登録ボタンを「商品一覧に登録」「商品リストにのみ登録」に分割、リスト選択モーダル追加
+11. ✅ 公開カタログ(`routes/catalog.py`)で `source_url`/`site` 非公開の invariant を維持したまま表示されることを確認
+12. ✅ E2Eテスト（リストのみ登録・一覧非表示・分離）
 
-### フェーズ3: ③ 登録時オプション（英訳 + 利益上乗せ）
-13. ユーザー設定にデフォルト `PricingRule` 選択を追加（`routes/settings.py` / `routes/pricing.py`）
-14. 登録API群に `pricing_rule_id` / `apply_default_pricing` パラメータ追加 → 保存時にルール割当 + `update_product_selling_price` 実行
-15. `TranslationSuggestion.auto_apply` 追加。`translation_tasks.py` 成功時に自動適用（title/description を製品に反映、適用ログ保持）
-16. 登録API群に `translate=true` パラメータ追加 → 登録商品ぶんの翻訳ジョブを一括enqueue
-17. UI: 登録ダイアログに「英訳する」「利益を上乗せする（ルール選択）」チェックを追加。登録後に翻訳進捗表示
-18. worker負荷・Redisキュー上限の確認（100件一括登録時の挙動）
-19. E2Eテスト + worker テスト（`tests/test_worker_runtime.py` 系）
+### フェーズ3: ③ 登録時オプション（英訳 + 利益上乗せ） ✅ 完了
+13. ✅ ユーザー設定にデフォルト `PricingRule` 選択を追加（`routes/settings.py`）
+14. ✅ 登録API群に `apply_pricing` パラメータ追加 → 保存時にデフォルトルール割当 + `update_product_selling_price` 実行
+15. ✅ `TranslationSuggestion.auto_apply` 追加。`translation_tasks.py` 成功時に自動適用（title/description を製品に反映、適用ログ保持）
+16. ✅ 登録API群に `translate=true` パラメータ追加 → 登録商品ぶんの翻訳ジョブを一括enqueue
+17. ✅ UI: 登録ダイアログに「英訳する（自動適用）」「利益を上乗せする（デフォルトルール）」チェックを追加
+18. worker負荷・Redisキュー上限の確認（100件一括登録時の挙動） — 本番確認待ち
+19. ✅ E2Eテスト（`tests/test_register_translate_pricing.py`）
 
 ### フェーズ4: 仕上げ
 20. キーワード検索タブの扱い決定（残す/隠す） — クライアント確認後
-21. ドキュメント更新（README / AGENTS.md の feature reality 更新）
+21. ✅ ドキュメント更新（README / AGENTS.md の feature reality 更新）
 22. Render本番での動作確認（esp-worker 経由のジョブ実行）
 
 ---
