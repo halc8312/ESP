@@ -356,6 +356,19 @@ def register_to_pricelist():
     if error_response is not None:
         return error_response
 
+    # 商品を保存する前にリストの存在と所有権を検証する（不可視な孤児商品を作らないため）
+    if price_list_id is not None:
+        check_db = SessionLocal()
+        try:
+            owned = check_db.query(PriceList.id).filter(
+                PriceList.id == price_list_id,
+                PriceList.user_id == current_user.id,
+            ).first()
+        finally:
+            check_db.close()
+        if owned is None:
+            return jsonify({"error": "指定された商品リストが見つかりません。"}), 404
+
     try:
         save_summary = save_scraped_items_to_db(
             selected_items,

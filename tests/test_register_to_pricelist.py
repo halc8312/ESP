@@ -137,6 +137,8 @@ def test_register_to_pricelist_rejects_other_users_list(client, db_session, monk
 
     assert response.status_code == 404
     assert db_session.query(PriceListItem).filter_by(price_list_id=other_list.id).count() == 0
+    # 検証はリスト保存前に行われるため、不可視な孤児商品は作られない
+    assert db_session.query(Product).filter_by(user_id=user.id).count() == 0
 
 
 def test_register_to_pricelist_requires_list_target(client, db_session, monkeypatch):
