@@ -36,14 +36,23 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <div class="scrape-form-intro">
                     <strong>URL指定</strong>
-                    <p class="text-muted mb-0">個別商品URLを直接貼り付けて、1件ずつ確実に取り込みます。</p>
+                    <p class="text-muted mb-0">個別商品URLのほか、各サイトで絞り込んだ検索結果URLも貼り付けられます。検索結果URLの場合は指定件数までまとめて抽出します。</p>
                 </div>
                 <div class="form-row">
                     <div class="form-group form-group--keyword">
                         <label for="scrapeTargetUrl">対象URL</label>
                         <input type="url" id="scrapeTargetUrl" name="target_url"
-                            placeholder="https://... メルカリ / ラクマ / Yahoo / 駿河屋 / オフモール / ヤフオク / SNKRDUNK"
+                            placeholder="商品URLまたは検索結果URL（メルカリ / ラクマ / Yahoo / 駿河屋 / オフモール / ヤフオク / SNKRDUNK）"
                             required inputmode="url" autocomplete="url">
+                    </div>
+                    <div class="form-group">
+                        <label for="scrapeUrlLimit">件数（検索結果URL時）</label>
+                        <select id="scrapeUrlLimit" name="limit">
+                            <option value="10" selected>10件</option>
+                            <option value="20">20件</option>
+                            <option value="50">50件</option>
+                            <option value="100">100件</option>
+                        </select>
                     </div>
                     <div class="form-group form-group--submit">
                         <button type="submit" class="btn btn-primary" data-loading-label="URLを解析しています...">URLから商品を抽出</button>

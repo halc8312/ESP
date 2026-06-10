@@ -49,6 +49,52 @@ def detect_site_from_url(url: str) -> str:
     return "mercari"
 
 
+# Per-site predicates that decide whether a pasted URL points at a single
+# item page. Anything on a known marketplace domain that is NOT an item page
+# is treated as a listing (search results / category / filtered list) and
+# routed to the site's search scraper.
+_ITEM_URL_RULES = {
+    "mercari": lambda host, path: path.startswith("/item/") or path.startswith("/shops/product/"),
+    "rakuma": lambda host, path: host == "item.fril.jp",
+    "yahoo": lambda host, path: host == "store.shopping.yahoo.co.jp",
+    "surugaya": lambda host, path: "/product/detail/" in path,
+    "offmall": lambda host, path: "/product/" in path,
+    "yahuoku": lambda host, path: "/auction/" in path or host == "page.auctions.yahoo.co.jp",
+    "snkrdunk": lambda host, path: "/products/" in path,
+}
+
+
+def classify_target_url(url: str) -> tuple[str, str]:
+    """
+    Classify a pasted target URL as ("item" | "search", site).
+
+    Returns "item" for single-product pages and "search" for any other page
+    on a known marketplace domain (search results, category and filtered
+    listing pages). Unknown domains fall back to ("item", "mercari") to
+    preserve the legacy single-item behaviour.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return ("item", "mercari")
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return ("item", "mercari")
+    host = (parsed.hostname or "").lower()
+    path = parsed.path or "/"
+
+    site = None
+    for domain, mapped_site in DOMAIN_SITE_MAP:
+        if domain in raw:
+            site = mapped_site
+            break
+    if site is None:
+        return ("item", "mercari")
+
+    is_item = _ITEM_URL_RULES.get(site, lambda _host, _path: True)(host, path)
+    return ("item" if is_item else "search", site)
+
+
 def get_internal_search_limit(limit: int) -> int:
     """Expand the crawl window to absorb exclusions and fetch failures."""
     requested = max(1, int(limit or 10))
@@ -83,6 +129,18 @@ def build_scrape_job_context(
     persist_to_db: bool,
 ) -> dict[str, object]:
     if target_url:
+        url_kind, _url_site = classify_target_url(target_url)
+        if url_kind == "search":
+            requested_limit = max(1, int(limit or 10))
+            return {
+                "site_label": "検索結果URLから抽出",
+                "detail_label": simplify_target_label(target_url),
+                "limit": requested_limit,
+                "limit_label": f"{requested_limit}件",
+                "persist_to_db": persist_to_db,
+                "target_url": target_url,
+                "keyword": keyword or "",
+            }
         return {
             "site_label": "URLから抽出",
             "detail_label": simplify_target_label(target_url),
