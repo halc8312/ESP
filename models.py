@@ -11,6 +11,7 @@ class User(UserMixin, Base):
     id = Column(Integer, primary_key=True)
     username = Column(String(100), unique=True, nullable=False)
     password_hash = Column(String(200), nullable=False)
+    default_pricing_rule_id = Column(Integer, ForeignKey("pricing_rules.id"), nullable=True)
     
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -178,7 +179,7 @@ class PricingRule(Base):
 
     created_at = Column(DateTime, default=utc_now)
 
-    user = relationship("User")
+    user = relationship("User", foreign_keys=[user_id])
 
 
 class ExclusionKeyword(Base):
@@ -395,6 +396,10 @@ class TranslationSuggestion(Base):
     # Populated on completion.
     translated_title = Column(Text)
     translated_description = Column(Text)
+
+    # When True, a succeeded suggestion is automatically applied to the
+    # Product by the worker (no manual review step).
+    auto_apply = Column(Boolean, default=False)
 
     # queued -> running -> succeeded | failed | applied | rejected
     status = Column(String(16), nullable=False, default="queued", index=True)

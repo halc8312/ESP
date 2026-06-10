@@ -37,6 +37,7 @@ from services.media_queue import (
 )
 from services.translator import compute_source_hash
 from services.translator.suggestion_store import (
+    apply_suggestion_to_product,
     create_suggestion,
     get_suggestion_by_job_id,
     list_suggestions_for_product,
@@ -262,25 +263,17 @@ def apply_translation_suggestion(job_id: str):
         if product is None:
             return jsonify({"error": "product_not_found"}), 404
 
-        changes: dict[str, str | None] = {}
+        saved_title = suggestion.translated_title
+        saved_desc = suggestion.translated_description
+        if not apply_title:
+            suggestion.translated_title = None
+        if not apply_description:
+            suggestion.translated_description = None
 
-        if apply_title and suggestion.translated_title:
-            product.custom_title_en = suggestion.translated_title
-            product.custom_title_en_source_hash = suggestion.source_title_hash
-            changes["custom_title_en"] = suggestion.translated_title
+        changes = apply_suggestion_to_product(suggestion, session_db)
 
-        if apply_description and suggestion.translated_description:
-            from services.rich_text import normalize_rich_text
-
-            sanitised_description = (
-                normalize_rich_text(suggestion.translated_description) or None
-            )
-            if sanitised_description:
-                product.custom_description_en = sanitised_description
-                product.custom_description_en_source_hash = (
-                    suggestion.source_description_hash
-                )
-                changes["custom_description_en"] = sanitised_description
+        suggestion.translated_title = saved_title
+        suggestion.translated_description = saved_desc
 
         if not changes:
             return (
@@ -288,8 +281,6 @@ def apply_translation_suggestion(job_id: str):
                 400,
             )
 
-        suggestion.status = "applied"
-        suggestion.updated_at = utc_now()
         session_db.commit()
 
         return jsonify(

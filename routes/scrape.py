@@ -1,14 +1,23 @@
 """
 Scraping routes.
 """
-from flask import Blueprint, jsonify, render_template, request, session, redirect, url_for
-from flask_login import login_required, current_user
+from __future__ import annotations
 
+import logging
+import os
 import uuid
+
+from flask import Blueprint, current_app, jsonify, render_template, request, session, redirect, url_for
+from flask_login import login_required, current_user
 
 from database import SessionLocal
 from jobs.scrape_tasks import execute_scrape_job
-from models import PriceList, PriceListItem, Shop
+from models import PriceList, PriceListItem, Product, ProductSnapshot, Shop, TranslationSuggestion, User
+from services.media_queue import (
+    enqueue_media_job,
+    resolve_queue_backend_name,
+)
+from services.pricing_service import update_product_selling_price
 from services.product_service import save_scraped_items_to_db
 from services.queue_backend import get_queue_backend
 from services.scrape_request import (
@@ -16,6 +25,11 @@ from services.scrape_request import (
     build_scrape_task_request,
     detect_site_from_url,
 )
+from services.translator import compute_source_hash
+from services.translator.suggestion_store import create_suggestion
+
+
+logger = logging.getLogger("routes.scrape")
 
 
 # Backward-compatible alias for tests that monkeypatch routes.scrape.get_queue.
@@ -55,11 +69,14 @@ def scrape_form():
         if current_shop_id:
             price_lists_query = price_lists_query.filter(PriceList.shop_id == current_shop_id)
         price_lists = price_lists_query.order_by(PriceList.created_at.desc()).all()
+        user = session_db.query(User).filter_by(id=current_user.id).one()
+        has_default_pricing_rule = bool(user.default_pricing_rule_id)
         return render_template(
             "scrape_form.html",
             all_shops=all_shops,
             current_shop_id=current_shop_id,
             price_lists=price_lists,
+            has_default_pricing_rule=has_default_pricing_rule,
         )
     except Exception:
         session_db.rollback()
@@ -292,6 +309,114 @@ def _resolve_selected_items(payload):
     return selected_items, result, None
 
 
+def _enqueue_translation_for_products(
+    product_ids: list[int],
+    user_id: int,
+    session_db,
+) -> int:
+    """Enqueue translation jobs for the given products. Returns count enqueued."""
+    provider = str(
+        current_app.config.get("TRANSLATOR_BACKEND")
+        or os.environ.get("TRANSLATOR_BACKEND")
+        or "argos"
+    ).lower()
+    backend_name = resolve_queue_backend_name()
+    enqueued = 0
+
+    for pid in product_ids:
+        try:
+            product = session_db.query(Product).filter_by(id=pid, user_id=user_id).one_or_none()
+            if product is None:
+                continue
+
+            title = (product.custom_title or product.last_title or "").strip()
+            description = (product.custom_description or "").strip()
+            if not description:
+                snap = (
+                    session_db.query(ProductSnapshot)
+                    .filter_by(product_id=product.id)
+                    .order_by(ProductSnapshot.scraped_at.desc())
+                    .first()
+                )
+                if snap and snap.description:
+                    description = str(snap.description).strip()
+
+            if not title and not description:
+                continue
+
+            job_id = str(uuid.uuid4())
+            create_suggestion(
+                session=session_db,
+                job_id=job_id,
+                product_id=product.id,
+                user_id=user_id,
+                scope="full",
+                provider=provider,
+                source_title=title or None,
+                source_description=description or None,
+                source_title_hash=compute_source_hash(title) or None,
+                source_description_hash=compute_source_hash(description) or None,
+                auto_apply=True,
+            )
+            session_db.commit()
+
+            if backend_name == "rq":
+                try:
+                    enqueue_media_job(
+                        job_id=job_id,
+                        func="jobs.translation_tasks.execute_translation_job",
+                        args=(job_id,),
+                        description=f"translate product {product.id} scope=full (auto)",
+                    )
+                except Exception:
+                    logger.exception("failed to enqueue translation job %s", job_id)
+                    _run_translation_inline(job_id)
+            else:
+                _run_translation_inline(job_id)
+
+            enqueued += 1
+        except Exception:
+            logger.exception("translation enqueue failed for product %s", pid)
+    return enqueued
+
+
+def _run_translation_inline(job_id: str) -> None:
+    try:
+        from jobs.translation_tasks import execute_translation_job
+        execute_translation_job(job_id)
+    except Exception:
+        logger.exception("inline translation job %s failed", job_id)
+
+
+def _apply_default_pricing(
+    product_ids: list[int],
+    user_id: int,
+    session_db,
+) -> int:
+    """Assign user's default pricing rule to products and recalculate. Returns count applied."""
+    user = session_db.query(User).filter_by(id=user_id).one_or_none()
+    if user is None or not user.default_pricing_rule_id:
+        return 0
+
+    applied = 0
+    for pid in product_ids:
+        try:
+            product = session_db.query(Product).filter_by(id=pid, user_id=user_id).one_or_none()
+            if product is None:
+                continue
+            if product.pricing_rule_id:
+                continue
+            product.pricing_rule_id = user.default_pricing_rule_id
+            session_db.flush()
+            update_product_selling_price(product.id, session=session_db)
+            applied += 1
+        except Exception:
+            logger.exception("pricing apply failed for product %s", pid)
+    if applied:
+        session_db.commit()
+    return applied
+
+
 @scrape_bp.route("/scrape/register-selected", methods=["POST"])
 @login_required
 def register_selected():
@@ -314,6 +439,7 @@ def register_selected():
         return jsonify({"error": "選択商品の保存に失敗しました。時間をおいて再度お試しください。"}), 500
 
     registered_count = int(save_summary.get("processed_count") or 0)
+    product_ids = save_summary.get("product_ids") or []
     if registered_count <= 0:
         return jsonify(
             {
@@ -323,6 +449,23 @@ def register_selected():
             }
         ), 422
 
+    translate_flag = bool(payload.get("translate"))
+    pricing_flag = bool(payload.get("apply_pricing"))
+    translation_jobs_enqueued = 0
+    pricing_applied_count = 0
+
+    if product_ids and (translate_flag or pricing_flag):
+        post_db = SessionLocal()
+        try:
+            if pricing_flag:
+                pricing_applied_count = _apply_default_pricing(product_ids, current_user.id, post_db)
+            if translate_flag:
+                translation_jobs_enqueued = _enqueue_translation_for_products(product_ids, current_user.id, post_db)
+        except Exception:
+            logger.exception("post-registration processing failed")
+        finally:
+            post_db.close()
+
     return jsonify(
         {
             "ok": True,
@@ -331,6 +474,8 @@ def register_selected():
             "new_count": save_summary.get("new_count", 0),
             "updated_count": save_summary.get("updated_count", 0),
             "rejected_count": save_summary.get("rejected_count", 0),
+            "translation_jobs_enqueued": translation_jobs_enqueued,
+            "pricing_applied_count": pricing_applied_count,
         }
     )
 
@@ -447,6 +592,23 @@ def register_to_pricelist():
     finally:
         session_db.close()
 
+    translate_flag = bool(payload.get("translate"))
+    pricing_flag = bool(payload.get("apply_pricing"))
+    translation_jobs_enqueued = 0
+    pricing_applied_count = 0
+
+    if product_ids and (translate_flag or pricing_flag):
+        post_db = SessionLocal()
+        try:
+            if pricing_flag:
+                pricing_applied_count = _apply_default_pricing(product_ids, current_user.id, post_db)
+            if translate_flag:
+                translation_jobs_enqueued = _enqueue_translation_for_products(product_ids, current_user.id, post_db)
+        except Exception:
+            logger.exception("post-registration processing failed")
+        finally:
+            post_db.close()
+
     return jsonify(
         {
             "ok": True,
@@ -459,6 +621,8 @@ def register_to_pricelist():
             "price_list_id": price_list_id_value,
             "price_list_name": price_list_name,
             "price_list_url": url_for('pricelist.pricelist_items', pricelist_id=price_list_id_value),
+            "translation_jobs_enqueued": translation_jobs_enqueued,
+            "pricing_applied_count": pricing_applied_count,
         }
     )
 
