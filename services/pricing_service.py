@@ -5,7 +5,7 @@ Handles the calculation of selling prices based on pricing rules.
 Formula: selling_price = (cost_price + shipping_cost) * (1 + margin_rate/100) + fixed_fee
 """
 import logging
-from database import SessionLocal
+from database import create_isolated_session
 from models import Product, PricingRule
 
 logger = logging.getLogger("pricing")
@@ -87,7 +87,7 @@ def update_product_selling_price(product_id: int, session=None) -> bool:
     """
     owns_session = session is None
     if owns_session:
-        session = SessionLocal()
+        session = create_isolated_session()
     try:
         product = session.query(Product).filter_by(id=product_id).first()
         if not product:
@@ -152,7 +152,7 @@ def update_all_products_with_rule(rule_id: int, session=None) -> int:
     """
     owns_session = session is None
     if owns_session:
-        session = SessionLocal()
+        session = create_isolated_session()
     updated_count = 0
     try:
         rule = session.query(PricingRule).filter_by(id=rule_id).first()

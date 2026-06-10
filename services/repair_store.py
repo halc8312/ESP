@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import func, inspect as sa_inspect
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 
-from database import SessionLocal, get_database_url, normalize_database_url
+from database import create_isolated_session, get_database_url, normalize_database_url
 from models import SelectorActiveRuleSet, SelectorRepairCandidate
 from time_utils import utc_now
 
@@ -101,7 +101,7 @@ def inspect_repair_store_state() -> dict[str, Any]:
             "blockers": ["repair_store_disabled"],
         }
 
-    session = SessionLocal()
+    session = create_isolated_session()
     try:
         inspector = sa_inspect(session.get_bind())
         existing_tables = set(inspector.get_table_names())
@@ -167,7 +167,7 @@ def get_repair_queue_snapshot(sample_limit: int = 5) -> dict[str, Any]:
         return snapshot
 
     safe_limit = max(0, int(sample_limit or 0))
-    session = SessionLocal()
+    session = create_isolated_session()
     try:
         base_query = session.query(SelectorRepairCandidate).filter(
             SelectorRepairCandidate.status == "pending",
@@ -235,7 +235,7 @@ def load_active_selectors(site: str, page_type: str, field: str) -> list[str] | 
     if not _db_store_enabled() or _store_known_unavailable():
         return None
 
-    session = SessionLocal()
+    session = create_isolated_session()
     try:
         record = (
             session.query(SelectorActiveRuleSet)
@@ -296,7 +296,7 @@ def record_repair_candidate(
         except (TypeError, ValueError):
             numeric_score = None
 
-    session = SessionLocal()
+    session = create_isolated_session()
     try:
         candidate = SelectorRepairCandidate(
             site=str(site or "").strip().lower(),
@@ -336,7 +336,7 @@ def list_pending_repair_candidates(limit: int = 10) -> list[dict[str, Any]]:
         return []
 
     safe_limit = max(1, int(limit or 10))
-    session = SessionLocal()
+    session = create_isolated_session()
     try:
         records = (
             session.query(SelectorRepairCandidate)
@@ -369,7 +369,7 @@ def get_pending_repair_candidate(candidate_id: int) -> dict[str, Any] | None:
     if not _db_store_enabled() or _store_known_unavailable():
         return None
 
-    session = SessionLocal()
+    session = create_isolated_session()
     try:
         record = (
             session.query(SelectorRepairCandidate)
@@ -415,7 +415,7 @@ def mark_repair_candidate_rejected(candidate_id: int, *, reason: str, details: d
     if not _db_store_enabled() or _store_known_unavailable():
         return False
 
-    session = SessionLocal()
+    session = create_isolated_session()
     try:
         candidate = session.get(SelectorRepairCandidate, int(candidate_id))
         if candidate is None:
@@ -458,7 +458,7 @@ def promote_repair_candidate(
     if not normalized_selectors:
         return {"ok": False, "reason": "empty_selector_payload"}
 
-    session = SessionLocal()
+    session = create_isolated_session()
     try:
         candidate = (
             session.query(SelectorRepairCandidate)

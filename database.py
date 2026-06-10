@@ -58,6 +58,17 @@ SessionLocal = scoped_session(_session_factory)
 Base = declarative_base()
 
 
+def create_isolated_session():
+    """Return a brand-new Session independent of the thread-scoped registry.
+
+    ``SessionLocal()`` returns the shared thread-local session, so helpers
+    that call ``.close()`` on it tear down the caller's session as well.
+    Long-running owners (patrol loop) and self-contained helpers must use
+    an isolated session so closing it never affects other code paths.
+    """
+    return _session_factory()
+
+
 ADDITIVE_STARTUP_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("products", "pricing_rule_id", "ALTER TABLE products ADD COLUMN pricing_rule_id INTEGER"),
     ("products", "selling_price", "ALTER TABLE products ADD COLUMN selling_price INTEGER"),

@@ -6,7 +6,7 @@ Non-Mercari sites use HTTP-only fetching (Scrapling) to avoid launching Chrome.
 import logging
 from datetime import timedelta
 from sqlalchemy import asc, func, or_
-from database import SessionLocal
+from database import create_isolated_session
 from models import Product, Variant
 from services.pricing_service import product_has_pricing_config, update_product_selling_price
 from services.scrape_result_policy import normalize_status_for_persistence
@@ -83,7 +83,11 @@ class MonitorService:
             limit: Number of products to check (increased from 5 to 15 due to speed)
         """
         logger.info(f"--- Starting Lightweight Patrol (Limit: {limit}) ---")
-        session_db = SessionLocal()
+        # Use an isolated session: helpers invoked during a patrol cycle
+        # (selector repair store, pricing, alerts) close the thread-scoped
+        # SessionLocal, which would detach every product mid-loop and make
+        # all patrol commits silent no-ops.
+        session_db = create_isolated_session()
         driver = None
         summary = {
             "status": "started",
@@ -121,6 +125,7 @@ class MonitorService:
             error_count = 0
 
             for product in products:
+                product_id = product.id
                 try:
                     logger.info(f"Patrol: {product.source_url[:50]}...")
                     
@@ -221,11 +226,12 @@ class MonitorService:
                     session_db.commit()
                     
                 except Exception as e:
-                    logger.error(f"Error checking product {product.id}: {e}")
+                    logger.error(f"Error checking product {product_id}: {e}")
                     try:
+                        session_db.rollback()
                         MonitorService._apply_backoff(product, session_db)
                     except Exception:
-                        pass
+                        logger.exception(f"Backoff failed for product {product_id}")
                     error_count += 1
                     continue
             
