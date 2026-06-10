@@ -18,7 +18,7 @@ from services.product_service import save_scraped_items_to_db
 from services.scrape_job_runtime import run_tracked_job
 from services.scrape_request import (
     build_search_url,
-    detect_site_from_url,
+    classify_target_url,
     get_internal_search_limit,
     get_search_depth,
 )
@@ -102,18 +102,40 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
             }
 
         if target_url:
-            target_site = detect_site_from_url(target_url)
-            scraper_map = {
-                "yahoo": yahoo_db.scrape_single_item,
-                "rakuma": rakuma_db.scrape_single_item,
-                "surugaya": surugaya_db.scrape_single_item,
-                "offmall": offmall_db.scrape_single_item,
-                "yahuoku": yahuoku_db.scrape_single_item,
-                "snkrdunk": snkrdunk_db.scrape_single_item,
-                "mercari": scrape_single_item,
-            }
-            scraper_fn = scraper_map.get(target_site, scrape_single_item)
-            finalize(scraper_fn(target_url, headless=True), target_site)
+            url_kind, target_site = classify_target_url(target_url)
+            if url_kind == "search":
+                search_scraper_map = {
+                    "yahoo": yahoo_db.scrape_search_result,
+                    "rakuma": rakuma_db.scrape_search_result,
+                    "surugaya": surugaya_db.scrape_search_result,
+                    "offmall": offmall_db.scrape_search_result,
+                    "yahuoku": yahuoku_db.scrape_search_result,
+                    "snkrdunk": snkrdunk_db.scrape_search_result,
+                    "mercari": scrape_search_result,
+                }
+                search_fn = search_scraper_map.get(target_site, scrape_search_result)
+                search_url = target_url
+                search_limit = get_internal_search_limit(limit)
+                search_depth = get_search_depth(target_site, search_limit)
+                scraped = search_fn(
+                    search_url=target_url,
+                    max_items=search_limit,
+                    max_scroll=search_depth,
+                    headless=True,
+                )
+                finalize(scraped, target_site)
+            else:
+                scraper_map = {
+                    "yahoo": yahoo_db.scrape_single_item,
+                    "rakuma": rakuma_db.scrape_single_item,
+                    "surugaya": surugaya_db.scrape_single_item,
+                    "offmall": offmall_db.scrape_single_item,
+                    "yahuoku": yahuoku_db.scrape_single_item,
+                    "snkrdunk": snkrdunk_db.scrape_single_item,
+                    "mercari": scrape_single_item,
+                }
+                scraper_fn = scraper_map.get(target_site, scrape_single_item)
+                finalize(scraper_fn(target_url, headless=True), target_site)
         else:
             search_limit = get_internal_search_limit(limit)
             search_depth = get_search_depth(site, search_limit)
