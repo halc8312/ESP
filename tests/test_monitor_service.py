@@ -495,3 +495,58 @@ def test_is_valid_detail_url_invalid_cases():
 def test_is_valid_detail_url_unknown_site():
     """Unknown sites are allowed through (don't break future additions)."""
     assert is_valid_detail_url("https://newsite.com/item/123", "newsite")
+
+
+class ScopedSessionClosingPatrol:
+    """Simulates helpers (e.g. repair store) closing the thread-scoped
+    SessionLocal during a patrol fetch."""
+
+    def __init__(self, result):
+        self.result = result
+        self.called_urls = []
+
+    def fetch(self, url, driver=None):
+        from database import SessionLocal
+        self.called_urls.append(url)
+        SessionLocal().close()
+        return self.result
+
+
+def test_patrol_survives_scoped_session_close(client, db_session, monkeypatch):
+    """Patrol updates must persist even when a helper closes the
+    thread-scoped SessionLocal mid-cycle (regression for silent no-op
+    commits that froze the patrol cursor)."""
+    user = _create_user(db_session, 'monitor_scoped_close_user')
+    old_time = utc_now() - timedelta(days=1)
+
+    product = Product(
+        user_id=user.id,
+        site='mercari',
+        source_url='https://jp.mercari.com/item/m-scoped-close',
+        last_title='Item',
+        last_price=1000,
+        last_status='on_sale',
+        archived=False,
+        deleted_at=None,
+        created_at=old_time,
+        updated_at=old_time,
+    )
+    db_session.add(product)
+    db_session.commit()
+
+    fake_patrol = ScopedSessionClosingPatrol(
+        PatrolResult(price=2000, status='on_sale', variants=[])
+    )
+    monkeypatch.setattr(MonitorService, '_patrols', {'mercari': fake_patrol})
+
+    summary = MonitorService.check_stale_products(limit=10)
+
+    assert summary["status"] == "completed"
+    assert summary["updated_count"] == 1
+    assert summary["error_count"] == 0
+
+    db_session.expire_all()
+    refreshed = db_session.query(Product).filter_by(id=product.id).one()
+    assert refreshed.last_price == 2000
+    assert refreshed.last_patrolled_at is not None
+    assert refreshed.updated_at > old_time
