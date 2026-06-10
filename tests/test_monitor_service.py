@@ -87,7 +87,7 @@ def test_monitor_service_skips_deleted_products(client, db_session, monkeypatch)
 
 
 def test_invalid_url_skipped_with_backoff(client, db_session, monkeypatch):
-    """Products with search URLs are skipped and get backoff applied."""
+    """Products with search URLs are skipped and get patrol backoff applied."""
     user = _create_user(db_session, 'monitor_invalid_url_user')
     old_time = utc_now() - timedelta(days=1)
 
@@ -120,14 +120,17 @@ def test_invalid_url_skipped_with_backoff(client, db_session, monkeypatch):
     assert fake_patrol.called_urls == []
     # Fail count incremented
     assert refreshed.patrol_fail_count == 1
-    # updated_at pushed into the future (at least 10 min from now)
-    assert refreshed.updated_at > utc_now() + timedelta(minutes=10)
+    # Product-list updated_at is not used as a patrol backoff cursor.
+    assert refreshed.updated_at == old_time
+    assert refreshed.last_patrolled_at is not None
+    # next_patrol_at is pushed into the future (at least 10 min from now)
+    assert refreshed.next_patrol_at > utc_now() + timedelta(minutes=10)
     # Price unchanged
     assert refreshed.last_price == 500
 
 
-def test_patrol_failure_updates_timestamp(client, db_session, monkeypatch):
-    """When patrol.fetch returns an error, backoff is applied."""
+def test_patrol_failure_records_patrol_backoff_without_touching_list_timestamp(client, db_session, monkeypatch):
+    """When patrol.fetch returns an error, backoff is applied outside updated_at."""
     user = _create_user(db_session, 'monitor_fail_ts_user')
     old_time = utc_now() - timedelta(days=1)
 
@@ -157,8 +160,11 @@ def test_patrol_failure_updates_timestamp(client, db_session, monkeypatch):
 
     # Fail count incremented from 2 → 3
     assert refreshed.patrol_fail_count == 3
-    # updated_at pushed into the future (3 * 15 = 45 min backoff)
-    assert refreshed.updated_at > utc_now() + timedelta(minutes=40)
+    # updated_at remains the product-list update timestamp
+    assert refreshed.updated_at == old_time
+    assert refreshed.last_patrolled_at is not None
+    # next_patrol_at carries the 3 * 15 = 45 min backoff
+    assert refreshed.next_patrol_at > utc_now() + timedelta(minutes=40)
     # Price NOT changed
     assert refreshed.last_price == 2000
 
@@ -194,11 +200,66 @@ def test_patrol_success_resets_fail_count(client, db_session, monkeypatch):
 
     # Fail count reset
     assert refreshed.patrol_fail_count == 0
+    assert refreshed.next_patrol_at is None
+    assert refreshed.last_patrolled_at is not None
     # Price updated
     assert refreshed.last_price == 3500
     assert refreshed.last_status == 'on_sale'
     # updated_at should be recent (not in the future)
     assert refreshed.updated_at <= utc_now() + timedelta(seconds=10)
+
+def test_backoff_product_is_skipped_until_next_patrol_at(client, db_session, monkeypatch):
+    user = _create_user(db_session, 'monitor_backoff_skip_user')
+    old_time = utc_now() - timedelta(days=2)
+    recent_time = utc_now() - timedelta(minutes=1)
+
+    backed_off = Product(
+        user_id=user.id,
+        site='mercari',
+        source_url='https://jp.mercari.com/item/m-backed-off',
+        last_title='Backed Off Item',
+        last_price=1000,
+        last_status='on_sale',
+        archived=False,
+        deleted_at=None,
+        patrol_fail_count=1,
+        created_at=old_time,
+        updated_at=old_time,
+        last_patrolled_at=recent_time,
+        next_patrol_at=utc_now() + timedelta(minutes=30),
+    )
+    due_product = Product(
+        user_id=user.id,
+        site='mercari',
+        source_url='https://jp.mercari.com/item/m-due-now',
+        last_title='Due Item',
+        last_price=2000,
+        last_status='on_sale',
+        archived=False,
+        deleted_at=None,
+        patrol_fail_count=0,
+        created_at=old_time,
+        updated_at=old_time + timedelta(minutes=1),
+        last_patrolled_at=None,
+        next_patrol_at=None,
+    )
+    db_session.add_all([backed_off, due_product])
+    db_session.commit()
+
+    ok_patrol = FakePatrol(PatrolResult(price=2500, status='active', variants=[]))
+    monkeypatch.setattr(MonitorService, '_patrols', {'mercari': ok_patrol})
+
+    MonitorService.check_stale_products(limit=10)
+
+    db_session.expire_all()
+    refreshed_backed_off = db_session.query(Product).filter_by(id=backed_off.id).one()
+    refreshed_due = db_session.query(Product).filter_by(id=due_product.id).one()
+
+    assert ok_patrol.called_urls == ['https://jp.mercari.com/item/m-due-now']
+    assert refreshed_backed_off.last_price == 1000
+    assert refreshed_backed_off.next_patrol_at is not None
+    assert refreshed_due.last_price == 2500
+    assert refreshed_due.next_patrol_at is None
 
 
 def test_patrol_deleted_status_only_preserves_price_and_zeroes_inventory(client, db_session, monkeypatch):

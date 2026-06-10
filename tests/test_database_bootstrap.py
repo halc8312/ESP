@@ -1,11 +1,19 @@
 from pathlib import Path
 import uuid
+from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import inspect, text
 
 import database
 from models import ScrapeJob, ScrapeJobEvent
+from time_utils import utc_now
+
+
+def _coerce_datetime(value):
+    if isinstance(value, str):
+        return datetime.fromisoformat(value)
+    return value
 
 
 def test_bootstrap_schema_auto_falls_back_to_legacy(monkeypatch):
@@ -193,6 +201,41 @@ def test_apply_additive_startup_migrations_adds_description_template_user_id():
     assert "user_id" in columns
 
 
+def test_apply_additive_startup_migrations_adds_product_patrol_schedule_columns():
+    smoke_db = Path(f"test_db_additive_product_patrol_{uuid.uuid4().hex}.sqlite")
+    smoke_engine = database.create_app_engine(f"sqlite:///{smoke_db.as_posix()}")
+
+    try:
+        with smoke_engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE products (
+                        id INTEGER PRIMARY KEY,
+                        user_id INTEGER NOT NULL,
+                        site VARCHAR NOT NULL,
+                        source_url VARCHAR NOT NULL,
+                        patrol_fail_count INTEGER DEFAULT 0,
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    )
+                    """
+                )
+            )
+
+        with smoke_engine.begin() as connection:
+            results = database.apply_additive_startup_migrations(bind=connection)
+        columns = {column["name"] for column in inspect(smoke_engine).get_columns("products")}
+    finally:
+        smoke_engine.dispose()
+        smoke_db.unlink(missing_ok=True)
+
+    assert "products.last_patrolled_at" in results["applied"]
+    assert "products.next_patrol_at" in results["applied"]
+    assert "last_patrolled_at" in columns
+    assert "next_patrol_at" in columns
+
+
 def test_apply_additive_startup_migrations_avoids_missing_column_probe_queries(monkeypatch):
     class FakeInspector:
         def __init__(self, table_columns):
@@ -310,7 +353,94 @@ def test_run_alembic_upgrade_for_database_url_backfills_tracker_dismissed_at_fro
     assert "ix_scrape_jobs_tracker_dismissed_at" in indexes
     assert "selector_repair_candidates" in table_names
     assert "selector_active_rule_sets" in table_names
-    assert version_num == "20260422_0006"
+    assert version_num == "20260424_0008"
+
+
+def test_run_alembic_upgrade_adds_product_patrol_schedule_columns_from_previous_head():
+    smoke_db = Path(f"test_db_alembic_patrol_schedule_{uuid.uuid4().hex}.sqlite")
+    smoke_db_url = f"sqlite:///{smoke_db.resolve().as_posix()}"
+    smoke_engine = database.create_app_engine(smoke_db_url)
+
+    try:
+        with smoke_engine.begin() as connection:
+            connection.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"))
+            connection.execute(text("INSERT INTO alembic_version (version_num) VALUES ('20260422_0006')"))
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE products (
+                        id INTEGER PRIMARY KEY,
+                        user_id INTEGER NOT NULL,
+                        site VARCHAR NOT NULL,
+                        source_url VARCHAR NOT NULL,
+                        patrol_fail_count INTEGER DEFAULT 0,
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    )
+                    """
+                )
+            )
+            legacy_backoff_until = utc_now() + timedelta(hours=1)
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO products (
+                        id,
+                        user_id,
+                        site,
+                        source_url,
+                        patrol_fail_count,
+                        created_at,
+                        updated_at
+                    ) VALUES (
+                        1,
+                        1,
+                        'mercari',
+                        'https://jp.mercari.com/item/m123',
+                        2,
+                        :created_at,
+                        :updated_at
+                    )
+                    """
+                ),
+                {
+                    "created_at": utc_now() - timedelta(days=2),
+                    "updated_at": legacy_backoff_until,
+                },
+            )
+
+        database.run_alembic_upgrade_for_database_url(smoke_db_url)
+
+        upgraded_engine = database.create_app_engine(smoke_db_url)
+        try:
+            inspector = inspect(upgraded_engine)
+            product_columns = {column["name"] for column in inspector.get_columns("products")}
+            product_indexes = {index["name"] for index in inspector.get_indexes("products")}
+            with upgraded_engine.connect() as connection:
+                version_num = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+                migrated_product = connection.execute(
+                    text(
+                        """
+                        SELECT updated_at, last_patrolled_at, next_patrol_at
+                        FROM products
+                        WHERE id = 1
+                        """
+                    )
+                ).mappings().one()
+        finally:
+            upgraded_engine.dispose()
+    finally:
+        smoke_engine.dispose()
+        smoke_db.unlink(missing_ok=True)
+
+    assert "last_patrolled_at" in product_columns
+    assert "next_patrol_at" in product_columns
+    assert "ix_products_last_patrolled_at" in product_indexes
+    assert "ix_products_next_patrol_at" in product_indexes
+    assert version_num == "20260424_0008"
+    assert _coerce_datetime(migrated_product["next_patrol_at"]) == legacy_backoff_until
+    assert _coerce_datetime(migrated_product["updated_at"]) <= utc_now()
+    assert _coerce_datetime(migrated_product["last_patrolled_at"]) <= utc_now()
 
 
 def test_inspect_additive_schema_drift_reports_missing_scrape_job_columns():
