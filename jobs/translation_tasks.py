@@ -25,6 +25,7 @@ from services.rich_text import normalize_rich_text
 from services.translator import get_translator_backend
 from services.translator.base import TranslationError
 from services.translator.suggestion_store import (
+    apply_suggestion_to_product,
     get_suggestion_by_job_id,
     mark_failed,
     mark_running,
@@ -33,6 +34,31 @@ from services.translator.suggestion_store import (
 
 
 logger = logging.getLogger("jobs.translation_tasks")
+
+
+def _auto_apply_suggestion(job_id: str) -> None:
+    """Apply a succeeded suggestion to the product when auto_apply is set."""
+    from database import create_isolated_session
+
+    session_db = create_isolated_session()
+    try:
+        refreshed = get_suggestion_by_job_id(job_id, session=session_db)
+        if refreshed is None or refreshed.status != "succeeded":
+            return
+        changes = apply_suggestion_to_product(refreshed, session_db)
+        if changes:
+            session_db.commit()
+            logger.info(
+                "auto-applied translation %s to product %s: %s",
+                job_id,
+                refreshed.product_id,
+                sorted(changes.keys()),
+            )
+    except Exception:
+        session_db.rollback()
+        logger.exception("auto-apply failed for translation job %s", job_id)
+    finally:
+        session_db.close()
 
 
 def execute_translation_job(job_id: str) -> dict[str, Any]:
@@ -88,6 +114,10 @@ def execute_translation_job(job_id: str) -> dict[str, Any]:
             translated_title=translated_title,
             translated_description=translated_description,
         )
+
+        if suggestion.auto_apply:
+            _auto_apply_suggestion(job_id)
+
     except TranslationError as exc:
         logger.exception("translation job %s failed", job_id)
         mark_failed(job_id, error_message=str(exc))

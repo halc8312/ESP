@@ -24,6 +24,8 @@
     var pricelistCancelButton = document.getElementById("pricelistRegisterCancel");
     var registerUrl = config.dataset.registerUrl;
     var registerPricelistUrl = config.dataset.registerPricelistUrl;
+    var translateCheck = document.getElementById("scrapeTranslateCheck");
+    var pricingCheck = document.getElementById("scrapePricingCheck");
     var statusUrlTemplate = config.dataset.statusUrlTemplate;
     var restoreJobId = config.dataset.restoreJobId;
     var activePreviewJob = null;
@@ -580,23 +582,35 @@
         if (csrfToken) {
             headers["X-CSRFToken"] = csrfToken;
         }
+        var registerPayload = {
+            job_id: activePreviewJob.jobId,
+            selected_indices: selectedIndices
+        };
+        if (translateCheck && translateCheck.checked) {
+            registerPayload.translate = true;
+        }
+        if (pricingCheck && pricingCheck.checked && !pricingCheck.disabled) {
+            registerPayload.apply_pricing = true;
+        }
+
         fetch(activePreviewJob.registerUrl, {
             method: "POST",
             headers: headers,
-            body: JSON.stringify({
-                job_id: activePreviewJob.jobId,
-                selected_indices: selectedIndices
-            })
+            body: JSON.stringify(registerPayload)
         })
             .then(function (response) {
                 return parseJsonResponse(response, "登録に失敗しました");
             })
             .then(function (data) {
                 setStep("review", "選択した商品を登録しました。必要なら同じ結果から追加登録もできます。", "success");
-                showFlash(
-                    "登録完了: " + data.registered_count + "件（新規 " + data.new_count + " / 更新 " + data.updated_count + "）",
-                    "success"
-                );
+                var flashParts = ["登録完了: " + data.registered_count + "件（新規 " + data.new_count + " / 更新 " + data.updated_count + "）"];
+                if (data.translation_jobs_enqueued > 0) {
+                    flashParts.push("英訳ジョブ" + data.translation_jobs_enqueued + "件を開始しました");
+                }
+                if (data.pricing_applied_count > 0) {
+                    flashParts.push("利益ルール" + data.pricing_applied_count + "件に適用しました");
+                }
+                showFlash(flashParts.join("。"), "success");
                 if (window.ESPUI) {
                     window.ESPUI.toast("選択した商品を登録しました。", { type: "success" });
                 }
@@ -680,6 +694,12 @@
             } else {
                 payload.new_list_name = newListName;
             }
+            if (translateCheck && translateCheck.checked) {
+                payload.translate = true;
+            }
+            if (pricingCheck && pricingCheck.checked && !pricingCheck.disabled) {
+                payload.apply_pricing = true;
+            }
 
             fetch(registerPricelistUrl, {
                 method: "POST",
@@ -692,7 +712,14 @@
                 .then(function (data) {
                     hidePricelistPanel();
                     setStep("review", "選択した商品を商品リストに登録しました。", "success");
-                    var message = "リスト「" + (data.price_list_name || "") + "」に" + data.added_to_list_count + "件登録しました。";
+                    var messageParts = ["リスト「" + (data.price_list_name || "") + "」に" + data.added_to_list_count + "件登録しました"];
+                    if (data.translation_jobs_enqueued > 0) {
+                        messageParts.push("英訳ジョブ" + data.translation_jobs_enqueued + "件を開始しました");
+                    }
+                    if (data.pricing_applied_count > 0) {
+                        messageParts.push("利益ルール" + data.pricing_applied_count + "件に適用しました");
+                    }
+                    var message = messageParts.join("。") + "。";
                     showFlash(message, "success");
                     if (data.price_list_url && previewMeta) {
                         var listLink = document.createElement("a");

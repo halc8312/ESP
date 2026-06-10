@@ -77,6 +77,34 @@
 
 <div class="content-card">
     <div class="content-card-header">
+        <h2>抽出登録オプション</h2>
+    </div>
+    <div class="content-card-body">
+        <p class="text-muted settings-summary-text">抽出した商品を登録するとき、自動で利益を上乗せするデフォルトルールを選べます。</p>
+        <form action="{{ url_for('settings.set_default_pricing_rule') }}" method="POST" class="form-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <div class="settings-form-row">
+                <div class="form-group settings-form-main">
+                    <label for="default_pricing_rule_id">デフォルト利益ルール</label>
+                    <select id="default_pricing_rule_id" name="default_pricing_rule_id">
+                        <option value="">未設定</option>
+                        {% for rule in pricing_rules|default([]) %}
+                        <option value="{{ rule.id }}" {% if default_pricing_rule_id == rule.id %}selected{% endif %}>
+                            {{ rule.name }}（利益率 {{ rule.margin_rate }}% / 送料 ¥{{ rule.shipping_cost }} / 固定費 ¥{{ rule.fixed_fee }}）
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group settings-form-action">
+                    <button type="submit" class="btn btn-primary">保存する</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="content-card">
+    <div class="content-card-header">
         <h2>よく使う例</h2>
     </div>
     <div class="content-card-body">

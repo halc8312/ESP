@@ -99,6 +99,8 @@ ADDITIVE_STARTUP_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("scrape_job_events", "payload", "ALTER TABLE scrape_job_events ADD COLUMN payload TEXT"),
     ("scrape_job_events", "created_at", "ALTER TABLE scrape_job_events ADD COLUMN created_at TIMESTAMP"),
     ("products", "is_listed", "ALTER TABLE products ADD COLUMN is_listed BOOLEAN DEFAULT TRUE"),
+    ("translation_suggestions", "auto_apply", "ALTER TABLE translation_suggestions ADD COLUMN auto_apply BOOLEAN DEFAULT FALSE"),
+    ("users", "default_pricing_rule_id", "ALTER TABLE users ADD COLUMN default_pricing_rule_id INTEGER"),
 )
 
 

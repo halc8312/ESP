@@ -14,7 +14,7 @@ from typing import Any, Iterable, Optional
 from sqlalchemy.orm import Session
 
 from database import SessionLocal
-from models import TranslationSuggestion
+from models import Product, TranslationSuggestion
 from time_utils import utc_now
 
 
@@ -42,6 +42,7 @@ def create_suggestion(
     source_description: Optional[str],
     source_title_hash: Optional[str],
     source_description_hash: Optional[str],
+    auto_apply: bool = False,
     session: Optional[Session] = None,
 ) -> TranslationSuggestion:
     """Insert a new suggestion row in the ``queued`` state."""
@@ -61,6 +62,7 @@ def create_suggestion(
             source_description=source_description,
             source_title_hash=source_title_hash,
             source_description_hash=source_description_hash,
+            auto_apply=auto_apply,
             status="queued",
             created_at=now,
             updated_at=now,
@@ -246,6 +248,46 @@ def list_suggestions_for_product(
     finally:
         if owns_session:
             session_db.close()
+
+
+def apply_suggestion_to_product(
+    suggestion: TranslationSuggestion,
+    session: Session,
+) -> dict[str, str | None]:
+    """Apply a succeeded suggestion's translations to the Product.
+
+    Returns a dict of field names that were actually updated on the
+    product.  The caller is responsible for committing the session.
+    """
+    from services.rich_text import normalize_rich_text
+
+    product = (
+        session.query(Product)
+        .filter_by(id=suggestion.product_id, user_id=suggestion.user_id)
+        .one_or_none()
+    )
+    if product is None:
+        return {}
+
+    changes: dict[str, str | None] = {}
+
+    if suggestion.translated_title:
+        product.custom_title_en = suggestion.translated_title
+        product.custom_title_en_source_hash = suggestion.source_title_hash
+        changes["custom_title_en"] = suggestion.translated_title
+
+    if suggestion.translated_description:
+        sanitised = normalize_rich_text(suggestion.translated_description) or None
+        if sanitised:
+            product.custom_description_en = sanitised
+            product.custom_description_en_source_hash = suggestion.source_description_hash
+            changes["custom_description_en"] = sanitised
+
+    if changes:
+        suggestion.status = "applied"
+        suggestion.updated_at = utc_now()
+
+    return changes
 
 
 def serialize_suggestion(row: TranslationSuggestion) -> dict[str, Any]:

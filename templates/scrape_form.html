@@ -151,6 +151,19 @@
                     <input type="checkbox" id="scrapePreviewSelectAll">
                     すべて選択
                 </label>
+                <div class="scrape-register-options">
+                    <label class="scrape-register-option">
+                        <input type="checkbox" id="scrapeTranslateCheck">
+                        英訳する（自動適用）
+                    </label>
+                    <label class="scrape-register-option{% if not has_default_pricing_rule %} is-disabled{% endif %}">
+                        <input type="checkbox" id="scrapePricingCheck"{% if not has_default_pricing_rule %} disabled{% endif %}>
+                        利益を上乗せする（デフォルトルール）
+                        {% if not has_default_pricing_rule %}
+                        <span class="scrape-register-hint">設定画面でデフォルトルールを選択してください</span>
+                        {% endif %}
+                    </label>
+                </div>
                 <button type="button" id="registerSelectedButton" class="btn btn-primary" data-loading-label="登録しています..." disabled>商品一覧に登録</button>
                 <button type="button" id="registerToListButton" class="btn btn-secondary" disabled>商品リストにのみ登録</button>
             </div>
