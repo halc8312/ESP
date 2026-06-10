@@ -23,7 +23,10 @@ def _parse_ids_and_params(session_db):
     markup = request.args.get("markup", type=float) or 1.0
     qty = request.args.get("qty", type=int) or 1
 
-    query = session_db.query(Product).filter(Product.user_id == current_user.id)
+    query = session_db.query(Product).filter(
+        Product.user_id == current_user.id,
+        Product.is_listed.isnot(False),
+    )
     
     current_shop_id = session.get('current_shop_id')
     if current_shop_id:

@@ -203,6 +203,7 @@ def dashboard():
             Product.user_id == current_user.id,
             Product.archived != True,
             Product.deleted_at == None,
+            Product.is_listed.isnot(False),
         )
         if current_shop_id:
             base_query = base_query.filter(Product.shop_id == current_shop_id)
@@ -221,6 +222,7 @@ def dashboard():
                 Product.user_id == current_user.id,
                 Product.archived != True,
                 Product.deleted_at == None,
+                Product.is_listed.isnot(False),
             )
             .filter(Variant.inventory_qty == 0)
         )
@@ -331,7 +333,8 @@ def index():
         base_query = session_db.query(Product).filter(
             Product.user_id == current_user.id,
             Product.archived != True,  # Exclude archived products
-            Product.deleted_at == None  # Exclude deleted products (trash)
+            Product.deleted_at == None,  # Exclude deleted products (trash)
+            Product.is_listed.isnot(False),  # Exclude pricelist-only products
         )
 
         sites = [s[0] for s in base_query.with_entities(Product.site).distinct().all()]

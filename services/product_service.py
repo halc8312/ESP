@@ -166,6 +166,7 @@ def save_scraped_items_to_db(
     manual_selection: bool = False,
     return_summary: bool = False,
     raise_on_error: bool = False,
+    is_listed: bool = True,
 ):
     """
     mercari_db.scrape_search_result() が返した items(list[dict]) を
@@ -183,6 +184,7 @@ def save_scraped_items_to_db(
     rejected_count = 0
     now = utc_now()
     repricing_product_ids = set()
+    saved_product_ids: list[int] = []
 
     resolved_shop_id = shop_id
     if resolved_shop_id is None and has_request_context():
@@ -239,6 +241,7 @@ def save_scraped_items_to_db(
                     last_title=title,
                     last_price=price,
                     last_status=status,
+                    is_listed=is_listed,
                     created_at=now,
                     updated_at=now,
                 )
@@ -296,6 +299,9 @@ def save_scraped_items_to_db(
                 if product.shop_id is None and resolved_shop_id is not None:
                     product.shop_id = resolved_shop_id
 
+                if manual_selection and is_listed and product.is_listed is False:
+                    product.is_listed = True
+
                 if persistence_action == "allow_status_only":
                     status_changed = bool(status) and product.last_status != status
                     product.last_status = status or product.last_status
@@ -307,6 +313,7 @@ def save_scraped_items_to_db(
                     if status_changed:
                         updated_count += 1
                     processed_count += 1
+                    saved_product_ids.append(product.id)
                     continue
 
                 title_changed = bool(title.strip()) and product.last_title != title
@@ -336,6 +343,9 @@ def save_scraped_items_to_db(
                         existing_variant.inventory_qty = existing_variant.inventory_qty or 1
                 processed_count += 1
 
+            if product.id not in saved_product_ids:
+                saved_product_ids.append(product.id)
+
             cached_image_urls = _cache_external_images(
                 image_urls, product.id
             )
@@ -364,6 +374,7 @@ def save_scraped_items_to_db(
             "new_count": new_count,
             "updated_count": updated_count,
             "rejected_count": rejected_count,
+            "product_ids": saved_product_ids,
         }
         return summary if return_summary else (new_count, updated_count)
     except Exception:

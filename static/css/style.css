@@ -4416,6 +4416,7 @@ body.sidebar-open .scrape-progress-panel {
 }
 
 .scrape-preview-card {
+    position: relative;
     display: grid;
     grid-template-columns: 24px 72px minmax(0, 1fr);
     gap: 10px;
@@ -4425,6 +4426,49 @@ body.sidebar-open .scrape-progress-panel {
     border-radius: 10px;
     background: #fff;
     cursor: pointer;
+}
+
+.scrape-preview-remove {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-color);
+    border-radius: 50%;
+    background: #fff;
+    color: #666;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+}
+
+.scrape-preview-remove:hover {
+    background: #fee2e2;
+    border-color: #fca5a5;
+    color: #b91c1c;
+}
+
+.scrape-pricelist-panel {
+    margin: 12px 0;
+    padding: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: #f8fafc;
+}
+
+.scrape-pricelist-panel .form-group {
+    margin-bottom: 10px;
+}
+
+.scrape-pricelist-panel-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
 }
 
 .scrape-preview-image {

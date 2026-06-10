@@ -82,6 +82,9 @@ class Product(Base):
     # Archive (SOLD Stacking)
     archived = Column(Boolean, default=False)
 
+    # 商品一覧に表示するか（False = 顧客向け商品リスト専用）
+    is_listed = Column(Boolean, default=True)
+
     # Trash (Soft Delete)
     deleted_at = Column(DateTime, nullable=True)  # NULL = not deleted
 

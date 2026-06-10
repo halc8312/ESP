@@ -353,7 +353,7 @@ def test_run_alembic_upgrade_for_database_url_backfills_tracker_dismissed_at_fro
     assert "ix_scrape_jobs_tracker_dismissed_at" in indexes
     assert "selector_repair_candidates" in table_names
     assert "selector_active_rule_sets" in table_names
-    assert version_num == "20260424_0008"
+    assert version_num == "20260610_0009"
 
 
 def test_run_alembic_upgrade_adds_product_patrol_schedule_columns_from_previous_head():
@@ -437,7 +437,7 @@ def test_run_alembic_upgrade_adds_product_patrol_schedule_columns_from_previous_
     assert "next_patrol_at" in product_columns
     assert "ix_products_last_patrolled_at" in product_indexes
     assert "ix_products_next_patrol_at" in product_indexes
-    assert version_num == "20260424_0008"
+    assert version_num == "20260610_0009"
     assert _coerce_datetime(migrated_product["next_patrol_at"]) == legacy_backoff_until
     assert _coerce_datetime(migrated_product["updated_at"]) <= utc_now()
     assert _coerce_datetime(migrated_product["last_patrolled_at"]) <= utc_now()
