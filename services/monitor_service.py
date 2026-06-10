@@ -106,6 +106,7 @@ class MonitorService:
             products = session_db.query(Product).filter(
                 Product.site.in_(list(MonitorService._patrols.keys())),
                 Product.archived != True,
+                Product.is_listed.isnot(False),
                 Product.deleted_at == None,
                 or_(Product.next_patrol_at == None, Product.next_patrol_at <= now),
             ).order_by(asc(patrol_cursor), asc(Product.id)).limit(limit).all()

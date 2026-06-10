@@ -15,7 +15,15 @@
     var progressStatus = document.getElementById("scrapeProgressStatus");
     var selectAllCheckbox = document.getElementById("scrapePreviewSelectAll");
     var registerButton = document.getElementById("registerSelectedButton");
+    var registerToListButton = document.getElementById("registerToListButton");
+    var pricelistPanel = document.getElementById("pricelistRegisterPanel");
+    var pricelistSelect = document.getElementById("pricelistSelect");
+    var pricelistNewNameGroup = document.getElementById("pricelistNewNameGroup");
+    var pricelistNewNameInput = document.getElementById("pricelistNewName");
+    var pricelistConfirmButton = document.getElementById("pricelistRegisterConfirm");
+    var pricelistCancelButton = document.getElementById("pricelistRegisterCancel");
     var registerUrl = config.dataset.registerUrl;
+    var registerPricelistUrl = config.dataset.registerPricelistUrl;
     var statusUrlTemplate = config.dataset.statusUrlTemplate;
     var restoreJobId = config.dataset.restoreJobId;
     var activePreviewJob = null;
@@ -214,8 +222,18 @@
 
     function updateRegisterButtonState() {
         var checkedCount = previewGrid.querySelectorAll(".scrape-preview-checkbox:checked").length;
-        registerButton.disabled = !activePreviewJob || !activePreviewJob.jobId || checkedCount === 0;
+        var disabled = !activePreviewJob || !activePreviewJob.jobId || checkedCount === 0;
+        registerButton.disabled = disabled;
+        if (registerToListButton) {
+            registerToListButton.disabled = disabled;
+        }
         updateSelectionSummary();
+    }
+
+    function hidePricelistPanel() {
+        if (pricelistPanel) {
+            pricelistPanel.hidden = true;
+        }
     }
 
     function applyCardSelectionState(card, checkbox) {
@@ -243,6 +261,7 @@
 
         previewSection.hidden = false;
         clearFlash();
+        hidePricelistPanel();
         previewMeta.innerHTML = "";
         previewGrid.innerHTML = "";
         selectAllCheckbox.checked = true;
@@ -283,6 +302,22 @@
                 if (!checkbox.checked) {
                     selectAllCheckbox.checked = false;
                 }
+            });
+
+            var removeButton = document.createElement("button");
+            removeButton.type = "button";
+            removeButton.className = "scrape-preview-remove";
+            removeButton.setAttribute("aria-label", "この商品を除外");
+            removeButton.title = "この商品を除外";
+            removeButton.textContent = "×";
+            removeButton.addEventListener("click", function (event) {
+                event.preventDefault();
+                event.stopPropagation();
+                card.remove();
+                if (activePreviewJob) {
+                    activePreviewJob.excludedCount = (activePreviewJob.excludedCount || 0) + 1;
+                }
+                updateRegisterButtonState();
             });
 
             var imageWrap = document.createElement("div");
@@ -341,6 +376,7 @@
             }
 
             card.appendChild(checkbox);
+            card.appendChild(removeButton);
             card.appendChild(imageWrap);
             card.appendChild(body);
             applyCardSelectionState(card, checkbox);
@@ -579,6 +615,111 @@
                 updateRegisterButtonState();
             });
     });
+
+    if (registerToListButton && pricelistPanel) {
+        registerToListButton.addEventListener("click", function () {
+            if (!activePreviewJob || !activePreviewJob.jobId) {
+                return;
+            }
+            if (!getSelectedIndices().length) {
+                showFlash("登録する商品を選択してください。", "error");
+                return;
+            }
+            pricelistPanel.hidden = false;
+            pricelistPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+    }
+
+    if (pricelistSelect && pricelistNewNameGroup) {
+        pricelistSelect.addEventListener("change", function () {
+            pricelistNewNameGroup.hidden = !!pricelistSelect.value;
+        });
+    }
+
+    if (pricelistCancelButton) {
+        pricelistCancelButton.addEventListener("click", hidePricelistPanel);
+    }
+
+    if (pricelistConfirmButton) {
+        pricelistConfirmButton.addEventListener("click", function () {
+            if (!activePreviewJob || !activePreviewJob.jobId) {
+                return;
+            }
+
+            var selectedIndices = getSelectedIndices();
+            if (!selectedIndices.length) {
+                showFlash("登録する商品を選択してください。", "error");
+                return;
+            }
+
+            var priceListId = pricelistSelect ? pricelistSelect.value : "";
+            var newListName = pricelistNewNameInput ? pricelistNewNameInput.value.trim() : "";
+            if (!priceListId && !newListName) {
+                showFlash("登録先のリストを選択するか、新しいリスト名を入力してください。", "error");
+                return;
+            }
+
+            if (window.ESPUI) {
+                window.ESPUI.setButtonBusy(pricelistConfirmButton, true, pricelistConfirmButton.dataset.loadingLabel);
+            }
+
+            var csrfToken = getCsrfToken();
+            var headers = {
+                "Content-Type": "application/json"
+            };
+            if (csrfToken) {
+                headers["X-CSRFToken"] = csrfToken;
+            }
+
+            var payload = {
+                job_id: activePreviewJob.jobId,
+                selected_indices: selectedIndices
+            };
+            if (priceListId) {
+                payload.price_list_id = priceListId;
+            } else {
+                payload.new_list_name = newListName;
+            }
+
+            fetch(registerPricelistUrl, {
+                method: "POST",
+                headers: headers,
+                body: JSON.stringify(payload)
+            })
+                .then(function (response) {
+                    return parseJsonResponse(response, "リストへの登録に失敗しました");
+                })
+                .then(function (data) {
+                    hidePricelistPanel();
+                    setStep("review", "選択した商品を商品リストに登録しました。", "success");
+                    var message = "リスト「" + (data.price_list_name || "") + "」に" + data.added_to_list_count + "件登録しました。";
+                    showFlash(message, "success");
+                    if (data.price_list_url && previewMeta) {
+                        var listLink = document.createElement("a");
+                        if (assignUrl(listLink, "href", data.price_list_url)) {
+                            listLink.textContent = "登録したリストを開く";
+                            listLink.className = "scrape-preview-link";
+                            previewMeta.appendChild(listLink);
+                        }
+                    }
+                    if (window.ESPUI) {
+                        window.ESPUI.toast(message, { type: "success" });
+                    }
+                })
+                .catch(function (error) {
+                    showFlash(error.message || "リストへの登録に失敗しました", "error");
+                    if (window.ESPUI) {
+                        window.ESPUI.toast(error.message || "リストへの登録に失敗しました", { type: "error" });
+                    }
+                })
+                .finally(function () {
+                    if (window.ESPUI) {
+                        window.ESPUI.setButtonBusy(pricelistConfirmButton, false);
+                    }
+                    updateRegisterButtonState();
+                });
+        });
+    }
 
     selectAllCheckbox.addEventListener("change", function () {
         previewGrid.querySelectorAll(".scrape-preview-checkbox").forEach(function (checkbox) {

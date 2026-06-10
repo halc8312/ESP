@@ -151,7 +151,29 @@
                     <input type="checkbox" id="scrapePreviewSelectAll">
                     すべて選択
                 </label>
-                <button type="button" id="registerSelectedButton" class="btn btn-primary" data-loading-label="登録しています..." disabled>選択した商品を登録</button>
+                <button type="button" id="registerSelectedButton" class="btn btn-primary" data-loading-label="登録しています..." disabled>商品一覧に登録</button>
+                <button type="button" id="registerToListButton" class="btn btn-secondary" disabled>商品リストにのみ登録</button>
+            </div>
+        </div>
+
+        <div id="pricelistRegisterPanel" class="scrape-pricelist-panel" hidden>
+            <p class="text-muted">選択した商品を顧客閲覧用の商品リストにのみ登録します（商品一覧には表示されません）。</p>
+            <div class="form-group">
+                <label for="pricelistSelect">登録先の商品リスト</label>
+                <select id="pricelistSelect">
+                    <option value="">新しいリストを作成...</option>
+                    {% for price_list in price_lists|default([]) %}
+                    <option value="{{ price_list.id }}">{{ price_list.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" id="pricelistNewNameGroup">
+                <label for="pricelistNewName">新しいリスト名</label>
+                <input type="text" id="pricelistNewName" placeholder="例: お問い合わせ様向けリスト">
+            </div>
+            <div class="scrape-pricelist-panel-actions">
+                <button type="button" id="pricelistRegisterConfirm" class="btn btn-primary" data-loading-label="登録しています...">リストに登録する</button>
+                <button type="button" id="pricelistRegisterCancel" class="btn btn-text">キャンセル</button>
             </div>
         </div>
 
@@ -162,6 +184,7 @@
 <div
     id="scrapePageConfig"
     data-register-url="{{ url_for('scrape.register_selected') }}"
+    data-register-pricelist-url="{{ url_for('scrape.register_to_pricelist') }}"
     data-status-url-template="{{ url_for('api.get_scrape_status', job_id='__JOB_ID__') }}"
     data-restore-job-id="{{ request.args.get('job_id', '') }}"
 ></div>
