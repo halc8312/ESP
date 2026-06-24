@@ -7,7 +7,7 @@ psycopg2-binary==2.9.12
 redis==7.4.0
 rq==2.8.0
 requests==2.33.0
-pandas==3.0.1
+pandas==3.0.2
 gunicorn==25.1.0
 Flask-Login==0.6.3
 pytest==9.0.3
