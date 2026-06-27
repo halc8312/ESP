@@ -33,6 +33,22 @@ class ImageValidationError(ValueError):
     """Raised when an image is missing, too large, or not a supported image."""
 
 
+def split_image_url_string(pipe_separated: str | None) -> list[str]:
+    """Return de-duplicated image URLs from a pipe-separated snapshot field."""
+    if not pipe_separated:
+        return []
+
+    urls: list[str] = []
+    seen: set[str] = set()
+    for raw_url in pipe_separated.split("|"):
+        url = raw_url.strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+    return urls
+
+
 def _allowed_hosts():
     raw_hosts = os.environ.get("ALLOWED_IMAGE_HOSTS", "")
     return {host.strip().lower() for host in raw_hosts.split(",") if host.strip()}

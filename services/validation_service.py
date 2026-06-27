@@ -3,6 +3,7 @@ Validation Service
 
 Checks products for issues that would prevent successful export to Shopify/eBay.
 """
+from services.image_service import split_image_url_string
 
 
 def validate_product(product, snapshot=None):
@@ -45,9 +46,7 @@ def validate_product(product, snapshot=None):
     # 4. No Images
     has_images = False
     if snapshot and snapshot.image_urls:
-        # image_urls is pipe-separated string
-        images = [img for img in snapshot.image_urls.split("|") if img.strip()]
-        has_images = len(images) > 0
+        has_images = bool(split_image_url_string(snapshot.image_urls))
     
     if not has_images:
         issues.append({
