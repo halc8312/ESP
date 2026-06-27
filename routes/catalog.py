@@ -9,10 +9,12 @@ from urllib.parse import urlparse
 
 from flask import Blueprint, render_template, abort, jsonify, request, session
 from flask_login import login_required, current_user
+from sqlalchemy import func, select
 from sqlalchemy.orm import joinedload, subqueryload
 
 from database import SessionLocal, _session_factory
-from models import Shop, PriceList, PriceListItem, Product, CatalogPageView
+from models import Shop, PriceList, PriceListItem, Product, ProductSnapshot, CatalogPageView
+from services.image_service import split_image_url_string
 from services.rich_text import build_rich_text_excerpt, normalize_rich_text, rich_text_to_plain_text
 from time_utils import utc_now
 
@@ -23,9 +25,42 @@ SOCIAL_REFERRERS = ("facebook.", "instagram.", "tiktok.", "twitter.", "x.com", "
 
 
 def _latest_snapshot(product):
+    if hasattr(product, "latest_snapshot"):
+        return product.latest_snapshot
     if not product.snapshots:
         return None
     return sorted(product.snapshots, key=lambda s: s.scraped_at, reverse=True)[0]
+
+
+def _attach_latest_snapshots(session_db, products):
+    product_ids = [product.id for product in products if product is not None]
+    if not product_ids:
+        return
+
+    ranked_snapshots = (
+        select(
+            ProductSnapshot.id.label("snapshot_id"),
+            ProductSnapshot.product_id.label("product_id"),
+            func.row_number()
+            .over(
+                partition_by=ProductSnapshot.product_id,
+                order_by=(ProductSnapshot.scraped_at.desc(), ProductSnapshot.id.desc()),
+            )
+            .label("snapshot_rank"),
+        )
+        .where(ProductSnapshot.product_id.in_(product_ids))
+        .subquery()
+    )
+    snapshots = (
+        session_db.query(ProductSnapshot)
+        .join(ranked_snapshots, ProductSnapshot.id == ranked_snapshots.c.snapshot_id)
+        .filter(ranked_snapshots.c.snapshot_rank == 1)
+        .all()
+    )
+    snapshots_by_product = {snapshot.product_id: snapshot for snapshot in snapshots}
+    for product in products:
+        if product is not None:
+            product.latest_snapshot = snapshots_by_product.get(product.id)
 
 
 def _pricelist_by_token(session_db, token):
@@ -80,9 +115,7 @@ def _build_catalog_item(item):
         return None
 
     snapshot = _latest_snapshot(p)
-    image_urls = []
-    if snapshot and snapshot.image_urls:
-        image_urls = [url.strip() for url in snapshot.image_urls.split("|") if url.strip()]
+    image_urls = split_image_url_string(snapshot.image_urls if snapshot else None)
 
     display_title = p.custom_title or p.last_title or "(No Title)"
     display_price = item.custom_price or p.selling_price or p.last_price or 0
@@ -188,12 +221,12 @@ def catalog_view(token):
                 PriceListItem.visible == True,
             )
             .join(Product)
-            .options(subqueryload(PriceListItem.product).subqueryload(Product.snapshots))
-            .options(subqueryload(PriceListItem.product).subqueryload(Product.variants))
-            .options(subqueryload(PriceListItem.product).joinedload(Product.shop))
+            .options(joinedload(PriceListItem.product).subqueryload(Product.variants))
+            .options(joinedload(PriceListItem.product).joinedload(Product.shop))
             .order_by(PriceListItem.sort_order)
             .all()
         )
+        _attach_latest_snapshots(session_db, [item.product for item in items])
 
         # Process items for display
         catalog_items = []
@@ -240,13 +273,13 @@ def catalog_product_detail(token, product_id):
                 PriceListItem.visible == True,
             )
             .join(Product)
-            .options(subqueryload(PriceListItem.product).subqueryload(Product.snapshots))
-            .options(subqueryload(PriceListItem.product).subqueryload(Product.variants))
+            .options(joinedload(PriceListItem.product).subqueryload(Product.variants))
             .first()
         )
         if not item:
             return jsonify({"error": "Not found"}), 404
 
+        _attach_latest_snapshots(session_db, [item.product])
         catalog_item = _build_catalog_item(item)
         if catalog_item is None:
             return jsonify({"error": "Not found"}), 404
