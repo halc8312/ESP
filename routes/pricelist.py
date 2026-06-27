@@ -8,6 +8,7 @@ from sqlalchemy.orm import subqueryload
 
 from database import SessionLocal
 from models import Shop, Product, ProductSnapshot, Variant, PriceList, PriceListItem
+from services.image_service import split_image_url_string
 from services.rich_text import normalize_rich_text
 from time_utils import utc_now
 
@@ -267,10 +268,8 @@ def pricelist_items(pricelist_id):
                 sorted(p.snapshots, key=lambda s: s.scraped_at, reverse=True)[0]
                 if p.snapshots else None
             )
-            item.thumb_url = (
-                snapshot.image_urls.split("|")[0]
-                if snapshot and snapshot.image_urls else ""
-            )
+            image_urls = split_image_url_string(snapshot.image_urls if snapshot else None)
+            item.thumb_url = image_urls[0] if image_urls else ""
             item.display_title = p.custom_title or p.last_title or "(タイトルなし)"
             item.display_price = item.custom_price or p.selling_price or p.last_price
             item.total_stock = sum(v.inventory_qty or 0 for v in p.variants)
@@ -405,10 +404,8 @@ def pricelist_add_products_page(pricelist_id):
                 sorted(p.snapshots, key=lambda s: s.scraped_at, reverse=True)[0]
                 if p.snapshots else None
             )
-            p.thumb_url = (
-                snapshot.image_urls.split("|")[0]
-                if snapshot and snapshot.image_urls else ""
-            )
+            image_urls = split_image_url_string(snapshot.image_urls if snapshot else None)
+            p.thumb_url = image_urls[0] if image_urls else ""
             p.already_added = p.id in existing_ids
 
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()

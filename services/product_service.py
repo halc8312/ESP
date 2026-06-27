@@ -9,6 +9,7 @@ from flask import has_request_context, session
 
 from database import SessionLocal
 from models import Product, ProductSnapshot, Variant
+from services.image_service import split_image_url_string
 from services.pricing_service import product_has_pricing_config, update_product_selling_price
 from services.scrape_result_policy import (
     evaluate_persistence,
@@ -45,7 +46,7 @@ def _normalize_text(value) -> str:
 
 def _normalize_image_urls(value) -> list[str]:
     if isinstance(value, str):
-        candidates = value.replace("\r", "\n").replace("|", "\n").split("\n")
+        candidates = split_image_url_string(value.replace("\r", "|").replace("\n", "|"))
     elif isinstance(value, (list, tuple, set)):
         candidates = value
     else:

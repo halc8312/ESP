@@ -51,7 +51,7 @@ from services.bg_remover.job_store import (
     serialize_job,
     serialize_jobs,
 )
-from services.image_service import IMAGE_STORAGE_PATH
+from services.image_service import IMAGE_STORAGE_PATH, split_image_url_string
 from services.media_queue import (
     enqueue_media_job,
     resolve_media_queue_name,
@@ -90,9 +90,7 @@ def _iter_current_image_urls(session_db, product: Product) -> list[str]:
         .order_by(ProductSnapshot.scraped_at.desc())
         .first()
     )
-    if not snap or not snap.image_urls:
-        return []
-    return [url.strip() for url in snap.image_urls.split("|") if url.strip()]
+    return split_image_url_string(snap.image_urls if snap else None)
 
 
 def _is_allowed_source_image_url(url: str) -> bool:

@@ -6,11 +6,31 @@ on:
       - 'Dockerfile'
       - 'requirements.txt'
       - '.dockerignore'
+      - '.github/workflows/docker-build.yml'
+      - '*.py'
+      - 'alembic/**'
+      - 'config/**'
+      - 'jobs/**'
+      - 'routes/**'
+      - 'services/**'
+      - 'static/**'
+      - 'templates/**'
+      - 'utils/**'
   pull_request:
     paths:
       - 'Dockerfile'
       - 'requirements.txt'
       - '.dockerignore'
+      - '.github/workflows/docker-build.yml'
+      - '*.py'
+      - 'alembic/**'
+      - 'config/**'
+      - 'jobs/**'
+      - 'routes/**'
+      - 'services/**'
+      - 'static/**'
+      - 'templates/**'
+      - 'utils/**'
 
 permissions:
   contents: read

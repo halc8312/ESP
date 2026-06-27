@@ -30,28 +30,12 @@ from services.snkrdunk_browser_fetch import (
     fetch_snkrdunk_page_via_browser_pool_sync,
     should_use_snkrdunk_browser_pool_dynamic,
 )
+from utils.env_helpers import env_flag as _env_flag, env_int as _env_int
 
 
 logger = logging.getLogger("repair_worker")
 
 _CANARY_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "repair_canaries.json"
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = str(os.environ.get(name, "") or "").strip()
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
-
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _dedupe_urls(urls: list[str]) -> list[str]:

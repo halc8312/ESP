@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable
 from playwright.async_api import async_playwright
 
 from services.browser_runtime import BrowserRuntimeConfig, SharedBrowserRuntime
+from utils.env_helpers import env_flag as _env_flag
 
 
 _POOL_LOCK = threading.RLock()
@@ -25,13 +26,6 @@ _DEFAULT_LAUNCH_ARGS = (
     "--disable-extensions",
     "--disable-background-networking",
 )
-
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _site_env_name(site: str, suffix: str) -> str:

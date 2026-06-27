@@ -8,7 +8,7 @@ from flask_login import login_required, current_user
 
 from database import SessionLocal
 from models import Product, Variant, ProductSnapshot
-from services.image_service import cache_mercari_image, download_external_image
+from services.image_service import cache_mercari_image, download_external_image, split_image_url_string
 from services.rich_text import normalize_rich_text
 
 export_bp = Blueprint('export', __name__)
@@ -85,7 +85,7 @@ def export_shopify():
             image_urls = []
             if snapshot and snapshot.image_urls:
                 base_url = request.url_root.rstrip('/')
-                original_urls = snapshot.image_urls.split("|")
+                original_urls = split_image_url_string(snapshot.image_urls)
                 for i, mercari_url in enumerate(original_urls):
                     local_filename = cache_mercari_image(mercari_url, product.id, i)
                     if local_filename:
@@ -242,7 +242,7 @@ def export_ebay():
 
             image_urls = []
             if snap and snap.image_urls:
-                image_urls = [u for u in snap.image_urls.split("|") if u]
+                image_urls = split_image_url_string(snap.image_urls)
             pic_url = "|".join(image_urls) if image_urls else ""
 
             custom_label = f"MERCARI-{p.id}"
@@ -379,7 +379,7 @@ def export_images():
                 if not snapshot or not snapshot.image_urls:
                     continue
                 
-                image_urls = [u for u in snapshot.image_urls.split("|") if u]
+                image_urls = split_image_url_string(snapshot.image_urls)
                 product_folder = f"product_{product.id}"
                 
                 for i, img_url in enumerate(image_urls):

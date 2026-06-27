@@ -11,16 +11,20 @@ jobs:
   opencode:
     if: |
       github.event_name == 'workflow_dispatch' ||
-      startsWith(github.event.comment.body, '/oc') ||
-      startsWith(github.event.comment.body, '/opencode') ||
-      contains(github.event.comment.body, ' /oc') ||
-      contains(github.event.comment.body, ' /opencode') ||
-      contains(github.event.comment.body, '\n/oc') ||
-      contains(github.event.comment.body, '\n/opencode')
+      (
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+        (
+          startsWith(github.event.comment.body, '/oc') ||
+          startsWith(github.event.comment.body, '/opencode') ||
+          contains(github.event.comment.body, ' /oc') ||
+          contains(github.event.comment.body, ' /opencode') ||
+          contains(github.event.comment.body, '\n/oc') ||
+          contains(github.event.comment.body, '\n/opencode')
+        )
+      )
     runs-on: ubuntu-latest
 
     permissions:
-      id-token: write
       contents: write
       pull-requests: write
       issues: write
@@ -33,7 +37,7 @@ jobs:
           persist-credentials: false
 
       - name: Run opencode
-        uses: anomalyco/opencode/github@latest
+        uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a
         env:
           STEPFUN_API_KEY: ${{ secrets.STEPFUN_API_KEY }}
         with:

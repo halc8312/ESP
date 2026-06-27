@@ -30,7 +30,10 @@ jobs:
         run: python -m pip check
 
       - name: Dependency vulnerability audit
-        run: python -m pip_audit -r requirements.txt
+        run: |
+          # argostranslate 1.11.0 currently hard-pins stanza==1.10.1.
+          # Remove this ignore once argostranslate ships a fixed stanza dependency.
+          python -m pip_audit -r requirements.txt --ignore-vuln CVE-2026-54499
 
       - name: Test
         run: python -m pytest -q

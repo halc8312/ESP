@@ -7,10 +7,11 @@ from datetime import datetime
 from flask import Blueprint, render_template, request, session, redirect, url_for
 from flask_login import login_required, current_user
 from sqlalchemy.orm import subqueryload
-from sqlalchemy import func
+from sqlalchemy import func, or_, select
 
 from database import SessionLocal
 from models import Shop, Product, Variant, ProductSnapshot
+from services.image_service import split_image_url_string
 from services.rich_text import normalize_rich_text
 from services.validation_service import validate_product, get_issue_summary
 from time_utils import utc_now
@@ -155,9 +156,103 @@ def _latest_snapshot_for_dashboard(product):
 
 
 def _split_snapshot_image_urls(snapshot):
-    if not snapshot or not snapshot.image_urls:
-        return []
-    return [url.strip() for url in snapshot.image_urls.split("|") if url.strip()]
+    return split_image_url_string(snapshot.image_urls if snapshot else None)
+
+
+def _ranked_snapshot_select(product_ids_select):
+    return (
+        select(
+            ProductSnapshot.id.label("snapshot_id"),
+            ProductSnapshot.product_id.label("product_id"),
+            ProductSnapshot.price.label("price"),
+            ProductSnapshot.status.label("status"),
+            func.row_number()
+            .over(
+                partition_by=ProductSnapshot.product_id,
+                order_by=(ProductSnapshot.scraped_at.desc(), ProductSnapshot.id.desc()),
+            )
+            .label("snapshot_rank"),
+        )
+        .join(product_ids_select, ProductSnapshot.product_id == product_ids_select.c.product_id)
+    )
+
+
+def _changed_product_ids_select(product_query):
+    product_ids = product_query.with_entities(Product.id.label("product_id")).order_by(None).subquery()
+    ranked_snapshots = _ranked_snapshot_select(product_ids).subquery()
+    latest = (
+        select(
+            ranked_snapshots.c.product_id,
+            ranked_snapshots.c.price,
+            ranked_snapshots.c.status,
+        )
+        .where(ranked_snapshots.c.snapshot_rank == 1)
+        .subquery()
+    )
+    previous = (
+        select(
+            ranked_snapshots.c.product_id,
+            ranked_snapshots.c.price,
+            ranked_snapshots.c.status,
+        )
+        .where(ranked_snapshots.c.snapshot_rank == 2)
+        .subquery()
+    )
+
+    return (
+        select(latest.c.product_id)
+        .join(previous, latest.c.product_id == previous.c.product_id)
+        .where(
+            or_(
+                latest.c.price.is_distinct_from(previous.c.price),
+                latest.c.status.is_distinct_from(previous.c.status),
+            )
+        )
+    )
+
+
+def _load_recent_snapshots_by_product(session_db, product_ids):
+    if not product_ids:
+        return {}
+
+    product_ids_select = (
+        select(Product.id.label("product_id"))
+        .where(Product.id.in_(product_ids))
+        .subquery()
+    )
+    ranked_snapshots = _ranked_snapshot_select(product_ids_select).subquery()
+    rows = (
+        session_db.query(ProductSnapshot, ranked_snapshots.c.snapshot_rank)
+        .join(ranked_snapshots, ProductSnapshot.id == ranked_snapshots.c.snapshot_id)
+        .filter(ranked_snapshots.c.snapshot_rank <= 2)
+        .order_by(ranked_snapshots.c.product_id, ranked_snapshots.c.snapshot_rank)
+        .all()
+    )
+
+    snapshots_by_product = {}
+    for snapshot, snapshot_rank in rows:
+        snapshots_by_product.setdefault(snapshot.product_id, {})[int(snapshot_rank)] = snapshot
+    return snapshots_by_product
+
+
+def _annotate_products_for_index(session_db, products):
+    snapshots_by_product = _load_recent_snapshots_by_product(
+        session_db,
+        [product.id for product in products],
+    )
+    for product in products:
+        recent = snapshots_by_product.get(product.id, {})
+        latest = recent.get(1)
+        previous = recent.get(2)
+        product.latest_snapshot = latest
+        product.has_changed = bool(
+            latest
+            and previous
+            and (
+                latest.price != previous.price
+                or latest.status != previous.status
+            )
+        )
 
 
 def _build_dashboard_product_row(product):
@@ -342,12 +437,13 @@ def index():
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         current_shop_id = session.get('current_shop_id')
         
-        # Site statistics - count products per site
-        site_stats = {}
-        for site in sites:
-            count = base_query.filter(Product.site == site).count()
-            site_stats[site] = count
-        total_count = base_query.count()
+        site_stats = dict(
+            base_query
+            .with_entities(Product.site, func.count(Product.id))
+            .group_by(Product.site)
+            .all()
+        )
+        total_count = base_query.order_by(None).count()
 
         query = base_query
         if current_shop_id:
@@ -389,30 +485,16 @@ def index():
         else:  # default: updated_desc
             query = query.order_by(Product.updated_at.desc())
 
-        all_products = query.options(subqueryload(Product.snapshots)).all()
+        if selected_change_filter == 'changed':
+            query = query.filter(Product.id.in_(_changed_product_ids_select(query)))
 
-        products_to_display = []
-        for p in all_products:
-            p.has_changed = False
-            if len(p.snapshots) >= 2:
-                sorted_snapshots = sorted(p.snapshots, key=lambda s: s.scraped_at, reverse=True)
-                latest = sorted_snapshots[0]
-                previous = sorted_snapshots[1]
-                if latest.price != previous.price or latest.status != previous.status:
-                    p.has_changed = True
-            
-            if selected_change_filter == 'changed':
-                if p.has_changed:
-                    products_to_display.append(p)
-            else:
-                products_to_display.append(p)
-
-        total_items = len(products_to_display)
+        total_items = query.order_by(None).count()
         total_pages = max(1, (total_items + PAGE_SIZE - 1) // PAGE_SIZE)
         if page > total_pages:
             page = total_pages
         offset = (page - 1) * PAGE_SIZE
-        paginated_products = products_to_display[offset : offset + PAGE_SIZE]
+        paginated_products = query.offset(offset).limit(PAGE_SIZE).all()
+        _annotate_products_for_index(session_db, paginated_products)
         page_start = offset + 1 if total_items else 0
         page_end = min(offset + PAGE_SIZE, total_items)
         page_numbers = list(range(max(1, page - 2), min(total_pages, page + 2) + 1))

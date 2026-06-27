@@ -254,7 +254,7 @@
                 </thead>
                 <tbody>
                     {% for p in products %}
-                    {% set first_snapshot = p.snapshots|sort(attribute='scraped_at', reverse=true)|first if p.snapshots else none %}
+                    {% set first_snapshot = p.latest_snapshot %}
                     {% set thumb_url = first_snapshot.image_urls.split('|')[0] if first_snapshot and first_snapshot.image_urls else '' %}
                     <tr class="{{ 'changed' if p.has_changed else '' }}">
                         <td>
@@ -325,7 +325,7 @@
 
         <div class="product-card-mobile">
             {% for p in products %}
-            {% set first_snapshot = p.snapshots|sort(attribute='scraped_at', reverse=true)|first if p.snapshots else none %}
+            {% set first_snapshot = p.latest_snapshot %}
             {% set thumb_url = first_snapshot.image_urls.split('|')[0] if first_snapshot and first_snapshot.image_urls else '' %}
             <article class="product-card {{ 'changed' if p.has_changed else '' }}">
                 <div class="product-checkbox-wrapper">

@@ -184,28 +184,30 @@ Shopify 用 CSV を生成して一括出品
 ### Web フレームワーク
 | ライブラリ | バージョン | 用途 |
 |---|---|---|
-| Flask | 最新 | Web フレームワーク |
-| SQLAlchemy | 最新 | ORM |
-| Flask-Login | 最新 | 認証・セッション |
-| Flask-APScheduler | 最新 | バックグラウンドスケジューラ |
-| Gunicorn | 最新 | WSGI 本番サーバー |
+| Flask | `requirements.txt` で固定 | Web フレームワーク |
+| SQLAlchemy | `requirements.txt` で固定 | ORM |
+| Flask-Login | `requirements.txt` で固定 | 認証・セッション |
+| Flask-APScheduler | `requirements.txt` で固定 | バックグラウンドスケジューラ |
+| Gunicorn | `requirements.txt` で固定 | WSGI 本番サーバー |
 
 ### スクレイピング・HTTP
 | ライブラリ | バージョン | 用途 |
 |---|---|---|
-| Scrapling | 最新 | 高速 HTTP クライアント（Fetcher / StealthyFetcher） |
-| Playwright | 最新 | ブラウザ自動操作（JS 重複サイト用） |
-| Patchright | 最新 | Playwright ブラウザバイナリ管理 |
-| curl_cffi | 最新 | アンチボット HTTP クライアント |
-| BeautifulSoup4 | 最新 | HTML パース |
-| requests | 最新 | HTTP クライアント（補助用） |
+| Scrapling | `requirements.txt` で固定 | 高速 HTTP クライアント（Fetcher / StealthyFetcher） |
+| Playwright | `requirements.txt` で固定 | ブラウザ自動操作（JS 重複サイト用） |
+| Patchright | `requirements.txt` で固定 | Playwright ブラウザバイナリ管理 |
+| curl_cffi | `requirements.txt` で固定 | アンチボット HTTP クライアント |
+| BeautifulSoup4 | `requirements.txt` で固定 | HTML パース |
+| requests | `requirements.txt` で固定 | HTTP クライアント（補助用） |
 
 ### データ処理・その他
 | ライブラリ | バージョン | 用途 |
 |---|---|---|
-| pandas | 最新 | CSV 生成・処理 |
-| msgspec | 最新 | 高速 JSON シリアライズ |
-| browserforge | 最新 | ブラウザフィンガープリント生成 |
+| msgspec | `requirements.txt` で固定 | 高速 JSON シリアライズ |
+| browserforge | `requirements.txt` で固定 | ブラウザフィンガープリント生成 |
+| nh3 | `requirements.txt` で固定 | HTML サニタイズ |
+| argostranslate / openai | `requirements.txt` で固定 | 翻訳バックエンド |
+| Pillow / rembg | `requirements.txt` で固定 | 画像処理 |
 
 ### インフラ
 - **コンテナ**: Docker（Python 3.11-slim ベース）
@@ -308,8 +310,11 @@ docker run -p 10000:10000 \
 ### ローカル環境（Python 3.11+）
 
 ```bash
-# 1. 依存パッケージのインストール
-pip install -r requirements.txt
+# 1. 依存パッケージのインストール（アプリ実行のみ）
+python -m pip install -r requirements.txt
+
+# 開発・テスト・依存監査も行う場合はこちら（runtime 依存を含む）
+python -m pip install -r requirements-dev.txt
 
 # 2. Playwright / Scrapling ブラウザのインストール
 scrapling install
@@ -476,6 +481,7 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 | `LOG_LEVEL` | `INFO` (`worker.py`) | worker/browser pool instrumentation の出力レベル |
 | `PORT` | `10000` | Gunicorn バインドポート |
 | `IMAGE_STORAGE_PATH` | `static/images` | ダウンロード画像、ショップロゴ、商品アップロード画像の保存先。Render disk を付ける場合は `/var/data/images` を推奨 |
+| `IMPORT_PREVIEW_STORAGE_PATH` | Flask `instance/import_previews` | CSV インポートのプレビュー本文を一時保存するサーバー側パス。session には不透明トークンだけを保持する |
 | `MERCARI_USE_NETWORK_PAYLOAD` | `false` | メルカリ API インターセプト有効化 |
 | `{SITE}_DETAIL_CONCURRENCY` | サイト依存 | 詳細ページの並列取得数 |
 | `{SITE}_DETAIL_TIMEOUT` | サイト依存 | タイムアウト秒数 |
@@ -608,6 +614,9 @@ APScheduler により **15 分おきに全登録商品を巡回**し、価格・
 ## 12. テスト
 
 ```bash
+# 開発・テスト・依存監査ツールを含めてインストール
+python -m pip install -r requirements-dev.txt
+
 # テスト全体を実行
 python -m pytest tests/ -v
 
@@ -635,8 +644,8 @@ python -m pytest -k "mercari" -v
 | `test_selector_healer.py` | セルフヒーリングセレクター |
 | `test_auth.py` | 認証 |
 
-> **既知の前提**: CI 環境では `scrapling` の一部依存（`patchright`, `msgspec`）が未インストールの場合があります。  
-> テストは `sys.modules` モックで対応しています（`tests/conftest.py` 参照）。
+> **既知の前提**: ブラウザバイナリは Python パッケージとは別に `scrapling install` / `patchright install chromium` で導入します。<br>
+> live browser を必要としないテストでは、重い外部依存を `tests/conftest.py` 側で隔離・初期化しています。
 
 ---
 
@@ -648,9 +657,10 @@ ESP/
 ├── models.py                   # SQLAlchemy ORM モデル（13 テーブル）
 ├── database.py                 # DB 設定（SQLite WAL モード、SessionLocal）
 ├── requirements.txt            # Python 依存パッケージ
+├── requirements-dev.txt        # 開発・テスト・依存監査用パッケージ
 ├── Dockerfile                  # Docker ビルド設定
 ├── selector_config.py          # CSS セレクター読み込み・キャッシュ
-├── utils.py                    # 共通ユーティリティ
+├── utils/                      # 共通ユーティリティ
 │
 ├── *_db.py                     # サイト別スクレイパー（7 ファイル）
 │   ├── mercari_db.py
@@ -693,7 +703,7 @@ ESP/
 ├── templates/                  # Jinja2 テンプレート（20 ファイル）
 ├── static/                     # CSS / JS / 画像アセット
 ├── config/                     # CSS セレクター設定・フィンガープリントキャッシュ
-├── tests/                      # pytest テストスイート（18 ファイル）
+├── tests/                      # pytest テストスイート
 ├── docs/                       # 設計書・ロードマップ・仕様書
 └── knowledge/                  # 運用ナレッジベース（インシデント記録等）
 ```

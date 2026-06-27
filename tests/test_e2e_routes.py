@@ -371,6 +371,84 @@ class TestMainRoutes:
         response = client.get('/?page=2')
         assert response.status_code == 200
 
+    def test_index_changed_filter_uses_latest_two_snapshots(self, client, db_session):
+        """Changed filter should include only products whose latest snapshot changed."""
+        user = User(username='changedfiltertest')
+        user.set_password('testpassword')
+        db_session.add(user)
+        db_session.commit()
+
+        changed_product = Product(
+            user_id=user.id,
+            site='mercari',
+            source_url='https://example.com/changed',
+            last_title='Changed Product',
+            last_price=200,
+            last_status='on_sale',
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        stable_product = Product(
+            user_id=user.id,
+            site='mercari',
+            source_url='https://example.com/stable',
+            last_title='Stable Product',
+            last_price=100,
+            last_status='on_sale',
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        db_session.add_all([changed_product, stable_product])
+        db_session.commit()
+
+        db_session.add_all([
+            ProductSnapshot(
+                product_id=changed_product.id,
+                scraped_at=datetime(2026, 1, 1, 10, 0, 0),
+                title='Changed Product',
+                price=100,
+                status='on_sale',
+                image_urls='https://img.example.com/changed-old.jpg',
+            ),
+            ProductSnapshot(
+                product_id=changed_product.id,
+                scraped_at=datetime(2026, 1, 2, 10, 0, 0),
+                title='Changed Product',
+                price=200,
+                status='on_sale',
+                image_urls='https://img.example.com/changed-new.jpg',
+            ),
+            ProductSnapshot(
+                product_id=stable_product.id,
+                scraped_at=datetime(2026, 1, 1, 10, 0, 0),
+                title='Stable Product',
+                price=100,
+                status='on_sale',
+                image_urls='https://img.example.com/stable-old.jpg',
+            ),
+            ProductSnapshot(
+                product_id=stable_product.id,
+                scraped_at=datetime(2026, 1, 2, 10, 0, 0),
+                title='Stable Product',
+                price=100,
+                status='on_sale',
+                image_urls='https://img.example.com/stable-new.jpg',
+            ),
+        ])
+        db_session.commit()
+
+        client.post('/login', data={
+            'username': 'changedfiltertest',
+            'password': 'testpassword'
+        })
+
+        response = client.get('/?change_filter=changed')
+
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'Changed Product' in html
+        assert 'Stable Product' not in html
+
     def test_manual_add_requires_login(self, client):
         """Test manual add page requires authentication"""
         response = client.get('/products/manual-add', follow_redirects=True)

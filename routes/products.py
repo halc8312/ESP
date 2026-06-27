@@ -12,7 +12,7 @@ from werkzeug.utils import secure_filename
 
 from database import SessionLocal
 from models import Shop, Product, Variant, ProductSnapshot, DescriptionTemplate, PricingRule
-from services.image_service import IMAGE_STORAGE_PATH
+from services.image_service import IMAGE_STORAGE_PATH, split_image_url_string
 from services.rich_text import normalize_rich_text
 from services.scrape_request import SITE_LABELS
 from time_utils import utc_now
@@ -34,9 +34,7 @@ def _latest_snapshot_for_product(session_db, product_id):
 
 
 def _split_snapshot_images(snapshot):
-    if not snapshot or not snapshot.image_urls:
-        return []
-    return [url.strip() for url in snapshot.image_urls.split("|") if url.strip()]
+    return split_image_url_string(snapshot.image_urls if snapshot else None)
 
 
 def _is_allowed_image_url(url):
