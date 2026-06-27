@@ -14,6 +14,25 @@ def test_index_requires_login(client):
     assert len(response.history) > 0
     assert response.request.path == "/login"
 
+
+def test_invalid_session_user_id_redirects_to_login(client):
+    with client.session_transaction() as session:
+        session["_user_id"] = "not-an-int"
+        session["_fresh"] = True
+
+    response = client.get("/", follow_redirects=True)
+
+    assert response.status_code == 200
+    assert response.request.path == "/login"
+
+
+def test_security_headers_include_csp(client):
+    response = client.get("/login")
+
+    assert response.status_code == 200
+    assert "Content-Security-Policy" in response.headers
+    assert "default-src 'self'" in response.headers["Content-Security-Policy"]
+
 def test_login_flow(client, db_session):
     # Setup user
     password = "password123"

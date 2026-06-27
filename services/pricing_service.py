@@ -91,7 +91,7 @@ def update_product_selling_price(product_id: int, session=None) -> bool:
     try:
         product = session.query(Product).filter_by(id=product_id).first()
         if not product:
-            logger.warning(f"Product {product_id} not found")
+            logger.warning("Product %s not found", product_id)
             return False
 
         has_manual_override = (
@@ -107,7 +107,7 @@ def update_product_selling_price(product_id: int, session=None) -> bool:
         if product.pricing_rule_id:
             rule = session.query(PricingRule).filter_by(id=product.pricing_rule_id).first()
             if not rule:
-                logger.warning(f"PricingRule {product.pricing_rule_id} not found")
+                logger.warning("PricingRule %s not found", product.pricing_rule_id)
                 if not has_manual_override:
                     return False
 
@@ -123,13 +123,18 @@ def update_product_selling_price(product_id: int, session=None) -> bool:
             product.selling_price = new_price
             if owns_session:
                 session.commit()
-            logger.info(f"Product {product_id}: selling_price updated {old_price} -> {new_price}")
+            logger.info(
+                "Product %s: selling_price updated %s -> %s",
+                product_id,
+                old_price,
+                new_price,
+            )
             return True
         
         return False
         
     except Exception as e:
-        logger.error(f"Error updating selling price for product {product_id}: {e}")
+        logger.error("Error updating selling price for product %s: %s", product_id, e)
         if owns_session:
             session.rollback()
         return False
@@ -173,11 +178,11 @@ def update_all_products_with_rule(rule_id: int, session=None) -> int:
         
         if owns_session:
             session.commit()
-        logger.info(f"Updated {updated_count} products with rule {rule_id}")
+        logger.info("Updated %s products with rule %s", updated_count, rule_id)
         return updated_count
         
     except Exception as e:
-        logger.error(f"Error updating products with rule {rule_id}: {e}")
+        logger.error("Error updating products with rule %s: %s", rule_id, e)
         if owns_session:
             session.rollback()
         return 0

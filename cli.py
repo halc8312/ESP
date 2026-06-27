@@ -2393,11 +2393,12 @@ def run_single_web_smoke(
     if blockers:
         return result
 
-    config_keys = ("SCRAPE_QUEUE_BACKEND", "SCRAPE_QUEUE_NAME")
+    config_keys = ("SCRAPE_QUEUE_BACKEND", "SCRAPE_QUEUE_NAME", "WTF_CSRF_ENABLED")
     original_config = {key: app.config.get(key) for key in config_keys}
     original_rate_limit_env = {key: os.environ.get(key) for key in ("REDIS_URL", "VALKEY_URL")}
     user_id = None
     job_id = None
+    smoke_password = "SingleWebSmokePassword123!"
 
     try:
         from services.rate_limit_service import reset_rate_limiter_for_tests
@@ -2409,13 +2410,14 @@ def run_single_web_smoke(
             {
                 "SCRAPE_QUEUE_BACKEND": "inmemory",
                 "SCRAPE_QUEUE_NAME": "scrape",
+                "WTF_CSRF_ENABLED": False,
             }
         )
 
         session_db = SessionLocal()
         try:
             user = User(username=f"single_web_smoke_{uuid.uuid4().hex[:10]}")
-            user.set_password("single-web-smoke-password")
+            user.set_password(smoke_password)
             session_db.add(user)
             session_db.commit()
             user_id = user.id
@@ -2426,7 +2428,7 @@ def run_single_web_smoke(
         client = app.test_client()
         login_response = client.post(
             "/login",
-            data={"username": username, "password": "single-web-smoke-password"},
+            data={"username": username, "password": smoke_password},
             follow_redirects=False,
         )
         result["login_status_code"] = login_response.status_code

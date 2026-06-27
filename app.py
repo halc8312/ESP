@@ -11,11 +11,12 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from flask import Flask, redirect, render_template, request, send_from_directory
+from flask import Flask, abort, redirect, render_template, request, send_from_directory
 from flask_wtf.csrf import CSRFProtect
 from flask_apscheduler import APScheduler
 from flask_login import LoginManager
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.utils import safe_join
 
 from database import SessionLocal, bootstrap_schema, ensure_additive_schema_ready
 from models import User
@@ -94,6 +95,9 @@ RUNTIME_DEFAULTS: dict[str, dict[str, Any]] = {
 
 _SCHEDULER_LOCK_PATH = os.path.join(tempfile.gettempdir(), "esp_scheduler.lock")
 logger = logging.getLogger("app_runtime")
+_as_bool = parse_bool
+_heartbeat_redis_pool = None
+_heartbeat_redis_pool_url: str | None = None
 
 
 def _utc_iso_now() -> str:
@@ -109,6 +113,8 @@ def _get_scheduler_heartbeat_key(app: Flask) -> str:
 
 
 def _get_scheduler_heartbeat_connection(app: Flask):
+    global _heartbeat_redis_pool, _heartbeat_redis_pool_url
+
     if not _as_bool(app.config.get("SCHEDULER_HEARTBEAT_ENABLED", False)):
         app.extensions["esp_scheduler_heartbeat_error"] = "disabled"
         return None
@@ -119,9 +125,17 @@ def _get_scheduler_heartbeat_connection(app: Flask):
         return None
 
     try:
-        from redis import Redis
+        from redis import ConnectionPool, Redis
 
-        return Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=1, socket_timeout=1)
+        if _heartbeat_redis_pool is None or _heartbeat_redis_pool_url != redis_url:
+            _heartbeat_redis_pool = ConnectionPool.from_url(
+                redis_url,
+                decode_responses=True,
+                socket_connect_timeout=1,
+                socket_timeout=1,
+            )
+            _heartbeat_redis_pool_url = redis_url
+        return Redis(connection_pool=_heartbeat_redis_pool)
     except Exception as exc:
         app.extensions["esp_scheduler_heartbeat_error"] = type(exc).__name__
         logger.warning(
@@ -266,12 +280,18 @@ def get_scheduler_health_snapshot(app: Flask) -> dict[str, Any]:
 
 @login_manager.user_loader
 def load_user(user_id):
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        return None
+
     session_db = SessionLocal()
     try:
-        return session_db.query(User).get(int(user_id))
+        return session_db.get(User, uid)
     except Exception:
         session_db.rollback()
-        raise
+        logger.warning("Failed to load user from session", exc_info=True)
+        return None
     finally:
         session_db.close()
 
@@ -370,6 +390,8 @@ def _register_backward_compat_aliases(app: Flask) -> None:
 def _register_media_route(app: Flask) -> None:
     @app.route("/media/<path:filename>")
     def serve_image(filename):
+        if safe_join(IMAGE_STORAGE_PATH, filename) is None:
+            abort(404)
         return send_from_directory(IMAGE_STORAGE_PATH, filename)
 
 
@@ -427,6 +449,18 @@ def _register_security_headers(app: Flask) -> None:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' https: data:; "
+            "connect-src 'self' https://open.er-api.com; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "frame-ancestors 'none'",
+        )
         if app.config.get("HSTS_ENABLED") and request.is_secure:
             response.headers["Strict-Transport-Security"] = build_hsts_header(app)
         return response
@@ -660,12 +694,6 @@ class _RedisSchedulerLockHandle:
             except Exception:
                 pass
             self.lock = None
-
-
-def _as_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _should_try_redis_scheduler_lock(app: Flask) -> bool:

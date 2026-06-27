@@ -22,8 +22,6 @@ from services.patrol.offmall_patrol import OffmallPatrol
 from services.patrol.yahuoku_patrol import YahuokuPatrol
 from services.patrol.snkrdunk_patrol import SnkrdunkPatrol
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("patrol")
 
 # Sites that require a browser (Selenium/Chrome)
