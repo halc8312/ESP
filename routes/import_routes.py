@@ -4,7 +4,11 @@ Import routes - CSV product import with preview.
 import csv
 import io
 import json
-from flask import Blueprint, render_template, request, redirect, url_for, flash, session as flask_session
+import os
+import secrets
+import time
+from pathlib import Path
+from flask import Blueprint, current_app, render_template, request, redirect, url_for, flash, session as flask_session
 from flask_login import login_required, current_user
 from database import SessionLocal
 from models import Product, Variant, Shop
@@ -12,6 +16,104 @@ from services.rich_text import normalize_rich_text
 from time_utils import utc_now
 
 import_bp = Blueprint('import', __name__)
+
+_IMPORT_PREVIEW_TOKEN_KEY = 'import_csv_token'
+_IMPORT_PREVIEW_SHOP_ID_KEY = 'import_shop_id'
+_IMPORT_PREVIEW_SITE_KEY = 'import_site'
+_LEGACY_IMPORT_PREVIEW_CONTENT_KEY = 'import_csv_content'
+_IMPORT_PREVIEW_TTL_SECONDS = 60 * 60
+
+
+def _resolve_owned_shop_id(session_db, shop_id_value):
+    """Return a shop id only when it belongs to the current user."""
+    shop_id_raw = str(shop_id_value or '').strip()
+    if not shop_id_raw:
+        return None, None
+
+    try:
+        shop_id = int(shop_id_raw)
+    except ValueError:
+        return None, '選択したショップが見つかりません'
+
+    owned_shop = session_db.query(Shop.id).filter(
+        Shop.id == shop_id,
+        Shop.user_id == current_user.id,
+    ).first()
+    if not owned_shop:
+        return None, '選択したショップが見つかりません'
+
+    return shop_id, None
+
+
+def _import_preview_storage_dir() -> Path:
+    configured_path = (
+        current_app.config.get('IMPORT_PREVIEW_STORAGE_PATH')
+        or os.environ.get('IMPORT_PREVIEW_STORAGE_PATH')
+    )
+    base_dir = Path(configured_path) if configured_path else Path(current_app.instance_path) / 'import_previews'
+    base_dir.mkdir(parents=True, exist_ok=True)
+    return base_dir
+
+
+def _import_preview_path(token):
+    if not token or '/' in token or '\\' in token:
+        return None
+    return _import_preview_storage_dir() / f'{token}.csv'
+
+
+def _discard_import_preview_content(token):
+    path = _import_preview_path(token)
+    if not path:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _cleanup_import_preview_files():
+    try:
+        storage_dir = _import_preview_storage_dir()
+    except OSError:
+        return
+
+    cutoff = time.time() - _IMPORT_PREVIEW_TTL_SECONDS
+    for path in storage_dir.glob('*.csv'):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
+def _store_import_preview_content(content):
+    _cleanup_import_preview_files()
+    token = secrets.token_urlsafe(32)
+    path = _import_preview_storage_dir() / f'{token}.csv'
+    path.write_bytes(content.encode('utf-8'))
+    return token
+
+
+def _load_import_preview_content(token):
+    path = _import_preview_path(token)
+    if not path or not path.is_file():
+        return None
+    try:
+        return path.read_bytes().decode('utf-8')
+    finally:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _clear_import_preview_session(delete_content=True):
+    token = flask_session.pop(_IMPORT_PREVIEW_TOKEN_KEY, None)
+    flask_session.pop(_IMPORT_PREVIEW_SHOP_ID_KEY, None)
+    flask_session.pop(_IMPORT_PREVIEW_SITE_KEY, None)
+    flask_session.pop(_LEGACY_IMPORT_PREVIEW_CONTENT_KEY, None)
+    if delete_content and token:
+        _discard_import_preview_content(token)
 
 
 def _map_csv_row(row: dict, is_shopify: bool = False) -> dict:
@@ -67,6 +169,10 @@ def import_preview():
         file = request.files.get('file')
         shop_id_str = request.form.get('shop_id')
         site = request.form.get('site', 'import')
+        shop_id, shop_error = _resolve_owned_shop_id(session_db, shop_id_str)
+        if shop_error:
+            flash(shop_error, 'error')
+            return redirect(url_for('import.import_form'))
         
         if not file or file.filename == '':
             flash('ファイルを選択してください', 'error')
@@ -124,10 +230,17 @@ def import_preview():
                 warnings.append('プレビューは最初の50行のみ表示')
                 break
         
-        # Store CSV content in session for actual import
-        flask_session['import_csv_content'] = content
-        flask_session['import_shop_id'] = shop_id_str
-        flask_session['import_site'] = site
+        # Store preview content server-side; keep only the opaque token in the cookie session.
+        _clear_import_preview_session()
+        try:
+            preview_token = _store_import_preview_content(content)
+        except OSError:
+            flash('プレビューデータの保存に失敗しました。再度アップロードしてください。', 'error')
+            return redirect(url_for('import.import_form'))
+
+        flask_session[_IMPORT_PREVIEW_TOKEN_KEY] = preview_token
+        flask_session[_IMPORT_PREVIEW_SHOP_ID_KEY] = str(shop_id) if shop_id is not None else ''
+        flask_session[_IMPORT_PREVIEW_SITE_KEY] = site
         
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         
@@ -156,18 +269,19 @@ def import_preview():
 @login_required
 def import_execute():
     """Execute the actual import from previewed data."""
-    content = flask_session.get('import_csv_content')
-    shop_id_str = flask_session.get('import_shop_id')
-    site = flask_session.get('import_site', 'import')
+    preview_token = flask_session.get(_IMPORT_PREVIEW_TOKEN_KEY)
+    content = _load_import_preview_content(preview_token) if preview_token else None
+    if content is None:
+        content = flask_session.get(_LEGACY_IMPORT_PREVIEW_CONTENT_KEY)
+    shop_id_str = flask_session.get(_IMPORT_PREVIEW_SHOP_ID_KEY)
+    site = flask_session.get(_IMPORT_PREVIEW_SITE_KEY, 'import')
     
     if not content:
+        _clear_import_preview_session()
         flash('プレビューデータがありません。再度アップロードしてください。', 'error')
         return redirect(url_for('import.import_form'))
     
-    # Clear session data
-    flask_session.pop('import_csv_content', None)
-    flask_session.pop('import_shop_id', None)
-    flask_session.pop('import_site', None)
+    _clear_import_preview_session(delete_content=False)
     
     # Process import
     return _process_import(content, shop_id_str, site)
@@ -194,7 +308,11 @@ def _process_import(content: str, shop_id_str: str, site: str):
     session_db = SessionLocal()
     try:
         reader = csv.DictReader(io.StringIO(content))
-        shop_id = int(shop_id_str) if shop_id_str else None
+        shop_id, shop_error = _resolve_owned_shop_id(session_db, shop_id_str)
+        if shop_error:
+            flash(shop_error, 'error')
+            return redirect(url_for('import.import_form'))
+
         imported = 0
         errors = []
         
