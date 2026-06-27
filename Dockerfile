@@ -1,11 +1,19 @@
-# ベースイメージ: Python 3.11 (Debian BookwormベースのSlim版)
-# Playwright / Patchright 用の依存パッケージのみをインストールする
+FROM python:3.11-slim AS builder
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /build
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+
+# Runtime image: keep system libraries, browser/model assets, and app code.
 FROM python:3.11-slim
 
-# Pythonのバッファリングを無効化（ログを即時出力）
-ENV PYTHONUNBUFFERED=1
-# .pycファイルの生成を抑制
-ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # Playwright / Patchright の実行に必要なシステム依存関係
 # --no-install-recommends で推奨パッケージを除外しイメージサイズを削減
@@ -24,8 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=builder /install /usr/local
 
 # Playwright / Patchright ブラウザを root で共有インストールし、非 root ユーザーでも参照可能にする
 # Chromium のみインストールし、不要なブラウザは除外
@@ -69,6 +76,9 @@ COPY . .
 RUN useradd -m myuser \
     && chown -R myuser:myuser /opt/argos /opt/rembg
 USER myuser
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:${PORT:-10000}/healthz || exit 1
 
 # ScrapeQueue はプロセス内シングルトンのため worker は 1 を維持する
 # シェル形式を使用して ${PORT} 変数を展開する

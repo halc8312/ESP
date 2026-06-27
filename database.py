@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -11,12 +12,15 @@ from sqlalchemy.orm import declarative_base, scoped_session, sessionmaker
 
 
 DEFAULT_DATABASE_URL = "sqlite:///mercari.db"
+logger = logging.getLogger("database")
 
 
 def normalize_database_url(database_url: str | None = None) -> str:
     resolved_url = str(database_url or DEFAULT_DATABASE_URL).strip()
     if resolved_url.startswith("postgres://"):
-        return "postgresql://" + resolved_url[len("postgres://") :]
+        return "postgresql+psycopg://" + resolved_url[len("postgres://") :]
+    if resolved_url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + resolved_url[len("postgresql://") :]
     return resolved_url
 
 
@@ -30,7 +34,7 @@ def create_app_engine(database_url: str | None = None):
         debug_url = make_url(resolved_url).render_as_string(hide_password=True)
     except Exception:
         debug_url = resolved_url
-    print(f"DEBUG: Using database URL: {debug_url}")
+    logger.debug("Using database URL: %s", debug_url)
 
     is_sqlite = "sqlite" in resolved_url.lower()
 
@@ -69,6 +73,9 @@ def create_isolated_session():
     return _session_factory()
 
 
+# Legacy compatibility patchset for databases created before the Alembic chain
+# was complete. New additive schema changes must be added through Alembic only;
+# keep this tuple as a rescue path for old SQLite/PostgreSQL installs.
 ADDITIVE_STARTUP_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("products", "pricing_rule_id", "ALTER TABLE products ADD COLUMN pricing_rule_id INTEGER"),
     ("products", "selling_price", "ALTER TABLE products ADD COLUMN selling_price INTEGER"),

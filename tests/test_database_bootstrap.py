@@ -59,7 +59,7 @@ def test_describe_schema_bootstrap_reports_postgres_legacy_fallback(monkeypatch)
 def test_get_database_url_normalizes_legacy_postgres_scheme(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgres://user:secret@example.com/app")
 
-    assert database.get_database_url() == "postgresql://user:secret@example.com/app"
+    assert database.get_database_url() == "postgresql+psycopg://user:secret@example.com/app"
     assert database.get_database_backend() == "postgresql"
     assert "***" in database.redact_database_url()
 
@@ -79,7 +79,7 @@ def test_create_app_engine_normalizes_legacy_postgres_scheme(monkeypatch):
 
     engine = database.create_app_engine("postgres://user:secret@example.com/app")
 
-    assert captured["url"] == "postgresql://user:secret@example.com/app"
+    assert captured["url"] == "postgresql+psycopg://user:secret@example.com/app"
     assert engine.url.drivername == "postgresql"
 
 
