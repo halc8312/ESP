@@ -3,11 +3,10 @@ SNKRDUNK browser-pool DOM fetch helpers.
 """
 from __future__ import annotations
 
-import os
-
 from services.browser_pool import run_browser_page_task
 from services.html_page_adapter import HtmlPageAdapter
 from services.scraping_client import run_coro_sync
+from utils.env_helpers import env_flag as _env_flag
 
 
 _SNKRDUNK_LAUNCH_ARGS = [
@@ -34,13 +33,6 @@ _SNKRDUNK_INIT_SCRIPTS = [
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     """
 ]
-
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def should_use_snkrdunk_browser_pool_dynamic() -> bool:

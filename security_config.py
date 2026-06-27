@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 from typing import Mapping, MutableMapping
 
+from utils.env_helpers import parse_bool
+
 
 DEFAULT_DEV_SECRET = "dev-secret-key-change-this"
 PRODUCTION_ROLES = {"web", "worker"}
@@ -18,12 +20,6 @@ DEFAULT_HSTS_SECONDS = 31536000
 
 class SecurityConfigurationError(RuntimeError):
     """Raised when production security configuration is unsafe."""
-
-
-def parse_bool(value: str | None, default: bool = False) -> bool:
-    if value is None or value == "":
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def is_production_runtime(environ: Mapping[str, str] | None = None) -> bool:

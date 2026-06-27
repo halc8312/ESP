@@ -8,6 +8,8 @@ from typing import Any
 from urllib import request
 from urllib.parse import urlparse
 
+from utils.env_helpers import env_int as _env_int
+
 
 logger = logging.getLogger("alerts")
 
@@ -19,16 +21,6 @@ _DISCORD_COLOR_BY_SEVERITY = {
     "error": 15158332,
     "critical": 10038562,
 }
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = str(os.environ.get(name, "") or "").strip()
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
 
 
 class AlertDispatcher:

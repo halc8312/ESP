@@ -72,8 +72,7 @@ def is_valid_detail_url(url: str, site: str) -> bool:
 
     pattern = _DETAIL_URL_PATTERNS.get(site)
     if pattern is None:
-        # Unknown site – allow through (don't break future sites)
+        # Unknown site - allow through (don't break future sites)
         return True
 
     return bool(pattern.search(url))
-

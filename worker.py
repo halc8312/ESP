@@ -8,13 +8,14 @@ import os
 
 from app import create_worker_app, get_scheduler_health_snapshot
 from services.worker_runtime import run_worker
+from utils.env_helpers import env_flag
 
 
 logger = logging.getLogger("worker_entrypoint")
 
 
 def _env_to_bool(env_name: str) -> bool:
-    return str(os.environ.get(env_name, "") or "").strip().lower() in {"1", "true", "yes", "on"}
+    return env_flag(env_name)
 
 
 def _configure_logging() -> None:

@@ -34,6 +34,7 @@ from services.mercari_browser_fetch import (
 )
 from services.scraping_client import fetch_dynamic, gather_with_concurrency, get_async_fetch_settings, run_coro_sync
 from services.scrape_alerts import report_detail_result
+from utils.env_helpers import env_flag as _env_flag
 
 # Import metrics logging
 try:
@@ -51,11 +52,6 @@ except ImportError:
 
 
 logger = logging.getLogger("mercari")
-
-
-def _env_flag(name: str) -> bool:
-    raw = str(os.environ.get(name, "") or "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
 
 
 def _should_capture_mercari_network_payload() -> bool:

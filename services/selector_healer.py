@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from services.alerts import get_alert_dispatcher
 from services.page_state_classifier import classify_page_state
 from services.repair_store import record_repair_candidate
+from utils.env_helpers import env_float as _env_float, env_int as _env_int
 
 logger = logging.getLogger("selector_healer")
 
@@ -43,26 +44,6 @@ _HEAL_LOG_PATH = os.path.join(_CONFIG_DIR, "heal_history.jsonl")
 
 _fingerprints_cache: Optional[dict] = None
 _fp_lock = threading.Lock()
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = str(os.environ.get(name, "") or "").strip()
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        return default
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = str(os.environ.get(name, "") or "").strip()
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
 
 
 def _load_fingerprints(force: bool = False) -> dict:

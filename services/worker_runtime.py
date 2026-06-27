@@ -18,6 +18,7 @@ from services.browser_pool import close_browser_pool, get_browser_pool_health, w
 from services.repair_store import get_repair_queue_snapshot
 from services.repair_worker import process_pending_repair_candidates
 from services.scrape_job_store import get_job_backlog_snapshot, reconcile_stalled_jobs
+from utils.env_helpers import parse_bool as _as_bool
 
 
 logger = logging.getLogger("worker_runtime")
@@ -45,14 +46,6 @@ class WorkerRuntime:
     connection: Redis
     queue: Any
     worker: Any
-
-
-def _as_bool(value, default: bool = False) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _as_int(value, default: int, minimum: int = 0) -> int:
