@@ -48,7 +48,8 @@ Shopifyの「Product (親)」と「Variant (子)」の関係をデータベー�
 | `option2_value` | String | オプション2の値 (例: L) | |
 | `option3_value` | String | オプション3の値 | |
 | `sku` | String | SKU | |
-| `price` | Integer | 販売価格 | |
+| `price` | Integer | 取得元のバリエーション価格 | スクレイピング・監視で更新 |
+| `selling_price` | Integer | バリエーション別の販売価格 | NULLなら商品の共通販売価格を使用 |
 | `inventory_qty` | Integer | 在庫数 | |
 | `grams` | Integer | 重量 (g) | |
 | `taxable` | Boolean | 課税対象か | |

@@ -49,6 +49,30 @@ def main() -> int:
             "ENABLE_LEGACY_SCHEMA_PATCHSET": True,
             "VERIFY_SCHEMA_DRIFT_ON_STARTUP": True,
             "ENABLE_SCHEDULER": _env_to_bool("WORKER_ENABLE_SCHEDULER"),
+            "SCHEDULER_HEARTBEAT_ENABLED": os.environ.get(
+                "SCHEDULER_HEARTBEAT_ENABLED",
+                "1",
+            ),
+            "SCHEDULER_HEARTBEAT_KEY": os.environ.get(
+                "SCHEDULER_HEARTBEAT_KEY",
+                "esp:scheduler:heartbeat",
+            ),
+            "WORKER_HEARTBEAT_ENABLED": os.environ.get(
+                "WORKER_HEARTBEAT_ENABLED",
+                "1",
+            ),
+            "WORKER_HEARTBEAT_KEY_PREFIX": os.environ.get(
+                "WORKER_HEARTBEAT_KEY_PREFIX",
+                "esp:worker:heartbeat",
+            ),
+            "WORKER_HEARTBEAT_INTERVAL_SECONDS": os.environ.get(
+                "WORKER_HEARTBEAT_INTERVAL_SECONDS",
+                "15",
+            ),
+            "WORKER_HEARTBEAT_TTL_SECONDS": os.environ.get(
+                "WORKER_HEARTBEAT_TTL_SECONDS",
+                "90",
+            ),
             "WARM_BROWSER_POOL": os.environ.get("WARM_BROWSER_POOL", "1"),
             "WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP": os.environ.get(
                 "WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP",

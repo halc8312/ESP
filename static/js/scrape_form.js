@@ -245,7 +245,7 @@
     function buildStatusBadge(item) {
         var badge = document.createElement("span");
         badge.className = "scrape-preview-status-pill";
-        badge.textContent = item.status || "ステータス不明";
+        badge.textContent = item.status || "状態を確認できません";
         if ((item.status || "").toLowerCase() === "unknown") {
             badge.classList.add("is-warning");
         }
@@ -254,6 +254,11 @@
 
     function renderPreview(result) {
         var items = result.items || [];
+        var resultError = String(
+            result.error_msg
+            || (result.status === "blocked" ? "サイト側のアクセス制限により商品を取得できませんでした。" : "")
+            || ""
+        ).trim();
         activePreviewJob = {
             jobId: result.job_id || (activePreviewJob && activePreviewJob.jobId) || null,
             registerUrl: registerUrl,
@@ -267,6 +272,15 @@
         previewMeta.innerHTML = "";
         previewGrid.innerHTML = "";
         selectAllCheckbox.checked = true;
+
+        if (resultError) {
+            setStep("running", "商品抽出に失敗しました。内容を確認して再試行してください。", "error");
+            showFlash("商品抽出に失敗しました: " + resultError, "error");
+            updateRegisterButtonState();
+            previewSection.scrollIntoView({ behavior: "smooth", block: "start" });
+            return;
+        }
+
         setStep("review", "抽出結果の確認ができました。必要な商品だけ選んで登録してください。", "success");
 
         if (result.search_url) {
@@ -392,7 +406,7 @@
     function describeStatusContext(data) {
         var detailLabel = data.context && data.context.detail_label ? data.context.detail_label : "";
         if (!detailLabel) {
-            return "ジョブの状態を更新しています。";
+            return "抽出状況を確認しています。";
         }
         return detailLabel;
     }
@@ -401,13 +415,13 @@
         clearPollTimer();
         fetch(statusUrl)
             .then(function (response) {
-                return parseJsonResponse(response, "ステータス取得に失敗しました");
+                return parseJsonResponse(response, "抽出状況を確認できませんでした");
             })
             .then(function (data) {
                 registerTrackerJob(data);
 
                 if (data.status === "queued") {
-                    setStep("queued", "ジョブを受け付けました。 " + describeStatusContext(data), "info");
+                    setStep("queued", "商品抽出を受け付けました。 " + describeStatusContext(data), "info");
                     pollTimer = setTimeout(function () {
                         pollPreviewStatus(statusUrl);
                     }, 2000);
@@ -451,9 +465,9 @@
         previewSection.hidden = false;
         previewGrid.innerHTML = "";
         previewMeta.innerHTML = "";
-        previewSummary.textContent = "ジョブを作成しています...";
+        previewSummary.textContent = "抽出を準備しています...";
         previewSelection.textContent = "0件選択中";
-        setStep("queued", "抽出ジョブを作成しています。", "info");
+        setStep("queued", "商品抽出を準備しています。", "info");
 
         var formData = new FormData(form);
         formData.append("response_mode", "preview");
@@ -474,7 +488,7 @@
 
         fetch(form.action, requestOptions)
             .then(function (response) {
-                return parseJsonResponse(response, "商品抽出ジョブの作成に失敗しました");
+                return parseJsonResponse(response, "商品抽出を開始できませんでした");
             })
             .then(function (data) {
                 activePreviewJob = {
@@ -510,7 +524,7 @@
         var statusUrl = buildStatusUrl(jobId);
         fetch(statusUrl)
             .then(function (response) {
-                return parseJsonResponse(response, "抽出ジョブの復元に失敗しました");
+                return parseJsonResponse(response, "前回の抽出状況を確認できませんでした");
             })
             .then(function (data) {
                 registerTrackerJob(data);
@@ -535,22 +549,22 @@
 
                 if (data.status === "failed") {
                     previewSection.hidden = false;
-                    setStep("running", "前回の抽出ジョブは失敗しました。", "error");
+                    setStep("running", "前回の商品抽出は失敗しました。", "error");
                     showFlash("商品抽出に失敗しました: " + (data.error || "不明なエラー"), "error");
                     return;
                 }
 
                 if (data.status === "queued") {
-                    setStep("queued", "前回の抽出ジョブを復元しました。処理開始を待っています。", "info");
+                    setStep("queued", "前回の商品抽出を再表示しました。開始を待っています。", "info");
                 } else {
-                    setStep("running", "前回の抽出ジョブを復元しました。抽出を続けています。", "info");
+                    setStep("running", "前回の商品抽出を再表示しました。抽出を続けています。", "info");
                 }
                 pollPreviewStatus(statusUrl);
             })
             .catch(function (error) {
                 previewSection.hidden = false;
-                setStep("setup", "抽出ジョブの復元に失敗しました。", "error");
-                showFlash(error.message || "抽出ジョブの復元に失敗しました", "error");
+                setStep("setup", "前回の抽出状況を確認できませんでした。", "error");
+                showFlash(error.message || "前回の抽出状況を確認できませんでした", "error");
             });
     }
 
@@ -584,11 +598,12 @@
         }
         var registerPayload = {
             job_id: activePreviewJob.jobId,
-            selected_indices: selectedIndices
+            selected_indices: selectedIndices,
+            // Registration translates by default.  Always send the boolean so
+            // an explicit uncheck is distinguishable from an older client
+            // omitting the option altogether.
+            translate: !!(translateCheck && translateCheck.checked)
         };
-        if (translateCheck && translateCheck.checked) {
-            registerPayload.translate = true;
-        }
         if (pricingCheck && pricingCheck.checked && !pricingCheck.disabled) {
             registerPayload.apply_pricing = true;
         }
@@ -605,7 +620,7 @@
                 setStep("review", "選択した商品を登録しました。必要なら同じ結果から追加登録もできます。", "success");
                 var flashParts = ["登録完了: " + data.registered_count + "件（新規 " + data.new_count + " / 更新 " + data.updated_count + "）"];
                 if (data.translation_jobs_enqueued > 0) {
-                    flashParts.push("英訳ジョブ" + data.translation_jobs_enqueued + "件を開始しました");
+                    flashParts.push("英訳を" + data.translation_jobs_enqueued + "件開始しました");
                 }
                 if (data.pricing_applied_count > 0) {
                     flashParts.push("利益ルール" + data.pricing_applied_count + "件に適用しました");
@@ -687,15 +702,13 @@
 
             var payload = {
                 job_id: activePreviewJob.jobId,
-                selected_indices: selectedIndices
+                selected_indices: selectedIndices,
+                translate: !!(translateCheck && translateCheck.checked)
             };
             if (priceListId) {
                 payload.price_list_id = priceListId;
             } else {
                 payload.new_list_name = newListName;
-            }
-            if (translateCheck && translateCheck.checked) {
-                payload.translate = true;
             }
             if (pricingCheck && pricingCheck.checked && !pricingCheck.disabled) {
                 payload.apply_pricing = true;
@@ -714,7 +727,7 @@
                     setStep("review", "選択した商品を商品リストに登録しました。", "success");
                     var messageParts = ["リスト「" + (data.price_list_name || "") + "」に" + data.added_to_list_count + "件登録しました"];
                     if (data.translation_jobs_enqueued > 0) {
-                        messageParts.push("英訳ジョブ" + data.translation_jobs_enqueued + "件を開始しました");
+                        messageParts.push("英訳を" + data.translation_jobs_enqueued + "件開始しました");
                     }
                     if (data.pricing_applied_count > 0) {
                         messageParts.push("利益ルール" + data.pricing_applied_count + "件に適用しました");

@@ -8,8 +8,12 @@
 
 <div class="page-header">
     <h1>📦 {{ pricelist.name }}</h1>
-    <p class="page-subtitle">商品の追加・表示設定・カスタム価格を管理</p>
+    <p class="page-subtitle">商品の追加、顧客への表示、個別の販売価格を管理します。</p>
 </div>
+
+{% if error %}
+<div class="alert alert-error" role="alert">{{ error }}</div>
+{% endif %}
 
 <div style="margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
     <a href="{{ url_for('pricelist.pricelist_add_products_page', pricelist_id=pricelist.id) }}" class="btn btn-primary"
@@ -18,7 +22,7 @@
     </a>
     <a href="{{ url_for('catalog.catalog_view', token=pricelist.token) }}" target="_blank"
         style="padding: 10px 16px; background: #f3e5f5; color: #7b1fa2; text-decoration: none; border-radius: 6px; border: 1px solid #ce93d8;">
-        👁️ プレビュー
+        👁️ 顧客表示を確認
     </a>
     <a href="{{ url_for('catalog.pricelist_analytics', pricelist_id=pricelist.id) }}"
         style="padding: 10px 16px; background: #e8f7ff; color: #0b5f8a; text-decoration: none; border-radius: 6px; border: 1px solid #9dd0f2;">
@@ -37,13 +41,13 @@
                 <table class="product-table">
                     <thead>
                         <tr>
-                            <th>削除</th>
+                            <th>リストから外す</th>
                             <th>サムネイル</th>
                             <th>商品名</th>
-                            <th>元価格</th>
-                            <th>カスタム価格</th>
+                            <th>仕入価格</th>
+                            <th>個別の販売価格</th>
                             <th>在庫</th>
-                            <th>表示</th>
+                            <th>顧客に表示</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -54,7 +58,7 @@
                             </td>
                             <td>
                                 {% if item.thumb_url %}
-                                <img src="{{ item.thumb_url }}" alt="thumb" class="product-thumb"
+                                <img src="{{ item.thumb_url }}" alt="{{ item.display_title }}" class="product-thumb"
                                     style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px;">
                                 {% else %}
                                 <span class="product-thumb-placeholder" aria-hidden="true"></span>
@@ -62,7 +66,7 @@
                             </td>
                             <td class="product-title-cell" style="max-width: 200px;">{{ item.display_title }}</td>
                             <td>
-                                {% if item.product.last_price %}
+                                {% if item.product.last_price is not none %}
                                 ¥{{ "{:,}".format(item.product.last_price) }}
                                 {% else %}
                                 -
@@ -70,7 +74,8 @@
                             </td>
                             <td>
                                 <input type="number" name="custom_price_{{ item.id }}"
-                                    value="{{ item.custom_price or '' }}" placeholder="空=自動" style="width: 100px;">
+                                    value="{{ submitted_custom_prices.get(item.id) if item.id in submitted_custom_prices else (item.custom_price if item.custom_price is not none else '') }}"
+                                    min="0" step="1" inputmode="numeric" placeholder="空=自動" style="width: 100px;">
                             </td>
                             <td>
                                 {% if item.total_stock > 0 %}

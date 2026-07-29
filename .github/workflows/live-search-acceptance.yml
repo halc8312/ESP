@@ -1,0 +1,73 @@
+name: Live Search URL Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      mercari_url:
+        description: Mercari search/listing URL
+        required: true
+        type: string
+      rakuma_url:
+        description: Rakuma search/listing URL
+        required: true
+        type: string
+      yahoo_url:
+        description: Yahoo! Shopping search/listing URL
+        required: true
+        type: string
+      surugaya_url:
+        description: Surugaya search/listing URL
+        required: true
+        type: string
+      offmall_url:
+        description: Off Mall search/listing URL
+        required: true
+        type: string
+      yahuoku_url:
+        description: Yahoo! Auctions search/listing URL
+        required: true
+        type: string
+      snkrdunk_url:
+        description: SNKRDUNK search/listing URL
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  live-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m patchright install --with-deps chromium
+
+      - name: Run all seven live search checks
+        env:
+          MERCARI_URL: ${{ inputs.mercari_url }}
+          RAKUMA_URL: ${{ inputs.rakuma_url }}
+          YAHOO_URL: ${{ inputs.yahoo_url }}
+          SURUGAYA_URL: ${{ inputs.surugaya_url }}
+          OFFMALL_URL: ${{ inputs.offmall_url }}
+          YAHUOKU_URL: ${{ inputs.yahuoku_url }}
+          SNKRDUNK_URL: ${{ inputs.snkrdunk_url }}
+        run: |
+          python scripts/live_search_acceptance.py \
+            --target "mercari=${MERCARI_URL}" \
+            --target "rakuma=${RAKUMA_URL}" \
+            --target "yahoo=${YAHOO_URL}" \
+            --target "surugaya=${SURUGAYA_URL}" \
+            --target "offmall=${OFFMALL_URL}" \
+            --target "yahuoku=${YAHUOKU_URL}" \
+            --target "snkrdunk=${SNKRDUNK_URL}"

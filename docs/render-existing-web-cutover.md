@@ -33,6 +33,9 @@ All add-ons for this path must be created in the **same Render region as the exi
 - The worker runtime requires `SCRAPE_QUEUE_BACKEND=rq` and `REDIS_URL`. See `services/worker_runtime.py`.
 - Durable job state lives in `scrape_jobs` and `scrape_job_events`, so web and worker must share the same database. See `models.py`, `services/scrape_job_store.py`, and `routes/api.py`.
 - Images are still served from `IMAGE_STORAGE_PATH`, so the current web disk can stay in use. See `services/image_service.py` and `app.py`.
+- PostgreSQL schema bootstrap is protected by a process-independent advisory
+  lock, so simultaneous web/worker starts serialize the complete Alembic
+  upgrade rather than racing migration DDL. SQLite remains unchanged.
 
 ## Step 1: Provision Only the Add-on Resources
 
@@ -135,8 +138,19 @@ Set these env vars on `esp-worker`:
   Managed from `esp-postgres`
 - `REDIS_URL`
   Managed from `esp-keyvalue`
+- `WEB_PUBLIC_URL=https://<current-web-host>`
+  Set this manually to the existing Web Service's public HTTPS origin, without
+  a trailing slash. The existing web is intentionally outside this add-ons
+  Blueprint, so Render cannot resolve it through `fromService`. The worker uses
+  this URL for managed-media fetch/upload calls back to web.
 - `SCRAPE_QUEUE_BACKEND=rq`
 - `WORKER_ENABLE_SCHEDULER=1`
+- `SCHEDULER_HEARTBEAT_ENABLED=1`
+- `SCHEDULER_HEARTBEAT_KEY=esp:scheduler:heartbeat`
+- `WORKER_HEARTBEAT_ENABLED=1`
+- `WORKER_HEARTBEAT_KEY_PREFIX=esp:worker:heartbeat`
+- `WORKER_HEARTBEAT_INTERVAL_SECONDS=15`
+- `WORKER_HEARTBEAT_TTL_SECONDS=90`
 - `WARM_BROWSER_POOL=1`
 - `ENABLE_SHARED_BROWSER_RUNTIME=1`
 - `BROWSER_POOL_WARM_SITES=mercari`
@@ -150,7 +164,11 @@ Set these env vars on `esp-worker`:
   Optional manual secret
 
 Deploy the worker and confirm it starts with `python worker.py`.
-Also confirm in the Render Dashboard that `esp-worker` was created with **2 instances**.
+Before deploying, confirm `WEB_PUBLIC_URL` is no longer shown as missing in the
+worker's Render Environment page and that it exactly matches the existing web
+origin. Do not use the bare service name or an internal port for this cutover
+path.
+Also confirm in the Render Dashboard that `esp-worker` was created with **1 instance**. Additional queue workers require a separate scheduler-owner topology; do not scale this scheduler-enabled service horizontally.
 Also confirm the worker service is in `singapore`.
 
 ## Step 7: Switch the Existing Web Service
@@ -165,6 +183,10 @@ Required env vars for the existing Web Service:
 - `REDIS_URL=<KEY_VALUE_CONNECTION_STRING>`
 - `SCRAPE_QUEUE_BACKEND=rq`
 - `WEB_SCHEDULER_MODE=disabled`
+- `SCHEDULER_HEARTBEAT_KEY=esp:scheduler:heartbeat`
+- `SCHEDULER_HEARTBEAT_FRESHNESS_SECONDS=1200`
+- `WORKER_HEARTBEAT_KEY_PREFIX=esp:worker:heartbeat`
+- `WORKER_HEARTBEAT_FRESHNESS_SECONDS=60`
 - `SCHEMA_BOOTSTRAP_MODE=auto`
 - `IMAGE_STORAGE_PATH=/var/data/images`
 
@@ -176,7 +198,9 @@ Use the internal connection strings from the Singapore `esp-postgres` and Singap
 
 Once the existing Web Service env vars are updated, redeploy it.
 
-Expected post-cutover health contract:
+Expected post-cutover deployment configuration (web lifecycle dependencies are
+verified by `/readyz`, the full worker/scheduler contract by `/stack-readyz`;
+`/healthz` intentionally exposes only liveness and the runtime role):
 
 - `runtime_role=web`
 - `queue_backend=rq`
@@ -198,6 +222,8 @@ flask render-postdeploy-smoke --base-url https://<current-web-url> --expect-queu
 
 Also verify manually:
 
+- `/readyz` returns `200` with `database=ok` and `redis=ok`
+- `/stack-readyz` returns `200` with `database=ok`, `redis=ok`, `worker=ok`, and `scheduler=ok`
 - `/healthz` returns `200`
 - `/login` returns `200`
 - `/scrape` returns `200` after login
@@ -217,7 +243,8 @@ Before cutover:
 6. Create add-ons by importing `render.existing-web-addons.yaml` as a custom Blueprint path.
 7. In the Blueprint preview, confirm only `esp-worker`, `esp-keyvalue`, and `esp-postgres` appear.
 8. In the Blueprint preview or created resource pages, confirm all three add-ons target `singapore`.
-9. After creation, open `esp-worker` and confirm it has 2 instances.
+9. After creation, open `esp-worker`, set `WEB_PUBLIC_URL` to the existing
+   web's public HTTPS origin, and confirm it has 1 instance.
 10. Open `esp-postgres` and copy its Singapore internal connection string from the Render Dashboard.
 11. Open `esp-keyvalue` and copy its Singapore internal connection string from the Render Dashboard.
 12. Run the SQLite -> Postgres migration from the existing Web shell in Singapore.

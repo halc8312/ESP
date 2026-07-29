@@ -3,22 +3,18 @@ Shared scrape-request helpers used by routes and background workers.
 """
 from __future__ import annotations
 
+import ipaddress
 import math
+import re
 from urllib.parse import urlencode, urlparse
 
 from services.filter_service import normalize_price_bounds
+from services.scrape_safety import (
+    UnsafeScrapeUrlError,
+    identify_marketplace_site,
+    validate_marketplace_url,
+)
 
-
-DOMAIN_SITE_MAP = [
-    ("fril.jp", "rakuma"),
-    ("item.fril.jp", "rakuma"),
-    ("jp.mercari.com", "mercari"),
-    ("shopping.yahoo.co.jp", "yahoo"),
-    ("suruga-ya.jp", "surugaya"),
-    ("netmall.hardoff.co.jp", "offmall"),
-    ("auctions.yahoo.co.jp", "yahuoku"),
-    ("snkrdunk.com", "snkrdunk"),
-]
 
 SITE_LABELS = {
     "mercari": "メルカリ",
@@ -41,27 +37,77 @@ SEARCH_DEPTH_RULES = {
 }
 
 
+class InvalidTargetUrl(ValueError):
+    """Raised when a pasted URL is not a safe, supported marketplace URL."""
+
+
+def _normalize_hostname(hostname: str) -> str:
+    host = str(hostname or "").strip().rstrip(".").lower()
+    if not host:
+        raise InvalidTargetUrl("URLのホスト名を確認してください。")
+    try:
+        normalized = host.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise InvalidTargetUrl("URLのホスト名を確認してください。") from exc
+    labels = normalized.split(".")
+    if (
+        len(normalized) > 253
+        or any(
+            not label
+            or len(label) > 63
+            or label.startswith("-")
+            or label.endswith("-")
+            or re.fullmatch(r"[a-z0-9-]+", label) is None
+            for label in labels
+        )
+    ):
+        raise InvalidTargetUrl("URLのホスト名を確認してください。")
+    return normalized
+
+
+def _parse_supported_target_url(url: str):
+    raw = (url or "").strip()
+    if not raw:
+        raise InvalidTargetUrl("商品ページまたは検索結果ページのURLを入力してください。")
+
+    try:
+        parsed = urlparse(raw)
+    except ValueError as exc:
+        raise InvalidTargetUrl("URLの形式を確認してください。") from exc
+
+    if parsed.scheme.lower() != "https":
+        raise InvalidTargetUrl("URLは https:// で始まる形式で入力してください。")
+    if not parsed.netloc or not parsed.hostname:
+        raise InvalidTargetUrl("URLのホスト名を確認してください。")
+    if parsed.username is not None or parsed.password is not None:
+        raise InvalidTargetUrl("ユーザー名やパスワードを含むURLは使用できません。")
+
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise InvalidTargetUrl("URLのポート番号を確認してください。") from exc
+    if port not in (None, 443):
+        raise InvalidTargetUrl("標準のHTTPSポート以外を指定したURLは使用できません。")
+
+    host = _normalize_hostname(parsed.hostname)
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        raise InvalidTargetUrl("IPアドレスを直接指定したURLは使用できません。")
+
+    site = identify_marketplace_site(host)
+    if site:
+        return parsed, host, site
+
+    raise InvalidTargetUrl("対応している7サイトの商品ページまたは検索結果URLを入力してください。")
+
+
 def detect_site_from_url(url: str) -> str:
     """Infer the scrape site from a target URL."""
-    for domain, site in DOMAIN_SITE_MAP:
-        if domain in url:
-            return site
-    return "mercari"
-
-
-# Per-site predicates that decide whether a pasted URL points at a single
-# item page. Anything on a known marketplace domain that is NOT an item page
-# is treated as a listing (search results / category / filtered list) and
-# routed to the site's search scraper.
-_ITEM_URL_RULES = {
-    "mercari": lambda host, path: path.startswith("/item/") or path.startswith("/shops/product/"),
-    "rakuma": lambda host, path: host == "item.fril.jp",
-    "yahoo": lambda host, path: host == "store.shopping.yahoo.co.jp",
-    "surugaya": lambda host, path: "/product/detail/" in path,
-    "offmall": lambda host, path: "/product/" in path,
-    "yahuoku": lambda host, path: "/auction/" in path or host == "page.auctions.yahoo.co.jp",
-    "snkrdunk": lambda host, path: "/products/" in path,
-}
+    _parsed, _host, site = _parse_supported_target_url(url)
+    return site
 
 
 def classify_target_url(url: str) -> tuple[str, str]:
@@ -70,29 +116,23 @@ def classify_target_url(url: str) -> tuple[str, str]:
 
     Returns "item" for single-product pages and "search" for any other page
     on a known marketplace domain (search results, category and filtered
-    listing pages). Unknown domains fall back to ("item", "mercari") to
-    preserve the legacy single-item behaviour.
+    listing pages). Unsafe or unsupported URLs raise InvalidTargetUrl.
     """
-    raw = (url or "").strip()
-    if not raw:
-        return ("item", "mercari")
+    _parsed, _host, site = _parse_supported_target_url(url)
     try:
-        parsed = urlparse(raw)
-    except ValueError:
-        return ("item", "mercari")
-    host = (parsed.hostname or "").lower()
-    path = parsed.path or "/"
+        validate_marketplace_url(url, site, kind="detail")
+    except UnsafeScrapeUrlError:
+        pass
+    else:
+        return "item", site
 
-    site = None
-    for domain, mapped_site in DOMAIN_SITE_MAP:
-        if domain in raw:
-            site = mapped_site
-            break
-    if site is None:
-        return ("item", "mercari")
-
-    is_item = _ITEM_URL_RULES.get(site, lambda _host, _path: True)(host, path)
-    return ("item" if is_item else "search", site)
+    try:
+        validate_marketplace_url(url, site, kind="search")
+    except UnsafeScrapeUrlError as exc:
+        raise InvalidTargetUrl(
+            "対応サイトの商品ページまたは検索結果ページのURL形式を確認してください。"
+        ) from exc
+    return "search", site
 
 
 def get_internal_search_limit(limit: int) -> int:

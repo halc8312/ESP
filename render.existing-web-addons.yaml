@@ -16,7 +16,7 @@ services:
     dockerContext: .
     dockerCommand: python worker.py
     autoDeployTrigger: off
-    numInstances: 2
+    numInstances: 1
     maxShutdownDelaySeconds: 300
     envVars:
       - key: SECRET_KEY
@@ -30,10 +30,27 @@ services:
           type: keyvalue
           name: esp-keyvalue
           property: connectionString
+      # The existing web service is intentionally outside this Blueprint, so
+      # it cannot be referenced with fromService. Set its current public HTTPS
+      # origin manually (for example https://esp-existing.onrender.com).
+      - key: WEB_PUBLIC_URL
+        sync: false
       - key: SCRAPE_QUEUE_BACKEND
         value: rq
       - key: WORKER_ENABLE_SCHEDULER
         value: "1"
+      - key: SCHEDULER_HEARTBEAT_ENABLED
+        value: "1"
+      - key: SCHEDULER_HEARTBEAT_KEY
+        value: esp:scheduler:heartbeat
+      - key: WORKER_HEARTBEAT_ENABLED
+        value: "1"
+      - key: WORKER_HEARTBEAT_KEY_PREFIX
+        value: esp:worker:heartbeat
+      - key: WORKER_HEARTBEAT_INTERVAL_SECONDS
+        value: "15"
+      - key: WORKER_HEARTBEAT_TTL_SECONDS
+        value: "90"
       - key: WARM_BROWSER_POOL
         value: "1"
       - key: ENABLE_SHARED_BROWSER_RUNTIME

@@ -24,12 +24,16 @@
                 <h3 class="pricelist-list-title">{{ pl.name }}</h3>
                 <div class="pricelist-list-meta">
                     <span>📦 {{ pl.item_count }}商品</span>
-                    <span>💱 レート自動取得</span>
-                    <span>🧭 {{ 'エディトリアル' if pl.layout == 'editorial' else ('高密度リスト' if pl.layout == 'list' else 'グリッド') }}</span>
+                    <span>💱 為替を自動換算</span>
+                    <span>🧭 {{ '写真を大きく表示' if pl.layout == 'editorial' else ('コンパクトな一覧' if pl.layout == 'list' else 'カード表示') }}</span>
                     {% if pl.shop %}
                     <span>🏬 {{ pl.shop.name }}</span>
                     {% endif %}
-                    {% if pl.is_active %}
+                    {% if pl.publication_state == 'expired' %}
+                    <span class="pricelist-meta-status is-inactive">● 公開終了済み（{{ pl.unpublish_at_jst | replace('T', ' ') }} JST）</span>
+                    {% elif pl.publication_state == 'scheduled' %}
+                    <span class="pricelist-meta-status is-active">● 公開中（{{ pl.unpublish_at_jst | replace('T', ' ') }} JSTに自動非公開）</span>
+                    {% elif pl.publication_state == 'active' %}
                     <span class="pricelist-meta-status is-active">● 公開中</span>
                     {% else %}
                     <span class="pricelist-meta-status is-inactive">● 非公開</span>
@@ -52,10 +56,10 @@
                     ✏️ 編集
                 </a>
                 <a href="{{ url_for('catalog.catalog_view', token=pl.token) }}" target="_blank" class="btn pricelist-action-button pricelist-action-button--preview">
-                    👁️ プレビュー
+                    👁️ 顧客表示を確認
                 </a>
                 <a href="{{ url_for('catalog.pricelist_analytics', pricelist_id=pl.id) }}" class="btn pricelist-action-button pricelist-action-button--analytics">
-                    📊 解析
+                    📊 閲覧数を確認
                 </a>
                 <form action="{{ url_for('pricelist.pricelist_delete', pricelist_id=pl.id) }}" method="post"
                     data-confirm-title="価格表を削除" data-confirm-message="「{{ pl.name }}」を削除します。{{ pl.item_count }}件の商品との紐付けも解除されます。よろしいですか？"

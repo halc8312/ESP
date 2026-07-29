@@ -8,9 +8,21 @@ import logging
 import re
 from urllib.parse import urljoin
 
-from selector_config import get_selectors, get_valid_domains
+from selector_config import get_selectors
 from services.detail_field_strategy_runner import DetailFieldStrategy, run_detail_field_strategies
 from services.scrape_alerts import report_detail_result
+from services.scrape_safety import (
+    ScrapeBlockedError,
+    ScrapeFailure,
+    UnsafeScrapeUrlError,
+    is_usable_detail_result,
+    page_text,
+    raise_for_unsafe_detail_result,
+    require_search_outcome,
+    require_usable_details,
+    validate_fetch_response,
+    validate_marketplace_url,
+)
 from services.snkrdunk_browser_fetch import (
     fetch_snkrdunk_page_via_browser_pool_sync,
     should_use_snkrdunk_browser_pool_dynamic,
@@ -516,18 +528,27 @@ def scrape_item_detail_light(url: str) -> dict:
     Static-first SNKRDUNK detail scrape using the embedded __NEXT_DATA__ JSON.
     """
     try:
-        from services.scraping_client import fetch_dynamic, fetch_static
+        from services.scraping_client import fetch_dynamic, fetch_marketplace_static
 
+        url = validate_marketplace_url(url, "snkrdunk", kind="detail")
         try:
-            page = fetch_static(url)
+            page = fetch_marketplace_static(
+                url,
+                site="snkrdunk",
+                kind="detail",
+            )
+        except (UnsafeScrapeUrlError, ScrapeBlockedError):
+            raise
         except Exception as exc:
             logger.debug("SNKRDUNK static detail fetch failed, retrying dynamic fetch: %s", exc)
             if should_use_snkrdunk_browser_pool_dynamic():
                 page = fetch_snkrdunk_page_via_browser_pool_sync(url, network_idle=True)
             else:
                 page = fetch_dynamic(url, headless=True, network_idle=True)
+            validate_fetch_response(page, "snkrdunk", kind="detail")
             return _parse_detail_page(page, url)
 
+        validate_fetch_response(page, "snkrdunk", kind="detail")
         result = _parse_detail_page(page, url)
         if result.get("title"):
             return result
@@ -537,33 +558,47 @@ def scrape_item_detail_light(url: str) -> dict:
             page = fetch_snkrdunk_page_via_browser_pool_sync(url, network_idle=True)
         else:
             page = fetch_dynamic(url, headless=True, network_idle=True)
+        validate_fetch_response(page, "snkrdunk", kind="detail")
         return _parse_detail_page(page, url)
+    except ScrapeFailure:
+        raise
     except Exception as exc:
         logger.debug("SNKRDUNK light scrape error: %s", exc)
         return {}
 
 
 async def _scrape_item_detail_async(url: str) -> dict:
-    from services.scraping_client import fetch_dynamic, fetch_static_async, get_async_fetch_settings
+    from services.scraping_client import (
+        fetch_dynamic,
+        fetch_marketplace_static_async,
+        get_async_fetch_settings,
+    )
 
     settings = get_async_fetch_settings("snkrdunk")
 
     try:
+        url = validate_marketplace_url(url, "snkrdunk", kind="detail")
         try:
-            page = await fetch_static_async(
+            page = await fetch_marketplace_static_async(
                 url,
+                site="snkrdunk",
+                kind="detail",
                 timeout=settings.timeout,
                 retries=settings.retries,
                 backoff_seconds=settings.backoff_seconds,
             )
+        except (UnsafeScrapeUrlError, ScrapeBlockedError):
+            raise
         except Exception as exc:
             logger.debug("SNKRDUNK async static detail fetch failed, retrying dynamic fetch: %s", exc)
             if should_use_snkrdunk_browser_pool_dynamic():
                 page = await asyncio.to_thread(fetch_snkrdunk_page_via_browser_pool_sync, url, network_idle=True)
             else:
                 page = await asyncio.to_thread(fetch_dynamic, url, headless=True, network_idle=True)
+            validate_fetch_response(page, "snkrdunk", kind="detail")
             return _parse_detail_page(page, url)
 
+        validate_fetch_response(page, "snkrdunk", kind="detail")
         result = _parse_detail_page(page, url)
         if result.get("title"):
             return result
@@ -573,7 +608,10 @@ async def _scrape_item_detail_async(url: str) -> dict:
             page = await asyncio.to_thread(fetch_snkrdunk_page_via_browser_pool_sync, url, network_idle=True)
         else:
             page = await asyncio.to_thread(fetch_dynamic, url, headless=True, network_idle=True)
+        validate_fetch_response(page, "snkrdunk", kind="detail")
         return _parse_detail_page(page, url)
+    except ScrapeFailure:
+        raise
     except Exception as exc:
         logger.debug("SNKRDUNK async detail scrape error: %s", exc)
         return {}
@@ -597,17 +635,17 @@ def scrape_single_item(url: str, headless: bool = True):
     try:
         data = scrape_item_detail(url)
         log_scrape_result("snkrdunk", url, data)
-        if data.get("title"):
+        if is_usable_detail_result(data):
             metrics.finish()
             return [data]
         metrics.record_attempt(False, url, "empty title")
         metrics.finish()
-        return []
+        return [data]
     except Exception as exc:
         metrics.record_attempt(False, url, str(exc))
         metrics.finish()
-        logger.error("SNKRDUNK single scrape error: %s", exc)
-        return []
+        logger.exception("SNKRDUNK single scrape error: %s", exc)
+        raise
 
 
 def _extract_search_urls(page, base_url: str, max_items: int) -> list:
@@ -616,8 +654,6 @@ def _extract_search_urls(page, base_url: str, max_items: int) -> list:
         "a[class*='productTile']",
         "a[href*='/products/']",
     ]
-    valid_domains = get_valid_domains("snkrdunk", "search") or ["snkrdunk.com"]
-
     urls = []
     seen = set()
     for selector in link_selectors:
@@ -626,9 +662,9 @@ def _extract_search_urls(page, base_url: str, max_items: int) -> list:
             if not href:
                 continue
             full_url = urljoin(base_url, href)
-            if not any(domain in full_url for domain in valid_domains):
-                continue
-            if "/products/" not in full_url:
+            try:
+                full_url = validate_marketplace_url(full_url, "snkrdunk", kind="detail")
+            except UnsafeScrapeUrlError:
                 continue
             if full_url in seen:
                 continue
@@ -661,7 +697,10 @@ def _find_next_page_url(page, current_url: str) -> str:
             or "next" in rel
             or "next" in aria_label
         ):
-            return full_url
+            try:
+                return validate_marketplace_url(full_url, "snkrdunk", kind="search")
+            except UnsafeScrapeUrlError:
+                continue
     return ""
 
 
@@ -677,9 +716,16 @@ def scrape_search_result(
     items = []
     candidate_urls = []
     candidate_target = max(max_items, max_items * 2)
+    first_page_text = ""
 
     try:
-        from services.scraping_client import fetch_dynamic, fetch_static, gather_with_concurrency, get_async_fetch_settings
+        search_url = validate_marketplace_url(search_url, "snkrdunk", kind="search")
+        from services.scraping_client import (
+            fetch_dynamic,
+            fetch_marketplace_static,
+            gather_with_concurrency,
+            get_async_fetch_settings,
+        )
 
         current_url = search_url
         seen_pages = set()
@@ -690,16 +736,31 @@ def scrape_search_result(
             if should_use_snkrdunk_browser_pool_dynamic():
                 try:
                     page = fetch_snkrdunk_page_via_browser_pool_sync(current_url, network_idle=True)
+                except (UnsafeScrapeUrlError, ScrapeBlockedError):
+                    raise
                 except Exception as exc:
                     logger.debug("SNKRDUNK browser-pool search fetch failed, retrying static fetch: %s", exc)
-                    page = fetch_static(current_url)
+                    page = fetch_marketplace_static(
+                        current_url,
+                        site="snkrdunk",
+                        kind="search",
+                    )
             else:
                 try:
                     page = fetch_dynamic(current_url, headless=headless, network_idle=True)
+                except (UnsafeScrapeUrlError, ScrapeBlockedError):
+                    raise
                 except Exception as exc:
                     logger.debug("SNKRDUNK dynamic search fetch failed, retrying static fetch: %s", exc)
-                    page = fetch_static(current_url)
+                    page = fetch_marketplace_static(
+                        current_url,
+                        site="snkrdunk",
+                        kind="search",
+                    )
 
+            validate_fetch_response(page, "snkrdunk", kind="search")
+            if not first_page_text:
+                first_page_text = page_text(page)
             for item_url in _extract_search_urls(page, current_url, max_items=candidate_target):
                 if item_url not in candidate_urls:
                     candidate_urls.append(item_url)
@@ -709,6 +770,11 @@ def scrape_search_result(
                 break
             current_url = _find_next_page_url(page, current_url)
 
+        require_search_outcome(
+            "snkrdunk",
+            candidate_count=len(candidate_urls),
+            text=first_page_text,
+        )
         settings = get_async_fetch_settings("snkrdunk")
         detail_results = run_coro_sync(
             gather_with_concurrency(
@@ -718,6 +784,9 @@ def scrape_search_result(
             )
         )
 
+        for data in detail_results:
+            raise_for_unsafe_detail_result("snkrdunk", data)
+
         for item_url, data in zip(candidate_urls, detail_results):
             if len(items) >= max_items:
                 break
@@ -725,11 +794,16 @@ def scrape_search_result(
                 metrics.record_attempt(False, item_url, str(data))
                 continue
             log_scrape_result("snkrdunk", item_url, data)
-            if data.get("title"):
+            if is_usable_detail_result(data):
                 items.append(data)
             else:
                 metrics.record_attempt(False, item_url, "empty title")
 
+        require_usable_details(
+            "snkrdunk",
+            candidate_count=len(candidate_urls),
+            item_count=len(items),
+        )
         health = check_scrape_health(items)
         if health["action_required"]:
             logger.warning("SNKRDUNK scrape health check: %s", health["message"])
@@ -738,5 +812,5 @@ def scrape_search_result(
     except Exception as exc:
         metrics.record_attempt(False, search_url, str(exc))
         metrics.finish()
-        logger.error("SNKRDUNK search scrape error: %s", exc)
-        return []
+        logger.exception("SNKRDUNK search scrape error: %s", exc)
+        raise

@@ -2,6 +2,7 @@
 
 {% block title %}商品抽出結果{% endblock %}
 {% block header_title %}商品抽出結果{% endblock %}
+{% block body_class %}has-bottom-nav scrape-page{% endblock %}
 
 {% block content %}
     <a href="{{ url_for('scrape_form') }}" class="back-link">&laquo; 条件を変更して再抽出</a>
@@ -18,13 +19,13 @@
         </summary>
         <div class="mobile-collapsible-content">
             <pre style="background:#f0f0f0; padding:12px; overflow-x: auto; font-size: 12px;">{{ search_url }}</pre>
-            <h4>設定パラメータ</h4>
+            <h4>抽出条件</h4>
             <ul style="font-size: 14px;">
                 <li>キーワード: {{ keyword }}</li>
                 <li>価格範囲: {{ price_min }} 〜 {{ price_max }}</li>
-                <li>ソート: {{ sort }}</li>
+                <li>並び順: {{ sort }}</li>
                 <li>カテゴリ: {{ category }}</li>
-                <li>要求件数: {{ limit }}</li>
+                <li>指定件数: {{ limit }}</li>
             </ul>
         </div>
     </details>
@@ -36,13 +37,13 @@
         </div>
         <div class="content-card-body">
             <pre style="background:#f0f0f0; padding:12px; overflow-x: auto;">{{ search_url }}</pre>
-            <h4>設定パラメータ:</h4>
+            <h4>抽出条件:</h4>
             <ul>
                 <li>キーワード: {{ keyword }}</li>
                 <li>価格範囲: {{ price_min }} 〜 {{ price_max }}</li>
-                <li>ソート: {{ sort }}</li>
+                <li>並び順: {{ sort }}</li>
                 <li>カテゴリ: {{ category }}</li>
-                <li>要求件数: {{ limit }}</li>
+                <li>指定件数: {{ limit }}</li>
             </ul>
         </div>
     </div>
@@ -76,7 +77,7 @@
     {% if items %}
     <div class="content-card">
         <div class="content-card-header">
-            <h3>抽出した商品（プレビュー）</h3>
+            <h3>抽出した商品</h3>
         </div>
         <div class="content-card-body" style="padding: 0;">
             <div class="table-responsive">
@@ -85,8 +86,8 @@
                         <th>#</th>
                         <th>タイトル</th>
                         <th>価格</th>
-                        <th class="hide-mobile">ステータス</th>
-                        <th>URL</th>
+                        <th class="hide-mobile">在庫状況</th>
+                        <th>商品ページ</th>
                     </tr>
                     {% for it in items %}
                     <tr>

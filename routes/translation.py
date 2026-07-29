@@ -263,19 +263,30 @@ def apply_translation_suggestion(job_id: str):
         if product is None:
             return jsonify({"error": "product_not_found"}), 404
 
-        saved_title = suggestion.translated_title
-        saved_desc = suggestion.translated_description
-        if not apply_title:
-            suggestion.translated_title = None
-        if not apply_description:
-            suggestion.translated_description = None
-
-        changes = apply_suggestion_to_product(suggestion, session_db)
-
-        suggestion.translated_title = saved_title
-        suggestion.translated_description = saved_desc
+        changes = apply_suggestion_to_product(
+            suggestion,
+            session_db,
+            apply_title=apply_title,
+            apply_description=apply_description,
+        )
 
         if not changes:
+            session_db.expire_all()
+            current_status = (
+                session_db.query(TranslationSuggestion.status)
+                .filter_by(job_id=job_id, user_id=current_user.id)
+                .scalar()
+            )
+            if current_status != "succeeded":
+                return (
+                    jsonify(
+                        {
+                            "error": "suggestion_not_ready",
+                            "status": current_status,
+                        }
+                    ),
+                    409,
+                )
             return (
                 jsonify({"error": "nothing_to_apply"}),
                 400,
@@ -316,16 +327,18 @@ def reject_translation_suggestion(job_id: str):
         if suggestion.status in {"applied", "rejected"}:
             return jsonify({"status": suggestion.status, "suggestion": serialize_suggestion(suggestion)})
 
-        mark_terminal_state(job_id, status="rejected", session=session_db)
-        session_db.commit()
-        refreshed = (
-            session_db.query(TranslationSuggestion)
-            .filter_by(job_id=job_id)
-            .one_or_none()
+        refreshed = mark_terminal_state(
+            job_id,
+            status="rejected",
+            user_id=current_user.id,
+            session=session_db,
         )
+        session_db.commit()
+        if refreshed is not None:
+            session_db.refresh(refreshed)
         return jsonify(
             {
-                "status": "rejected",
+                "status": refreshed.status if refreshed else "missing",
                 "suggestion": serialize_suggestion(refreshed) if refreshed else None,
             }
         )

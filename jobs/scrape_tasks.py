@@ -27,6 +27,45 @@ from services.scrape_request import (
 logger = logging.getLogger("scrape_tasks")
 
 
+def _validate_scraper_result(scraped_items, *, site: str, allow_empty: bool = True):
+    """
+    Preserve a legitimate empty result while failing closed on scraper errors.
+
+    Scrapers use an empty list for a valid search with no matches. Explicit
+    blocked/error item states and malformed return values are operational
+    failures and must reach run_tracked_job/RQ as exceptions.
+    """
+    if scraped_items is None:
+        raise RuntimeError(f"{site}の商品抽出結果を取得できませんでした。")
+    if not isinstance(scraped_items, (list, tuple)):
+        raise RuntimeError(f"{site}の商品抽出結果の形式が不正です。")
+    if not scraped_items and not allow_empty:
+        raise RuntimeError(
+            f"{site}の商品ページから商品情報を取得できませんでした。"
+            "サイト側の表示変更または通信障害の可能性があります。"
+        )
+
+    failed_statuses = {
+        str(item.get("status") or "").strip().lower()
+        for item in scraped_items
+        if isinstance(item, dict)
+        and str(item.get("status") or "").strip().lower() in {"blocked", "challenge", "error"}
+    }
+    if failed_statuses.intersection({"blocked", "challenge"}):
+        raise RuntimeError(f"{site}へのアクセスが制限されました。時間をおいて再度お試しください。")
+    if "error" in failed_statuses:
+        raise RuntimeError(f"{site}の商品情報を取得できませんでした。時間をおいて再度お試しください。")
+    if any(not isinstance(item, dict) for item in scraped_items):
+        raise RuntimeError(f"{site}の商品抽出結果の形式が不正です。")
+    if scraped_items and not any(str(item.get("title") or "").strip() for item in scraped_items):
+        raise RuntimeError(
+            f"{site}の商品ページは取得できましたが、商品情報を確認できませんでした。"
+            "サイト側の表示変更の可能性があります。"
+        )
+
+    return list(scraped_items)
+
+
 def _get_smoke_result_payload(request_payload: dict[str, Any]) -> dict[str, Any] | None:
     for key in ("__smoke_result", "_smoke_result", "smoke_result"):
         candidate = request_payload.get(key)
@@ -52,12 +91,16 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
     new_count = 0
     updated_count = 0
     excluded_count = 0
-    error_msg = ""
     search_url = ""
     normalized_price_min, normalized_price_max = normalize_price_bounds(price_min, price_max)
 
-    def finalize(scraped_items, target_site):
+    def finalize(scraped_items, target_site, *, allow_empty=True):
         nonlocal items, excluded_count, new_count, updated_count
+        scraped_items = _validate_scraper_result(
+            scraped_items,
+            site=target_site,
+            allow_empty=allow_empty,
+        )
         filtered_items, excluded_count = filter_excluded_items(scraped_items, user_id)
         filtered_items, price_excluded_count = filter_items_by_price(
             filtered_items,
@@ -77,8 +120,10 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
     try:
         smoke_result = _get_smoke_result_payload(request_payload)
         if smoke_result is not None:
+            smoke_error = str(smoke_result.get("error_msg") or "").strip()
+            if smoke_error:
+                raise RuntimeError(smoke_error)
             finalize(list(smoke_result.get("items") or []), str(smoke_result.get("site") or site))
-            error_msg = str(smoke_result.get("error_msg") or "")
             search_url = str(smoke_result.get("search_url") or f"internal://stack-smoke/{site}")
             keyword = str(smoke_result.get("keyword") or keyword)
             sort = str(smoke_result.get("sort") or sort)
@@ -88,7 +133,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                 "new_count": new_count,
                 "updated_count": updated_count,
                 "excluded_count": excluded_count,
-                "error_msg": error_msg,
+                "error_msg": "",
                 "search_url": search_url,
                 "keyword": keyword,
                 "price_min": normalized_price_min,
@@ -113,7 +158,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                     "snkrdunk": snkrdunk_db.scrape_search_result,
                     "mercari": scrape_search_result,
                 }
-                search_fn = search_scraper_map.get(target_site, scrape_search_result)
+                search_fn = search_scraper_map[target_site]
                 search_url = target_url
                 search_limit = get_internal_search_limit(limit)
                 search_depth = get_search_depth(target_site, search_limit)
@@ -134,8 +179,12 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                     "snkrdunk": snkrdunk_db.scrape_single_item,
                     "mercari": scrape_single_item,
                 }
-                scraper_fn = scraper_map.get(target_site, scrape_single_item)
-                finalize(scraper_fn(target_url, headless=True), target_site)
+                scraper_fn = scraper_map[target_site]
+                finalize(
+                    scraper_fn(target_url, headless=True),
+                    target_site,
+                    allow_empty=False,
+                )
         else:
             search_limit = get_internal_search_limit(limit)
             search_depth = get_search_depth(site, search_limit)
@@ -204,19 +253,16 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                     headless=True,
                 )
                 finalize(items, "mercari")
-    except Exception as exc:
+    except Exception:
         logger.exception("Scrape task failed for site=%s", site)
-        error_msg = str(exc)
-        items = []
-        new_count = 0
-        updated_count = 0
+        raise
 
     return {
         "items": items,
         "new_count": new_count,
         "updated_count": updated_count,
         "excluded_count": excluded_count,
-        "error_msg": error_msg,
+        "error_msg": "",
         "search_url": search_url,
         "keyword": keyword,
         "price_min": normalized_price_min,

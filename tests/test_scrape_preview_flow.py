@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 import pytest
 
@@ -128,6 +129,51 @@ def test_scrape_run_preview_returns_json_without_saving(client, db_session, monk
     assert fake_queue.last_enqueue['request_payload']['persist_to_db'] is False
     assert fake_queue.last_enqueue['mode'] == 'preview'
     assert db_session.query(Product).filter_by(user_id=user.id).count() == 0
+
+
+@pytest.mark.parametrize(
+    "target_url",
+    [
+        "http://jp.mercari.com/item/m-unsafe",
+        "https://jp.mercari.com.evil.example/item/m-unsafe",
+        "https://user:password@jp.mercari.com/item/m-unsafe",
+        "https://jp.mercari.com:8443/item/m-unsafe",
+        "https://127.0.0.1/item/m-unsafe",
+    ],
+)
+def test_scrape_run_rejects_unsafe_target_url_before_enqueue(
+    client,
+    db_session,
+    monkeypatch,
+    target_url,
+):
+    login_user(client, db_session, f"unsafe_url_user_{abs(hash(target_url))}")
+    fake_queue = FakeQueue()
+    monkeypatch.setattr("routes.scrape.get_queue", lambda: fake_queue)
+
+    response = client.post(
+        "/scrape/run",
+        data={
+            "target_url": target_url,
+            "response_mode": "preview",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json["kind"] == "invalid_target_url"
+    assert response.json["error"]
+    assert fake_queue.counter == 0
+
+
+def test_scrape_preview_javascript_surfaces_error_before_empty_result():
+    script_path = Path(__file__).resolve().parents[1] / "static" / "js" / "scrape_form.js"
+    source = script_path.read_text(encoding="utf-8")
+
+    error_contract = source.index("result.error_msg")
+    error_branch = source.index("if (resultError)")
+    empty_branch = source.index("if (!items.length)")
+
+    assert error_contract < error_branch < empty_branch
 
 
 def test_scrape_run_passes_current_shop_id_to_task(client, db_session, monkeypatch):

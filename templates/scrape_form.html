@@ -2,18 +2,19 @@
 
 {% block title %}商品抽出{% endblock %}
 {% block header_title %}商品抽出{% endblock %}
+{% block body_class %}has-bottom-nav scrape-page{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <h1>商品抽出</h1>
-    <p class="page-subtitle">URL指定と検索抽出を1つの導線にまとめ、進捗確認と選択登録をしやすくします。</p>
+    <p class="page-subtitle">各サイトで絞り込んだページのURLを貼り付ける方法と、キーワード検索の両方を使えます。</p>
 </div>
 
 <section class="content-card scrape-workflow-card">
     <div class="content-card-header">
         <div>
-            <h2>抽出フロー</h2>
-            <p class="text-muted mb-0">抽出方法の選択からプレビュー登録まで、同じ画面で進められます。</p>
+            <h2>かんたん4ステップ</h2>
+            <p class="text-muted mb-0">抽出方法を選び、結果を確認して登録するまで、この画面で進められます。</p>
         </div>
     </div>
     <div class="content-card-body">
@@ -35,12 +36,12 @@
             <form method="POST" action="{{ url_for('scrape_run') }}" class="scrape-form-compact" data-scrape-form="url">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <div class="scrape-form-intro">
-                    <strong>URL指定</strong>
+                    <strong>サイトのURLを貼り付け</strong>
                     <p class="text-muted mb-0">個別商品URLのほか、各サイトで絞り込んだ検索結果URLも貼り付けられます。検索結果URLの場合は指定件数までまとめて抽出します。</p>
                 </div>
                 <div class="form-row">
                     <div class="form-group form-group--keyword">
-                        <label for="scrapeTargetUrl">対象URL</label>
+                        <label for="scrapeTargetUrl">商品または検索結果のURL</label>
                         <input type="url" id="scrapeTargetUrl" name="target_url"
                             placeholder="商品URLまたは検索結果URL（メルカリ / ラクマ / Yahoo / 駿河屋 / オフモール / ヤフオク / SNKRDUNK）"
                             required inputmode="url" autocomplete="url">
@@ -66,7 +67,7 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <div class="scrape-form-intro">
                     <strong>検索抽出</strong>
-                    <p class="text-muted mb-0">キーワード条件をまとめて指定し、候補をプレビューから選んで登録します。</p>
+                    <p class="text-muted mb-0">キーワードと価格を指定し、抽出した商品を確認してから登録します。</p>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
@@ -95,11 +96,11 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label for="scrapePriceMin">価格 min</label>
+                        <label for="scrapePriceMin">最低価格</label>
                         <input type="number" id="scrapePriceMin" name="price_min" inputmode="numeric" min="0" placeholder="¥0">
                     </div>
                     <div class="form-group">
-                        <label for="scrapePriceMax">価格 max</label>
+                        <label for="scrapePriceMax">最高価格</label>
                         <input type="number" id="scrapePriceMax" name="price_max" inputmode="numeric" min="0" placeholder="上限なし">
                     </div>
                     <div class="form-group form-group--submit">
@@ -107,10 +108,10 @@
                     </div>
                 </div>
                 <details class="filter-advanced scrape-filter-advanced">
-                    <summary>詳細オプション（ソート順・カテゴリID）</summary>
+                    <summary>さらに条件を指定（並び順・サイトのカテゴリ番号）</summary>
                     <div class="filter-advanced-body scrape-filter-advanced-body">
                         <div class="form-group">
-                            <label for="scrapeSort">ソート順</label>
+                            <label for="scrapeSort">並び順</label>
                             <select id="scrapeSort" name="sort">
                                 <option value="created_desc">新着順</option>
                                 <option value="price_asc">価格: 安い順</option>
@@ -118,8 +119,9 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label for="scrapeCategory">カテゴリID（任意）</label>
+                            <label for="scrapeCategory">サイトのカテゴリ番号（任意）</label>
                             <input type="text" id="scrapeCategory" name="category" placeholder="例: 1" inputmode="numeric">
+                            <span class="text-small text-muted">分からない場合は空欄のままで構いません。</span>
                         </div>
                     </div>
                 </details>
@@ -134,7 +136,7 @@
 
 <section id="scrapePreviewSection" class="content-card scrape-preview-section" hidden>
     <div class="content-card-header">
-        <h3>抽出プレビュー</h3>
+        <h3>抽出した商品を確認</h3>
     </div>
     <div class="content-card-body">
         <div id="scrapePreviewFlash" class="scrape-preview-flash" hidden aria-live="polite"></div>
@@ -153,14 +155,14 @@
                 </label>
                 <div class="scrape-register-options">
                     <label class="scrape-register-option">
-                        <input type="checkbox" id="scrapeTranslateCheck">
+                        <input type="checkbox" id="scrapeTranslateCheck" checked>
                         英訳する（自動適用）
                     </label>
                     <label class="scrape-register-option{% if not has_default_pricing_rule %} is-disabled{% endif %}">
                         <input type="checkbox" id="scrapePricingCheck"{% if not has_default_pricing_rule %} disabled{% endif %}>
-                        利益を上乗せする（デフォルトルール）
+                        設定済みの標準ルールで利益を上乗せする
                         {% if not has_default_pricing_rule %}
-                        <span class="scrape-register-hint">設定画面でデフォルトルールを選択してください</span>
+                        <span class="scrape-register-hint">設定画面で標準ルールを選択してください</span>
                         {% endif %}
                     </label>
                 </div>
@@ -170,7 +172,7 @@
         </div>
 
         <div id="pricelistRegisterPanel" class="scrape-pricelist-panel" hidden>
-            <p class="text-muted">選択した商品を顧客閲覧用の商品リストにのみ登録します（商品一覧には表示されません）。</p>
+            <p class="text-muted">選択した商品を顧客閲覧用の商品リストにのみ登録します。商品一覧には表示せず、在庫・価格の自動確認も行いません。</p>
             <div class="form-group">
                 <label for="pricelistSelect">登録先の商品リスト</label>
                 <select id="pricelistSelect">

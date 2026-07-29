@@ -40,10 +40,10 @@
 
 ## 2. 計算方針
 
-### margin
+### margin（現在は利益上乗せ率）
 
-- `selling_price = cost / (1 - margin/100)`
-- ロードマップ記載の利益率定義に合わせた
+- `selling_price = cost × (1 + margin/100)`
+- 標準価格ルールと同じ計算方式へ統一済み
 
 ### fixed_add
 

@@ -12,6 +12,7 @@ from services.rakuma_item_parser import (
     is_rakuma_missing_item_page,
     parse_rakuma_item_page,
 )
+from services.scrape_safety import fetch_with_safe_redirects
 from services.scraping_client import fetch_static
 
 logger = logging.getLogger("patrol.rakuma")
@@ -28,7 +29,16 @@ class RakumaPatrol(BasePatrol):
         driver 引数は後方互換のために保持するが、使用しない。
         """
         try:
-            page = fetch_static(url, follow_redirects=True)
+            page = fetch_with_safe_redirects(
+                lambda current_url: fetch_static(
+                    current_url,
+                    follow_redirects=False,
+                ),
+                url,
+                "rakuma",
+                kind="detail",
+                allowed_statuses=frozenset({404}),
+            )
             http_status = self._extract_http_status(page)
             body_text = extract_rakuma_page_text(page)
 

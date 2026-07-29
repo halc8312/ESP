@@ -2093,6 +2093,13 @@ body.has-bottom-nav .main-content {
         width: calc(100% - var(--sidebar-width));
     }
 
+    /* High-density work screens use all space beside the navigation. */
+    body.product-list-page .main-content,
+    body.scrape-page .main-content {
+        max-width: none;
+        width: calc(100% - var(--sidebar-width));
+    }
+
     /* Hide legacy nav on desktop when using new layout */
     body.has-bottom-nav .nav:not(.sidebar-nav) {
         display: none;

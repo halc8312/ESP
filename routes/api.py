@@ -1,12 +1,17 @@
 """
 API routes for scraping job status polling and lightweight product updates.
 """
+import math
+
 from flask import Blueprint, jsonify, request, url_for
 from flask_login import login_required, current_user
 
 from database import SessionLocal
-from models import PricingRule, Product
-from services.pricing_service import calculate_selling_price
+from models import PricingRule, Product, Variant
+from services.pricing_service import (
+    calculate_configured_product_price,
+    calculate_selling_price,
+)
 from services.queue_backend import get_queue_backend, serialize_scrape_job_for_api
 from services.scrape_job_store import dismiss_job_record, dismiss_job_records, list_dismissed_job_ids_for_user
 from time_utils import utc_now
@@ -42,8 +47,8 @@ def _parse_bulk_price_payload(mode, value, extra_value):
             margin = float(value)
         except (TypeError, ValueError):
             raise ValueError("margin must be a number")
-        if margin < 0 or margin >= 100:
-            raise ValueError("margin must satisfy 0 <= margin < 100")
+        if not math.isfinite(margin) or margin < 0 or margin > 500:
+            raise ValueError("margin must satisfy 0 <= margin <= 500")
 
         payload = {"mode": mode, "value": margin}
         if mode == "margin_plus_fixed":
@@ -58,9 +63,6 @@ def _parse_bulk_price_payload(mode, value, extra_value):
 
 def _calculate_bulk_price(product, parsed):
     mode = parsed["mode"]
-    if mode == "reset":
-        return None
-
     if mode == "fixed":
         return parsed["value"]
 
@@ -69,14 +71,20 @@ def _calculate_bulk_price(product, parsed):
         raise ValueError("cost price is missing")
 
     if mode == "fixed_add":
-        return cost + parsed["value"]
+        result = cost + parsed["value"]
+        if result < 0:
+            raise ValueError("calculated price must be >= 0")
+        return result
 
     if mode == "margin":
-        return int(round(cost / (1 - parsed["value"] / 100)))
+        return int(round(cost * (1 + parsed["value"] / 100)))
 
     if mode == "margin_plus_fixed":
-        margin_price = cost / (1 - parsed["value"] / 100)
-        return int(round(margin_price + parsed["extra_value"]))
+        margin_price = cost * (1 + parsed["value"] / 100)
+        result = int(round(margin_price + parsed["extra_value"]))
+        if result < 0:
+            raise ValueError("calculated price must be >= 0")
+        return result
 
     raise ValueError("Unsupported mode")
 
@@ -196,6 +204,28 @@ def inline_update_product(product_id):
             normalized_value = str(value).strip() if value is not None else ""
             normalized_value = normalized_value or None
 
+        if field == "custom_title_en":
+            if normalized_value != product.custom_title_en:
+                product.custom_title_en_source_hash = None
+            # This endpoint is an explicit operator edit, including when the
+            # submitted value is empty.
+            product.custom_title_en_manually_edited = True
+        else:
+            # A product-level manual price intentionally restores the common
+            # default contract.  Remove older per-variant overrides so the
+            # value shown in the list is also the value exports resolve from.
+            session_db.query(Variant).filter_by(
+                product_id=product.id
+            ).update(
+                {Variant.selling_price: None},
+                synchronize_session=False,
+            )
+        if field == "selling_price" and normalized_value is None:
+            normalized_value = calculate_configured_product_price(
+                session_db,
+                product,
+                user_id=current_user.id,
+            )
         setattr(product, field, normalized_value)
         session_db.commit()
 
@@ -222,14 +252,16 @@ def recalc_product_price(product_id):
 
     Request JSON:
         {
+            "pricing_rule_id": int | null,
             "manual_margin_rate": int | null,
             "manual_shipping_cost": int | null
         }
 
-    Returns the recalculated selling_price using the product's pricing rule
-    (if any) overridden by the supplied manual values. Does NOT persist
-    anything to the database — frontend uses this to populate variant price
-    inputs as a preview only.
+    Returns the recalculated selling_price using the rule currently selected
+    in the edit form (or the persisted product rule for older callers),
+    overridden by the supplied manual values. Does NOT persist anything to
+    the database — frontend uses this to populate variant price inputs as a
+    preview only.
     """
     payload = request.get_json(silent=True) or {}
 
@@ -263,9 +295,43 @@ def recalc_product_price(product_id):
         if product.last_price is None or product.last_price <= 0:
             return jsonify({"success": False, "error": "仕入価格が未取得のため計算できません"}), 400
 
+        selected_rule_id = product.pricing_rule_id
+        if "pricing_rule_id" in payload:
+            raw_rule_id = payload.get("pricing_rule_id")
+            if raw_rule_id in (None, ""):
+                selected_rule_id = None
+            else:
+                try:
+                    selected_rule_id = int(raw_rule_id)
+                except (TypeError, ValueError):
+                    return jsonify(
+                        {
+                            "success": False,
+                            "error": "価格ルールを選び直してください",
+                        }
+                    ), 400
+                if selected_rule_id <= 0:
+                    return jsonify(
+                        {
+                            "success": False,
+                            "error": "価格ルールを選び直してください",
+                        }
+                    ), 400
+
         rule = None
-        if product.pricing_rule_id:
-            rule = session_db.query(PricingRule).filter_by(id=product.pricing_rule_id).first()
+        if selected_rule_id:
+            rule = (
+                session_db.query(PricingRule)
+                .filter_by(id=selected_rule_id, user_id=current_user.id)
+                .one_or_none()
+            )
+            if rule is None:
+                return jsonify(
+                    {
+                        "success": False,
+                        "error": "選択した価格ルールを利用できません",
+                    }
+                ), 400
 
         selling_price = calculate_selling_price(
             product.last_price,
@@ -309,6 +375,9 @@ def bulk_price_update():
     value = payload.get("value")
     extra_value = payload.get("extra_value")
 
+    if not isinstance(raw_ids, list):
+        return jsonify({"error": "ids must be an array of integers"}), 400
+
     try:
         product_ids = [int(pid) for pid in raw_ids]
     except (TypeError, ValueError):
@@ -337,12 +406,28 @@ def bulk_price_update():
 
         for product in products:
             try:
-                new_price = _calculate_bulk_price(product, parsed)
+                if parsed["mode"] == "reset":
+                    new_price = calculate_configured_product_price(
+                        session_db,
+                        product,
+                        user_id=current_user.id,
+                    )
+                else:
+                    new_price = _calculate_bulk_price(product, parsed)
             except ValueError as exc:
                 skipped_products.append({"id": product.id, "reason": str(exc)})
                 continue
 
             product.selling_price = new_price
+            # Bulk product-level pricing is an explicit replacement, not a
+            # preview.  Clear row-level manual prices so the reported result
+            # cannot disagree with subsequent exports.
+            session_db.query(Variant).filter_by(
+                product_id=product.id
+            ).update(
+                {Variant.selling_price: None},
+                synchronize_session=False,
+            )
             product.updated_at = utc_now()
             updated_products.append({"id": product.id, "selling_price": new_price})
 

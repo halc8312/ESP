@@ -81,6 +81,58 @@ def test_monitor_service_skips_deleted_products(client, db_session, monkeypatch)
     assert refreshed_deleted.last_status == 'on_sale'
 
 
+def test_monitor_service_excludes_products_registered_only_to_a_list(
+    client,
+    db_session,
+    monkeypatch,
+):
+    user = _create_user(db_session, "monitor_list_only_user")
+    old_time = utc_now() - timedelta(days=1)
+    monitored = Product(
+        user_id=user.id,
+        site="mercari",
+        source_url="https://jp.mercari.com/item/m-regular-monitor",
+        last_title="Regular product",
+        last_price=1000,
+        last_status="on_sale",
+        is_listed=True,
+        archived=False,
+        deleted_at=None,
+        created_at=old_time,
+        updated_at=old_time,
+    )
+    list_only = Product(
+        user_id=user.id,
+        site="mercari",
+        source_url="https://jp.mercari.com/item/m-list-only",
+        last_title="List-only product",
+        last_price=2000,
+        last_status="on_sale",
+        is_listed=False,
+        archived=False,
+        deleted_at=None,
+        created_at=old_time - timedelta(minutes=1),
+        updated_at=old_time - timedelta(minutes=1),
+    )
+    db_session.add_all([monitored, list_only])
+    db_session.commit()
+
+    fake_patrol = FakePatrol(
+        PatrolResult(price=1500, status="active", variants=[])
+    )
+    monkeypatch.setattr(MonitorService, "_patrols", {"mercari": fake_patrol})
+
+    summary = MonitorService.check_stale_products(limit=10)
+
+    assert summary["status"] == "completed"
+    assert summary["selected_count"] == 1
+    assert fake_patrol.called_urls == [monitored.source_url]
+    db_session.expire_all()
+    assert db_session.get(Product, monitored.id).last_price == 1500
+    assert db_session.get(Product, list_only.id).last_price == 2000
+    assert db_session.get(Product, list_only.id).last_patrolled_at is None
+
+
 # ---------------------------------------------------------------------------
 # New tests for URL validation & failure backoff
 # ---------------------------------------------------------------------------

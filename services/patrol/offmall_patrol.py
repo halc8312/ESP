@@ -19,9 +19,13 @@ class OffmallPatrol(BasePatrol):
 
     def _fetch_with_scrapling(self, url: str) -> PatrolResult:
         try:
-            from services.scraping_client import fetch_static
+            from services.scraping_client import fetch_marketplace_static
 
-            page = fetch_static(url)
+            page = fetch_marketplace_static(
+                url,
+                site="offmall",
+                kind="detail",
+            )
             page_text = _get_page_text(page)
             json_ld = _extract_json_ld_product(page)
             offers = json_ld.get("offers", {}) if isinstance(json_ld, dict) else {}

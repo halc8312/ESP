@@ -14,12 +14,13 @@ so existing curl_cffi-based code (surugaya_db.py) can be migrated with minimal c
 
 import asyncio
 import base64
+import inspect
 import logging
 import os
 import queue
 import threading
 from dataclasses import dataclass
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse, urlunparse
 
 logger = logging.getLogger("scraping_client")
 
@@ -38,6 +39,7 @@ class ExternalFetchResponse:
     status_code: int
     text: str
     source: str
+    transport_url: str = ""
 
     @property
     def status(self) -> int:
@@ -50,6 +52,10 @@ class ExternalFetchResponse:
     @property
     def content(self) -> bytes:
         return self.text.encode("utf-8")
+
+    @property
+    def headers(self) -> dict:
+        return {}
 
 
 _ASYNC_FETCH_DEFAULTS = {
@@ -128,6 +134,10 @@ class _ScraplingResponse:
     def url(self) -> str:
         return str(self._page.url or "")
 
+    @property
+    def headers(self):
+        return getattr(self._page, "headers", {}) or {}
+
 
 class _ScraplingSession:
     """
@@ -141,8 +151,10 @@ class _ScraplingSession:
         self._fs = FetcherSession(impersonate="chrome", stealthy_headers=True)
         self._inner = self._fs.__enter__()
 
-    def get(self, url: str, timeout: int = 30) -> _ScraplingResponse:
-        page = self._inner.get(url, timeout=timeout)
+    def get(self, url: str, timeout: int = 30, **kwargs) -> _ScraplingResponse:
+        if "allow_redirects" in kwargs and "follow_redirects" not in kwargs:
+            kwargs["follow_redirects"] = kwargs.pop("allow_redirects")
+        page = self._inner.get(url, timeout=timeout, **kwargs)
         return _ScraplingResponse(page)
 
 
@@ -170,70 +182,203 @@ def fetch_static(url: str, timeout: int = 30, **kwargs):
     return Fetcher.get(url, stealthy_headers=True, timeout=timeout, **kwargs)
 
 
+def _is_test_fetch_double(fetcher) -> bool:
+    module_name = str(getattr(fetcher, "__module__", "") or "")
+    return (
+        module_name.startswith("test_")
+        or module_name.startswith("tests.")
+        or module_name.startswith("unittest.mock")
+    )
+
+
+def _call_static_without_redirects(fetcher, url: str, *, timeout: int, kwargs: dict):
+    call_kwargs = dict(kwargs)
+    call_kwargs["timeout"] = timeout
+    call_kwargs["follow_redirects"] = False
+    try:
+        return fetcher(url, **call_kwargs)
+    except TypeError:
+        if not _is_test_fetch_double(fetcher):
+            raise
+        # Lightweight unit-test doubles cannot redirect and often accept only
+        # the URL positional argument.
+        signature = inspect.signature(fetcher)
+        if "timeout" in signature.parameters:
+            return fetcher(url, timeout=timeout)
+        return fetcher(url)
+
+
+def _safe_transport_origin(url: str) -> str:
+    """Return a credential/query/path-free origin suitable for diagnostics."""
+    try:
+        parsed = urlparse(str(url or ""))
+        host = str(parsed.hostname or "").rstrip(".").lower()
+        if parsed.scheme not in {"http", "https"} or not host:
+            return ""
+        port = parsed.port
+    except (TypeError, ValueError):
+        return ""
+    netloc = host
+    if port is not None:
+        netloc = f"{host}:{port}"
+    return urlunparse((parsed.scheme, netloc, "", "", "", ""))
+
+
+def _call_external_transport(source: str, operation):
+    """Run a provider request without surfacing credential-bearing URLs."""
+    try:
+        return operation()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Surugaya external fetch via {source} failed "
+            f"({type(exc).__name__})."
+        ) from None
+
+
+def fetch_marketplace_static(
+    url: str,
+    *,
+    site: str,
+    kind: str,
+    timeout: int = 30,
+    max_redirects: int = 5,
+    allowed_statuses: frozenset[int] = frozenset(),
+    **kwargs,
+):
+    """Fetch a marketplace page without permitting unvalidated redirects."""
+    from services.scrape_safety import fetch_with_safe_redirects
+
+    return fetch_with_safe_redirects(
+        lambda current_url: _call_static_without_redirects(
+            fetch_static,
+            current_url,
+            timeout=timeout,
+            kwargs=kwargs,
+        ),
+        url,
+        site,
+        kind=kind,
+        max_redirects=max_redirects,
+        allowed_statuses=allowed_statuses,
+    )
+
+
 def fetch_surugaya_external(url: str, timeout: int = 60) -> ExternalFetchResponse | None:
     from curl_cffi import requests
+    from services.scrape_safety import (
+        ScrapeFailure,
+        fetch_with_safe_redirects,
+        validate_marketplace_url,
+    )
+
+    target_kind = "detail" if "/product/detail/" in url else "search"
+    url = validate_marketplace_url(url, "surugaya", kind=target_kind)
 
     zyte_key = (os.environ.get("SURUGAYA_ZYTE_API_KEY") or "").strip()
     if zyte_key:
         token = base64.b64encode(f"{zyte_key}:".encode("utf-8")).decode("ascii")
-        response = requests.post(
-            "https://api.zyte.com/v1/extract",
-            headers={"Authorization": f"Basic {token}"},
-            json={"url": url, "browserHtml": True, "geolocation": "JP"},
-            timeout=timeout,
+        response = _call_external_transport(
+            "zyte",
+            lambda: requests.post(
+                "https://api.zyte.com/v1/extract",
+                headers={"Authorization": f"Basic {token}"},
+                json={"url": url, "browserHtml": True, "geolocation": "JP"},
+                timeout=timeout,
+                allow_redirects=False,
+            ),
         )
         if response.status_code >= 400:
-            return ExternalFetchResponse(url=url, status_code=response.status_code, text=response.text, source="zyte")
-        data = response.json()
+            return ExternalFetchResponse(
+                url=url,
+                status_code=response.status_code,
+                text=response.text,
+                source="zyte",
+                transport_url="https://api.zyte.com",
+            )
+        data = _call_external_transport("zyte", response.json)
         html = str(data.get("browserHtml") or data.get("httpResponseBody") or "")
         if html:
             status_code = data.get("browserHtmlStatusCode") or data.get("statusCode") or 200
-            return ExternalFetchResponse(url=url, status_code=int(status_code), text=html, source="zyte")
+            return ExternalFetchResponse(
+                url=url,
+                status_code=int(status_code),
+                text=html,
+                source="zyte",
+                transport_url="https://api.zyte.com",
+            )
 
     scraperapi_key = (os.environ.get("SURUGAYA_SCRAPERAPI_KEY") or "").strip()
     if scraperapi_key:
-        response = requests.get(
-            "http://api.scraperapi.com",
-            params={
-                "api_key": scraperapi_key,
-                "url": url,
-                "render": "true",
-                "country_code": "jp",
-            },
-            timeout=timeout,
+        response = _call_external_transport(
+            "scraperapi",
+            lambda: requests.get(
+                "https://api.scraperapi.com",
+                params={
+                    "api_key": scraperapi_key,
+                    "url": url,
+                    "render": "true",
+                    "country_code": "jp",
+                },
+                timeout=timeout,
+                allow_redirects=False,
+            ),
         )
         return ExternalFetchResponse(
-            url=response.url or url,
+            url=url,
             status_code=response.status_code,
             text=response.text,
             source="scraperapi",
+            transport_url="https://api.scraperapi.com",
         )
 
     template = (os.environ.get("SURUGAYA_FETCH_API_URL_TEMPLATE") or "").strip()
     if template:
         fetch_url = template.format(url=quote_plus(url), raw_url=url)
-        response = requests.get(fetch_url, timeout=timeout)
+        response = _call_external_transport(
+            "template",
+            lambda: requests.get(
+                fetch_url,
+                timeout=timeout,
+                allow_redirects=False,
+            ),
+        )
         return ExternalFetchResponse(
-            url=response.url or url,
+            url=url,
             status_code=response.status_code,
             text=response.text,
             source="template",
+            transport_url=_safe_transport_origin(fetch_url),
         )
 
     proxy_url = (os.environ.get("SURUGAYA_PROXY_URL") or "").strip()
     if proxy_url:
-        response = requests.get(
-            url,
-            timeout=timeout,
-            impersonate="chrome120",
-            proxies={"http": proxy_url, "https": proxy_url},
-            headers={"Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7"},
-        )
+        try:
+            response = fetch_with_safe_redirects(
+                lambda current_url: requests.get(
+                    current_url,
+                    timeout=timeout,
+                    impersonate="chrome120",
+                    proxies={"http": proxy_url, "https": proxy_url},
+                    headers={"Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7"},
+                    allow_redirects=False,
+                ),
+                url,
+                "surugaya",
+                kind=target_kind,
+            )
+        except ScrapeFailure:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                "Surugaya external fetch via proxy failed "
+                f"({type(exc).__name__})."
+            ) from None
         return ExternalFetchResponse(
             url=response.url or url,
             status_code=response.status_code,
             text=response.text,
             source="proxy",
+            transport_url=_safe_transport_origin(proxy_url),
         )
 
     return None
@@ -268,6 +413,41 @@ async def fetch_static_async(
                 await asyncio.sleep(delay)
 
     raise last_error
+
+
+async def fetch_marketplace_static_async(
+    url: str,
+    *,
+    site: str,
+    kind: str,
+    timeout: int = 30,
+    retries: int = 0,
+    backoff_seconds: float = 0.0,
+    max_redirects: int = 5,
+    allowed_statuses: frozenset[int] = frozenset(),
+    **kwargs,
+):
+    """Async static fetch with per-hop marketplace redirect validation."""
+    from services.scrape_safety import fetch_with_safe_redirects_async
+
+    async def _fetch_once(current_url: str):
+        return await fetch_static_async(
+            current_url,
+            timeout=timeout,
+            retries=retries,
+            backoff_seconds=backoff_seconds,
+            follow_redirects=False,
+            **kwargs,
+        )
+
+    return await fetch_with_safe_redirects_async(
+        _fetch_once,
+        url,
+        site,
+        kind=kind,
+        max_redirects=max_redirects,
+        allowed_statuses=allowed_statuses,
+    )
 
 
 async def gather_with_concurrency(values, worker, concurrency: int, return_exceptions: bool = True):
@@ -333,10 +513,78 @@ def fetch_dynamic(url: str, headless: bool = True, network_idle: bool = True, **
         headless: ヘッドレスモードで実行するか (default: True)
         network_idle: ネットワークアイドル待機するか (default: True)
     """
-    from scrapling import StealthyFetcher
-    return StealthyFetcher.fetch(
-        url,
-        headless=headless,
-        network_idle=network_idle,
-        **kwargs
+    from services.browser_pool import run_browser_page_task
+    from services.html_page_adapter import HtmlPageAdapter
+    from services.scrape_request import classify_target_url
+    from services.scrape_safety import (
+        install_navigation_guard,
+        raise_for_blocked_navigation,
+        validate_fetch_response,
+        validate_marketplace_url,
     )
+
+    request_kind, site = classify_target_url(url)
+    kind = "detail" if request_kind == "item" else "search"
+    normalized_url = validate_marketplace_url(url, site, kind=kind)
+    timeout = max(1, int(kwargs.pop("timeout", 30000) or 30000))
+    wait_selector = str(kwargs.pop("wait_selector", "") or "")
+    wait_ms = max(0, int(kwargs.pop("wait", 0) or 0))
+    if kwargs:
+        unsupported = ", ".join(sorted(kwargs))
+        raise TypeError(f"Unsupported guarded dynamic fetch options: {unsupported}")
+
+    async def _fetch_guarded():
+        page_state: dict[str, object] = {}
+
+        async def _task(page, context):
+            blocked_urls = await install_navigation_guard(context, site, kind=kind)
+            try:
+                response = await page.goto(
+                    normalized_url,
+                    wait_until="domcontentloaded",
+                    timeout=timeout,
+                )
+            except Exception:
+                raise_for_blocked_navigation(blocked_urls, site)
+                raise
+            raise_for_blocked_navigation(blocked_urls, site)
+            if network_idle:
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=min(timeout, 5000))
+                except Exception:
+                    pass
+            if wait_selector:
+                try:
+                    await page.wait_for_selector(wait_selector, timeout=min(timeout, 5000))
+                except Exception:
+                    pass
+            if wait_ms:
+                await page.wait_for_timeout(wait_ms)
+            raise_for_blocked_navigation(blocked_urls, site)
+            final_url = str(getattr(page, "url", "") or normalized_url)
+            validate_marketplace_url(final_url, site, kind=kind)
+            page_state["html"] = await page.content()
+            page_state["url"] = final_url
+            page_state["status"] = getattr(response, "status", None) or 200
+
+        await run_browser_page_task(
+            site,
+            _task,
+            headless=headless,
+            launch_args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-extensions",
+                "--disable-background-networking",
+            ],
+        )
+        result = HtmlPageAdapter(
+            str(page_state.get("html") or ""),
+            url=str(page_state.get("url") or normalized_url),
+            status=int(page_state.get("status") or 200),
+        )
+        validate_fetch_response(result, site, kind=kind)
+        return result
+
+    return run_coro_sync(_fetch_guarded())

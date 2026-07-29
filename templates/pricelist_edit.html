@@ -11,6 +11,9 @@
 </div>
 
 {% set layout_value = selected_layout or (pricelist.layout if pricelist and pricelist.layout else 'grid') %}
+{% set name_value = selected_name if selected_name is defined else (pricelist.name if pricelist else '') %}
+{% set notes_value = selected_notes if selected_notes is defined else (pricelist.notes if pricelist else '') %}
+{% set currency_rate_value = selected_currency_rate if selected_currency_rate is defined else (pricelist.currency_rate if pricelist else 150) %}
 
 {% if error %}
 <div
@@ -27,7 +30,7 @@
             {% set shop_value = selected_shop_id if selected_shop_id is defined else (pricelist.shop_id if pricelist and pricelist.shop_id else '') %}
             <div class="form-group">
                 <label for="name">価格表名 *</label>
-                <input type="text" id="name" name="name" value="{{ pricelist.name if pricelist else '' }}"
+                <input type="text" id="name" name="name" value="{{ name_value }}"
                     placeholder="例: Customer A Price List" required>
             </div>
 
@@ -49,13 +52,13 @@
             <div class="form-group">
                 <label for="notes">備考（顧客へのメッセージ）</label>
                 <textarea id="notes" name="notes" rows="3"
-                    placeholder="例: Thank you for your interest!">{{ pricelist.notes if pricelist else '' }}</textarea>
+                    placeholder="例: Thank you for your interest!">{{ notes_value }}</textarea>
             </div>
 
-            <input type="hidden" name="currency_rate" value="{{ pricelist.currency_rate if pricelist else 150 }}">
+            <input type="hidden" name="currency_rate" value="{{ currency_rate_value }}">
 
             <div class="form-group">
-                <label>ベースカラー</label>
+                <label>画面の色</label>
                 <div style="display: grid; gap: 12px;">
                     <label
                         style="display: block; border: 1px solid {% if theme_value == 'dark' %}#f4b183{% else %}#d9dde3{% endif %}; background: {% if theme_value == 'dark' %}#1f2430{% else %}#fff{% endif %}; color: {% if theme_value == 'dark' %}#fff{% else %}inherit{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
@@ -73,25 +76,25 @@
             </div>
 
             <div class="form-group">
-                <label>公開レイアウト</label>
+                <label>商品の見せ方</label>
                 <div style="display: grid; gap: 12px;">
                     <label
                         style="display: block; border: 1px solid {% if layout_value == 'grid' %}#90caf9{% else %}#d9dde3{% endif %}; background: {% if layout_value == 'grid' %}#e3f2fd{% else %}#fff{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
                         <input type="radio" name="layout" value="grid" {% if layout_value == 'grid' %}checked{% endif %}>
-                        <strong style="display: block; margin-top: 6px;">グリッド (Grid)</strong>
-                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">Card-based layout. Best for catalogs with many products.</span>
+                        <strong style="display: block; margin-top: 6px;">カード表示</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">商品を写真付きのカードで並べます。商品数が多い場合に向いています。</span>
                     </label>
                     <label
                         style="display: block; border: 1px solid {% if layout_value == 'editorial' %}#f4b183{% else %}#d9dde3{% endif %}; background: {% if layout_value == 'editorial' %}#fff4e8{% else %}#fff{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
                         <input type="radio" name="layout" value="editorial" {% if layout_value == 'editorial' %}checked{% endif %}>
-                        <strong style="display: block; margin-top: 6px;">エディトリアル (Editorial)</strong>
-                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">Large images with alternating layout. Best for curated selections.</span>
+                        <strong style="display: block; margin-top: 6px;">写真を大きく表示</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">大きな写真を交互に配置します。おすすめ商品を目立たせたい場合に向いています。</span>
                     </label>
                     <label
                         style="display: block; border: 1px solid {% if layout_value == 'list' %}#81c784{% else %}#d9dde3{% endif %}; background: {% if layout_value == 'list' %}#e8f5e9{% else %}#fff{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
                         <input type="radio" name="layout" value="list" {% if layout_value == 'list' %}checked{% endif %}>
-                        <strong style="display: block; margin-top: 6px;">高密度リスト (Compact List)</strong>
-                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">High-density rows for fast browsing. Shows thumbnail, title, price, and stock at a glance.</span>
+                        <strong style="display: block; margin-top: 6px;">一覧をコンパクトに表示</strong>
+                        <span style="display: block; margin-top: 4px; font-size: 13px; color: #51606f;">画像・商品名・価格・在庫を1行にまとめ、多くの商品を素早く確認できます。</span>
                     </label>
                 </div>
             </div>
@@ -100,19 +103,38 @@
                 style="background: #e8f5e9; padding: 14px; border-radius: 6px; border: 1px solid #a5d6a7;">
                 <label style="margin-bottom: 4px; font-weight: 600;">💱 為替レート</label>
                 <p style="font-size: 13px; color: #2e7d32; margin: 0;">
-                    為替レートは <strong>open.er-api.com</strong> から自動取得されます（APIキー不要）。<br>
-                    カタログページを開くと、最新のレートが自動的に適用されます。<br>
-                    API障害時は内部フォールバックレートが使用されます。
+                    顧客がカタログを開くと、その時点の為替レートを自動で反映します。<br>
+                    最新レートを確認できない場合も、保存済みのレートで表示を続けます。
                 </p>
             </div>
 
+            <div class="form-group">
+                <label for="unpublish_at">自動非公開日時（日本時間・任意）</label>
+                <input type="datetime-local" id="unpublish_at" name="unpublish_at"
+                    value="{{ selected_unpublish_at or '' }}">
+                <p class="text-small text-muted mb-0" style="margin-top: 6px;">
+                    日本標準時（JST）で指定します。指定時刻になると公開ページだけが自動的に非公開になり、商品リストとデータは削除されません。空欄にすると予約を解除します。
+                </p>
+            </div>
 
             {% if pricelist %}
             <div class="form-group">
                 <label>
-                    <input type="checkbox" name="is_active" {% if pricelist.is_active %}checked{% endif %}>
+                    <input type="checkbox" name="is_active" {% if selected_is_active %}checked{% endif %}>
                     公開する（チェックを外すとアクセス不可になります）
                 </label>
+                <p class="text-small text-muted mb-0" style="margin-top: 6px;">
+                    現在の状態:
+                    {% if publication_state == 'expired' %}
+                    公開終了済み
+                    {% elif publication_state == 'scheduled' %}
+                    公開中（自動非公開を予約済み）
+                    {% elif publication_state == 'active' %}
+                    公開中
+                    {% else %}
+                    手動で非公開
+                    {% endif %}
+                </p>
             </div>
 
             <div class="form-group" style="background: #f5f5f5; padding: 12px; border-radius: 6px;">

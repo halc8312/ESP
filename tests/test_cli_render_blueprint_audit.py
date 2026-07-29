@@ -73,3 +73,20 @@ def test_run_render_dashboard_inputs_current_blueprint_contains_manual_and_manag
         env["key"] == "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP" and env["value"] == "0"
         for env in worker_service["fixed_envs"]
     )
+
+
+def test_existing_web_addons_requires_manual_existing_web_public_url():
+    from cli import _parse_render_blueprint
+
+    blueprint = _parse_render_blueprint("render.existing-web-addons.yaml")
+    worker = next(
+        service for service in blueprint["services"] if service["name"] == "esp-worker"
+    )
+
+    assert "esp-web" not in {
+        service["name"] for service in blueprint["services"]
+    }
+    assert worker["env_vars"]["WEB_PUBLIC_URL"] == {
+        "key": "WEB_PUBLIC_URL",
+        "sync": "false",
+    }

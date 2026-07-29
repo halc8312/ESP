@@ -78,7 +78,7 @@ RUN useradd -m myuser \
 USER myuser
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-10000}/healthz || exit 1
+    CMD curl -f http://localhost:${PORT:-10000}/readyz || exit 1
 
 # ScrapeQueue はプロセス内シングルトンのため worker は 1 を維持する
 # シェル形式を使用して ${PORT} 変数を展開する

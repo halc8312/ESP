@@ -21,9 +21,10 @@ from services.pricing_service import update_product_selling_price
 from services.product_service import save_scraped_items_to_db
 from services.queue_backend import get_queue_backend
 from services.scrape_request import (
+    InvalidTargetUrl,
     build_scrape_job_context,
     build_scrape_task_request,
-    detect_site_from_url,
+    classify_target_url,
 )
 from services.translator import compute_source_hash
 from services.translator.suggestion_store import create_suggestion
@@ -37,6 +38,46 @@ get_queue = get_queue_backend
 
 
 scrape_bp = Blueprint('scrape', __name__)
+
+
+def _resolve_owned_shop_id(session_db, raw_shop_id, *, clear_stale_session=False):
+    """Return an owned shop id, failing safely to the unscoped view."""
+    if raw_shop_id in (None, ""):
+        return None
+
+    if isinstance(raw_shop_id, bool):
+        shop_id = None
+    else:
+        try:
+            shop_id = int(raw_shop_id)
+        except (TypeError, ValueError):
+            shop_id = None
+
+    owned_shop_id = None
+    if shop_id is not None and shop_id > 0:
+        owned = session_db.query(Shop.id).filter(
+            Shop.id == shop_id,
+            Shop.user_id == current_user.id,
+        ).first()
+        if owned is not None:
+            owned_shop_id = shop_id
+
+    if owned_shop_id is None:
+        logger.warning(
+            "Ignoring stale or non-owned shop context for user_id=%s",
+            current_user.id,
+        )
+        if clear_stale_session:
+            session.pop("current_shop_id", None)
+    return owned_shop_id
+
+
+def _current_owned_shop_id(session_db):
+    return _resolve_owned_shop_id(
+        session_db,
+        session.get("current_shop_id"),
+        clear_stale_session=True,
+    )
 
 
 def _build_scrape_task(site, target_url, keyword, price_min, price_max, sort, category, limit, user_id, persist_to_db=True, shop_id=None):
@@ -62,7 +103,7 @@ def scrape_form():
     session_db = SessionLocal()
     try:
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
-        current_shop_id = session.get('current_shop_id')
+        current_shop_id = _current_owned_shop_id(session_db)
         price_lists_query = session_db.query(PriceList).filter(
             PriceList.user_id == current_user.id,
         )
@@ -98,11 +139,20 @@ def scrape_run():
     limit = int(limit_str) if limit_str.isdigit() else 10
     response_mode = request.form.get("response_mode", "").strip().lower()
     preview_mode = response_mode == "preview"
-    current_shop_id = session.get('current_shop_id')
+    shop_db = SessionLocal()
+    try:
+        current_shop_id = _current_owned_shop_id(shop_db)
+    finally:
+        shop_db.close()
 
-    # URL から site を推定する（キュー振り分けに使用）
+    target_url = (target_url or "").strip()
+
+    # URL から site を安全に判定する（キュー振り分けに使用）
     if target_url:
-        site = detect_site_from_url(target_url)
+        try:
+            _url_kind, site = classify_target_url(target_url)
+        except InvalidTargetUrl as exc:
+            return jsonify({"error": str(exc), "kind": "invalid_target_url"}), 400
     else:
         site = request.form.get("site", "mercari")
 
@@ -174,7 +224,7 @@ def scrape_status(job_id):
     session_db = SessionLocal()
     try:
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
-        current_shop_id = session.get('current_shop_id')
+        current_shop_id = _current_owned_shop_id(session_db)
         return render_template(
             "scrape_waiting.html",
             job_id=job_id,
@@ -198,7 +248,7 @@ def scrape_result(job_id):
     session_db = SessionLocal()
     try:
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
-        current_shop_id = session.get('current_shop_id')
+        current_shop_id = _current_owned_shop_id(session_db)
 
         if status is None:
             return render_template(
@@ -437,12 +487,18 @@ def register_selected():
     if error_response is not None:
         return error_response
 
+    scope_db = SessionLocal()
+    try:
+        queued_shop_id = _resolve_owned_shop_id(scope_db, result.get("shop_id"))
+    finally:
+        scope_db.close()
+
     try:
         save_summary = save_scraped_items_to_db(
             selected_items,
             user_id=current_user.id,
             site=result.get("site", "mercari"),
-            shop_id=result.get("shop_id"),
+            shop_id=queued_shop_id,
             manual_selection=True,
             return_summary=True,
             raise_on_error=True,
@@ -461,7 +517,10 @@ def register_selected():
             }
         ), 422
 
-    translate_flag = bool(payload.get("translate"))
+    # Auto-translation is the registration default.  Current clients always
+    # send an explicit boolean, while omitted values from older clients retain
+    # the agreed automatic behaviour.
+    translate_flag = bool(payload.get("translate", True))
     pricing_flag = bool(payload.get("apply_pricing"))
     translation_jobs_enqueued = 0
     pricing_applied_count = 0
@@ -526,12 +585,18 @@ def register_to_pricelist():
         if owned is None:
             return jsonify({"error": "指定された商品リストが見つかりません。"}), 404
 
+    scope_db = SessionLocal()
+    try:
+        queued_shop_id = _resolve_owned_shop_id(scope_db, result.get("shop_id"))
+    finally:
+        scope_db.close()
+
     try:
         save_summary = save_scraped_items_to_db(
             selected_items,
             user_id=current_user.id,
             site=result.get("site", "mercari"),
-            shop_id=result.get("shop_id"),
+            shop_id=queued_shop_id,
             manual_selection=True,
             return_summary=True,
             raise_on_error=True,
@@ -553,7 +618,7 @@ def register_to_pricelist():
 
     session_db = SessionLocal()
     try:
-        current_shop_id = session.get('current_shop_id')
+        current_shop_id = _current_owned_shop_id(session_db)
         if price_list_id is not None:
             price_list = session_db.query(PriceList).filter(
                 PriceList.id == price_list_id,
@@ -604,7 +669,7 @@ def register_to_pricelist():
     finally:
         session_db.close()
 
-    translate_flag = bool(payload.get("translate"))
+    translate_flag = bool(payload.get("translate", True))
     pricing_flag = bool(payload.get("apply_pricing"))
     translation_jobs_enqueued = 0
     pricing_applied_count = 0
@@ -637,5 +702,3 @@ def register_to_pricelist():
             "pricing_applied_count": pricing_applied_count,
         }
     )
-
-

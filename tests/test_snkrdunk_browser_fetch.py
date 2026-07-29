@@ -1,5 +1,13 @@
+import pytest
+
 from services.html_page_adapter import HtmlPageAdapter
+from services.scrape_safety import ScrapeBlockedError, ScrapeHttpError
 from services.snkrdunk_browser_fetch import fetch_snkrdunk_page_via_browser_pool_sync
+
+
+class FakeBrowserContext:
+    async def route(self, _pattern, _handler):
+        return None
 
 
 def test_fetch_snkrdunk_page_via_browser_pool_sync_builds_html_adapter(monkeypatch):
@@ -43,7 +51,7 @@ def test_fetch_snkrdunk_page_via_browser_pool_sync_builds_html_adapter(monkeypat
                 </html>
                 """
 
-        await task_coro_factory(FakePage(), object())
+        await task_coro_factory(FakePage(), FakeBrowserContext())
 
     monkeypatch.setattr("services.snkrdunk_browser_fetch.run_browser_page_task", fake_run_browser_page_task)
 
@@ -98,6 +106,55 @@ def test_scrape_item_detail_light_can_use_browser_pool_dynamic_fallback(monkeypa
 
     assert captured["call"] == (url, True)
     assert result["title"] == "SNKRDUNK Item"
+
+
+def test_snkrdunk_detail_http_failure_can_use_guarded_dynamic_fallback(monkeypatch):
+    import snkrdunk_db
+
+    url = "https://snkrdunk.com/products/test-1"
+    monkeypatch.setenv("SNKRDUNK_USE_BROWSER_POOL_DYNAMIC", "true")
+    monkeypatch.setattr(
+        "services.scraping_client.fetch_static",
+        lambda _target_url: (_ for _ in ()).throw(ScrapeHttpError("HTTP 500")),
+    )
+    sentinel_page = object()
+    monkeypatch.setattr(
+        snkrdunk_db,
+        "fetch_snkrdunk_page_via_browser_pool_sync",
+        lambda *_args, **_kwargs: sentinel_page,
+    )
+    monkeypatch.setattr(
+        snkrdunk_db,
+        "_parse_detail_page",
+        lambda _page, target_url: {
+            "url": target_url,
+            "title": "Recovered item",
+            "status": "on_sale",
+        },
+    )
+
+    assert snkrdunk_db.scrape_item_detail_light(url)["title"] == "Recovered item"
+
+
+def test_snkrdunk_detail_block_never_falls_through_to_dynamic(monkeypatch):
+    import snkrdunk_db
+
+    url = "https://snkrdunk.com/products/test-1"
+    monkeypatch.setenv("SNKRDUNK_USE_BROWSER_POOL_DYNAMIC", "true")
+    monkeypatch.setattr(
+        "services.scraping_client.fetch_static",
+        lambda _target_url: (_ for _ in ()).throw(ScrapeBlockedError("challenge")),
+    )
+    monkeypatch.setattr(
+        snkrdunk_db,
+        "fetch_snkrdunk_page_via_browser_pool_sync",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("blocked response must not use fallback")
+        ),
+    )
+
+    with pytest.raises(ScrapeBlockedError, match="challenge"):
+        snkrdunk_db.scrape_item_detail_light(url)
 
 
 def test_scrape_search_result_can_use_browser_pool_dynamic(monkeypatch):

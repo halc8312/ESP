@@ -13,6 +13,11 @@ from werkzeug.utils import secure_filename
 from database import SessionLocal
 from models import Shop, Product, Variant, ProductSnapshot, DescriptionTemplate, PricingRule
 from services.image_service import IMAGE_STORAGE_PATH, split_image_url_string
+from services.pricing_service import (
+    calculate_configured_product_price,
+    resolve_variant_selling_price,
+    resolve_variant_selling_prices,
+)
 from services.rich_text import normalize_rich_text
 from services.scrape_request import SITE_LABELS
 from time_utils import utc_now
@@ -194,7 +199,11 @@ _IN_STOCK_STATUS_LABELS = {"在庫あり"}
 def _build_product_edit_summary(product, snapshot, images, variants):
     public_title = (product.custom_title or product.last_title or "").strip()
     public_description = product.custom_description or (snapshot.description if snapshot else "") or ""
-    priced_variants = [variant.price for variant in variants if variant.price is not None]
+    priced_variants = [
+        variant.display_selling_price
+        for variant in variants
+        if variant.display_selling_price is not None
+    ]
     variant_count = len(variants)
     in_stock_count = sum(1 for variant in variants if (variant.inventory_qty or 0) > 0)
 
@@ -293,7 +302,17 @@ def _render_product_detail(session_db, product, snapshot, images, *, error=None,
         .all()
     )
     current_shop_id = session.get('current_shop_id')
-    variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
+    variants = (
+        session_db.query(Variant)
+        .filter_by(product_id=product.id)
+        .order_by(Variant.position, Variant.id)
+        .all()
+    )
+    resolved_variant_prices = resolve_variant_selling_prices(product, variants)
+    for variant, resolved_price in zip(variants, resolved_variant_prices):
+        # Transient view-only attribute.  The template must never expose the
+        # source-site Variant.price as an editable customer price.
+        variant.display_selling_price = resolved_price
     edit_summary = _build_product_edit_summary(product, snapshot, images, variants)
 
     current_title_hash = compute_source_hash(product.custom_title or product.last_title or "")
@@ -348,20 +367,61 @@ def product_detail(product_id):
         current_images = _split_snapshot_images(snapshot)
 
         if request.method == "POST":
+            original_pricing_config = (
+                product.pricing_rule_id,
+                product.manual_margin_rate,
+                product.manual_shipping_cost,
+            )
+
             # --- 所属ショップ ---
-            shop_id_str = request.form.get("shop_id")
+            shop_id_str = (request.form.get("shop_id") or "").strip()
             if shop_id_str:
-                # Verify shop ownership
-                s = session_db.query(Shop).filter_by(id=int(shop_id_str), user_id=current_user.id).first()
-                product.shop_id = s.id if s else None
+                try:
+                    requested_shop_id = int(shop_id_str)
+                except (TypeError, ValueError):
+                    requested_shop_id = None
+                owned_shop = (
+                    session_db.query(Shop)
+                    .filter_by(
+                        id=requested_shop_id,
+                        user_id=current_user.id,
+                    )
+                    .one_or_none()
+                    if requested_shop_id is not None
+                    else None
+                )
+                if owned_shop is None:
+                    return _render_product_detail(
+                        session_db,
+                        product,
+                        snapshot,
+                        current_images,
+                        error="選択したショップが見つかりません",
+                        status_code=400,
+                    )
+                product.shop_id = owned_shop.id
             else:
                 product.shop_id = None
 
             # --- 基本情報 (Product) ---
             product.custom_title = request.form.get("title")
             product.custom_description = normalize_rich_text(request.form.get("description")) or None
-            product.custom_title_en = request.form.get("title_en")
-            product.custom_description_en = normalize_rich_text(request.form.get("description_en")) or None
+            submitted_title_en = request.form.get("title_en")
+            submitted_description_en = normalize_rich_text(request.form.get("description_en")) or None
+            if submitted_title_en != product.custom_title_en:
+                # A manual edit owns the target until the user explicitly
+                # applies another suggestion.
+                product.custom_title_en_source_hash = None
+                product.custom_title_en_manually_edited = True
+            if submitted_description_en != product.custom_description_en:
+                product.custom_description_en_source_hash = None
+                product.custom_description_en_manually_edited = True
+            # A changed nullable value can represent an intentional manual
+            # clear.  Persist that ownership, while an unrelated form save
+            # leaves automatically managed translations eligible for future
+            # refreshes.
+            product.custom_title_en = submitted_title_en
+            product.custom_description_en = submitted_description_en
             product.status = request.form.get("status")
 
             # --- オプション名 (Product) ---
@@ -417,6 +477,11 @@ def product_detail(product_id):
             else:
                 product.manual_margin_rate = None
                 product.manual_shipping_cost = None
+            pricing_config_changed = original_pricing_config != (
+                product.pricing_rule_id,
+                product.manual_margin_rate,
+                product.manual_shipping_cost,
+            )
 
             submitted_images = _parse_image_urls_json(
                 request.form.get("image_urls_json"),
@@ -455,15 +520,43 @@ def product_detail(product_id):
                 if next_snapshot is not None:
                     session_db.add(next_snapshot)
                     snapshot = next_snapshot
+
+            # Capture the exact sale prices that the GET page renders.  Those
+            # values are resolved from source prices, product defaults and any
+            # existing variant overrides under the same contract as exports.
+            original_variants = (
+                session_db.query(Variant)
+                .filter_by(product_id=product.id)
+                .order_by(Variant.position, Variant.id)
+                .all()
+            )
+            original_effective_prices = dict(
+                zip(
+                    (variant.id for variant in original_variants),
+                    resolve_variant_selling_prices(product, original_variants),
+                )
+            )
+            original_primary_id = (
+                original_variants[0].id if original_variants else None
+            )
+            submitted_prices = {}
+            changed_price_ids = set()
             
             # --- バリエーション削除 ---
             delete_ids_str = request.form.get("delete_v_ids", "")
+            delete_ids = {
+                int(del_id)
+                for del_id in delete_ids_str.split(",")
+                if del_id.isdigit()
+            }
             if delete_ids_str:
-                for del_id in delete_ids_str.split(","):
-                    if del_id.isdigit():
-                        v_to_del = session_db.query(Variant).filter_by(id=int(del_id), product_id=product.id).first()
-                        if v_to_del:
-                            session_db.delete(v_to_del)
+                for del_id in delete_ids:
+                    v_to_del = session_db.query(Variant).filter_by(
+                        id=del_id,
+                        product_id=product.id,
+                    ).first()
+                    if v_to_del:
+                        session_db.delete(v_to_del)
 
             # --- バリエーション更新 (既存) ---
             v_ids = request.form.getlist("v_ids")
@@ -475,8 +568,22 @@ def product_detail(product_id):
                         variant.option1_value = request.form.get(f"v_opt1_{v_id}")
                         variant.option2_value = request.form.get(f"v_opt2_{v_id}")
                         
-                        p_val = request.form.get(f"v_price_{v_id}")
-                        variant.price = int(p_val) if p_val and p_val.isdigit() else None
+                        price_field = f"v_price_{v_id}"
+                        if price_field in request.form:
+                            p_val = (request.form.get(price_field) or "").strip()
+                            submitted_price = (
+                                int(p_val) if p_val.isdigit() else None
+                            )
+                            submitted_prices[v_id] = submitted_price
+                            if (
+                                submitted_price
+                                != original_effective_prices.get(v_id)
+                            ):
+                                # Do not mutate Variant.price: it is refreshed
+                                # from the source site.  A user's exact sale
+                                # price belongs to the dedicated override.
+                                variant.selling_price = submitted_price
+                                changed_price_ids.add(v_id)
                         
                         variant.sku = request.form.get(f"v_sku_{v_id}")
                         
@@ -494,6 +601,7 @@ def product_detail(product_id):
 
             # --- バリエーション新規作成 ---
             new_indices = request.form.getlist("new_v_indices")
+            new_variant_prices = {}
             for idx in new_indices:
                 try:
                     new_variant = Variant(
@@ -507,9 +615,11 @@ def product_detail(product_id):
                         taxable=(request.form.get(f"new_v_tax_{idx}") == 'on')
                     )
                     
-                    p_val = request.form.get(f"new_v_price_{idx}")
-                    if p_val and p_val.isdigit():
-                        new_variant.price = int(p_val)
+                    p_val = (request.form.get(f"new_v_price_{idx}") or "").strip()
+                    new_variant.selling_price = (
+                        int(p_val) if p_val.isdigit() else None
+                    )
+                    new_variant_prices[new_variant] = new_variant.selling_price
                         
                     q_val = request.form.get(f"new_v_qty_{idx}")
                     if q_val and q_val.isdigit():
@@ -527,14 +637,64 @@ def product_detail(product_id):
                     continue
 
             # --- 販売価格の同期 ---
-            # バリエーションの価格をProduct.selling_priceに反映
-            # （商品一覧やカタログで表示される価格）
-            all_variants = session_db.query(Variant).filter_by(product_id=product.id).all()
+            session_db.flush()
+            all_variants = (
+                session_db.query(Variant)
+                .filter_by(product_id=product.id)
+                .order_by(Variant.position, Variant.id)
+                .all()
+            )
+            if pricing_config_changed:
+                # Persist the selected rule, per-product overrides, and the
+                # customer-facing default as one transaction. Explicit
+                # Variant.selling_price values still win in the shared resolver.
+                product.selling_price = calculate_configured_product_price(
+                    session_db,
+                    product,
+                    user_id=current_user.id,
+                )
+
             if all_variants:
-                # 最初のバリエーションの価格を代表として使用
                 primary_variant = all_variants[0]
-                if primary_variant.price is not None:
-                    product.selling_price = primary_variant.price
+                primary_contract_changed = (
+                    primary_variant.id != original_primary_id
+                    or primary_variant.id in changed_price_ids
+                )
+                if primary_contract_changed:
+                    # Product.selling_price is the representative/default
+                    # amount shown on product-level screens.  If that anchor
+                    # changes, freeze every submitted row at exactly the price
+                    # the operator saw so proportional legacy fallbacks cannot
+                    # move the other variants after saving.
+                    for variant in all_variants:
+                        if variant.id in submitted_prices:
+                            variant.selling_price = submitted_prices[variant.id]
+                        elif variant in new_variant_prices:
+                            variant.selling_price = new_variant_prices[variant]
+
+                    if primary_variant.id in submitted_prices:
+                        primary_sale_price = submitted_prices[primary_variant.id]
+                    elif primary_variant in new_variant_prices:
+                        primary_sale_price = new_variant_prices[primary_variant]
+                    else:
+                        primary_sale_price = resolve_variant_selling_price(
+                            product,
+                            primary_variant,
+                        )
+                    if (
+                        primary_sale_price is None
+                        and (
+                            product.pricing_rule_id is not None
+                            or product.manual_margin_rate is not None
+                            or product.manual_shipping_cost is not None
+                        )
+                    ):
+                        primary_sale_price = calculate_configured_product_price(
+                            session_db,
+                            product,
+                            user_id=current_user.id,
+                        )
+                    product.selling_price = primary_sale_price
 
             product.updated_at = utc_now()
             session_db.commit()

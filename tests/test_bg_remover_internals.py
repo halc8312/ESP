@@ -351,6 +351,40 @@ def test_upload_result_bytes_rewrites_internal_redirect(monkeypatch):
     ]
 
 
+def test_upload_result_bytes_rejects_cross_origin_redirect(monkeypatch):
+    from jobs import bg_removal_tasks
+    from services.bg_remover.base import BackgroundRemovalError
+
+    monkeypatch.setenv("WEB_INTERNAL_HOST", "esp-1-kend")
+    monkeypatch.setenv("WEB_INTERNAL_PORT", "8080")
+    seen_urls = []
+
+    class RedirectResponse:
+        is_redirect = True
+        headers = {"Location": "https://evil.example/collect"}
+        status_code = 302
+        text = ""
+
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, **_kwargs):
+        seen_urls.append(url)
+        return RedirectResponse()
+
+    monkeypatch.setattr(bg_removal_tasks.requests, "post", fake_post)
+
+    with pytest.raises(BackgroundRemovalError, match="outside"):
+        bg_removal_tasks._upload_result_bytes(
+            job_id="job-1",
+            result_bytes=b"png-bytes",
+        )
+
+    assert seen_urls == [
+        "http://esp-1-kend:8080/internal/bg-removal/job-1/upload"
+    ]
+
+
 # --- image_fetch header builder tests ---
 
 

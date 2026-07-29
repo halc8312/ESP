@@ -4,6 +4,7 @@ CLI commands for the application.
 import html
 import json
 import os
+import re
 import socket
 import time
 import traceback
@@ -470,6 +471,10 @@ def run_render_blueprint_audit(path: str = "render.yaml") -> dict:
         "WEB_SCHEDULER_MODE",
         "SCHEMA_BOOTSTRAP_MODE",
         "IMAGE_STORAGE_PATH",
+        "WORKER_HEARTBEAT_KEY_PREFIX",
+        "WORKER_HEARTBEAT_FRESHNESS_SECONDS",
+        "SCHEDULER_HEARTBEAT_KEY",
+        "SCHEDULER_HEARTBEAT_FRESHNESS_SECONDS",
     ):
         _require_env("esp-web", web_env, key)
 
@@ -479,6 +484,12 @@ def run_render_blueprint_audit(path: str = "render.yaml") -> dict:
         "REDIS_URL",
         "SCRAPE_QUEUE_BACKEND",
         "WORKER_ENABLE_SCHEDULER",
+        "SCHEDULER_HEARTBEAT_ENABLED",
+        "SCHEDULER_HEARTBEAT_KEY",
+        "WORKER_HEARTBEAT_ENABLED",
+        "WORKER_HEARTBEAT_KEY_PREFIX",
+        "WORKER_HEARTBEAT_INTERVAL_SECONDS",
+        "WORKER_HEARTBEAT_TTL_SECONDS",
         "WARM_BROWSER_POOL",
         "ENABLE_SHARED_BROWSER_RUNTIME",
         "BROWSER_POOL_WARM_SITES",
@@ -501,8 +512,8 @@ def run_render_blueprint_audit(path: str = "render.yaml") -> dict:
         blockers.append("web_auto_deploy_must_be_off")
     if worker_service.get("autoDeployTrigger") != "off":
         blockers.append("worker_auto_deploy_must_be_off")
-    if web_service.get("healthCheckPath") != "/healthz":
-        blockers.append("web_healthcheck_must_use_healthz")
+    if web_service.get("healthCheckPath") != "/readyz":
+        blockers.append("web_healthcheck_must_use_readyz")
     if worker_service.get("dockerCommand") != "python worker.py":
         blockers.append("worker_command_must_use_python_worker_py")
     if web_service.get("disk", {}).get("mountPath") != "/var/data":
@@ -519,6 +530,20 @@ def run_render_blueprint_audit(path: str = "render.yaml") -> dict:
         blockers.append("web_image_storage_path_must_be_var_data_images")
     if worker_env.get("WORKER_ENABLE_SCHEDULER", {}).get("value") != "1":
         blockers.append("worker_scheduler_owner_must_be_enabled")
+    if worker_env.get("SCHEDULER_HEARTBEAT_ENABLED", {}).get("value") != "1":
+        blockers.append("worker_scheduler_heartbeat_must_be_enabled")
+    if worker_env.get("WORKER_HEARTBEAT_ENABLED", {}).get("value") != "1":
+        blockers.append("worker_heartbeat_must_be_enabled")
+    if (
+        web_env.get("WORKER_HEARTBEAT_KEY_PREFIX", {}).get("value")
+        != worker_env.get("WORKER_HEARTBEAT_KEY_PREFIX", {}).get("value")
+    ):
+        blockers.append("worker_heartbeat_prefix_must_match")
+    if (
+        web_env.get("SCHEDULER_HEARTBEAT_KEY", {}).get("value")
+        != worker_env.get("SCHEDULER_HEARTBEAT_KEY", {}).get("value")
+    ):
+        blockers.append("scheduler_heartbeat_key_must_match")
     if worker_env.get("WARM_BROWSER_POOL", {}).get("value") != "1":
         blockers.append("worker_browser_pool_warm_must_be_enabled")
     if worker_env.get("ENABLE_SHARED_BROWSER_RUNTIME", {}).get("value") != "1":
@@ -1126,6 +1151,22 @@ def _is_authenticated_redirect(status_code: int | None, location: str | None) ->
     return status_code == 302 and normalized_location not in {"", "/login", "/register"}
 
 
+def _extract_csrf_token(response) -> str:
+    """Extract Flask-WTF's form token without logging or exposing it."""
+    body = str(getattr(response, "text", "") or "")
+    patterns = (
+        r"""name=["']csrf_token["'][^>]*value=["']([^"']+)["']""",
+        r"""value=["']([^"']+)["'][^>]*name=["']csrf_token["']""",
+        r"""name=["']csrf-token["'][^>]*content=["']([^"']+)["']""",
+        r"""content=["']([^"']+)["'][^>]*name=["']csrf-token["']""",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, body, flags=re.IGNORECASE)
+        if match:
+            return html.unescape(match.group(1)).strip()
+    return ""
+
+
 def run_render_postdeploy_smoke(
     base_url: str,
     *,
@@ -1140,12 +1181,20 @@ def run_render_postdeploy_smoke(
     ensure_user: bool = False,
 ) -> dict:
     normalized_base_url = _normalize_base_url(base_url)
+    # Render's lifecycle probe uses /readyz (web dependencies only). This
+    # operator smoke intentionally uses the stronger full-stack contract.
+    readiness_url = f"{normalized_base_url}/stack-readyz"
     health_url = f"{normalized_base_url}/healthz"
     blockers: list[str] = []
     warnings: list[str] = []
     route_checks: list[dict[str, object]] = []
     authenticated_route_checks: list[dict[str, object]] = []
     health_payload: dict | None = None
+    readiness_payload: dict | None = None
+    readiness_error = None
+    readiness_status_code = None
+    readiness_attempt_count = 0
+    readiness_attempts: list[dict[str, object]] = []
     health_error = None
     health_status_code = None
     login_status_code = None
@@ -1176,6 +1225,60 @@ def run_render_postdeploy_smoke(
     if bool(normalized_username) != bool(normalized_password):
         blockers.append("auth_credentials_incomplete")
 
+    readiness_snapshot = _request_with_retries(
+        requests.get,
+        readiness_url,
+        timeout_seconds=timeout_seconds,
+        allow_redirects=True,
+        retries=retries,
+        retry_delay_seconds=retry_delay_seconds,
+    )
+    readiness_attempt_count = int(readiness_snapshot.get("attempt_count") or 0)
+    readiness_attempts = list(readiness_snapshot.get("attempts") or [])
+    readiness_response = readiness_snapshot.get("response")
+    if readiness_response is None:
+        readiness_error = str(readiness_snapshot.get("error") or "request_failed")
+        blockers.append("stack_readyz_request_failed")
+    else:
+        readiness_status_code = readiness_response.status_code
+        if readiness_attempt_count > 1:
+            warnings.append(f"stack_readyz_required_retry:{readiness_attempt_count}")
+        if readiness_response.status_code != 200:
+            blockers.append("stack_readyz_status_not_200")
+        try:
+            readiness_payload = dict(readiness_response.json() or {})
+        except Exception as exc:
+            readiness_error = str(exc)
+            blockers.append("stack_readyz_invalid_json")
+
+    if readiness_response is not None:
+        if readiness_payload is None:
+            pass
+        else:
+            if readiness_payload.get("status") != "ready":
+                blockers.append("stack_readyz_status_not_ready")
+            readiness_checks = readiness_payload.get("checks")
+            if not isinstance(readiness_checks, dict):
+                blockers.append("stack_readyz_checks_missing")
+            else:
+                if readiness_checks.get("database") != "ok":
+                    blockers.append("stack_readyz_database_not_ready")
+                if (
+                    str(expect_queue_backend or "").strip().lower() == "rq"
+                    and readiness_checks.get("redis") != "ok"
+                ):
+                    blockers.append("stack_readyz_redis_not_ready")
+                if (
+                    str(expect_queue_backend or "").strip().lower() == "rq"
+                    and readiness_checks.get("worker") != "ok"
+                ):
+                    blockers.append("stack_readyz_worker_not_ready")
+                if (
+                    str(expect_queue_backend or "").strip().lower() == "rq"
+                    and readiness_checks.get("scheduler") != "ok"
+                ):
+                    blockers.append("stack_readyz_scheduler_not_ready")
+
     health_snapshot = _request_with_retries(
         requests.get,
         health_url,
@@ -1203,17 +1306,33 @@ def run_render_postdeploy_smoke(
                 health_error = str(exc)
                 blockers.append("healthz_invalid_json")
 
-    if health_payload:
+    if health_payload is not None:
         if health_payload.get("status") != "ok":
             blockers.append("healthz_status_not_ok")
         if expect_runtime_role and health_payload.get("runtime_role") != expect_runtime_role:
             blockers.append("runtime_role_mismatch")
-        if expect_queue_backend and health_payload.get("queue_backend") != expect_queue_backend:
+    actual_queue_backend = None
+    actual_scheduler_enabled = None
+    if readiness_payload:
+        actual_queue_backend = readiness_payload.get("queue_backend")
+        actual_scheduler_enabled = readiness_payload.get("scheduler_enabled")
+    # Accept the legacy location during rolling deploys, but fail closed when
+    # neither endpoint exposes the contract.
+    if health_payload is not None:
+        if actual_queue_backend is None:
+            actual_queue_backend = health_payload.get("queue_backend")
+        if actual_scheduler_enabled is None:
+            actual_scheduler_enabled = health_payload.get("scheduler_enabled")
+
+    if expect_queue_backend:
+        if actual_queue_backend is None:
+            blockers.append("queue_backend_not_exposed")
+        elif actual_queue_backend != expect_queue_backend:
             blockers.append("queue_backend_mismatch")
-        if (
-            expected_scheduler_enabled is not None
-            and bool(health_payload.get("scheduler_enabled")) != expected_scheduler_enabled
-        ):
+    if expected_scheduler_enabled is not None:
+        if actual_scheduler_enabled is None:
+            blockers.append("scheduler_mode_not_exposed")
+        elif bool(actual_scheduler_enabled) != expected_scheduler_enabled:
             blockers.append("scheduler_mode_mismatch")
 
     for route_path in ("/login", "/scrape", "/api/scrape/jobs"):
@@ -1245,10 +1364,37 @@ def run_render_postdeploy_smoke(
         session = requests.Session()
         login_url = f"{normalized_base_url}/login"
         try:
+            login_form_request = _request_with_retries(
+                session.get,
+                login_url,
+                timeout_seconds=timeout_seconds,
+                allow_redirects=True,
+                retries=retries,
+                retry_delay_seconds=retry_delay_seconds,
+            )
+            login_form_response = login_form_request.get("response")
+            if login_form_response is None:
+                raise RuntimeError(
+                    str(login_form_request.get("error") or "login_form_request_failed")
+                )
+            if login_form_response.status_code != 200:
+                blockers.append(
+                    f"login_form_unavailable:{login_form_response.status_code}"
+                )
+                raise RuntimeError("login_form_unavailable")
+            login_csrf_token = _extract_csrf_token(login_form_response)
+            if not login_csrf_token:
+                blockers.append("login_csrf_token_missing")
+                raise RuntimeError("login_csrf_token_missing")
+
             login_request = _request_with_retries(
                 lambda url, **kwargs: session.post(
                     url,
-                    data={"username": normalized_username, "password": normalized_password},
+                    data={
+                        "username": normalized_username,
+                        "password": normalized_password,
+                        "csrf_token": login_csrf_token,
+                    },
                     **kwargs,
                 ),
                 login_url,
@@ -1278,10 +1424,40 @@ def run_render_postdeploy_smoke(
             register_url = f"{normalized_base_url}/register"
             registration_attempted = True
             try:
+                register_form_request = _request_with_retries(
+                    session.get,
+                    register_url,
+                    timeout_seconds=timeout_seconds,
+                    allow_redirects=True,
+                    retries=retries,
+                    retry_delay_seconds=retry_delay_seconds,
+                )
+                register_form_response = register_form_request.get("response")
+                if register_form_response is None:
+                    raise RuntimeError(
+                        str(
+                            register_form_request.get("error")
+                            or "register_form_request_failed"
+                        )
+                    )
+                if register_form_response.status_code != 200:
+                    blockers.append(
+                        f"register_form_unavailable:{register_form_response.status_code}"
+                    )
+                    raise RuntimeError("register_form_unavailable")
+                register_csrf_token = _extract_csrf_token(register_form_response)
+                if not register_csrf_token:
+                    blockers.append("register_csrf_token_missing")
+                    raise RuntimeError("register_csrf_token_missing")
+
                 registration_request = _request_with_retries(
                     lambda url, **kwargs: session.post(
                         url,
-                        data={"username": normalized_username, "password": normalized_password},
+                        data={
+                            "username": normalized_username,
+                            "password": normalized_password,
+                            "csrf_token": register_csrf_token,
+                        },
                         **kwargs,
                     ),
                     register_url,
@@ -1349,6 +1525,12 @@ def run_render_postdeploy_smoke(
         "blockers": blockers,
         "warnings": warnings,
         "base_url": normalized_base_url,
+        "readiness_url": readiness_url,
+        "readiness_status_code": readiness_status_code,
+        "readiness_payload": readiness_payload,
+        "readiness_error": readiness_error,
+        "readiness_attempt_count": readiness_attempt_count,
+        "readiness_attempts": readiness_attempts,
         "health_url": health_url,
         "health_status_code": health_status_code,
         "health_payload": health_payload,

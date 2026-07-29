@@ -8,7 +8,7 @@ import os
 from flask import has_request_context, session
 
 from database import SessionLocal
-from models import Product, ProductSnapshot, Variant
+from models import Product, ProductSnapshot, Shop, Variant
 from services.image_service import split_image_url_string
 from services.pricing_service import product_has_pricing_config, update_product_selling_price
 from services.scrape_result_policy import (
@@ -26,6 +26,7 @@ _IMAGE_CACHE_ENABLED = (
     os.environ.get("SCRAPE_IMAGE_CACHE_ENABLED", "1").strip().lower()
     not in {"0", "false", "no", "off"}
 )
+_SHOP_ID_UNSET = object()
 
 
 def _empty_save_summary(input_count: int = 0):
@@ -70,6 +71,43 @@ def _normalize_non_negative_int(value, default: int = 0) -> int:
     if normalized is None or normalized < 0:
         return default
     return normalized
+
+
+def _resolve_owned_shop_id(session_db, *, user_id: int, raw_shop_id):
+    """Resolve a shop only when it belongs to the product owner.
+
+    Scrape jobs can outlive the browser session that created them.  Treat a
+    stale/malformed queued shop context as unscoped instead of ever attaching
+    the resulting product to another user's shop.
+    """
+    if raw_shop_id in (None, ""):
+        return None
+
+    if isinstance(raw_shop_id, bool):
+        logger.warning("Ignoring invalid shop context for user_id=%s", user_id)
+        return None
+    try:
+        shop_id = int(raw_shop_id)
+    except (TypeError, ValueError):
+        logger.warning("Ignoring invalid shop context for user_id=%s", user_id)
+        return None
+
+    if shop_id <= 0:
+        logger.warning("Ignoring invalid shop context for user_id=%s", user_id)
+        return None
+
+    owned_shop = session_db.query(Shop.id).filter(
+        Shop.id == shop_id,
+        Shop.user_id == user_id,
+    ).first()
+    if owned_shop is None:
+        logger.warning(
+            "Ignoring non-owned shop context shop_id=%s user_id=%s",
+            shop_id,
+            user_id,
+        )
+        return None
+    return shop_id
 
 
 def _default_inventory_for_status(status: str) -> int:
@@ -163,7 +201,7 @@ def save_scraped_items_to_db(
     items,
     user_id: int,
     site: str = "mercari",
-    shop_id=None,
+    shop_id=_SHOP_ID_UNSET,
     manual_selection: bool = False,
     return_summary: bool = False,
     raise_on_error: bool = False,
@@ -187,11 +225,23 @@ def save_scraped_items_to_db(
     repricing_product_ids = set()
     saved_product_ids: list[int] = []
 
-    resolved_shop_id = shop_id
-    if resolved_shop_id is None and has_request_context():
-        resolved_shop_id = session.get('current_shop_id')
-
     try:
+        shop_id_from_session = False
+        raw_shop_id = shop_id
+        if raw_shop_id is _SHOP_ID_UNSET and has_request_context():
+            raw_shop_id = session.get("current_shop_id")
+            shop_id_from_session = raw_shop_id is not None
+        elif raw_shop_id is _SHOP_ID_UNSET:
+            raw_shop_id = None
+
+        resolved_shop_id = _resolve_owned_shop_id(
+            session_db,
+            user_id=user_id,
+            raw_shop_id=raw_shop_id,
+        )
+        if shop_id_from_session and raw_shop_id is not None and resolved_shop_id is None:
+            session.pop("current_shop_id", None)
+
         for item in items:
             raw_url = item.get("url", "")
             if not raw_url:

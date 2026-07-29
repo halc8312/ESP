@@ -128,9 +128,49 @@ class SurugayaPatrol(BasePatrol):
 
     def _fetch_with_scrapling(self, url: str) -> PatrolResult:
         try:
-            from services.scraping_client import fetch_static, fetch_surugaya_external
+            from services.scraping_client import (
+                fetch_marketplace_static,
+                fetch_surugaya_external,
+            )
+            from services.scrape_safety import ScrapeBlockedError
 
-            page = fetch_static(url)
+            try:
+                page = fetch_marketplace_static(
+                    url,
+                    site="surugaya",
+                    kind="detail",
+                )
+            except ScrapeBlockedError as exc:
+                external_page = fetch_surugaya_external(url)
+                if external_page is None:
+                    message = str(exc)
+                    status_match = re.search(r"HTTP\s+(\d+)", message)
+                    if status_match:
+                        error = f"HTTP {status_match.group(1)}"
+                        reason = "blocked_http_status"
+                    else:
+                        error = "challenge_page"
+                        reason = "blocked_challenge_page"
+                    return PatrolResult(
+                        status="blocked",
+                        error=error,
+                        confidence="low",
+                        reason=reason,
+                    )
+                external_status = _response_status(external_page)
+                external_html = _body_text(external_page)
+                if _is_blocked_response(external_status, external_html):
+                    return _blocked_result(external_status, external_html)
+                if external_status is not None and external_status >= 400:
+                    return PatrolResult(
+                        status="error",
+                        error=f"HTTP {external_status}",
+                        confidence="low",
+                        reason="external_http_status",
+                    )
+                result = self._parse_html(external_html)
+                result.price_source = external_page.source
+                return result
             response_status = _response_status(page)
             html = _body_text(page)
             if _is_blocked_response(response_status, html):

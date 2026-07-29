@@ -169,7 +169,7 @@
 
     function getTitle(job) {
         if (job.status === "queued") {
-            return "キューで順番待ちです";
+            return "順番を待っています";
         }
         if (job.status === "running") {
             return "商品を抽出しています";
@@ -194,9 +194,9 @@
     function getPhase(job) {
         if (job.status === "queued") {
             if (job.queue_position) {
-                return job.queue_position + "番目で待機しています。前のジョブが終わり次第、抽出を開始します。";
+                return job.queue_position + "番目で待機しています。前の処理が終わると自動で始まります。";
             }
-            return "ジョブをキューへ登録しています。";
+            return "抽出の開始を準備しています。";
         }
         if (job.status === "running") {
             return getRunningPhase(job.elapsed_seconds);
@@ -211,7 +211,7 @@
         if (job.status === "queued") {
             return job.queue_position
                 ? job.queue_position + "番目で待機中です。"
-                : "ジョブをキューに登録しています。";
+                : "抽出の開始を準備しています。";
         }
         if (job.status === "running") {
             return "抽出処理を進めています。";
@@ -432,7 +432,7 @@
         var overflowCount = visibleJobs.length - maxVisibleJobs;
         if (overflowCount > 0) {
             overflowEl.hidden = false;
-            overflowEl.textContent = "他 " + overflowCount + " 件の抽出ジョブがあります。";
+            overflowEl.textContent = "他 " + overflowCount + " 件の商品抽出があります。";
         } else {
             overflowEl.hidden = true;
             overflowEl.textContent = "";
@@ -525,7 +525,7 @@
         })
             .then(function (response) {
                 if (!response.ok) {
-                    throw new Error("ジョブ一覧の取得に失敗しました");
+                    throw new Error("抽出状況を確認できませんでした");
                 }
                 return response.json();
             })

@@ -21,9 +21,13 @@ class SnkrdunkPatrol(BasePatrol):
 
     def _fetch_with_scrapling(self, url: str) -> PatrolResult:
         try:
-            from services.scraping_client import fetch_static
+            from services.scraping_client import fetch_marketplace_static
 
-            page = fetch_static(url)
+            page = fetch_marketplace_static(
+                url,
+                site="snkrdunk",
+                kind="detail",
+            )
             price = None
             status = "unknown"
             item = {}

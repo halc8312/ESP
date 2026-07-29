@@ -1,10 +1,13 @@
 """E2E tests for the translation API routes using a fake translator backend."""
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 
 from database import SessionLocal
 from models import Product, TranslationSuggestion, User
+from time_utils import utc_now
 
 
 class FakeTranslatorBackend:
@@ -163,6 +166,57 @@ def test_list_translation_suggestions_returns_recent_rows(client, db_session):
         assert item["status"] in {"queued", "running", "succeeded", "failed"}
 
 
+def test_list_translation_suggestions_is_read_only_for_expired_jobs(
+    client,
+    db_session,
+    monkeypatch,
+):
+    user = _login(client, db_session, "list_suggestions_read_only")
+    product = _create_product(db_session, user)
+    suggestion = TranslationSuggestion(
+        job_id="expired-job-read-only-poll",
+        product_id=product.id,
+        user_id=user.id,
+        scope="title",
+        provider="fake",
+        source_title=product.last_title,
+        status="running",
+        worker_token="expired-worker",
+        lease_expires_at=utc_now() - timedelta(seconds=1),
+    )
+    db_session.add(suggestion)
+    db_session.commit()
+    recovery_calls = []
+
+    def recovery_spy():
+        recovery_calls.append("called")
+        return {"recovered": [], "enqueued": [], "failed": []}
+
+    monkeypatch.setattr(
+        "services.translator.suggestion_store.recover_expired_translation_suggestions",
+        recovery_spy,
+    )
+    # Also replaces a route-level alias if one is accidentally reintroduced.
+    monkeypatch.setattr(
+        "routes.translation.recover_expired_translation_suggestions",
+        recovery_spy,
+        raising=False,
+    )
+
+    response = client.get(
+        f"/api/products/{product.id}/translation-suggestions"
+    )
+
+    assert response.status_code == 200
+    assert recovery_calls == []
+    assert response.get_json()["items"][0]["status"] == "running"
+    db_session.expire_all()
+    stored = db_session.get(TranslationSuggestion, suggestion.id)
+    assert stored.status == "running"
+    assert stored.worker_token == "expired-worker"
+    assert stored.lease_expires_at is not None
+
+
 def test_apply_suggestion_copies_fields_and_sets_source_hash(client, db_session):
     user = _login(client, db_session, "apply_tester")
     product = _create_product(db_session, user)
@@ -229,6 +283,82 @@ def test_reject_marks_suggestion_rejected(client, db_session):
         db_session.query(TranslationSuggestion).filter_by(job_id=job_id).one()
     )
     assert suggestion.status == "rejected"
+
+
+def test_late_auto_apply_preserves_manual_english_title(db_session):
+    """A manual target edit made while a job is queued must win the race."""
+    from jobs.translation_tasks import execute_translation_job
+
+    user = User(username="late_auto_apply_manual_user")
+    user.set_password("testpassword")
+    db_session.add(user)
+    db_session.commit()
+    product = _create_product(db_session, user)
+    product.custom_title_en = "Carefully edited English title"
+    product.custom_title_en_source_hash = None
+    suggestion = TranslationSuggestion(
+        job_id="late-auto-apply-manual-job",
+        product_id=product.id,
+        user_id=user.id,
+        scope="title",
+        provider="fake",
+        source_title=product.last_title,
+        source_title_hash="captured-source-hash",
+        auto_apply=True,
+        status="queued",
+    )
+    db_session.add(suggestion)
+    db_session.commit()
+
+    execute_translation_job(suggestion.job_id)
+
+    db_session.expire_all()
+    refreshed_product = db_session.query(Product).filter_by(id=product.id).one()
+    refreshed_suggestion = (
+        db_session.query(TranslationSuggestion)
+        .filter_by(job_id=suggestion.job_id)
+        .one()
+    )
+    assert refreshed_product.custom_title_en == "Carefully edited English title"
+    assert refreshed_product.custom_title_en_source_hash is None
+    assert refreshed_suggestion.status == "succeeded"
+
+
+def test_late_worker_does_not_reopen_rejected_suggestion(db_session):
+    from services.translator.suggestion_store import mark_succeeded
+
+    user = User(username="late_rejected_translation_user")
+    user.set_password("testpassword")
+    db_session.add(user)
+    db_session.commit()
+    product = _create_product(db_session, user)
+    suggestion = TranslationSuggestion(
+        job_id="late-rejected-job",
+        product_id=product.id,
+        user_id=user.id,
+        scope="title",
+        provider="fake",
+        source_title=product.last_title,
+        status="rejected",
+    )
+    db_session.add(suggestion)
+    db_session.commit()
+
+    mark_succeeded(
+        suggestion.job_id,
+        worker_token="late-worker",
+        translated_title="Late worker result",
+        translated_description=None,
+    )
+
+    db_session.expire_all()
+    refreshed = (
+        db_session.query(TranslationSuggestion)
+        .filter_by(job_id=suggestion.job_id)
+        .one()
+    )
+    assert refreshed.status == "rejected"
+    assert refreshed.translated_title is None
 
 
 def test_translation_pipeline_strips_malicious_html_before_storing(client, db_session):

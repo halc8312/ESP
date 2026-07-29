@@ -25,12 +25,12 @@ def test_scrape_search_result_count_guarantee():
     
     # mock _scrape_search_async which returns a list of URLs
     mock_urls = [
-        "http://m/item/1",
-        "http://m/item/2",
-        "http://m/item/3",
-        "http://m/item/4",
-        "http://m/item/5",
-        "http://m/item/6",
+        "https://jp.mercari.com/item/1",
+        "https://jp.mercari.com/item/2",
+        "https://jp.mercari.com/item/3",
+        "https://jp.mercari.com/item/4",
+        "https://jp.mercari.com/item/5",
+        "https://jp.mercari.com/item/6",
     ]
     
     with patch('mercari_db._scrape_search_async') as mock_search:
@@ -42,15 +42,19 @@ def test_scrape_search_result_count_guarantee():
         # Mock individual item details
         with patch('mercari_db.scrape_item_detail') as mock_detail:
             mock_detail.side_effect = [
-                {"title": "Item 1", "status": "on_sale", "url": "http://m/item/1"},
-                {"title": "Item 2", "status": "on_sale", "url": "http://m/item/2"},
-                {"title": "", "status": "error", "url": "http://m/item/3"},       # Failed item
-                {"title": "Item 4", "status": "on_sale", "url": "http://m/item/4"},
-                {"title": "Item 5", "status": "on_sale", "url": "http://m/item/5"},
-                {"title": "Item 6", "status": "on_sale", "url": "http://m/item/6"},
+                {"title": "Item 1", "status": "on_sale", "url": "https://jp.mercari.com/item/1"},
+                {"title": "Item 2", "status": "on_sale", "url": "https://jp.mercari.com/item/2"},
+                {"title": "", "status": "error", "url": "https://jp.mercari.com/item/3"},       # Failed item
+                {"title": "Item 4", "status": "on_sale", "url": "https://jp.mercari.com/item/4"},
+                {"title": "Item 5", "status": "on_sale", "url": "https://jp.mercari.com/item/5"},
+                {"title": "Item 6", "status": "on_sale", "url": "https://jp.mercari.com/item/6"},
             ]
             
-            results = scrape_search_result("http://search", max_items=max_items, max_scroll=2)
+            results = scrape_search_result(
+                "https://jp.mercari.com/search?keyword=test",
+                max_items=max_items,
+                max_scroll=2,
+            )
             
             assert len(results) == max_items
             assert results[0]["title"] == "Item 1"
@@ -60,10 +64,10 @@ def test_scrape_search_result_count_guarantee():
 @pytest.mark.asyncio
 async def test_collect_search_items_async_preserves_order_with_partial_failures():
     urls = [
-        "http://m/item/1",
-        "http://m/item/2",
-        "http://m/item/3",
-        "http://m/item/4",
+        "https://jp.mercari.com/item/1",
+        "https://jp.mercari.com/item/2",
+        "https://jp.mercari.com/item/3",
+        "https://jp.mercari.com/item/4",
     ]
 
     async def fake_scrape(url):
@@ -89,7 +93,7 @@ def test_scrape_variants_pattern_detection():
     """
     Test that scrape_item_detail detects variants using Scrapling Response mock.
     """
-    url = "http://m/item/variant"
+    url = "https://jp.mercari.com/item/mvariant"
     
     with patch('mercari_db.fetch_dynamic') as mock_fetch:
         mock_page = MagicMock()
@@ -141,7 +145,7 @@ def test_scrape_variants_shops_pattern():
     """
     Test Mercari Shops pattern by mocking the internal async wrapper function.
     """
-    url = "http://m/shops/product/variant" 
+    url = "https://jp.mercari.com/shops/product/variant"
     
     with patch('mercari_db._scrape_shops_product_async') as mock_shops_async:
         async def mock_shops_impl(*args, **kwargs):
@@ -184,7 +188,7 @@ def test_extract_plain_number_from_text_ignores_comma_only_text():
 
 
 def test_scrape_item_detail_tolerates_invalid_price_text():
-    url = "http://m/item/invalid-price"
+    url = "https://jp.mercari.com/item/minvalid-price"
 
     with patch('mercari_db.fetch_dynamic') as mock_fetch:
         mock_page = MagicMock()
@@ -219,7 +223,7 @@ def test_scrape_item_detail_tolerates_invalid_price_text():
 
 
 def test_scrape_item_detail_ignores_deleted_page_shell_price():
-    url = "http://m/item/deleted"
+    url = "https://jp.mercari.com/item/mdeleted"
 
     with patch('mercari_db.fetch_dynamic') as mock_fetch:
         mock_page = MagicMock()
@@ -248,7 +252,7 @@ def test_scrape_item_detail_ignores_deleted_page_shell_price():
 
 
 def test_scrape_item_detail_prefers_meta_price_when_dom_text_is_empty():
-    url = "http://m/item/meta-price"
+    url = "https://jp.mercari.com/item/mmeta-price"
 
     with patch('mercari_db.fetch_dynamic') as mock_fetch:
         mock_page = MagicMock()
@@ -316,4 +320,3 @@ def test_mercari_shops_status_detects_full_sold_out():
     在庫なし
     """
     assert _infer_mercari_shops_status(body_text) == "sold"
-

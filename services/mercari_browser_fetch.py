@@ -8,7 +8,14 @@ import re
 
 from services.browser_pool import run_browser_page_task
 from services.html_page_adapter import HtmlPageAdapter
+from services.scrape_request import classify_target_url
 from services.scraping_client import run_coro_sync
+from services.scrape_safety import (
+    install_navigation_guard,
+    raise_for_blocked_navigation,
+    validate_fetch_response,
+    validate_marketplace_url,
+)
 from utils.env_helpers import env_flag as _env_flag
 
 _MERCARI_ITEM_ID_IN_URL = re.compile(r"/item/(m\d+)", re.IGNORECASE)
@@ -108,6 +115,11 @@ async def fetch_mercari_page_and_payloads_via_browser_pool_async(
     network_idle: bool = True,
     wait_selector: str = "h1, [data-testid='price']",
 ) -> tuple[HtmlPageAdapter, list[dict]]:
+    request_kind, site = classify_target_url(url)
+    if site != "mercari":
+        raise ValueError("メルカリ以外のURLは取得できません。")
+    kind = "detail" if request_kind == "item" else "search"
+    url = validate_marketplace_url(url, "mercari", kind=kind)
     page_state: dict[str, object] = {}
     captured_payloads: list[dict] = []
     response_tasks: list[asyncio.Task] = []
@@ -200,12 +212,18 @@ async def fetch_mercari_page_and_payloads_via_browser_pool_async(
         await asyncio.gather(*pending, return_exceptions=True)
 
     async def _task(page, context):
+        blocked_urls = await install_navigation_guard(context, "mercari", kind=kind)
         page.on(
             "response",
             lambda response: response_tasks.append(asyncio.create_task(_capture_response(response))),
         )
 
-        response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        try:
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        except Exception:
+            raise_for_blocked_navigation(blocked_urls, "mercari")
+            raise
+        raise_for_blocked_navigation(blocked_urls, "mercari")
 
         # On production (Render US) the /items/get?id=<TARGET> XHR sometimes
         # lands *after* the default networkidle window, which caused the
@@ -231,11 +249,13 @@ async def fetch_mercari_page_and_payloads_via_browser_pool_async(
                 )
                 if reload_response is not None:
                     response = reload_response
+                raise_for_blocked_navigation(blocked_urls, "mercari")
                 await _perform_post_navigation_waits(page)
                 await _drain_response_tasks()
             except Exception:
                 pass
 
+        raise_for_blocked_navigation(blocked_urls, "mercari")
         page_state["html"] = await page.content()
         page_state["url"] = page.url
         page_state["status"] = getattr(response, "status", None) or 200
@@ -254,6 +274,7 @@ async def fetch_mercari_page_and_payloads_via_browser_pool_async(
         url=str(page_state.get("url") or url),
         status=int(page_state.get("status") or 200),
     )
+    validate_fetch_response(page, "mercari", kind=kind)
     return page, captured_payloads
 
 

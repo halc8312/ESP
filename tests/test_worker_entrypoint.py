@@ -18,6 +18,11 @@ def test_worker_main_builds_worker_app_and_runs_runtime(monkeypatch):
     monkeypatch.delenv("MERCARI_USE_BROWSER_POOL_DETAIL", raising=False)
     monkeypatch.delenv("MERCARI_PATROL_USE_BROWSER_POOL", raising=False)
     monkeypatch.delenv("SNKRDUNK_USE_BROWSER_POOL_DYNAMIC", raising=False)
+    monkeypatch.delenv("SCHEDULER_HEARTBEAT_ENABLED", raising=False)
+    monkeypatch.delenv("WORKER_HEARTBEAT_ENABLED", raising=False)
+    monkeypatch.delenv("WORKER_HEARTBEAT_KEY_PREFIX", raising=False)
+    monkeypatch.delenv("WORKER_HEARTBEAT_INTERVAL_SECONDS", raising=False)
+    monkeypatch.delenv("WORKER_HEARTBEAT_TTL_SECONDS", raising=False)
 
     assert worker.main() == 0
     assert captured["app"] is sentinel_app
@@ -27,6 +32,14 @@ def test_worker_main_builds_worker_app_and_runs_runtime(monkeypatch):
     assert captured["config_overrides"]["ENABLE_LEGACY_SCHEMA_PATCHSET"] is True
     assert captured["config_overrides"]["VERIFY_SCHEMA_DRIFT_ON_STARTUP"] is True
     assert captured["config_overrides"]["WARM_BROWSER_POOL"] == "1"
+    assert captured["config_overrides"]["SCHEDULER_HEARTBEAT_ENABLED"] == "1"
+    assert captured["config_overrides"]["WORKER_HEARTBEAT_ENABLED"] == "1"
+    assert (
+        captured["config_overrides"]["WORKER_HEARTBEAT_KEY_PREFIX"]
+        == "esp:worker:heartbeat"
+    )
+    assert captured["config_overrides"]["WORKER_HEARTBEAT_INTERVAL_SECONDS"] == "15"
+    assert captured["config_overrides"]["WORKER_HEARTBEAT_TTL_SECONDS"] == "90"
     assert captured["config_overrides"]["WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP"] == "0"
     assert captured["config_overrides"]["WORKER_SELECTOR_REPAIR_LIMIT"] == "1"
     assert worker.os.environ["MERCARI_USE_BROWSER_POOL_DETAIL"] == "1"

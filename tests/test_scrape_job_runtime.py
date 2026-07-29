@@ -3,7 +3,9 @@ from datetime import timedelta
 import pytest
 
 from database import SessionLocal
+from jobs.scrape_tasks import execute_scrape_job
 from models import ScrapeJob
+from services.scrape_request import build_scrape_task_request
 from services.scrape_job_runtime import run_tracked_job
 from services.scrape_job_store import create_job_record, get_job_record, mark_job_running, maybe_mark_job_stalled
 
@@ -40,6 +42,41 @@ def test_run_tracked_job_marks_job_failed(app):
     stored = get_job_record("runtime-job-2")
     assert stored["status"] == "failed"
     assert stored["error"] == "boom"
+
+
+def test_run_tracked_scrape_failure_is_not_marked_completed(app, monkeypatch):
+    create_job_record(
+        job_id="runtime-job-scrape-failure",
+        site="mercari",
+        context={"persist_to_db": False},
+        request_payload={"site": "mercari", "persist_to_db": False},
+        mode="preview",
+    )
+    monkeypatch.setattr(
+        "jobs.scrape_tasks.scrape_search_result",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("network unavailable")),
+    )
+    request_payload = build_scrape_task_request(
+        site="mercari",
+        target_url="",
+        keyword="retry-me",
+        price_min=None,
+        price_max=None,
+        sort="created_desc",
+        category=None,
+        limit=2,
+        user_id=1,
+        persist_to_db=False,
+        shop_id=None,
+    )
+
+    with pytest.raises(RuntimeError, match="network unavailable"):
+        run_tracked_job("runtime-job-scrape-failure", execute_scrape_job, request_payload)
+
+    stored = get_job_record("runtime-job-scrape-failure")
+    assert stored["status"] == "failed"
+    assert stored["result"] is None
+    assert stored["error"] == "network unavailable"
 
 
 def test_maybe_mark_job_stalled_converts_old_running_job(app):

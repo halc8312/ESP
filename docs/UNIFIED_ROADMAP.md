@@ -435,13 +435,12 @@ API キー設定前でも UI は動作する（翻訳なしで手動入力のみ
 
 ```
 新規エンドポイント: POST /api/products/bulk-price
-設定方式: margin（利益率）/ fixed_add / fixed / margin_plus_fixed / reset
+設定方式: margin（利益上乗せ率）/ fixed_add / fixed / margin_plus_fixed / reset
 ```
 
-**注意:** 利益率は販売価格に対する利益の割合として計算（既存 UI の定義に準拠）  
-`selling_price = cost / (1 - margin/100)` — **0 ≤ margin < 100 のバリデーション必須**  
-`margin` が 99 の場合 `selling_price = cost × 100`（仕入価格の100倍）となるため、  
-UI 側では上限を 99（または実務的な上限値）に設定し、ユーザーに警告を表示することを推奨する。
+**現在の契約:** `margin` は価格ルールと同じ利益上乗せ率として計算する。
+`selling_price = cost × (1 + margin/100)` — **0 ≤ margin ≤ 500**。
+画面・一括API・標準価格ルールで同じ式と上限を使用する。
 
 ---
 

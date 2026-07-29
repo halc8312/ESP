@@ -57,6 +57,10 @@ def login():
         try:
             user = session_db.query(User).filter_by(username=username).first()
             if user and user.check_password(password):
+                # Shop selection is user-scoped.  A browser session can survive
+                # logout/login cycles, so never carry a previous account's
+                # selection into the newly authenticated account.
+                session.pop("current_shop_id", None)
                 login_user(user)
                 reset_attempts("login-ip", client_ip)
                 reset_attempts("login-user", normalized_username)
@@ -116,6 +120,7 @@ def register():
             session_db.commit()
 
             # Auto login after registration
+            session.pop("current_shop_id", None)
             login_user(new_user)
             return redirect(url_for('main.index'))
         except Exception:
@@ -186,6 +191,7 @@ def account():
 @auth_bp.route('/logout', methods=['GET', 'POST'])
 @login_required
 def logout():
+    session.pop("current_shop_id", None)
     logout_user()
     return redirect(url_for('auth.login'))
 

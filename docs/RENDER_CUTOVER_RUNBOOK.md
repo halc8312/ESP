@@ -80,7 +80,8 @@ Use the dormant Blueprint in `render.yaml`.
 ### Web
 
 - Service name: `esp-web`
-- Health check: `/healthz`
+- Health check: `/readyz`（web自身に必須なDB/Redisのみ）
+- Full-stack check: `/stack-readyz`（live worker、worker role scheduler の heartbeat も含む）
 - Queue backend: `rq`
 - Scheduler: disabled on web
 - Image storage path: `/var/data/images`
@@ -89,7 +90,7 @@ Use the dormant Blueprint in `render.yaml`.
 
 - Service name: `esp-worker`
 - Start command: `python worker.py`
-- Scheduler owner: enabled on exactly one worker
+- Scheduler owner: enabled on exactly one worker（patrol、trash purge、translation lease recovery）
 - Shared browser runtime: enabled
 
 ### Data Stores
@@ -115,6 +116,14 @@ These should stay managed by the Blueprint and should not be copied by hand from
 - `SCHEMA_BOOTSTRAP_MODE`
 - `IMAGE_STORAGE_PATH`
 - `WORKER_ENABLE_SCHEDULER`
+- `SCHEDULER_HEARTBEAT_ENABLED`
+- `SCHEDULER_HEARTBEAT_KEY`
+- `SCHEDULER_HEARTBEAT_FRESHNESS_SECONDS`
+- `WORKER_HEARTBEAT_ENABLED`
+- `WORKER_HEARTBEAT_KEY_PREFIX`
+- `WORKER_HEARTBEAT_INTERVAL_SECONDS`
+- `WORKER_HEARTBEAT_TTL_SECONDS`
+- `WORKER_HEARTBEAT_FRESHNESS_SECONDS`
 - `WARM_BROWSER_POOL`
 - `ENABLE_SHARED_BROWSER_RUNTIME`
 - `BROWSER_POOL_WARM_SITES`
@@ -145,8 +154,8 @@ These stay manual because they are deployment-specific and should not be hardcod
 5. Fill selector repair canary URL env vars on `esp-worker`.
 6. Keep `WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP=0` for the first paid split deploy.
 7. Provision `esp-postgres` and `esp-keyvalue`.
-8. Deploy `esp-web` and confirm `/healthz` returns `200`.
-9. Deploy `esp-worker` and compare its startup logs against `flask render-worker-postdeploy-checklist --blueprint-path render.yaml`.
+8. Deploy `esp-worker` first, compare its startup logs against `flask render-worker-postdeploy-checklist --blueprint-path render.yaml`, and wait for both worker and scheduler heartbeats.
+9. Deploy `esp-web`, confirm `/healthz` reports the expected runtime role, confirm `/readyz` returns `200`, and verify `/stack-readyz` after the worker is live.
 10. Run `flask render-postdeploy-smoke --base-url https://<esp-web-url> --retries 4 --retry-delay-seconds 2`.
 11. Run `flask process-selector-repairs --limit 1 --dry-run`.
 12. If a smoke user already exists, rerun with `--username <smoke-user> --password <smoke-password>`. If it does not exist yet, add `--ensure-user` so authenticated `/scrape` and `/api/scrape/jobs` are checked too.
@@ -164,6 +173,8 @@ After provisioning, verify at minimum:
 - `SCRAPE_QUEUE_BACKEND=rq`
 - `WEB_SCHEDULER_MODE=disabled` on web
 - `WORKER_ENABLE_SCHEDULER=1` only on the intended worker
+- `/readyz` reports `database=ok` and `redis=ok`; worker/scheduler loss must not recycle a healthy web process
+- `/stack-readyz` reports `database=ok`, `redis=ok`, `worker=ok`, and `scheduler=ok`
 - `WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP=0` on the first deploy
 - `SELECTOR_REPAIR_MIN_SCORE=90`
 - `SELECTOR_REPAIR_MIN_CANARIES=2`

@@ -13,6 +13,12 @@ from urllib.parse import urljoin
 
 from services.browser_pool import run_browser_page_task
 from services.mercari_item_parser import parse_mercari_network_payload
+from services.scrape_safety import (
+    install_navigation_guard,
+    raise_for_blocked_navigation,
+    validate_fetch_response,
+    validate_marketplace_url,
+)
 
 
 _DETAIL_WAIT_SELECTOR = "h1, [data-testid='price'], [data-testid='checkout-button']"
@@ -265,10 +271,14 @@ async def probe_mercari_page(
     include_raw_payloads: bool = False,
 ) -> dict[str, Any]:
     """Open a Mercari page in a real browser and summarize JSON responses."""
+    page_kind = "detail" if page_kind == "detail" else "search"
+    url = validate_marketplace_url(url, "mercari", kind=page_kind)
     captured_responses: list[dict[str, Any]] = []
     response_tasks: list[asyncio.Task] = []
 
     async def _task(page, context):
+        blocked_urls = await install_navigation_guard(context, "mercari", kind=page_kind)
+
         async def _capture_response(response) -> None:
             if len(captured_responses) >= max_responses:
                 return
@@ -306,7 +316,21 @@ async def probe_mercari_page(
             lambda response: response_tasks.append(asyncio.create_task(_capture_response(response))),
         )
 
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        try:
+            navigation_response = await page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+        except Exception:
+            raise_for_blocked_navigation(blocked_urls, "mercari")
+            raise
+        raise_for_blocked_navigation(blocked_urls, "mercari")
+        validate_fetch_response(
+            navigation_response,
+            "mercari",
+            kind=page_kind,
+        )
         try:
             await page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
@@ -324,6 +348,8 @@ async def probe_mercari_page(
         if response_tasks:
             await asyncio.gather(*response_tasks, return_exceptions=True)
 
+        raise_for_blocked_navigation(blocked_urls, "mercari")
+        validate_marketplace_url(page.url, "mercari", kind=page_kind)
         html = await page.content()
         title = await page.title()
         item_urls = await _collect_search_item_urls(page) if page_kind == "search" else []

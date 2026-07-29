@@ -6,6 +6,13 @@ from __future__ import annotations
 from services.browser_pool import run_browser_page_task
 from services.html_page_adapter import HtmlPageAdapter
 from services.scraping_client import run_coro_sync
+from services.scrape_request import classify_target_url
+from services.scrape_safety import (
+    install_navigation_guard,
+    raise_for_blocked_navigation,
+    validate_fetch_response,
+    validate_marketplace_url,
+)
 from utils.env_helpers import env_flag as _env_flag
 
 
@@ -45,10 +52,21 @@ async def fetch_snkrdunk_page_via_browser_pool_async(
     network_idle: bool = True,
     wait_selector: str = "a[href*='/products/'], script#__NEXT_DATA__, title",
 ) -> HtmlPageAdapter:
+    request_kind, site = classify_target_url(url)
+    if site != "snkrdunk":
+        raise ValueError("SNKRDUNK以外のURLは取得できません。")
+    kind = "detail" if request_kind == "item" else "search"
+    url = validate_marketplace_url(url, "snkrdunk", kind=kind)
     page_state: dict[str, object] = {}
 
     async def _task(page, context):
-        response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        blocked_urls = await install_navigation_guard(context, "snkrdunk", kind=kind)
+        try:
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        except Exception:
+            raise_for_blocked_navigation(blocked_urls, "snkrdunk")
+            raise
+        raise_for_blocked_navigation(blocked_urls, "snkrdunk")
         if network_idle:
             try:
                 await page.wait_for_load_state("networkidle", timeout=5000)
@@ -60,6 +78,7 @@ async def fetch_snkrdunk_page_via_browser_pool_async(
             except Exception:
                 pass
 
+        raise_for_blocked_navigation(blocked_urls, "snkrdunk")
         page_state["html"] = await page.content()
         page_state["url"] = page.url
         page_state["status"] = getattr(response, "status", None) or 200
@@ -73,11 +92,13 @@ async def fetch_snkrdunk_page_via_browser_pool_async(
         init_scripts=_SNKRDUNK_INIT_SCRIPTS,
     )
 
-    return HtmlPageAdapter(
+    result = HtmlPageAdapter(
         str(page_state.get("html") or ""),
         url=str(page_state.get("url") or url),
         status=int(page_state.get("status") or 200),
     )
+    validate_fetch_response(result, "snkrdunk", kind=kind)
+    return result
 
 
 def fetch_snkrdunk_page_via_browser_pool_sync(

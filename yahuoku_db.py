@@ -9,6 +9,17 @@ from urllib.parse import urljoin
 
 from services.extraction_policy import attach_extraction_trace, pick_first
 from services.scrape_alerts import report_detail_result
+from services.scrape_safety import (
+    ScrapeFailure,
+    UnsafeScrapeUrlError,
+    is_usable_detail_result,
+    page_text,
+    raise_for_unsafe_detail_result,
+    require_search_outcome,
+    require_usable_details,
+    validate_fetch_response,
+    validate_marketplace_url,
+)
 
 logger = logging.getLogger("yahuoku")
 
@@ -190,9 +201,11 @@ def _infer_auction_status(item_detail: dict, page_text: str = "") -> str:
 def scrape_item_detail_light(url: str) -> dict:
     """HTTP-only Yahoo Auctions detail scrape."""
     try:
-        from services.scraping_client import fetch_static
+        from services.scraping_client import fetch_marketplace_static
 
-        page = fetch_static(url)
+        url = validate_marketplace_url(url, "yahuoku", kind="detail")
+        page = fetch_marketplace_static(url, site="yahuoku", kind="detail")
+        validate_fetch_response(page, "yahuoku", kind="detail")
         item_detail = _extract_auction_item(page)
         if not item_detail:
             return {}
@@ -286,6 +299,8 @@ def scrape_item_detail_light(url: str) -> dict:
             field_sources["variants"] = "next_data"
 
         return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
+    except ScrapeFailure:
+        raise
     except Exception as exc:
         logger.debug("Yahuoku light scrape error: %s", exc)
         return {}
@@ -305,7 +320,7 @@ def scrape_item_detail(url_or_driver, maybe_url=None, **_kwargs) -> dict:
 def scrape_single_item(url: str, headless: bool = True) -> list:
     """Scrape a single Yahoo Auctions item and return `list[dict]`."""
     result = scrape_item_detail(url)
-    return [result] if result.get("title") else []
+    return [result]
 
 
 def _extract_search_urls(page, base_url: str, max_items: int) -> list:
@@ -317,12 +332,9 @@ def _extract_search_urls(page, base_url: str, max_items: int) -> list:
             if not href:
                 continue
             full_url = urljoin(base_url, href)
-            if "/auction/" not in full_url:
-                continue
-            if not (
-                "auctions.yahoo.co.jp" in full_url
-                or "page.auctions.yahoo.co.jp" in full_url
-            ):
+            try:
+                full_url = validate_marketplace_url(full_url, "yahuoku", kind="detail")
+            except UnsafeScrapeUrlError:
                 continue
             if full_url in seen:
                 continue
@@ -341,7 +353,14 @@ def _find_next_page_url(page, current_url: str) -> str:
         text = str(anchor.text or "").strip()
         classes = str(anchor.attrib.get("class", "") or "")
         if "次へ" in text or "next" in classes.lower():
-            return urljoin(current_url, href)
+            try:
+                return validate_marketplace_url(
+                    urljoin(current_url, href),
+                    "yahuoku",
+                    kind="search",
+                )
+            except UnsafeScrapeUrlError:
+                continue
     return ""
 
 
@@ -355,9 +374,11 @@ def scrape_search_result(
     results = []
     candidate_urls = []
     candidate_target = max(max_items, max_items * 2)
+    first_page_text = ""
 
     try:
-        from services.scraping_client import fetch_static
+        search_url = validate_marketplace_url(search_url, "yahuoku", kind="search")
+        from services.scraping_client import fetch_marketplace_static
 
         current_url = search_url
         seen_pages = set()
@@ -365,7 +386,10 @@ def scrape_search_result(
 
         while current_url and current_url not in seen_pages and len(seen_pages) < max_pages:
             seen_pages.add(current_url)
-            page = fetch_static(current_url)
+            page = fetch_marketplace_static(current_url, site="yahuoku", kind="search")
+            validate_fetch_response(page, "yahuoku", kind="search")
+            if not first_page_text:
+                first_page_text = page_text(page)
             for item_url in _extract_search_urls(page, current_url, max_items=candidate_target):
                 if item_url not in candidate_urls:
                     candidate_urls.append(item_url)
@@ -375,14 +399,30 @@ def scrape_search_result(
                 break
             current_url = _find_next_page_url(page, current_url)
 
+        require_search_outcome(
+            "yahuoku",
+            candidate_count=len(candidate_urls),
+            text=first_page_text,
+        )
         for item_url in candidate_urls:
             if len(results) >= max_items:
                 break
-            result = scrape_item_detail(item_url)
-            if result.get("title"):
+            try:
+                result = scrape_item_detail(item_url)
+            except Exception as exc:
+                raise_for_unsafe_detail_result("yahuoku", exc)
+                logger.warning("Yahuoku detail scrape failed for %s: %s", item_url, exc)
+                continue
+            raise_for_unsafe_detail_result("yahuoku", result)
+            if is_usable_detail_result(result):
                 results.append(result)
 
+        require_usable_details(
+            "yahuoku",
+            candidate_count=len(candidate_urls),
+            item_count=len(results),
+        )
         return results
     except Exception as exc:
-        logger.error("Error in scrape_search_result: %s", exc)
-        return results
+        logger.exception("Error in scrape_search_result: %s", exc)
+        raise

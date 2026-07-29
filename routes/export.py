@@ -3,15 +3,53 @@ CSV Export routes: Shopify, eBay exports.
 """
 import csv
 import io
+import math
 from flask import Blueprint, request, make_response, session
 from flask_login import login_required, current_user
 
 from database import SessionLocal
 from models import Product, Variant, ProductSnapshot
 from services.image_service import cache_mercari_image, download_external_image, split_image_url_string
+from services.pricing_service import (
+    resolve_product_selling_price,
+    resolve_variant_selling_prices,
+)
 from services.rich_text import normalize_rich_text
 
 export_bp = Blueprint('export', __name__)
+
+
+def _load_variant_export_prices(session_db, products, markup):
+    """Resolve prices before writing a CSV so missing prices fail closed."""
+    prepared = {}
+    missing_product_ids = []
+    for product in products:
+        variants = (
+            session_db.query(Variant)
+            .filter_by(product_id=product.id)
+            .order_by(Variant.position, Variant.id)
+            .all()
+        )
+        if not variants:
+            continue
+        prices = resolve_variant_selling_prices(
+            product,
+            variants,
+            fallback_multiplier=markup,
+        )
+        if any(price is None for price in prices):
+            missing_product_ids.append(product.id)
+        prepared[product.id] = (variants, prices)
+    return prepared, missing_product_ids
+
+
+def _missing_price_response(product_ids):
+    product_labels = "、".join(str(product_id) for product_id in product_ids)
+    return (
+        f"販売価格が未設定の商品があります（商品ID: {product_labels}）。"
+        "価格を設定してから、もう一度出力してください。",
+        400,
+    )
 
 
 def _parse_ids_and_params(session_db):
@@ -21,6 +59,8 @@ def _parse_ids_and_params(session_db):
     """
     product_ids = request.args.getlist("id", type=int)
     markup = request.args.get("markup", type=float) or 1.0
+    if not math.isfinite(markup) or markup <= 0:
+        markup = 1.0
     qty = request.args.get("qty", type=int) or 1
 
     query = session_db.query(Product).filter(
@@ -47,6 +87,13 @@ def export_shopify():
         products, markup, default_qty = _parse_ids_and_params(session_db)
         if not products:
              return "対象の商品がありません。", 400
+        prepared_prices, missing_product_ids = _load_variant_export_prices(
+            session_db,
+            products,
+            markup,
+        )
+        if missing_product_ids:
+            return _missing_price_response(missing_product_ids)
         
         output = io.StringIO()
         fieldnames = [
@@ -92,11 +139,16 @@ def export_shopify():
                         full_url = f"{base_url}/media/{local_filename}"
                         image_urls.append(full_url)
             
-            variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
+            variants, resolved_variant_prices = prepared_prices.get(
+                product.id,
+                ([], []),
+            )
             if not variants:
                 continue
 
-            for i, variant in enumerate(variants):
+            for i, (variant, final_price) in enumerate(
+                zip(variants, resolved_variant_prices)
+            ):
                 row = {f: "" for f in fieldnames} # Initialize with empty strings
                 row["Handle"] = handle
                 
@@ -137,8 +189,6 @@ def export_shopify():
                 row["Variant Inventory Policy"] = "deny"
                 row["Variant Fulfillment Service"] = "manual"
                 
-                base_price = variant.price
-                final_price = int(base_price * markup) if base_price is not None else 0
                 row["Variant Price"] = final_price
                 row["Variant Compare At Price"] = "" # Empty for now
                 
@@ -190,6 +240,24 @@ def export_ebay():
             exchange_rate = float(request.args.get("rate", "155.0"))
         except ValueError:
             exchange_rate = 155.0
+        if not math.isfinite(exchange_rate) or exchange_rate <= 0:
+            return "為替レートは0より大きい値を指定してください。", 400
+
+        prepared_prices = {}
+        missing_product_ids = []
+        for product in products:
+            snapshot = product.snapshots[-1] if product.snapshots else None
+            resolved_price = resolve_product_selling_price(
+                product,
+                snapshot.price if snapshot else None,
+                product.last_price,
+                fallback_multiplier=markup,
+            )
+            prepared_prices[product.id] = (snapshot, resolved_price)
+            if resolved_price is None:
+                missing_product_ids.append(product.id)
+        if missing_product_ids:
+            return _missing_price_response(missing_product_ids)
 
         output = io.StringIO()
         writer = csv.writer(output)
@@ -218,7 +286,7 @@ def export_ebay():
         CARD_CONDITION_DEFAULT = "Used"
 
         for p in products:
-            snap = p.snapshots[-1] if p.snapshots else None
+            snap, base_price_yen = prepared_prices[p.id]
             title_src = snap.title if snap and snap.title else (p.last_title or "")
             title = (title_src or "")[:80]
             description_src = p.custom_description or (snap.description if snap and snap.description else "")
@@ -226,19 +294,8 @@ def export_ebay():
                 description_src = title_src
             description_html = normalize_rich_text(description_src)
 
-            base_price_yen = None
-            if snap and snap.price is not None:
-                base_price_yen = snap.price
-            elif p.last_price is not None:
-                base_price_yen = p.last_price
-
-            start_price = ""
-            if base_price_yen:
-                try:
-                    usd_val = (base_price_yen / exchange_rate) * markup
-                    start_price = "{:.2f}".format(usd_val)
-                except Exception:
-                    start_price = ""
+            usd_val = base_price_yen / exchange_rate
+            start_price = "{:.2f}".format(usd_val)
 
             image_urls = []
             if snap and snap.image_urls:
@@ -282,7 +339,12 @@ def export_stock_update():
 
         for product in products:
             handle = product.custom_handle or f"mercari-{product.id}"
-            variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
+            variants = (
+                session_db.query(Variant)
+                .filter_by(product_id=product.id)
+                .order_by(Variant.position, Variant.id)
+                .all()
+            )
             
             for variant in variants:
                 if product.last_status in {'sold', 'deleted'}:
@@ -318,6 +380,13 @@ def export_price_update():
         products, markup, default_qty = _parse_ids_and_params(session_db)
         if not products:
              return "対象の商品がありません。", 400
+        prepared_prices, missing_product_ids = _load_variant_export_prices(
+            session_db,
+            products,
+            markup,
+        )
+        if missing_product_ids:
+            return _missing_price_response(missing_product_ids)
 
         output = io.StringIO()
         fieldnames = ["Handle", "Option1 Value", "Option2 Value", "Option3 Value", "Variant Price"]
@@ -326,12 +395,15 @@ def export_price_update():
 
         for product in products:
             handle = product.custom_handle or f"mercari-{product.id}"
-            variants = session_db.query(Variant).filter_by(product_id=product.id).order_by(Variant.position).all()
+            variants, resolved_variant_prices = prepared_prices.get(
+                product.id,
+                ([], []),
+            )
             
-            for variant in variants:
-                price = variant.price
-                final_price = int(price * markup) if price is not None else 0
-
+            for variant, final_price in zip(
+                variants,
+                resolved_variant_prices,
+            ):
                 writer.writerow({
                     "Handle": handle,
                     "Option1 Value": variant.option1_value,
