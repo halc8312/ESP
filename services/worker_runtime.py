@@ -3,8 +3,15 @@ Dedicated worker runtime bootstrap.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
+import re
+import socket
+import threading
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from flask import Flask
@@ -38,6 +45,10 @@ class WorkerRuntimeSettings:
     selector_repair_limit: int
     backlog_warn_count: int
     backlog_warn_age_seconds: int
+    worker_heartbeat_enabled: bool
+    worker_heartbeat_key_prefix: str
+    worker_heartbeat_interval_seconds: int
+    worker_heartbeat_ttl_seconds: int
 
 
 @dataclass
@@ -46,6 +57,35 @@ class WorkerRuntime:
     connection: Redis
     queue: Any
     worker: Any
+
+
+@dataclass
+class WorkerHeartbeatHandle:
+    connection: Redis
+    key: str
+    instance_id: str
+    interval_seconds: int
+    ttl_seconds: int
+    stop_event: threading.Event
+    thread: threading.Thread | None = None
+
+
+HEARTBEAT_OK = "ok"
+HEARTBEAT_UNAVAILABLE = "unavailable"
+HEARTBEAT_STALE = "stale"
+_HEARTBEAT_FUTURE_SKEW_SECONDS = 60
+_SCHEDULER_LIVE_EVENTS = frozenset(
+    {
+        "scheduler_started",
+        "scheduler_already_started",
+        "scheduler_retry_succeeded",
+        "patrol_started",
+        "patrol_completed",
+        "patrol_failed",
+        "translation_recovery_completed",
+        "translation_recovery_failed",
+    }
+)
 
 
 def _as_int(value, default: int, minimum: int = 0) -> int:
@@ -91,6 +131,24 @@ def _collect_worker_runtime_settings(app: Flask, *, require_rq_backend: bool) ->
         default=900,
         minimum=0,
     )
+    worker_heartbeat_enabled = _as_bool(
+        app.config.get("WORKER_HEARTBEAT_ENABLED", False),
+        default=False,
+    )
+    worker_heartbeat_key_prefix = str(
+        app.config.get("WORKER_HEARTBEAT_KEY_PREFIX", "esp:worker:heartbeat")
+        or "esp:worker:heartbeat"
+    ).strip().rstrip(":") or "esp:worker:heartbeat"
+    worker_heartbeat_interval_seconds = _as_int(
+        app.config.get("WORKER_HEARTBEAT_INTERVAL_SECONDS", 15),
+        default=15,
+        minimum=1,
+    )
+    worker_heartbeat_ttl_seconds = _as_int(
+        app.config.get("WORKER_HEARTBEAT_TTL_SECONDS", 90),
+        default=90,
+        minimum=worker_heartbeat_interval_seconds * 2,
+    )
 
     return WorkerRuntimeSettings(
         queue_backend=queue_backend,
@@ -105,6 +163,10 @@ def _collect_worker_runtime_settings(app: Flask, *, require_rq_backend: bool) ->
         selector_repair_limit=selector_repair_limit,
         backlog_warn_count=backlog_warn_count,
         backlog_warn_age_seconds=backlog_warn_age_seconds,
+        worker_heartbeat_enabled=worker_heartbeat_enabled,
+        worker_heartbeat_key_prefix=worker_heartbeat_key_prefix,
+        worker_heartbeat_interval_seconds=worker_heartbeat_interval_seconds,
+        worker_heartbeat_ttl_seconds=worker_heartbeat_ttl_seconds,
     )
 
 
@@ -129,6 +191,205 @@ def build_worker_runtime(app: Flask) -> WorkerRuntime:
         queue=queues[0],
         worker=worker,
     )
+
+
+def _utc_iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _decode_redis_value(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _decode_redis_mapping(mapping: dict[Any, Any]) -> dict[str, str]:
+    return {
+        _decode_redis_value(key): _decode_redis_value(value)
+        for key, value in mapping.items()
+    }
+
+
+def _parse_heartbeat_timestamp(raw_value: Any) -> datetime | None:
+    normalized = _decode_redis_value(raw_value).strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _heartbeat_payload_is_fresh(
+    payload: dict[str, Any],
+    *,
+    freshness_seconds: int,
+    now: datetime | None = None,
+) -> bool:
+    if _decode_redis_value(payload.get("runtime_role", "")).strip().lower() != "worker":
+        return False
+    recorded_at = _parse_heartbeat_timestamp(payload.get("recorded_at", ""))
+    if recorded_at is None:
+        return False
+    current_time = now or datetime.now(timezone.utc)
+    age_seconds = (current_time - recorded_at).total_seconds()
+    return -_HEARTBEAT_FUTURE_SKEW_SECONDS <= age_seconds <= max(1, freshness_seconds)
+
+
+def inspect_worker_heartbeat(
+    connection: Any,
+    *,
+    key_prefix: str,
+    freshness_seconds: int,
+    now: datetime | None = None,
+) -> str:
+    """Return a non-secret readiness state for all live worker heartbeat keys."""
+    normalized_prefix = (
+        str(key_prefix or "esp:worker:heartbeat").strip().rstrip(":")
+        or "esp:worker:heartbeat"
+    )
+    try:
+        saw_key = False
+        for key in connection.scan_iter(match=f"{normalized_prefix}:*"):
+            saw_key = True
+            raw_payload = connection.get(key)
+            if raw_payload is None:
+                continue
+            ttl_seconds = int(connection.ttl(key))
+            if ttl_seconds <= 0:
+                continue
+            try:
+                payload = json.loads(_decode_redis_value(raw_payload))
+            except (TypeError, ValueError):
+                continue
+            if isinstance(payload, dict) and _heartbeat_payload_is_fresh(
+                payload,
+                freshness_seconds=max(1, int(freshness_seconds)),
+                now=now,
+            ):
+                return HEARTBEAT_OK
+        return HEARTBEAT_STALE if saw_key else HEARTBEAT_UNAVAILABLE
+    except Exception as exc:
+        logger.warning("Worker heartbeat inspection failed: error=%s", type(exc).__name__)
+        return HEARTBEAT_UNAVAILABLE
+
+
+def inspect_scheduler_heartbeat(
+    connection: Any,
+    *,
+    key: str,
+    freshness_seconds: int,
+    now: datetime | None = None,
+) -> str:
+    """Return a non-secret readiness state for the dedicated scheduler."""
+    try:
+        raw_payload = connection.hgetall(key)
+        if not raw_payload:
+            return HEARTBEAT_UNAVAILABLE
+        payload = _decode_redis_mapping(raw_payload)
+        event = payload.get("event", "").strip().lower()
+        if event in _SCHEDULER_LIVE_EVENTS and _heartbeat_payload_is_fresh(
+            payload,
+            freshness_seconds=max(1, int(freshness_seconds)),
+            now=now,
+        ):
+            return HEARTBEAT_OK
+        return HEARTBEAT_STALE
+    except Exception as exc:
+        logger.warning("Scheduler heartbeat inspection failed: error=%s", type(exc).__name__)
+        return HEARTBEAT_UNAVAILABLE
+
+
+def _build_worker_heartbeat_identity(settings: WorkerRuntimeSettings) -> tuple[str, str]:
+    instance_id = uuid.uuid4().hex
+    hostname = re.sub(r"[^A-Za-z0-9_.-]+", "-", socket.gethostname()).strip("-") or "unknown"
+    key = f"{settings.worker_heartbeat_key_prefix}:{hostname}:{os.getpid()}:{instance_id}"
+    return instance_id, key
+
+
+def _publish_worker_heartbeat(handle: WorkerHeartbeatHandle) -> None:
+    payload = {
+        "instance_id": handle.instance_id,
+        "runtime_role": "worker",
+        "recorded_at": _utc_iso_now(),
+        "hostname": socket.gethostname(),
+        "pid": os.getpid(),
+    }
+    handle.connection.set(
+        handle.key,
+        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        ex=handle.ttl_seconds,
+    )
+
+
+def _run_worker_heartbeat_loop(handle: WorkerHeartbeatHandle) -> None:
+    while not handle.stop_event.wait(handle.interval_seconds):
+        try:
+            _publish_worker_heartbeat(handle)
+        except Exception as exc:
+            logger.warning(
+                "Worker heartbeat write failed: error=%s",
+                type(exc).__name__,
+            )
+
+
+def start_worker_heartbeat(runtime: WorkerRuntime) -> WorkerHeartbeatHandle | None:
+    settings = runtime.settings
+    if not settings.worker_heartbeat_enabled:
+        return None
+
+    instance_id, key = _build_worker_heartbeat_identity(settings)
+    stop_event = threading.Event()
+    handle = WorkerHeartbeatHandle(
+        connection=runtime.connection,
+        key=key,
+        instance_id=instance_id,
+        interval_seconds=settings.worker_heartbeat_interval_seconds,
+        ttl_seconds=settings.worker_heartbeat_ttl_seconds,
+        stop_event=stop_event,
+    )
+    heartbeat_thread = threading.Thread(
+        target=_run_worker_heartbeat_loop,
+        args=(handle,),
+        name=f"worker-heartbeat-{instance_id[:8]}",
+        daemon=True,
+    )
+    handle.thread = heartbeat_thread
+    try:
+        _publish_worker_heartbeat(handle)
+    except Exception as exc:
+        logger.warning(
+            "Initial worker heartbeat write failed: error=%s",
+            type(exc).__name__,
+        )
+    heartbeat_thread.start()
+    return handle
+
+
+def stop_worker_heartbeat(handle: WorkerHeartbeatHandle | None) -> None:
+    if handle is None:
+        return
+
+    handle.stop_event.set()
+    if handle.thread is not None:
+        handle.thread.join(timeout=5)
+    try:
+        raw_payload = handle.connection.get(handle.key)
+        if raw_payload is None:
+            return
+        payload = json.loads(_decode_redis_value(raw_payload))
+        if isinstance(payload, dict) and payload.get("instance_id") == handle.instance_id:
+            handle.connection.delete(handle.key)
+    except Exception as exc:
+        logger.warning(
+            "Worker heartbeat cleanup failed: error=%s",
+            type(exc).__name__,
+        )
 
 
 def get_worker_health_snapshot(app: Flask) -> dict[str, Any]:
@@ -231,11 +492,21 @@ def emit_backlog_operational_alert(
         return False
 
 
+def recover_translation_suggestions_on_startup() -> dict[str, Any]:
+    """Load translation recovery lazily so worker bootstrap remains decoupled."""
+    from services.translator.suggestion_store import (
+        recover_expired_translation_suggestions,
+    )
+
+    return recover_expired_translation_suggestions()
+
+
 def run_worker(app: Flask) -> int:
     with app.app_context():
         ensure_additive_schema_ready()
 
     runtime = build_worker_runtime(app)
+    heartbeat_handle = start_worker_heartbeat(runtime)
     try:
         with app.app_context():
             backlog_before = get_job_backlog_snapshot()
@@ -257,6 +528,18 @@ def run_worker(app: Flask) -> int:
                         "Reconciled stalled scrape jobs before worker start: count=%s job_ids=%s",
                         len(reconciled_job_ids),
                         ",".join(reconciled_job_ids[:10]),
+                    )
+                try:
+                    translation_recovery = recover_translation_suggestions_on_startup()
+                    logger.info(
+                        "Translation startup recovery complete: recovered=%s enqueued=%s failed=%s",
+                        len(translation_recovery.get("recovered") or []),
+                        len(translation_recovery.get("enqueued") or []),
+                        len(translation_recovery.get("failed") or []),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Translation startup recovery failed; worker startup will continue"
                     )
             backlog_after = get_job_backlog_snapshot()
             logger.info(
@@ -288,6 +571,7 @@ def run_worker(app: Flask) -> int:
             with_scheduler=runtime.settings.with_scheduler,
         )
     finally:
+        stop_worker_heartbeat(heartbeat_handle)
         pool_health = get_browser_pool_health()
         if pool_health["runtimes"]:
             logger.info("Worker browser pool closing: health=%s", pool_health)

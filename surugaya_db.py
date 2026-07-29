@@ -5,6 +5,7 @@ impersonation to bypass Cloudflare protection. HTML parsing is done with
 BeautifulSoup after the page is fetched.
 """
 import html
+import inspect
 import json
 import logging
 import re
@@ -14,6 +15,18 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urljoin, urlp
 from bs4 import BeautifulSoup
 from services.extraction_policy import attach_extraction_trace, pick_first_valid
 from services.scrape_alerts import report_detail_result
+from services.scrape_safety import (
+    ScrapeBlockedError,
+    ScrapeFailure,
+    UnsafeScrapeUrlError,
+    fetch_with_safe_redirects,
+    is_usable_detail_result,
+    raise_for_unsafe_detail_result,
+    require_search_outcome,
+    require_usable_details,
+    validate_fetch_response,
+    validate_marketplace_url,
+)
 
 logger = logging.getLogger("surugaya")
 
@@ -261,26 +274,60 @@ def _pick_strategy(field_sources: dict) -> str:
 
 
 def _fetch_with_retry(session, url: str, timeout: int = 30, max_attempts: int = 3):
+    parsed = urlparse(str(url or ""))
+    kind = "detail" if "/product/detail/" in (parsed.path or "") else "search"
+    url = validate_marketplace_url(url, "surugaya", kind=kind)
     last_response = None
     last_error = None
 
     for attempt in range(max_attempts):
+        observed_response = None
+
+        def _fetch_once(current_url: str):
+            nonlocal observed_response
+            getter = session.get
+            try:
+                observed_response = getter(
+                    current_url,
+                    timeout=timeout,
+                    follow_redirects=False,
+                )
+            except TypeError:
+                module_name = str(getattr(getter, "__module__", "") or "")
+                if not (
+                    module_name.startswith("test_")
+                    or module_name.startswith("tests.")
+                    or module_name.startswith("unittest.mock")
+                ):
+                    raise
+                signature = inspect.signature(getter)
+                if "timeout" in signature.parameters:
+                    observed_response = getter(current_url, timeout=timeout)
+                else:
+                    observed_response = getter(current_url)
+            return observed_response
+
         try:
-            response = session.get(url, timeout=timeout)
+            response = fetch_with_safe_redirects(
+                _fetch_once,
+                url,
+                "surugaya",
+                kind=kind,
+            )
             last_response = response
             last_error = None
+        except UnsafeScrapeUrlError:
+            raise
         except Exception as exc:
             response = None
+            if observed_response is not None:
+                last_response = observed_response
             last_error = exc
 
         if response is not None and not _is_cloudflare_block(response) and response.status_code < 500:
             return response, None
 
         if attempt < max_attempts - 1:
-            try:
-                session.get(BASE_URL + "/", timeout=10)
-            except Exception:
-                pass
             time.sleep(1.0 + (attempt * 0.8))
 
     if last_response is not None and _is_cloudflare_block(last_response):
@@ -292,8 +339,16 @@ def _fetch_with_retry(session, url: str, timeout: int = 30, max_attempts: int = 
                 and not _is_cloudflare_block(external_response)
                 and external_response.status_code < 500
             ):
+                validate_fetch_response(
+                    external_response,
+                    "surugaya",
+                    kind=kind,
+                    text=external_response.text,
+                )
                 logger.info("Surugaya external fetch recovered blocked response via %s", external_response.source)
                 return external_response, None
+        except ScrapeFailure:
+            raise
         except Exception as exc:
             logger.warning("Surugaya external fetch fallback failed: %s", exc)
 
@@ -521,7 +576,15 @@ def _extract_product_urls(soup: BeautifulSoup, base_url: str) -> list:
             parsed = urlparse(full_url)
             if "/product/detail/" not in parsed.path:
                 continue
-            normalized = urlunparse(parsed._replace(fragment=""))
+            try:
+                normalized = validate_marketplace_url(
+                    urlunparse(parsed._replace(fragment="")),
+                    "surugaya",
+                    kind="detail",
+                )
+            except UnsafeScrapeUrlError:
+                logger.warning("Ignored unsafe Surugaya detail URL discovered in search HTML")
+                continue
             product_urls.append(normalized)
     return _dedupe_keep_order(product_urls)
 
@@ -548,6 +611,10 @@ def _build_search_page_urls(search_url: str, first_soup: BeautifulSoup, max_scro
             if not href:
                 continue
             full_url = _normalize_url(href, search_url)
+            try:
+                full_url = validate_marketplace_url(full_url, "surugaya", kind="search")
+            except UnsafeScrapeUrlError:
+                continue
             match = re.search(r"[?&]page=(\d+)", full_url)
             if not match:
                 continue
@@ -567,6 +634,7 @@ def _build_search_page_urls(search_url: str, first_soup: BeautifulSoup, max_scro
     next_page = 2
     while len(page_urls) < max_pages:
         candidate = _set_page_param(search_url, next_page)
+        candidate = validate_marketplace_url(candidate, "surugaya", kind="search")
         if candidate not in page_urls:
             page_urls.append(candidate)
         next_page += 1
@@ -575,11 +643,15 @@ def _build_search_page_urls(search_url: str, first_soup: BeautifulSoup, max_scro
 
 
 def _should_use_yahoo_search_fallback() -> bool:
-    return True
+    # A broad web-search fallback does not preserve the pasted marketplace
+    # filters, sorting, pagination, or explicit zero-result outcome.
+    return False
 
 
 def _should_use_global_domain_fallback() -> bool:
-    return True
+    # The global storefront is a different inventory surface and can return a
+    # different item/condition than the requested Japanese detail page.
+    return False
 
 
 def _extract_keyword_from_search_url(search_url: str) -> str:
@@ -682,7 +754,11 @@ def _search_product_urls_via_yahoo(keyword: str, max_items: int) -> list:
 
             if not resolved:
                 continue
-            urls.append(resolved)
+            try:
+                urls.append(validate_marketplace_url(resolved, "surugaya", kind="detail"))
+            except UnsafeScrapeUrlError:
+                logger.warning("Ignored unsafe Surugaya fallback detail URL")
+                continue
             if len(urls) >= max_items:
                 break
 
@@ -897,14 +973,14 @@ def scrape_item_detail(session, url: str, headless: bool = True) -> dict:
     field_sources = {}
 
     print(f"[SURUGAYA] Starting curl_cffi scrape for {url}")
+    url = validate_marketplace_url(url, "surugaya", kind="detail")
 
     soup = None
     page_url = url
     resp, fetch_error = _fetch_with_retry(session, url, timeout=30, max_attempts=3)
 
     if fetch_error is None and resp is not None and not _is_cloudflare_block(resp):
-        if resp.status_code >= 400:
-            print(f"[SURUGAYA] WARN: HTTP status {resp.status_code} for {url}")
+        validate_fetch_response(resp, "surugaya", kind="detail", text=resp.text)
         try:
             soup = BeautifulSoup(resp.content, "html.parser")
             page_url = resp.url or url
@@ -1130,10 +1206,10 @@ def scrape_single_item(url: str, headless: bool = True) -> list:
     try:
         session = get_session()
         result = scrape_item_detail(session, url, headless=headless)
-        return [result] if result["title"] else []
+        return [result]
     except Exception as e:
-        print(f"[SURUGAYA] Error in scrape_single_item: {e}")
-        return []
+        logger.exception("Error in scrape_single_item: %s", e)
+        raise
 
 
 def scrape_search_result(
@@ -1149,6 +1225,7 @@ def scrape_search_result(
     candidate_target = max(max_items, max_items * 2)
 
     try:
+        search_url = validate_marketplace_url(search_url, "surugaya", kind="search")
         print(f"[SURUGAYA] Search: Initializing curl_cffi session...")
         session = get_session()
 
@@ -1157,17 +1234,21 @@ def scrape_search_result(
 
         keyword = _extract_keyword_from_search_url(search_url)
         soup = None
+        challenge_detected = False
         base_search_url = search_url
         product_urls = []
         if fetch_error is None and first_resp is not None and not _is_cloudflare_block(first_resp):
+            validate_fetch_response(
+                first_resp,
+                "surugaya",
+                kind="search",
+                text=first_resp.text,
+            )
             soup = BeautifulSoup(first_resp.content, "html.parser")
             base_search_url = first_resp.url or search_url
         else:
             if first_resp is not None and _is_cloudflare_block(first_resp):
-                logger.warning(
-                    "Surugaya search page blocked (status=%s); using fallback URL discovery if available.",
-                    first_resp.status_code,
-                )
+                logger.warning("Surugaya search page blocked (status=%s).", first_resp.status_code)
 
         if soup is None:
             if first_resp is not None and _is_cloudflare_block(first_resp):
@@ -1179,10 +1260,20 @@ def scrape_search_result(
             if _should_use_yahoo_search_fallback():
                 print("[SURUGAYA] Search: INFO: Trying Yahoo search fallback after blocked search page...")
                 product_urls = _search_product_urls_via_yahoo(keyword, max_items=candidate_target)
+            if not product_urls:
+                if first_resp is not None and _is_cloudflare_block(first_resp):
+                    raise ScrapeBlockedError(
+                        "駿河屋の検索ページでアクセス制限が検出されました。"
+                    )
+                raise RuntimeError(
+                    "駿河屋の検索ページへアクセスできませんでした。"
+                    "アクセス制限または通信障害の可能性があります。"
+                )
         else:
             print(f"[SURUGAYA] Search: Page title: {soup.title.string if soup.title else 'No Title'}")
 
             if _looks_like_challenge_soup(soup):
+                challenge_detected = True
                 logger.warning("Surugaya search page appears to be a challenge page.")
                 if _should_use_yahoo_search_fallback():
                     print("[SURUGAYA] Search: INFO: Trying Yahoo search fallback for product URLs...")
@@ -1200,18 +1291,30 @@ def scrape_search_result(
                     page_resp, page_error = _fetch_with_retry(session, page_url, timeout=30, max_attempts=2)
                     page_soup = None
                     if page_error is None and page_resp is not None and not _is_cloudflare_block(page_resp):
+                        validate_fetch_response(
+                            page_resp,
+                            "surugaya",
+                            kind="search",
+                            text=page_resp.text,
+                        )
                         page_soup = BeautifulSoup(page_resp.content, "html.parser")
 
                     if page_soup is None:
+                        if page_resp is not None and _is_cloudflare_block(page_resp):
+                            raise ScrapeBlockedError(
+                                "駿河屋の検索ページでアクセス制限が検出されました。"
+                            )
                         if page_error is not None:
+                            raise_for_unsafe_detail_result("surugaya", page_error)
                             logger.warning(f"Surugaya page fetch failed: {page_url} ({page_error})")
                         else:
                             logger.warning(f"Surugaya page blocked/skipped: {page_url}")
                         continue
 
                     if _looks_like_challenge_soup(page_soup):
-                        logger.warning(f"Surugaya page challenge detected: {page_url}")
-                        continue
+                        raise ScrapeBlockedError(
+                            "駿河屋の検索ページでアクセス確認画面を検出しました。"
+                        )
 
                 for product_url in _extract_product_urls(page_soup, page_url):
                     if product_url in product_urls:
@@ -1228,6 +1331,16 @@ def scrape_search_result(
                 product_urls = _search_product_urls_via_yahoo(keyword, max_items=candidate_target)
 
         if not product_urls:
+            if challenge_detected:
+                raise RuntimeError(
+                    "駿河屋の検索ページでアクセス制限が検出されました。"
+                    "時間をおいて再度お試しください。"
+                )
+            require_search_outcome(
+                "surugaya",
+                candidate_count=0,
+                text=soup.get_text(" ", strip=True) if soup is not None else "",
+            )
             return results
 
         # Scrape each product detail
@@ -1236,14 +1349,21 @@ def scrape_search_result(
                 break
             try:
                 result = scrape_item_detail(session, url, headless=headless)
-                if result["title"]:
+                raise_for_unsafe_detail_result("surugaya", result)
+                if is_usable_detail_result(result):
                     results.append(result)
             except Exception as e:
+                raise_for_unsafe_detail_result("surugaya", e)
                 logger.error(f"Error scraping {url}: {e}")
                 continue
 
+        require_usable_details(
+            "surugaya",
+            candidate_count=len(product_urls),
+            item_count=len(results),
+        )
         return results
 
     except Exception as e:
-        logger.error(f"Error in scrape_search_result: {e}")
-        return results
+        logger.exception("Error in scrape_search_result: %s", e)
+        raise

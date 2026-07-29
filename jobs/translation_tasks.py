@@ -9,16 +9,16 @@ A translation job:
    captured source title / description (plain text for the title, HTML
    segmentation for the description so rich-text structure survives).
 3. Writes the result back to the suggestion row as ``succeeded`` (or
-   ``failed`` with an error message) and lets the web UI poll the API
-   to surface the result for review.
-
-The actual ``Product`` row is never updated directly; the operator has
-to explicitly apply the suggestion from the UI. This matches the "必要
-に応じて実行・確認できる形が望ましい" requirement from the DM.
+   ``failed`` with an error message).
+4. For registration jobs marked ``auto_apply``, applies the result to the
+   product unless the operator has manually edited that English field while
+   translation was running. Other jobs remain available for explicit review
+   and application from the UI.
 """
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 from services.rich_text import normalize_rich_text
@@ -45,7 +45,11 @@ def _auto_apply_suggestion(job_id: str) -> None:
         refreshed = get_suggestion_by_job_id(job_id, session=session_db)
         if refreshed is None or refreshed.status != "succeeded":
             return
-        changes = apply_suggestion_to_product(refreshed, session_db)
+        changes = apply_suggestion_to_product(
+            refreshed,
+            session_db,
+            preserve_existing=True,
+        )
         if changes:
             session_db.commit()
             logger.info(
@@ -57,6 +61,71 @@ def _auto_apply_suggestion(job_id: str) -> None:
     except Exception:
         session_db.rollback()
         logger.exception("auto-apply failed for translation job %s", job_id)
+    finally:
+        session_db.close()
+
+
+def _persist_translation_result(
+    *,
+    job_id: str,
+    worker_token: str,
+    translated_title: str | None,
+    translated_description: str | None,
+    auto_apply: bool,
+) -> bool:
+    """Persist a worker result, atomically with automatic Product application."""
+    if not auto_apply:
+        return mark_succeeded(
+            job_id,
+            worker_token=worker_token,
+            translated_title=translated_title,
+            translated_description=translated_description,
+        )
+
+    from database import create_isolated_session
+
+    session_db = create_isolated_session()
+    try:
+        stored = mark_succeeded(
+            job_id,
+            worker_token=worker_token,
+            translated_title=translated_title,
+            translated_description=translated_description,
+            session=session_db,
+        )
+        if not stored:
+            session_db.rollback()
+            return False
+
+        refreshed = get_suggestion_by_job_id(job_id, session=session_db)
+        if refreshed is None:
+            raise RuntimeError(
+                f"translation suggestion disappeared before auto-apply: {job_id}"
+            )
+        product_id = refreshed.product_id
+        changes = apply_suggestion_to_product(
+            refreshed,
+            session_db,
+            preserve_existing=True,
+        )
+        # With no eligible Product field, apply_suggestion_to_product restores
+        # the suggestion to `succeeded`.  Commit that reviewable state together
+        # with the translated text; otherwise commit `applied` plus Product.
+        session_db.commit()
+        if changes:
+            logger.info(
+                "auto-applied translation %s to product %s: %s",
+                job_id,
+                product_id,
+                sorted(changes.keys()),
+            )
+        return True
+    except BaseException:
+        # Includes worker termination/timeout exceptions.  Because the
+        # running claim was committed before translation began, rolling this
+        # transaction back leaves the fenced running row recoverable by lease.
+        session_db.rollback()
+        raise
     finally:
         session_db.close()
 
@@ -83,7 +152,16 @@ def execute_translation_job(job_id: str) -> dict[str, Any]:
         )
         return {"job_id": job_id, "status": suggestion.status}
 
-    mark_running(job_id)
+    worker_token = uuid.uuid4().hex
+    if not mark_running(job_id, worker_token=worker_token):
+        current = get_suggestion_by_job_id(job_id)
+        current_status = current.status if current is not None else "missing"
+        logger.info(
+            "translation job %s lost its worker claim to state %s",
+            job_id,
+            current_status,
+        )
+        return {"job_id": job_id, "status": current_status}
 
     scope = suggestion.scope
     source_title = suggestion.source_title or ""
@@ -109,26 +187,30 @@ def execute_translation_job(job_id: str) -> dict[str, Any]:
                 # stored and rendered in the review UI.
                 translated_description = normalize_rich_text(translated_raw) or None
 
-        mark_succeeded(
-            job_id,
+        stored = _persist_translation_result(
+            job_id=job_id,
+            worker_token=worker_token,
             translated_title=translated_title,
             translated_description=translated_description,
+            auto_apply=bool(suggestion.auto_apply),
         )
-
-        if suggestion.auto_apply:
-            _auto_apply_suggestion(job_id)
 
     except TranslationError as exc:
         logger.exception("translation job %s failed", job_id)
-        mark_failed(job_id, error_message=str(exc))
+        mark_failed(job_id, worker_token=worker_token, error_message=str(exc))
         raise
     except Exception as exc:  # pragma: no cover - defensive logging path
         logger.exception("translation job %s failed unexpectedly", job_id)
-        mark_failed(job_id, error_message=f"{type(exc).__name__}: {exc}")
+        mark_failed(
+            job_id,
+            worker_token=worker_token,
+            error_message=f"{type(exc).__name__}: {exc}",
+        )
         raise
 
+    current = get_suggestion_by_job_id(job_id)
     return {
         "job_id": job_id,
-        "status": "succeeded",
+        "status": current.status if current is not None else "missing",
         "scope": scope,
     }

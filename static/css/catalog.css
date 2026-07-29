@@ -102,7 +102,8 @@ body.light-mode .catalog-header {
 .stats-bar,
 .catalog-grid,
 .catalog-footer {
-    max-width: 1280px;
+    max-width: none;
+    width: 100%;
     margin: 0 auto;
     padding-left: 20px;
     padding-right: 20px;
@@ -339,7 +340,6 @@ body.catalog-layout-editorial .catalog-grid {
     display: flex;
     flex-direction: column;
     gap: 20px;
-    max-width: 1120px;
 }
 
 body.catalog-layout-list .catalog-grid {
@@ -655,7 +655,8 @@ body.catalog-layout-editorial .product-card-price {
 
 .catalog-empty-state {
     display: none;
-    max-width: 1280px;
+    max-width: none;
+    width: 100%;
     margin: -12px auto 32px;
     padding: 0 20px;
 }

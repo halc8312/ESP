@@ -4,12 +4,24 @@ Uses Scrapling HTTP fetches for product detail pages and search results.
 """
 import json
 import logging
+import re
 from urllib.parse import urljoin
 
-from selector_config import get_selectors, get_valid_domains
+from selector_config import get_selectors
 from scrape_metrics import check_scrape_health, get_metrics, log_scrape_result
 from services.extraction_policy import attach_extraction_trace, pick_first
 from services.scrape_alerts import report_detail_result
+from services.scrape_safety import (
+    ScrapeFailure,
+    UnsafeScrapeUrlError,
+    is_usable_detail_result,
+    page_text,
+    raise_for_unsafe_detail_result,
+    require_search_outcome,
+    require_usable_details,
+    validate_fetch_response,
+    validate_marketplace_url,
+)
 from services.selector_healer import get_healer
 
 logger = logging.getLogger("yahoo")
@@ -66,6 +78,29 @@ def _extract_item_from_page(page) -> dict:
         or page_props.get("sp", {}).get("item", {})
         or page_props.get("initialState", {}).get("item", {})
         or {}
+    )
+
+
+def _has_product_code_evidence(url: str, page_text: str) -> bool:
+    """Confirm a legacy Yahoo store page is a product before CSS healing.
+
+    Yahoo custom category pages can share the same ``/{store}/{id}.html`` URL
+    shape as products.  Modern product pages expose ``商品コード`` together
+    with the URL's item code; category/search pages do not.
+    """
+    filename = url.rsplit("/", 1)[-1].split("?", 1)[0]
+    if not filename.lower().endswith(".html"):
+        return False
+    item_code = filename[:-5]
+    if not item_code:
+        return False
+    normalized = re.sub(r"\s+", " ", str(page_text or ""))
+    return bool(
+        re.search(
+            rf"商品コード\s*(?:[|:：]\s*)?{re.escape(item_code)}(?:\s|$)",
+            normalized,
+            flags=re.IGNORECASE,
+        )
     )
 
 
@@ -170,15 +205,22 @@ def scrape_item_detail_light(url: str) -> dict:
     """
     result = _empty_result(url, status="unknown")
     try:
-        from services.scraping_client import fetch_static
+        from services.scraping_client import fetch_marketplace_static
 
-        page = fetch_static(url)
+        url = validate_marketplace_url(url, "yahoo", kind="detail")
+        page = fetch_marketplace_static(url, site="yahoo", kind="detail")
+        validate_fetch_response(page, "yahoo", kind="detail")
         item = _extract_item_from_page(page)
         if not item:
             logger.debug("No JSON item data found, falling back to CSS selectors with self-healing")
             healer = get_healer()
             field_sources = {}
             page_text = _get_page_text(page)
+            if not _has_product_code_evidence(url, page_text):
+                logger.warning(
+                    "Yahoo store page lacked product-code evidence; refusing detail CSS fallback"
+                )
+                return {}
 
             # Title (with healing)
             title_val, title_healed = healer.extract_with_healing(page, 'yahoo', 'detail', 'title', parser='scrapling')
@@ -362,6 +404,8 @@ def scrape_item_detail_light(url: str) -> dict:
             field_sources["status"] = status_source
 
         return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
+    except ScrapeFailure:
+        raise
     except Exception as exc:
         logger.debug("Yahoo light scrape error: %s", exc)
         return {}
@@ -386,11 +430,6 @@ def _extract_search_urls(page, base_url: str, max_items: int) -> list:
         ".Item__title a",
         "[data-testid='item-name'] a",
     ]
-    valid_domains = get_valid_domains("yahoo", "search") or [
-        "store.shopping.yahoo.co.jp",
-        "shopping-item-reach.yahoo.co.jp",
-    ]
-
     urls = []
     seen = set()
     for selector in item_link_selectors:
@@ -407,7 +446,9 @@ def _extract_search_urls(page, base_url: str, max_items: int) -> list:
                 if "rdUrl" in qs:
                     full_url = qs["rdUrl"][0]
 
-            if not any(domain in full_url for domain in valid_domains):
+            try:
+                full_url = validate_marketplace_url(full_url, "yahoo", kind="detail")
+            except UnsafeScrapeUrlError:
                 continue
             if full_url in seen:
                 continue
@@ -427,7 +468,14 @@ def _find_next_page_url(page, current_url: str) -> str:
         classes = str(anchor.attrib.get("class", "") or "")
         rel = str(anchor.attrib.get("rel", "") or "")
         if "次へ" in text or "elNext" in classes or rel == "next":
-            return urljoin(current_url, href)
+            try:
+                return validate_marketplace_url(
+                    urljoin(current_url, href),
+                    "yahoo",
+                    kind="search",
+                )
+            except UnsafeScrapeUrlError:
+                continue
     return ""
 
 
@@ -438,17 +486,17 @@ def scrape_single_item(url: str, headless: bool = True):
     try:
         data = scrape_item_detail(url)
         log_scrape_result("yahoo", url, data)
-        if data.get("title"):
+        if is_usable_detail_result(data):
             metrics.finish()
             return [data]
         metrics.record_attempt(False, url, "empty title")
         metrics.finish()
-        return []
+        return [data]
     except Exception as exc:
         metrics.record_attempt(False, url, str(exc))
         metrics.finish()
-        logger.error("Yahoo single scrape error: %s", exc)
-        return []
+        logger.exception("Yahoo single scrape error: %s", exc)
+        raise
 
 
 def scrape_search_result(
@@ -463,9 +511,11 @@ def scrape_search_result(
     items = []
     candidate_urls = []
     candidate_target = max(max_items, max_items * 2)
+    first_page_text = ""
 
     try:
-        from services.scraping_client import fetch_static
+        search_url = validate_marketplace_url(search_url, "yahoo", kind="search")
+        from services.scraping_client import fetch_marketplace_static
 
         current_url = search_url
         seen_pages = set()
@@ -473,7 +523,10 @@ def scrape_search_result(
 
         while current_url and current_url not in seen_pages and len(seen_pages) < max_pages:
             seen_pages.add(current_url)
-            page = fetch_static(current_url)
+            page = fetch_marketplace_static(current_url, site="yahoo", kind="search")
+            validate_fetch_response(page, "yahoo", kind="search")
+            if not first_page_text:
+                first_page_text = page_text(page)
             for item_url in _extract_search_urls(page, current_url, max_items=candidate_target):
                 if item_url not in candidate_urls:
                     candidate_urls.append(item_url)
@@ -483,16 +536,33 @@ def scrape_search_result(
                 break
             current_url = _find_next_page_url(page, current_url)
 
+        require_search_outcome(
+            "yahoo",
+            candidate_count=len(candidate_urls),
+            text=first_page_text,
+        )
         for item_url in candidate_urls:
             if len(items) >= max_items:
                 break
-            data = scrape_item_detail(item_url)
+            try:
+                data = scrape_item_detail(item_url)
+            except Exception as exc:
+                raise_for_unsafe_detail_result("yahoo", exc)
+                metrics.record_attempt(False, item_url, str(exc))
+                logger.warning("Yahoo detail scrape failed for %s: %s", item_url, exc)
+                continue
+            raise_for_unsafe_detail_result("yahoo", data)
             log_scrape_result("yahoo", item_url, data)
-            if data.get("title"):
+            if is_usable_detail_result(data):
                 items.append(data)
             else:
                 metrics.record_attempt(False, item_url, "empty title")
 
+        require_usable_details(
+            "yahoo",
+            candidate_count=len(candidate_urls),
+            item_count=len(items),
+        )
         health = check_scrape_health(items)
         if health["action_required"]:
             logger.warning("Yahoo scrape health check: %s", health["message"])
@@ -501,5 +571,5 @@ def scrape_search_result(
     except Exception as exc:
         metrics.record_attempt(False, search_url, str(exc))
         metrics.finish()
-        logger.error("Yahoo search scrape error: %s", exc)
-        return []
+        logger.exception("Yahoo search scrape error: %s", exc)
+        raise

@@ -640,6 +640,8 @@ def product_manual_add():
             custom_description=normalized_description,
             custom_title_en=form_data["title_en"] or None,
             custom_description_en=normalized_description_en,
+            custom_title_en_manually_edited=bool(form_data["title_en"]),
+            custom_description_en_manually_edited=bool(normalized_description_en),
             status=publish_status,
             tags=form_data["tags"] or None,
             selling_price=selling_price,
@@ -664,7 +666,8 @@ def product_manual_add():
             product_id=product.id,
             option1_value="Default Title",
             sku=form_data["sku"] or None,
-            price=selling_price if selling_price is not None else cost_price,
+            price=cost_price,
+            selling_price=selling_price,
             inventory_qty=effective_inventory_qty,
             position=1,
         )
@@ -725,4 +728,3 @@ def batch_edit():
         return redirect(url_for('main.index'))
     finally:
         session_db.close()
-

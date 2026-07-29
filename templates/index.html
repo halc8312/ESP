@@ -1,13 +1,16 @@
 {% extends "base.html" %}
 
-{% block title %}商品一覧（mercari.db）{% endblock %}
+{% block title %}商品一覧{% endblock %}
 {% block header_title %}商品一覧{% endblock %}
+{% block body_class %}has-bottom-nav product-list-page{% endblock %}
 
 {% block content %}
+{% set site_display = {'mercari': 'メルカリ', 'yahuoku': 'ヤフオク', 'yahoo': 'Yahoo!ショッピング', 'snkrdunk': 'SNKRDUNK', 'surugaya': '駿河屋',
+    'rakuma': 'ラクマ', 'offmall': 'オフモール', 'manual': '手動'} %}
 <div class="page-header page-header--split">
     <div>
         <h1>商品一覧</h1>
-        <p class="page-subtitle">{{ selected_site or "全サイト" }} / {{ selected_status or "全ステータス" }}</p>
+        <p class="page-subtitle">{{ site_display.get(selected_site, selected_site) if selected_site else "すべてのサイト" }} / {{ selected_status or "すべての公開状態" }}</p>
     </div>
     <div class="page-actions">
         <a href="{{ url_for('main.product_manual_add') }}" class="btn btn-primary">＋ 商品を手動追加</a>
@@ -23,7 +26,7 @@
     {% for site_name, count in site_stats.items() %}
     <a href="{{ url_for('index', site=site_name) }}"
         class="site-badge {{ 'active' if selected_site == site_name else '' }}">
-        {{ site_name }} <span class="site-badge-count">{{ count }}</span>
+        {{ site_display.get(site_name, site_name) }} <span class="site-badge-count">{{ count }}</span>
     </a>
     {% endfor %}
 </div>
@@ -31,7 +34,7 @@
 <!-- フィルタセクション（統合） -->
 <details class="filter-collapsible" id="filterSection">
     <summary class="filter-collapsible-header">
-        <span>🔍 フィルタ・検索</span>
+        <span>🔍 絞り込み・検索</span>
         <span class="filter-toggle-icon">▼</span>
     </summary>
     <form method="GET" action="{{ url_for('index') }}" class="filter-form-compact">
@@ -55,7 +58,7 @@
             <a href="{{ url_for('index') }}" class="btn btn-secondary">クリア</a>
         </div>
         <details class="filter-advanced">
-            <summary>詳細フィルタ ▼</summary>
+            <summary>さらに絞り込む ▼</summary>
             <div class="filter-advanced-body">
                 <div class="filter-group">
                     <label>サイト</label>
@@ -126,12 +129,12 @@
                     {% endif %}
                 </span>
             </div>
-            <div class="view-mode-toggle" role="group" aria-label="商品一覧モード">
-                <button type="button" class="view-mode-button is-active" data-view-mode="browse">閲覧モード</button>
-                <button type="button" class="view-mode-button" data-view-mode="edit">編集モード</button>
+            <div class="view-mode-toggle" role="group" aria-label="商品一覧の表示">
+                <button type="button" class="view-mode-button is-active" data-view-mode="browse">一覧を見る</button>
+                <button type="button" class="view-mode-button" data-view-mode="edit">価格・英訳を編集</button>
             </div>
         </div>
-        <p class="product-list-toolbar-note">閲覧モードでは一覧確認を優先し、編集モードでのみ英語タイトルと販売価格の入力欄を表示します。</p>
+        <p class="product-list-toolbar-note">「価格・英訳を編集」を選ぶと、英語タイトルと販売価格をこの一覧で変更できます。</p>
     </div>
 </section>
 
@@ -147,13 +150,14 @@
         <div class="mobile-collapsible-content">
             <div class="export-grid">
                 <div class="filter-group">
-                    <label>価格倍率</label>
+                    <label>価格倍率（原価に掛ける数）</label>
                     <input type="number" id="markup_mobile" name="markup" value="{{ default_markup }}" step="0.01"
                         oninput="updateProfitMarginMobile()" inputmode="decimal">
                     <span class="text-small text-muted">1.0=そのまま / 1.2=20%上乗せ</span>
+                    <span class="text-small text-muted">販売価格が未設定の商品にだけ使います。</span>
                 </div>
                 <div class="filter-group">
-                    <label>利益率 (%)</label>
+                    <label>利益上乗せ率 (%)</label>
                     <input type="number" id="profit_margin_mobile" step="1" oninput="updateMarkupMobile()"
                         inputmode="numeric">
                 </div>
@@ -162,7 +166,7 @@
                     <input type="number" name="qty" value="{{ default_qty }}" step="1" min="0" inputmode="numeric">
                 </div>
                 <div class="filter-group">
-                    <label>為替レート</label>
+                    <label>為替レート（1ドルあたりの円）</label>
                     <input type="number" name="rate" value="{{ default_rate }}" step="0.01" inputmode="decimal">
                 </div>
             </div>
@@ -180,22 +184,23 @@
         <div class="export-section-body">
             <div class="export-grid">
                 <div class="filter-group">
-                    <label>価格倍率 (markup)</label>
+                    <label>価格倍率（原価に掛ける数）</label>
                     <input type="number" id="markup" name="markup" value="{{ default_markup }}" step="0.01"
                         oninput="updateProfitMargin()" inputmode="decimal">
                     <span class="text-small text-muted">1.0=そのまま / 1.2=20%上乗せ</span>
+                    <span class="text-small text-muted">販売価格が未設定の商品にだけ使います。</span>
                 </div>
                 <div class="filter-group">
-                    <label>利益率 (%)</label>
+                    <label>利益上乗せ率 (%)</label>
                     <input type="number" id="profit_margin" step="1" oninput="updateMarkup()" inputmode="numeric">
                     <span class="text-small text-muted">価格倍率と連動します</span>
                 </div>
                 <div class="filter-group">
-                    <label>在庫数 (Quantity)</label>
+                    <label>一括設定する在庫数</label>
                     <input type="number" name="qty" value="{{ default_qty }}" step="1" min="0" inputmode="numeric">
                 </div>
                 <div class="filter-group">
-                    <label>為替レート (JPY → USD)</label>
+                    <label>為替レート（1ドルあたりの円）</label>
                     <input type="number" name="rate" value="{{ default_rate }}" step="0.01" inputmode="decimal">
                     <span class="text-small text-muted">1ドルあたりの円</span>
                 </div>
@@ -221,8 +226,8 @@
         <div class="batch-action-spacer"></div>
         <select id="batchAction" class="batch-action-select">
             <option value="">-- 一括操作を選択 --</option>
-            <option value="prefix">タイトルに接頭辞を追加</option>
-            <option value="suffix">タイトルに接尾辞を追加</option>
+            <option value="prefix">タイトルの先頭に文字を追加</option>
+            <option value="suffix">タイトルの末尾に文字を追加</option>
             <option value="replace">文字列を置換</option>
             <option value="bulk_price">販売価格を一括設定</option>
             <option value="archive">アーカイブに移動</option>
@@ -232,8 +237,6 @@
     </div>
 
 
-    {% set site_display = {'mercari': 'メルカリ', 'yahuoku': 'ヤフオク', 'yahoo': 'ヤフショ', 'snkrdunk': 'スニダン', 'surugaya': '駿河屋',
-    'rakuma': 'ラクマ', 'offmall': 'オフモール', 'manual': '手動'} %}
     <div class="product-list-shell" id="productListShell" data-mode="browse">
         {% if products %}
         <div class="table-responsive product-table-mobile-hidden">
@@ -242,7 +245,7 @@
                 <thead>
                     <tr>
                         <th>選択</th>
-                        <th class="hide-mobile">ID</th>
+                        <th class="hide-mobile">商品番号</th>
                         <th>サムネイル</th>
                         <th>商品名</th>
                         <th>価格</th>
@@ -272,7 +275,7 @@
                             <div class="product-title-cell">{{ p.custom_title or p.last_title }}</div>
                             <div class="product-meta-inline text-muted">{{ site_display.get(p.site, p.site) }} / 更新 {{ p.updated_at }}</div>
                             <div class="inline-edit-group">
-                                <label for="title_en_desktop_{{ p.id }}" class="inline-edit-label">ENタイトル</label>
+                                <label for="title_en_desktop_{{ p.id }}" class="inline-edit-label">英語の商品名</label>
                                 <input type="text" id="title_en_desktop_{{ p.id }}" class="inline-edit-input"
                                     data-url="{{ url_for('api.inline_update_product', product_id=p.id) }}"
                                     data-product-id="{{ p.id }}" data-field="custom_title_en" data-input-type="text"
@@ -340,7 +343,7 @@
                     <div class="product-card-title">{{ p.custom_title or p.last_title }}</div>
                     <div class="product-meta-inline text-muted">{{ site_display.get(p.site, p.site) }} / 更新 {{ p.updated_at }}</div>
                     <div class="inline-edit-group">
-                        <label for="title_en_mobile_{{ p.id }}" class="inline-edit-label">ENタイトル</label>
+                        <label for="title_en_mobile_{{ p.id }}" class="inline-edit-label">英語の商品名</label>
                         <input type="text" id="title_en_mobile_{{ p.id }}" class="inline-edit-input"
                             data-url="{{ url_for('api.inline_update_product', product_id=p.id) }}"
                             data-product-id="{{ p.id }}" data-field="custom_title_en" data-input-type="text"
@@ -406,7 +409,7 @@
         <section class="content-card product-list-empty">
             <div class="content-card-body">
                 <h2>商品がまだありません</h2>
-                <p class="text-muted">手動追加または商品抽出から登録を始めてください。条件を絞り込みすぎている場合は、フィルタをクリアすると一覧が戻ります。</p>
+                <p class="text-muted">手動追加または商品抽出から登録を始めてください。条件を絞り込みすぎている場合は、絞り込みを解除すると一覧が戻ります。</p>
                 <div class="page-actions">
                     <a href="{{ url_for('main.product_manual_add') }}" class="btn btn-primary">手動で追加</a>
                     <a href="{{ url_for('scrape_form') }}" class="btn btn-secondary">商品抽出へ</a>
@@ -471,7 +474,7 @@
         const syncFromMarkup = function () {
             const markup = parseFloat(markupInput.value);
             if (!Number.isNaN(markup) && markup > 0) {
-                marginInput.value = (((markup - 1) / markup) * 100).toFixed(0);
+                marginInput.value = ((markup - 1) * 100).toFixed(0);
             } else {
                 marginInput.value = '';
             }
@@ -479,8 +482,8 @@
 
         const syncFromMargin = function () {
             const margin = parseFloat(marginInput.value);
-            if (!Number.isNaN(margin) && margin < 100) {
-                markupInput.value = (1 / (1 - (margin / 100))).toFixed(2);
+            if (!Number.isNaN(margin) && margin >= 0) {
+                markupInput.value = (1 + (margin / 100)).toFixed(2);
             } else {
                 markupInput.value = '';
             }
@@ -696,12 +699,18 @@
             if (mode === 'fixed_add') {
                 primaryLabel.textContent = '仕入価格へ加算する金額';
                 primaryInput.placeholder = '1000';
+                primaryInput.removeAttribute('min');
+                primaryInput.removeAttribute('max');
             } else if (mode === 'fixed') {
                 primaryLabel.textContent = '固定販売価格';
                 primaryInput.placeholder = '5000';
+                primaryInput.min = '0';
+                primaryInput.removeAttribute('max');
             } else {
-                primaryLabel.textContent = '利益率 (%)';
+                primaryLabel.textContent = '利益上乗せ率 (%)';
                 primaryInput.placeholder = '20';
+                primaryInput.min = '0';
+                primaryInput.max = '500';
             }
         }
     }
@@ -712,7 +721,7 @@
         wrapper.innerHTML = '<p class="batch-modal-summary"><strong>' + selectedCount + '件</strong> を対象に操作します。</p>';
 
         if (action === 'prefix' || action === 'suffix') {
-            const label = action === 'prefix' ? '追加する接頭辞' : '追加する接尾辞';
+            const label = action === 'prefix' ? 'タイトルの先頭に追加する文字' : 'タイトルの末尾に追加する文字';
             const placeholder = action === 'prefix' ? '【新着】' : ' - 送料無料';
             wrapper.innerHTML += '' +
                 '<div class="form-group">' +
@@ -738,21 +747,21 @@
         if (action === 'bulk_price') {
             wrapper.innerHTML += '' +
                 '<div class="form-group">' +
-                '<label for="bulkMode">価格設定モード</label>' +
+                '<label for="bulkMode">販売価格の決め方</label>' +
                 '<select id="bulkMode" name="mode">' +
-                '<option value="margin">利益率から計算</option>' +
+                '<option value="margin">利益上乗せ率から計算</option>' +
                 '<option value="fixed_add">仕入価格に固定額を加算</option>' +
                 '<option value="fixed">固定販売価格にする</option>' +
-                '<option value="margin_plus_fixed">利益率 + 固定額</option>' +
-                '<option value="reset">販売価格をリセット</option>' +
+                '<option value="margin_plus_fixed">利益上乗せ率 + 固定額</option>' +
+                '<option value="reset">手動価格を解除（標準ルールへ戻す）</option>' +
                 '</select>' +
                 '</div>' +
                 '<div class="form-group" data-bulk-primary-field>' +
-                '<label for="batchInputPrimary">利益率 (%)</label>' +
+                '<label for="batchInputPrimary">利益上乗せ率 (%)</label>' +
                 '<input type="number" id="batchInputPrimary" name="input" inputmode="decimal" placeholder="20">' +
                 '</div>' +
                 '<div class="form-group" data-bulk-secondary-field hidden>' +
-                '<label for="batchInputSecondary">利益率計算後に加算する固定額</label>' +
+                '<label for="batchInputSecondary">上乗せ率で計算した後に加える固定額</label>' +
                 '<input type="number" id="batchInputSecondary" name="input2" inputmode="numeric" placeholder="500">' +
                 '</div>';
 

@@ -15,6 +15,7 @@ from flask import Flask, abort, redirect, render_template, request, send_from_di
 from flask_wtf.csrf import CSRFProtect
 from flask_apscheduler import APScheduler
 from flask_login import LoginManager
+from sqlalchemy import text
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import safe_join
 
@@ -395,6 +396,23 @@ def _register_media_route(app: Flask) -> None:
         return send_from_directory(IMAGE_STORAGE_PATH, filename)
 
 
+def _read_positive_int_config(app: Flask, key: str, default: int) -> int:
+    try:
+        return max(1, int(app.config.get(key, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _create_readiness_redis_client(redis_url: str):
+    from redis import Redis
+
+    return Redis.from_url(
+        redis_url,
+        socket_connect_timeout=2,
+        socket_timeout=2,
+    )
+
+
 def _register_health_route(app: Flask) -> None:
     @app.route("/healthz")
     @app.route("/health")
@@ -402,10 +420,138 @@ def _register_health_route(app: Flask) -> None:
         return {
             "status": "ok",
             "runtime_role": app.config.get("ESP_RUNTIME_ROLE", "base"),
-            "queue_backend": str(app.config.get("SCRAPE_QUEUE_BACKEND", "inmemory") or "inmemory").strip().lower(),
-            "scheduler_enabled": _as_bool(app.config.get("ENABLE_SCHEDULER", False)),
-            "scheduler": get_scheduler_health_snapshot(app),
         }
+
+    def _readiness_response(*, include_stack: bool):
+        """Build a non-secret web or full-stack readiness response."""
+        checks: dict[str, str] = {}
+        ready = True
+
+        db_session = None
+        try:
+            db_session = SessionLocal()
+            db_session.execute(text("SELECT 1"))
+            checks["database"] = "ok"
+        except Exception as exc:
+            logger.warning(
+                "Readiness database check failed: error=%s",
+                type(exc).__name__,
+            )
+            checks["database"] = "unavailable"
+            ready = False
+        finally:
+            if db_session is not None:
+                db_session.close()
+
+        queue_backend = str(
+            app.config.get("SCRAPE_QUEUE_BACKEND", "inmemory") or "inmemory"
+        ).strip().lower()
+        if queue_backend == "rq":
+            redis_client = None
+            redis_url = str(app.config.get("REDIS_URL", "") or "").strip()
+            if not redis_url:
+                checks["redis"] = "unavailable"
+                if include_stack:
+                    checks.update(
+                        {
+                            "worker": "unavailable",
+                            "scheduler": "unavailable",
+                        }
+                    )
+                ready = False
+            else:
+                try:
+                    redis_client = _create_readiness_redis_client(redis_url)
+                    redis_client.ping()
+                    checks["redis"] = "ok"
+                    if include_stack:
+                        from services.worker_runtime import (
+                            inspect_scheduler_heartbeat,
+                            inspect_worker_heartbeat,
+                        )
+
+                        checks["worker"] = inspect_worker_heartbeat(
+                            redis_client,
+                            key_prefix=str(
+                                app.config.get(
+                                    "WORKER_HEARTBEAT_KEY_PREFIX",
+                                    "esp:worker:heartbeat",
+                                )
+                                or "esp:worker:heartbeat"
+                            ),
+                            freshness_seconds=_read_positive_int_config(
+                                app,
+                                "WORKER_HEARTBEAT_FRESHNESS_SECONDS",
+                                60,
+                            ),
+                        )
+                        checks["scheduler"] = inspect_scheduler_heartbeat(
+                            redis_client,
+                            key=str(
+                                app.config.get(
+                                    "SCHEDULER_HEARTBEAT_KEY",
+                                    "esp:scheduler:heartbeat",
+                                )
+                                or "esp:scheduler:heartbeat"
+                            ),
+                            freshness_seconds=_read_positive_int_config(
+                                app,
+                                "SCHEDULER_HEARTBEAT_FRESHNESS_SECONDS",
+                                1200,
+                            ),
+                        )
+                        if checks["worker"] != "ok" or checks["scheduler"] != "ok":
+                            ready = False
+                except Exception as exc:
+                    logger.warning(
+                        "Readiness Redis check failed: error=%s",
+                        type(exc).__name__,
+                    )
+                    checks["redis"] = "unavailable"
+                    if include_stack:
+                        checks.update(
+                            {
+                                "worker": "unavailable",
+                                "scheduler": "unavailable",
+                            }
+                        )
+                    ready = False
+                finally:
+                    if redis_client is not None:
+                        close = getattr(redis_client, "close", None)
+                        if callable(close):
+                            try:
+                                close()
+                            except Exception as exc:
+                                logger.warning(
+                                    "Readiness Redis close failed: error=%s",
+                                    type(exc).__name__,
+                                )
+
+        return {
+            "status": "ready" if ready else "not_ready",
+            "checks": checks,
+            # Deliberately expose only the non-secret runtime contract needed
+            # by post-deploy verification.  `/healthz` remains a minimal
+            # liveness endpoint.
+            "runtime_role": app.config.get("ESP_RUNTIME_ROLE", "base"),
+            "queue_backend": queue_backend,
+            "scheduler_enabled": _as_bool(app.config.get("ENABLE_SCHEDULER", False)),
+        }, (200 if ready else 503)
+
+    @app.route("/readyz")
+    def readiness_check():
+        """Report whether this web process can serve requests.
+
+        Render uses this endpoint for web lifecycle decisions, so it includes
+        only dependencies required by the web process itself.
+        """
+        return _readiness_response(include_stack=False)
+
+    @app.route("/stack-readyz")
+    def stack_readiness_check():
+        """Report web dependencies plus live worker/scheduler heartbeats."""
+        return _readiness_response(include_stack=True)
 
 
 def _register_cli_commands(app: Flask) -> None:
@@ -509,6 +655,27 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
                 "1" if os.environ.get("REDIS_URL") else "0",
             ),
             "SCHEDULER_HEARTBEAT_KEY": os.environ.get("SCHEDULER_HEARTBEAT_KEY", "esp:scheduler:heartbeat"),
+            "SCHEDULER_HEARTBEAT_FRESHNESS_SECONDS": os.environ.get(
+                "SCHEDULER_HEARTBEAT_FRESHNESS_SECONDS",
+                "1200",
+            ),
+            "WORKER_HEARTBEAT_ENABLED": os.environ.get("WORKER_HEARTBEAT_ENABLED", "0"),
+            "WORKER_HEARTBEAT_KEY_PREFIX": os.environ.get(
+                "WORKER_HEARTBEAT_KEY_PREFIX",
+                "esp:worker:heartbeat",
+            ),
+            "WORKER_HEARTBEAT_INTERVAL_SECONDS": os.environ.get(
+                "WORKER_HEARTBEAT_INTERVAL_SECONDS",
+                "15",
+            ),
+            "WORKER_HEARTBEAT_TTL_SECONDS": os.environ.get(
+                "WORKER_HEARTBEAT_TTL_SECONDS",
+                "90",
+            ),
+            "WORKER_HEARTBEAT_FRESHNESS_SECONDS": os.environ.get(
+                "WORKER_HEARTBEAT_FRESHNESS_SECONDS",
+                "60",
+            ),
             "WARM_BROWSER_POOL": os.environ.get("WARM_BROWSER_POOL", ""),
             "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP": os.environ.get(
                 "WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP",
@@ -647,6 +814,39 @@ def _register_scheduler_jobs(app: Flask) -> None:
             if count > 0:
                 logger.info("Auto-purged %s items from trash", count)
 
+    def translation_recovery_job():
+        with app.app_context():
+            try:
+                from services.translator.suggestion_store import (
+                    recover_expired_translation_suggestions,
+                )
+
+                summary = recover_expired_translation_suggestions()
+                _write_scheduler_heartbeat(
+                    app,
+                    event="translation_recovery_completed",
+                    last_translation_recovery_completed_at=_utc_iso_now(),
+                    last_translation_recovery_recovered_count=len(
+                        summary.get("recovered") or []
+                    ),
+                    last_translation_recovery_enqueued_count=len(
+                        summary.get("enqueued") or []
+                    ),
+                    last_translation_recovery_failed_count=len(
+                        summary.get("failed") or []
+                    ),
+                )
+            except Exception as exc:
+                _write_scheduler_heartbeat(
+                    app,
+                    event="translation_recovery_failed",
+                    last_translation_recovery_failed_at=_utc_iso_now(),
+                    last_translation_recovery_error=type(exc).__name__,
+                )
+                logger.exception(
+                    "Scheduled translation recovery failed; scheduler will continue"
+                )
+
     scheduler.add_job(
         id="patrol_job",
         func=patrol_job,
@@ -659,6 +859,13 @@ def _register_scheduler_jobs(app: Flask) -> None:
         func=trash_purge_job,
         trigger="cron",
         hour=3,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        id="translation_recovery_job",
+        func=translation_recovery_job,
+        trigger="interval",
+        minutes=5,
         replace_existing=True,
     )
     app.extensions["esp_scheduler_jobs_registered"] = True

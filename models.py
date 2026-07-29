@@ -60,6 +60,12 @@ class Product(Base):
     # changes after a translation has been applied.
     custom_title_en_source_hash = Column(String(64))
     custom_description_en_source_hash = Column(String(64))
+    # An explicit ownership bit is needed in addition to the nullable value
+    # and source hash.  In particular, ``NULL``/empty can mean either "not
+    # translated yet" or "the operator intentionally cleared this field".
+    # Automatic translation only writes fields that are not operator-owned.
+    custom_title_en_manually_edited = Column(Boolean, nullable=False, default=False)
+    custom_description_en_manually_edited = Column(Boolean, nullable=False, default=False)
     
     # Shopify項目 (Product Level)
     status = Column(String, default='draft') # active or draft
@@ -116,7 +122,13 @@ class Variant(Base):
     
     # Variant Specifics
     sku = Column(String)
-    price = Column(Integer) # Variant Price
+    # Price observed at the source site.  Keep this separate from the
+    # customer-facing sale price because patrol/scrape refreshes may update it.
+    price = Column(Integer)
+    # Optional customer-facing override for this specific variant.  When NULL,
+    # Product.selling_price (and finally the legacy source-price fallback) is
+    # used by the shared pricing resolver.
+    selling_price = Column(Integer, nullable=True)
     inventory_qty = Column(Integer, default=0)
     grams = Column(Integer)
     taxable = Column(Boolean, default=False)
@@ -209,6 +221,7 @@ class PriceList(Base):
     name = Column(String, nullable=False)                # 例: "Customer A Price List"
     token = Column(String, unique=True, nullable=False)  # UUID公開アクセス用
     is_active = Column(Boolean, default=True)            # 有効/無効
+    unpublish_at = Column(DateTime, nullable=True)       # 自動非公開日時（naive UTC）
     currency_rate = Column(Integer, default=150)         # JPY→USD換算レート
     layout = Column(String, default="grid")              # grid / editorial / list
     theme = Column(String, default="dark")               # dark / light
@@ -220,6 +233,25 @@ class PriceList(Base):
     shop = relationship("Shop")
     items = relationship("PriceListItem", back_populates="price_list", cascade="all, delete-orphan")
     page_views = relationship("CatalogPageView", back_populates="price_list", cascade="all, delete-orphan")
+
+    def is_unpublish_due(self, now=None):
+        """Return whether the configured UTC publication deadline has passed."""
+        reference_time = now or utc_now()
+        return self.unpublish_at is not None and self.unpublish_at <= reference_time
+
+    def publication_state_at(self, now=None):
+        """Return the admin-facing publication state without mutating the row."""
+        if not self.is_active:
+            return "inactive"
+        if self.is_unpublish_due(now):
+            return "expired"
+        if self.unpublish_at is not None:
+            return "scheduled"
+        return "active"
+
+    def is_publicly_available(self, now=None):
+        """Return whether the token catalog should be accessible right now."""
+        return bool(self.is_active) and not self.is_unpublish_due(now)
 
 
 class PriceListItem(Base):
@@ -404,6 +436,10 @@ class TranslationSuggestion(Base):
     # queued -> running -> succeeded | failed | applied | rejected
     status = Column(String(16), nullable=False, default="queued", index=True)
     error_message = Column(Text)
+    # A random token makes a worker claim fencing-safe: after an expired
+    # lease is reclaimed, the old worker can no longer write a late result.
+    worker_token = Column(String(64), nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True, index=True)
 
     created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)

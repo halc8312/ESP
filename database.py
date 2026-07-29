@@ -4,6 +4,7 @@ import importlib.util
 import logging
 import os
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 from sqlalchemy import create_engine, inspect, text
@@ -12,6 +13,9 @@ from sqlalchemy.orm import declarative_base, scoped_session, sessionmaker
 
 
 DEFAULT_DATABASE_URL = "sqlite:///mercari.db"
+# Stable, application-specific 64-bit key used to serialize Alembic upgrades
+# across independently starting web and worker processes.
+ALEMBIC_UPGRADE_ADVISORY_LOCK_ID = 0x4553505F4D494752
 logger = logging.getLogger("database")
 
 
@@ -83,11 +87,14 @@ ADDITIVE_STARTUP_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("products", "custom_description_en", "ALTER TABLE products ADD COLUMN custom_description_en TEXT"),
     ("products", "custom_title_en_source_hash", "ALTER TABLE products ADD COLUMN custom_title_en_source_hash VARCHAR(64)"),
     ("products", "custom_description_en_source_hash", "ALTER TABLE products ADD COLUMN custom_description_en_source_hash VARCHAR(64)"),
+    ("products", "custom_title_en_manually_edited", "ALTER TABLE products ADD COLUMN custom_title_en_manually_edited BOOLEAN DEFAULT FALSE NOT NULL"),
+    ("products", "custom_description_en_manually_edited", "ALTER TABLE products ADD COLUMN custom_description_en_manually_edited BOOLEAN DEFAULT FALSE NOT NULL"),
     ("products", "archived", "ALTER TABLE products ADD COLUMN archived BOOLEAN DEFAULT FALSE"),
     ("products", "deleted_at", "ALTER TABLE products ADD COLUMN deleted_at TIMESTAMP"),
     ("price_lists", "layout", "ALTER TABLE price_lists ADD COLUMN layout VARCHAR DEFAULT 'grid'"),
     ("price_lists", "theme", "ALTER TABLE price_lists ADD COLUMN theme VARCHAR DEFAULT 'dark'"),
     ("price_lists", "shop_id", "ALTER TABLE price_lists ADD COLUMN shop_id INTEGER"),
+    ("price_lists", "unpublish_at", "ALTER TABLE price_lists ADD COLUMN unpublish_at TIMESTAMP"),
     ("shops", "logo_url", "ALTER TABLE shops ADD COLUMN logo_url VARCHAR"),
     ("description_templates", "user_id", "ALTER TABLE description_templates ADD COLUMN user_id INTEGER"),
     ("products", "patrol_fail_count", "ALTER TABLE products ADD COLUMN patrol_fail_count INTEGER DEFAULT 0"),
@@ -95,6 +102,7 @@ ADDITIVE_STARTUP_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("products", "next_patrol_at", "ALTER TABLE products ADD COLUMN next_patrol_at TIMESTAMP"),
     ("products", "manual_margin_rate", "ALTER TABLE products ADD COLUMN manual_margin_rate INTEGER"),
     ("products", "manual_shipping_cost", "ALTER TABLE products ADD COLUMN manual_shipping_cost INTEGER"),
+    ("variants", "selling_price", "ALTER TABLE variants ADD COLUMN selling_price INTEGER"),
     ("scrape_jobs", "logical_job_id", "ALTER TABLE scrape_jobs ADD COLUMN logical_job_id VARCHAR(64)"),
     ("scrape_jobs", "parent_job_id", "ALTER TABLE scrape_jobs ADD COLUMN parent_job_id VARCHAR(64)"),
     ("scrape_jobs", "context_payload", "ALTER TABLE scrape_jobs ADD COLUMN context_payload TEXT"),
@@ -107,6 +115,8 @@ ADDITIVE_STARTUP_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("scrape_job_events", "created_at", "ALTER TABLE scrape_job_events ADD COLUMN created_at TIMESTAMP"),
     ("products", "is_listed", "ALTER TABLE products ADD COLUMN is_listed BOOLEAN DEFAULT TRUE"),
     ("translation_suggestions", "auto_apply", "ALTER TABLE translation_suggestions ADD COLUMN auto_apply BOOLEAN DEFAULT FALSE"),
+    ("translation_suggestions", "worker_token", "ALTER TABLE translation_suggestions ADD COLUMN worker_token VARCHAR(64)"),
+    ("translation_suggestions", "lease_expires_at", "ALTER TABLE translation_suggestions ADD COLUMN lease_expires_at TIMESTAMP"),
     ("users", "default_pricing_rule_id", "ALTER TABLE users ADD COLUMN default_pricing_rule_id INTEGER"),
 )
 
@@ -288,17 +298,80 @@ def describe_schema_bootstrap(schema_mode: str = "auto", config_path: str = "ale
     }
 
 
+@contextmanager
+def alembic_upgrade_lock(database_url: str):
+    """Serialize Alembic upgrades on PostgreSQL.
+
+    PostgreSQL advisory locks are session scoped, so the connection must stay
+    open for the entire Alembic command. Other backends intentionally remain a
+    no-op to preserve SQLite/local bootstrap behavior.
+    """
+    normalized_url = normalize_database_url(database_url)
+    if get_database_backend(normalized_url) != "postgresql":
+        yield
+        return
+
+    lock_engine = create_engine(
+        normalized_url,
+        pool_pre_ping=True,
+        pool_size=1,
+        max_overflow=0,
+    )
+    lock_connection = None
+    acquired = False
+    try:
+        lock_connection = lock_engine.connect()
+        lock_connection.execute(
+            text("SELECT pg_advisory_lock(:lock_id)"),
+            {"lock_id": ALEMBIC_UPGRADE_ADVISORY_LOCK_ID},
+        )
+        acquired = True
+        logger.info("Acquired PostgreSQL Alembic advisory lock")
+        yield
+    finally:
+        if acquired and lock_connection is not None:
+            try:
+                lock_connection.execute(
+                    text("SELECT pg_advisory_unlock(:lock_id)"),
+                    {"lock_id": ALEMBIC_UPGRADE_ADVISORY_LOCK_ID},
+                )
+                logger.info("Released PostgreSQL Alembic advisory lock")
+            except Exception as exc:
+                logger.error(
+                    "Failed to release PostgreSQL Alembic advisory lock: error=%s",
+                    type(exc).__name__,
+                )
+        if lock_connection is not None:
+            lock_connection.close()
+        lock_engine.dispose()
+
+
+def _run_alembic_upgrade(
+    database_url: str,
+    *,
+    revision: str,
+    config_path: str,
+) -> str:
+    from alembic import command
+    from alembic.config import Config
+
+    normalized_url = normalize_database_url(database_url)
+    config = Config(config_path)
+    config.attributes["configured_sqlalchemy_url"] = normalized_url
+    with alembic_upgrade_lock(normalized_url):
+        command.upgrade(config, revision)
+    return revision
+
+
 def run_alembic_upgrade(revision: str = "head", config_path: str = "alembic.ini") -> str:
     if not alembic_available():
         raise RuntimeError("Alembic is not installed")
 
-    from alembic import command
-    from alembic.config import Config
-
-    config = Config(config_path)
-    config.attributes["configured_sqlalchemy_url"] = get_database_url()
-    command.upgrade(config, revision)
-    return revision
+    return _run_alembic_upgrade(
+        get_database_url(),
+        revision=revision,
+        config_path=config_path,
+    )
 
 
 def run_alembic_upgrade_for_database_url(
@@ -309,13 +382,11 @@ def run_alembic_upgrade_for_database_url(
     if not alembic_available():
         raise RuntimeError("Alembic is not installed")
 
-    from alembic import command
-    from alembic.config import Config
-
-    config = Config(config_path)
-    config.attributes["configured_sqlalchemy_url"] = normalize_database_url(database_url)
-    command.upgrade(config, revision)
-    return revision
+    return _run_alembic_upgrade(
+        database_url,
+        revision=revision,
+        config_path=config_path,
+    )
 
 
 def bootstrap_schema(schema_mode: str = "auto") -> str:

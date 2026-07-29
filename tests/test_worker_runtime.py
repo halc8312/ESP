@@ -1,9 +1,12 @@
+import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from app import (
     _record_scheduler_lock_status,
+    _register_scheduler_jobs,
     _run_scheduler_lock_retry,
     _serialize_scheduler_heartbeat_value,
     _should_try_redis_scheduler_lock,
@@ -20,9 +23,21 @@ from services.worker_runtime import (
     emit_backlog_operational_alert,
     evaluate_backlog_issues,
     get_worker_health_snapshot,
+    inspect_scheduler_heartbeat,
+    inspect_worker_heartbeat,
     load_worker_runtime_settings,
     run_worker,
+    start_worker_heartbeat,
+    stop_worker_heartbeat,
 )
+
+
+@pytest.fixture(autouse=True)
+def _stub_translation_startup_recovery(monkeypatch):
+    monkeypatch.setattr(
+        "services.worker_runtime.recover_translation_suggestions_on_startup",
+        lambda: {"recovered": [], "enqueued": [], "failed": []},
+    )
 
 
 def test_create_worker_app_skips_web_routes():
@@ -180,6 +195,75 @@ def test_create_worker_app_treats_string_zero_scheduler_flag_as_disabled(monkeyp
     snapshot = get_scheduler_health_snapshot(app)
     assert snapshot["enabled"] is False
     assert app.extensions.get("esp_scheduler_started") is None
+
+
+def test_translation_recovery_scheduler_job_runs_every_five_minutes_and_contains_failures(
+    monkeypatch,
+    caplog,
+):
+    captured = {"jobs": {}, "heartbeats": []}
+
+    class FakeScheduler:
+        def add_job(self, *, id, func, trigger, **kwargs):
+            captured["jobs"][id] = {
+                "id": id,
+                "func": func,
+                "trigger": trigger,
+                **kwargs,
+            }
+
+        def get_jobs(self):
+            return [
+                SimpleNamespace(id=job_id)
+                for job_id in captured["jobs"]
+            ]
+
+    app = create_app(
+        runtime_role="worker",
+        config_overrides={"REGISTER_CLI_COMMANDS": False},
+    )
+    app.extensions["esp_scheduler"] = FakeScheduler()
+    monkeypatch.setattr(
+        "app._write_scheduler_heartbeat",
+        lambda current_app, **fields: captured["heartbeats"].append(fields),
+    )
+
+    _register_scheduler_jobs(app)
+
+    recovery_job = captured["jobs"]["translation_recovery_job"]
+    assert recovery_job["trigger"] == "interval"
+    assert recovery_job["minutes"] == 5
+    assert recovery_job["replace_existing"] is True
+
+    monkeypatch.setattr(
+        "services.translator.suggestion_store.recover_expired_translation_suggestions",
+        lambda: {
+            "recovered": ["translation-1"],
+            "enqueued": ["translation-1"],
+            "failed": [],
+        },
+    )
+    recovery_job["func"]()
+
+    assert captured["heartbeats"][-1] == {
+        "event": "translation_recovery_completed",
+        "last_translation_recovery_completed_at": captured["heartbeats"][-1][
+            "last_translation_recovery_completed_at"
+        ],
+        "last_translation_recovery_recovered_count": 1,
+        "last_translation_recovery_enqueued_count": 1,
+        "last_translation_recovery_failed_count": 0,
+    }
+
+    monkeypatch.setattr(
+        "services.translator.suggestion_store.recover_expired_translation_suggestions",
+        lambda: (_ for _ in ()).throw(RuntimeError("recovery failed")),
+    )
+    with caplog.at_level("ERROR", logger="app_runtime"):
+        recovery_job["func"]()
+
+    assert captured["heartbeats"][-1]["event"] == "translation_recovery_failed"
+    assert "scheduler will continue" in caplog.text
 
 
 def test_worker_scheduler_lock_retry_defaults_on_for_worker_runtime():
@@ -573,6 +657,10 @@ def test_load_worker_runtime_settings_reads_worker_flags():
             "WORKER_SELECTOR_REPAIR_LIMIT": "7",
             "WORKER_BACKLOG_WARN_COUNT": "12",
             "WORKER_BACKLOG_WARN_AGE_SECONDS": "345",
+            "WORKER_HEARTBEAT_ENABLED": "1",
+            "WORKER_HEARTBEAT_KEY_PREFIX": "test:worker:heartbeat",
+            "WORKER_HEARTBEAT_INTERVAL_SECONDS": "20",
+            "WORKER_HEARTBEAT_TTL_SECONDS": "75",
         }
     )
 
@@ -589,6 +677,202 @@ def test_load_worker_runtime_settings_reads_worker_flags():
     assert settings.selector_repair_limit == 7
     assert settings.backlog_warn_count == 12
     assert settings.backlog_warn_age_seconds == 345
+    assert settings.worker_heartbeat_enabled is True
+    assert settings.worker_heartbeat_key_prefix == "test:worker:heartbeat"
+    assert settings.worker_heartbeat_interval_seconds == 20
+    assert settings.worker_heartbeat_ttl_seconds == 75
+
+
+class FakeWorkerHeartbeatRedis:
+    def __init__(self):
+        self.values = {}
+        self.ttls = {}
+        self.hashes = {}
+        self.deleted = []
+
+    def set(self, key, value, ex):
+        self.values[key] = value
+        self.ttls[key] = ex
+        return True
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def delete(self, key):
+        self.deleted.append(key)
+        self.values.pop(key, None)
+        self.ttls.pop(key, None)
+        return 1
+
+    def ttl(self, key):
+        return self.ttls.get(key, -2)
+
+    def scan_iter(self, match):
+        prefix = match[:-1] if match.endswith("*") else match
+        yield from [key for key in self.values if key.startswith(prefix)]
+
+    def hgetall(self, key):
+        return dict(self.hashes.get(key, {}))
+
+
+def _runtime_heartbeat_payload(recorded_at, *, runtime_role="worker"):
+    return json.dumps(
+        {
+            "runtime_role": runtime_role,
+            "recorded_at": recorded_at.isoformat().replace("+00:00", "Z"),
+        }
+    )
+
+
+def test_worker_heartbeat_inspection_requires_fresh_ttl_payload():
+    redis_client = FakeWorkerHeartbeatRedis()
+    now = datetime.now(timezone.utc)
+    key = "test:worker:heartbeat:host:123:abc"
+
+    assert inspect_worker_heartbeat(
+        redis_client,
+        key_prefix="test:worker:heartbeat",
+        freshness_seconds=60,
+        now=now,
+    ) == "unavailable"
+
+    redis_client.set(
+        key,
+        _runtime_heartbeat_payload(now),
+        ex=90,
+    )
+
+    assert inspect_worker_heartbeat(
+        redis_client,
+        key_prefix="test:worker:heartbeat",
+        freshness_seconds=60,
+        now=now,
+    ) == "ok"
+
+    redis_client.values[key] = _runtime_heartbeat_payload(
+        now - timedelta(seconds=61)
+    )
+    assert inspect_worker_heartbeat(
+        redis_client,
+        key_prefix="test:worker:heartbeat",
+        freshness_seconds=60,
+        now=now,
+    ) == "stale"
+
+    redis_client.ttls[key] = -1
+    assert inspect_worker_heartbeat(
+        redis_client,
+        key_prefix="test:worker:heartbeat",
+        freshness_seconds=60,
+        now=now,
+    ) == "stale"
+
+
+def test_scheduler_heartbeat_inspection_requires_fresh_worker_role():
+    redis_client = FakeWorkerHeartbeatRedis()
+    now = datetime.now(timezone.utc)
+    redis_client.hashes["test:scheduler:heartbeat"] = {
+        b"runtime_role": b"worker",
+        b"recorded_at": now.isoformat().replace("+00:00", "Z").encode(),
+        b"event": b"scheduler_started",
+    }
+
+    assert inspect_scheduler_heartbeat(
+        redis_client,
+        key="test:scheduler:heartbeat",
+        freshness_seconds=1200,
+        now=now,
+    ) == "ok"
+
+    for non_live_event in (
+        b"scheduler_start_requested",
+        b"scheduler_start_skipped",
+        b"scheduler_start_failed",
+    ):
+        redis_client.hashes["test:scheduler:heartbeat"][b"event"] = non_live_event
+        assert inspect_scheduler_heartbeat(
+            redis_client,
+            key="test:scheduler:heartbeat",
+            freshness_seconds=1200,
+            now=now,
+        ) == "stale"
+
+    redis_client.hashes["test:scheduler:heartbeat"][b"event"] = (
+        b"translation_recovery_failed"
+    )
+    assert inspect_scheduler_heartbeat(
+        redis_client,
+        key="test:scheduler:heartbeat",
+        freshness_seconds=1200,
+        now=now,
+    ) == "ok"
+
+    redis_client.hashes["test:scheduler:heartbeat"][b"event"] = b"scheduler_started"
+    redis_client.hashes["test:scheduler:heartbeat"][b"recorded_at"] = (
+        (now - timedelta(seconds=1201))
+        .isoformat()
+        .replace("+00:00", "Z")
+        .encode()
+    )
+    assert inspect_scheduler_heartbeat(
+        redis_client,
+        key="test:scheduler:heartbeat",
+        freshness_seconds=1200,
+        now=now,
+    ) == "stale"
+
+    redis_client.hashes["test:scheduler:heartbeat"][b"recorded_at"] = (
+        now.isoformat().replace("+00:00", "Z").encode()
+    )
+    redis_client.hashes["test:scheduler:heartbeat"][b"runtime_role"] = b"web"
+    assert inspect_scheduler_heartbeat(
+        redis_client,
+        key="test:scheduler:heartbeat",
+        freshness_seconds=1200,
+        now=now,
+    ) == "stale"
+
+    redis_client.hashes.clear()
+    assert inspect_scheduler_heartbeat(
+        redis_client,
+        key="test:scheduler:heartbeat",
+        freshness_seconds=1200,
+        now=now,
+    ) == "unavailable"
+
+
+def test_worker_heartbeat_cleanup_deletes_only_its_unique_key():
+    redis_client = FakeWorkerHeartbeatRedis()
+    app = create_worker_app(
+        config_overrides={
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "WORKER_HEARTBEAT_ENABLED": True,
+            "WORKER_HEARTBEAT_KEY_PREFIX": "test:worker:heartbeat",
+            "WORKER_HEARTBEAT_INTERVAL_SECONDS": 60,
+            "WORKER_HEARTBEAT_TTL_SECONDS": 120,
+        }
+    )
+    settings = load_worker_runtime_settings(app)
+    runtime = SimpleNamespace(settings=settings, connection=redis_client)
+
+    first = start_worker_heartbeat(runtime)
+    second = start_worker_heartbeat(runtime)
+
+    assert first is not None
+    assert second is not None
+    assert first.thread is not None and first.thread.daemon is True
+    assert second.thread is not None and second.thread.daemon is True
+    assert first.key != second.key
+    assert redis_client.ttls[first.key] == 120
+    assert redis_client.ttls[second.key] == 120
+
+    stop_worker_heartbeat(first)
+
+    assert first.key not in redis_client.values
+    assert second.key in redis_client.values
+    assert redis_client.deleted == [first.key]
+
+    stop_worker_heartbeat(second)
 
 
 def test_evaluate_backlog_issues_detects_count_and_age_thresholds():
@@ -659,6 +943,11 @@ def test_build_worker_runtime_uses_queue_and_worker_imports(monkeypatch):
     monkeypatch.setattr("services.worker_runtime.ensure_additive_schema_ready", lambda: {"ready": True, "blockers": []})
     monkeypatch.setattr("services.worker_runtime.get_job_backlog_snapshot", lambda: {"queued_count": 0, "running_count": 0})
     monkeypatch.setattr("services.worker_runtime.reconcile_stalled_jobs", lambda: ["stalled-1"])
+    monkeypatch.setattr(
+        "services.worker_runtime.recover_translation_suggestions_on_startup",
+        lambda: captured.setdefault("translation_recovered", True)
+        and {"recovered": ["translation-1"], "enqueued": ["translation-1"], "failed": []},
+    )
     monkeypatch.setattr("services.worker_runtime.warm_browser_pool", lambda: captured.setdefault("warmed", True))
     monkeypatch.setattr("services.worker_runtime.close_browser_pool", lambda: captured.setdefault("closed", True))
 
@@ -673,6 +962,7 @@ def test_build_worker_runtime_uses_queue_and_worker_imports(monkeypatch):
     assert isinstance(captured["worker_connection"], FakeRedis)
     assert captured["burst"] is True
     assert captured["with_scheduler"] is False
+    assert captured["translation_recovered"] is True
     assert captured["warmed"] is True
     assert captured["closed"] is True
     assert status == 0
@@ -829,7 +1119,7 @@ def test_run_worker_fails_fast_when_schema_drift_remains(monkeypatch):
         run_worker(app)
 
 
-def test_run_worker_logs_backlog_before_and_after_reconcile(monkeypatch):
+def test_run_worker_logs_backlog_before_and_after_reconcile(monkeypatch, caplog):
     captured = {"snapshots": []}
 
     class FakeRedis:
@@ -865,13 +1155,19 @@ def test_run_worker_logs_backlog_before_and_after_reconcile(monkeypatch):
     monkeypatch.setattr("services.worker_runtime.ensure_additive_schema_ready", lambda: {"ready": True, "blockers": []})
     monkeypatch.setattr("services.worker_runtime.get_job_backlog_snapshot", fake_backlog_snapshot)
     monkeypatch.setattr("services.worker_runtime.reconcile_stalled_jobs", lambda: [])
+    monkeypatch.setattr(
+        "services.worker_runtime.recover_translation_suggestions_on_startup",
+        lambda: (_ for _ in ()).throw(RuntimeError("translation recovery unavailable")),
+    )
     monkeypatch.setattr("services.worker_runtime.close_browser_pool", lambda: captured.setdefault("closed", True))
 
-    status = run_worker(app)
+    with caplog.at_level("ERROR", logger="worker_runtime"):
+        status = run_worker(app)
 
     assert captured["snapshots"] == ["called", "called"]
     assert captured["worked"] is True
     assert captured["closed"] is True
+    assert "worker startup will continue" in caplog.text
     assert status == 0
 
 

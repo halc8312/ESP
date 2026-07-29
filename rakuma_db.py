@@ -11,12 +11,27 @@ item.fril.jp は SSR（サーバーサイドレンダリング）で提供され
 """
 import asyncio
 import logging
-from selector_config import get_selectors, get_valid_domains
+from urllib.parse import urljoin
+
+from selector_config import get_selectors
 from scrape_metrics import get_metrics, log_scrape_result, check_scrape_health
 from services.rakuma_item_parser import parse_rakuma_item_page
+from services.scrape_safety import (
+    ScrapeFailure,
+    ScrapeHttpError,
+    UnsafeScrapeUrlError,
+    install_navigation_guard,
+    is_usable_detail_result,
+    raise_for_blocked_navigation,
+    raise_for_unsafe_detail_result,
+    require_search_outcome,
+    require_usable_details,
+    validate_fetch_response,
+    validate_marketplace_url,
+)
 from services.scraping_client import (
-    fetch_static,
-    fetch_static_async,
+    fetch_marketplace_static,
+    fetch_marketplace_static_async,
     gather_with_concurrency,
     get_async_fetch_settings,
     run_coro_sync,
@@ -33,10 +48,15 @@ def scrape_item_detail(url: str, driver=None):
     トップレベル（asyncioループ外）からの呼び出し用。
     """
     try:
-        page = fetch_static(
+        url = validate_marketplace_url(url, "rakuma", kind="detail")
+        page = fetch_marketplace_static(
             url,
-            follow_redirects=True,
+            site="rakuma",
+            kind="detail",
         )
+        validate_fetch_response(page, "rakuma", kind="detail")
+    except ScrapeFailure:
+        raise
     except Exception as e:
         logging.error(f"Error accessing {url}: {e}")
         return {
@@ -58,13 +78,18 @@ async def _scrape_item_detail_async(url: str) -> dict:
     settings = get_async_fetch_settings("rakuma")
 
     try:
-        page = await fetch_static_async(
+        url = validate_marketplace_url(url, "rakuma", kind="detail")
+        page = await fetch_marketplace_static_async(
             url,
+            site="rakuma",
+            kind="detail",
             timeout=settings.timeout,
             retries=settings.retries,
             backoff_seconds=settings.backoff_seconds,
-            follow_redirects=True,
         )
+        validate_fetch_response(page, "rakuma", kind="detail")
+    except ScrapeFailure:
+        raise
     except Exception as e:
         logging.error(f"Error accessing {url}: {e}")
         return {
@@ -88,7 +113,7 @@ def scrape_single_item(url: str, headless: bool = True):
         data = scrape_item_detail(url)
         log_scrape_result('rakuma', url, data)
 
-        if data["title"]:
+        if is_usable_detail_result(data):
             print(f"DEBUG: Success -> {data['title']}")
         else:
             print("DEBUG: Failed to get title")
@@ -97,12 +122,10 @@ def scrape_single_item(url: str, headless: bool = True):
         return [data]
 
     except Exception as e:
-        print(f"CRITICAL ERROR during Rakuma single scraping: {e}")
-        import traceback
-        traceback.print_exc()
+        logging.exception("Critical error during Rakuma single scraping: %s", e)
         metrics.record_attempt(False, url, str(e))
         metrics.finish()
-        return []
+        raise
 
 
 async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int):
@@ -126,11 +149,22 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
             ),
         )
         pw_page = await context.new_page()
+        blocked_urls = await install_navigation_guard(context, "rakuma", kind="search")
 
         try:
-            await pw_page.goto(search_url, wait_until="networkidle", timeout=30000)
+            response = await pw_page.goto(search_url, wait_until="networkidle", timeout=30000)
+            raise_for_blocked_navigation(blocked_urls, "rakuma")
+            validate_fetch_response(response, "rakuma", kind="search")
+            final_url = getattr(pw_page, "url", None)
+            if isinstance(final_url, str) and final_url:
+                validate_marketplace_url(final_url, "rakuma", kind="search")
+        except ScrapeFailure:
+            await browser.close()
+            raise
         except Exception as e:
-            logging.warning(f"Navigation timeout/error for {search_url}: {e}")
+            await browser.close()
+            raise_for_blocked_navigation(blocked_urls, "rakuma")
+            raise ScrapeHttpError(f"ラクマの検索ページを取得できませんでした: {e}") from e
 
         print(f"DEBUG: Page Title = {await pw_page.title()}")
 
@@ -159,6 +193,15 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
             for nl in new_links:
                 h = await nl.get_attribute("href")
                 if h:
+                    try:
+                        h = validate_marketplace_url(
+                            urljoin(search_url, h),
+                            "rakuma",
+                            kind="detail",
+                        )
+                    except UnsafeScrapeUrlError:
+                        logging.warning("Ignored unsafe Rakuma detail URL discovered in search HTML")
+                        continue
                     if h not in seen_hrefs:
                         seen_hrefs.add(h)
                         hrefs.append(h)
@@ -168,16 +211,21 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
 
             scroll_attempts += 1
 
+        try:
+            body_text = await pw_page.locator("body").inner_text(timeout=3000)
+        except Exception:
+            body_text = ""
         await browser.close()
+        raise_for_blocked_navigation(blocked_urls, "rakuma")
 
     print(f"DEBUG: Found {len(hrefs)} unique links on search page.")
 
-    # URLリストをフィルタ
-    valid_domains = get_valid_domains('rakuma', 'search') or ["item.fril.jp", "fril.jp"]
-    item_urls = [
-        h for h in hrefs
-        if any(domain in h for domain in valid_domains)
-    ]
+    item_urls = list(hrefs)
+    require_search_outcome(
+        "rakuma",
+        candidate_count=len(item_urls),
+        text=body_text,
+    )
 
     # 各商品を AsyncFetcher (HTTP) でスクレイピング
     filtered_items = []
@@ -189,6 +237,9 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
         concurrency=settings.concurrency,
     )
 
+    for data in detail_results:
+        raise_for_unsafe_detail_result("rakuma", data)
+
     for item_url, data in zip(candidate_urls, detail_results):
         if len(filtered_items) >= max_items:
             break
@@ -197,12 +248,17 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
         if isinstance(data, Exception):
             print(f"DEBUG: Error scraping {item_url}: {data}")
             continue
-        if data["title"] and data["status"] != "error":
+        if is_usable_detail_result(data):
             print(f"DEBUG: Success -> {data['title']}")
             filtered_items.append(data)
         else:
             print("DEBUG: Failed to get valid data (empty title or error)")
 
+    require_usable_details(
+        "rakuma",
+        candidate_count=len(candidate_urls),
+        item_count=len(filtered_items),
+    )
     return filtered_items
 
 
@@ -220,11 +276,10 @@ def scrape_search_result(
     """
     try:
         print(f"DEBUG: Starting Rakuma scrape_search_result")
+        search_url = validate_marketplace_url(search_url, "rakuma", kind="search")
         return run_coro_sync(
             _scrape_search_async(search_url, max_items, max_scroll)
         )
     except Exception as e:
-        print(f"CRITICAL ERROR during Rakuma scraping: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
+        logging.exception("Critical error during Rakuma search scraping: %s", e)
+        raise

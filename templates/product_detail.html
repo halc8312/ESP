@@ -1518,7 +1518,7 @@
 
                             <div class="form-group">
                                 <div class="field-label-row">
-                                    <label for="description">説明文 (日本語 / HTML可)</label>
+                                    <label for="description">説明文（日本語・文字装飾可）</label>
                                 </div>
                                 <textarea id="description" name="description"
                                     rows="8">{{ product.custom_description or (snapshot.description if snapshot else '') }}</textarea>
@@ -1544,7 +1544,7 @@
 
                             <div class="form-group">
                                 <div class="field-label-row" data-translation-actions>
-                                    <label for="description_en">説明文 (英語 / HTML可)</label>
+                                    <label for="description_en">説明文（英語・文字装飾可）</label>
                                     <button type="button" class="translate-trigger" data-translate-scope="description"
                                         title="商品説明文を自動翻訳します">翻訳する</button>
                                 </div>
@@ -1598,10 +1598,12 @@
                         <div class="form-group">
                             <label for="single_variant_price">販売価格 (¥)</label>
                             <input type="number" id="single_variant_price" name="v_price_{{ single_variant_item.id }}"
-                                value="{{ single_variant_item.price if single_variant_item.price is not none else '' }}"
+                                value="{{ single_variant_item.display_selling_price if single_variant_item.display_selling_price is not none else '' }}"
                                 min="0" step="1" inputmode="numeric" data-single-variant-master="price"
                                 data-variant-id="{{ single_variant_item.id }}">
-                            <p class="field-helper-text">自動計算した価格を手直しできます。保存するとこの商品の代表価格にも反映されます。</p>
+                            <input type="hidden" name="single_variant_display_price_original"
+                                value="{{ single_variant_item.display_selling_price if single_variant_item.display_selling_price is not none else '' }}">
+                            <p class="field-helper-text">ここに表示される金額が、そのまま出力と顧客向け表示に使われます。空欄にすると自動価格へ戻ります。</p>
                         </div>
                         <div class="form-group">
                             <label for="single_variant_qty">在庫数</label>
@@ -1613,7 +1615,7 @@
                         </div>
                     </div>
                     {% else %}
-                    <p class="field-helper-text product-sales-multi-note">複数バリエーションの商品は、下の詳細テーブルで行ごとに価格と在庫を編集します。</p>
+                    <p class="field-helper-text product-sales-multi-note">複数バリエーションの商品は、下の詳細テーブルで行ごとに販売価格を編集します。表示中の金額がそのまま出力されます。</p>
                     {% endif %}
 
                     <div class="product-sales-rule-grid">
@@ -1623,7 +1625,7 @@
                                 <option value="">(ルールなし / 共通ルールに従う)</option>
                                 {% for rule in pricing_rules %}
                                 <option value="{{ rule.id }}" {% if product.pricing_rule_id == rule.id %}selected{% endif %}>
-                                    {{ rule.name }} (利益率 {{ rule.margin_rate or 0 }}% / 送料 ¥{{ '{:,}'.format(rule.shipping_cost or 0) }} / 固定 ¥{{ '{:,}'.format(rule.fixed_fee or 0) }})
+                                    {{ rule.name }} (利益上乗せ率 {{ rule.margin_rate or 0 }}% / 送料 ¥{{ '{:,}'.format(rule.shipping_cost or 0) }} / 固定 ¥{{ '{:,}'.format(rule.fixed_fee or 0) }})
                                 </option>
                                 {% endfor %}
                             </select>
@@ -1636,7 +1638,7 @@
                             <label class="manual-price-override-toggle">
                                 <input type="checkbox" id="manual_price_toggle" name="manual_price_enabled"
                                     {% if product.manual_margin_rate is not none or product.manual_shipping_cost is not none %}checked{% endif %}>
-                                <span>個別の利益率・送料を有効にする</span>
+                                <span>この商品の利益上乗せ率・送料を設定する</span>
                             </label>
                             <p class="manual-price-override-note">この商品だけ既定の価格ルールを上書きしたい場合に使います。空欄ならルール側の値を使用します。</p>
                         </header>
@@ -1644,7 +1646,7 @@
                             {% if product.manual_margin_rate is none and product.manual_shipping_cost is none %}hidden{% endif %}>
                             <div class="manual-price-override-row">
                                 <div class="form-group">
-                                    <label for="manual_margin_rate">個別の利益率 (%)</label>
+                                    <label for="manual_margin_rate">この商品の利益上乗せ率 (%)</label>
                                     <input type="number" id="manual_margin_rate" name="manual_margin_rate"
                                         value="{{ product.manual_margin_rate if product.manual_margin_rate is not none else '' }}"
                                         min="0" step="1" placeholder="例: 20">
@@ -1749,9 +1751,12 @@
                                     </td>
                                     <td data-label="価格">
                                         <input type="number" {% if not single_variant %}name="v_price_{{ v.id }}"{% endif %}
-                                            value="{{ v.price if v.price is not none else '' }}"
+                                            value="{{ v.display_selling_price if v.display_selling_price is not none else '' }}"
+                                            min="0" step="1" inputmode="numeric"
                                             data-variant-price-input data-variant-id="{{ v.id }}"
                                             {% if single_variant %}data-single-variant-mirror="price"{% endif %}>
+                                        <input type="hidden" name="v_display_price_original_{{ v.id }}"
+                                            value="{{ v.display_selling_price if v.display_selling_price is not none else '' }}">
                                     </td>
                                     <td data-label="SKU">
                                         <input type="text" name="v_sku_{{ v.id }}" value="{{ v.sku or '' }}">
@@ -1802,7 +1807,7 @@
                             value="{{ product.custom_vendor or '' }}" placeholder="e.g. My Brand">
                     </div>
                     <div class="form-group">
-                        <label for="handle">URLスラッグ（Handle）</label>
+                        <label for="handle">公開URL用の短い名前（Handle）</label>
                         <input type="text" id="handle" name="handle"
                             value="{{ product.custom_handle or '' }}">
                     </div>
@@ -1823,16 +1828,16 @@
             <section class="content-card product-edit-panel" id="statusPanel">
                 <header class="content-card-header product-edit-summary">
                     <div class="product-edit-summary-copy">
-                        <h2>公開ステータス</h2>
+                        <h2>公開状態</h2>
                     </div>
                 </header>
                 <div class="content-card-body">
                     <div class="form-group">
-                        <label for="status">ステータス</label>
+                        <label for="status">公開状態</label>
                         <select id="status" name="status">
                             {% set current_status = product.status or 'draft' %}
-                            <option value="active" {% if current_status == 'active' %}selected{% endif %}>有効 (Active)</option>
-                            <option value="draft" {% if current_status == 'draft' %}selected{% endif %}>下書き (Draft)</option>
+                            <option value="active" {% if current_status == 'active' %}selected{% endif %}>公開する</option>
+                            <option value="draft" {% if current_status == 'draft' %}selected{% endif %}>下書き（公開しない）</option>
                         </select>
                     </div>
                 </div>
@@ -2469,6 +2474,7 @@
         var body = section.querySelector('#manual_price_settings');
         var marginInput = section.querySelector('#manual_margin_rate');
         var shippingInput = section.querySelector('#manual_shipping_cost');
+        var pricingRuleInput = document.querySelector('#pricing_rule_id');
         var recalcBtn = section.querySelector('#manual_price_recalc_btn');
         var resultEl = section.querySelector('#manual_price_recalc_result');
         var productId = section.getAttribute('data-product-id');
@@ -2523,6 +2529,7 @@
                 }
                 setResult('計算中...', false);
                 var payload = {
+                    pricing_rule_id: pricingRuleInput && pricingRuleInput.value !== '' ? Number(pricingRuleInput.value) : null,
                     manual_margin_rate: marginInput && marginInput.value !== '' ? Number(marginInput.value) : null,
                     manual_shipping_cost: shippingInput && shippingInput.value !== '' ? Number(shippingInput.value) : null
                 };

@@ -2,6 +2,9 @@
 Price List management routes: create, edit, delete, manage items.
 """
 import uuid
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
+
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 from flask_login import login_required, current_user
 from sqlalchemy.orm import subqueryload
@@ -9,6 +12,7 @@ from sqlalchemy.orm import subqueryload
 from database import SessionLocal
 from models import Shop, Product, ProductSnapshot, Variant, PriceList, PriceListItem
 from services.image_service import split_image_url_string
+from services.pricing_service import resolve_product_display_price
 from services.rich_text import normalize_rich_text
 from time_utils import utc_now
 
@@ -16,6 +20,8 @@ pricelist_bp = Blueprint('pricelist', __name__)
 
 PRICE_LIST_LAYOUTS = {"grid", "editorial", "list"}
 PRICE_LIST_THEMES = {"dark", "light"}
+JAPAN_TIMEZONE = ZoneInfo("Asia/Tokyo")
+DATETIME_LOCAL_FORMAT = "%Y-%m-%dT%H:%M"
 
 
 def _sanitize_notes(raw_html: str) -> str:
@@ -35,6 +41,64 @@ def _normalize_theme(value):
     if theme in PRICE_LIST_THEMES:
         return theme
     return "dark"
+
+
+def _parse_currency_rate(raw_value):
+    """Return a positive JPY/USD conversion rate or a form error."""
+    value = str(raw_value if raw_value is not None else "150").strip()
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None, "通貨換算レートは1以上の整数で入力してください"
+    if parsed <= 0:
+        return None, "通貨換算レートは1以上の整数で入力してください"
+    return parsed, None
+
+
+def _parse_optional_custom_price(raw_value):
+    """Parse an optional non-negative customer-facing item price."""
+    value = str(raw_value or "").strip()
+    if not value:
+        return None, None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None, "カスタム価格は0以上の整数で入力してください"
+    if parsed < 0:
+        return None, "カスタム価格は0以上の整数で入力してください"
+    return parsed, None
+
+
+def _parse_unpublish_at_jst(raw_value):
+    """Parse a datetime-local value as Japan time and return naive UTC."""
+    value = (raw_value or "").strip()
+    if not value:
+        return None, None
+
+    try:
+        local_naive = datetime.strptime(value, DATETIME_LOCAL_FORMAT)
+    except (TypeError, ValueError):
+        return None, "自動非公開日時を正しく入力してください"
+
+    utc_naive = (
+        local_naive.replace(tzinfo=JAPAN_TIMEZONE)
+        .astimezone(UTC)
+        .replace(tzinfo=None)
+    )
+    if utc_naive <= utc_now():
+        return None, "自動非公開日時は現在より後の日時を指定してください"
+    return utc_naive, None
+
+
+def _format_unpublish_at_jst(value):
+    """Format a stored naive-UTC timestamp for a datetime-local control."""
+    if value is None:
+        return ""
+    return (
+        value.replace(tzinfo=UTC)
+        .astimezone(JAPAN_TIMEZONE)
+        .strftime(DATETIME_LOCAL_FORMAT)
+    )
 
 
 def _resolve_owned_shop(session_db, raw_shop_id):
@@ -67,12 +131,15 @@ def pricelist_list():
             .all()
         )
         # Count items for each pricelist
+        now = utc_now()
         for pl in pricelists:
             pl.item_count = (
                 session_db.query(PriceListItem)
                 .filter(PriceListItem.price_list_id == pl.id)
                 .count()
             )
+            pl.publication_state = pl.publication_state_at(now)
+            pl.unpublish_at_jst = _format_unpublish_at_jst(pl.unpublish_at)
 
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         current_shop_id = session.get('current_shop_id')
@@ -99,25 +166,42 @@ def pricelist_create():
         if request.method == "POST":
             name = request.form.get("name", "").strip()
             notes = _sanitize_notes(request.form.get("notes", "").strip())
-            currency_rate = int(request.form.get("currency_rate", 150))
+            selected_currency_rate = (
+                request.form.get("currency_rate", "150") or ""
+            ).strip()
+            currency_rate, currency_error = _parse_currency_rate(
+                selected_currency_rate
+            )
             layout = _normalize_layout(request.form.get("layout"))
             theme = _normalize_theme(request.form.get("theme"))
             selected_shop_id = (request.form.get("shop_id") or "").strip()
             shop, shop_error = _resolve_owned_shop(session_db, selected_shop_id)
+            selected_unpublish_at = (request.form.get("unpublish_at") or "").strip()
+            unpublish_at, unpublish_error = _parse_unpublish_at_jst(selected_unpublish_at)
 
-            if not name or shop_error:
+            validation_error = (
+                "名前を入力してください"
+                if not name
+                else shop_error or currency_error or unpublish_error
+            )
+            if validation_error:
                 all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
                 current_shop_id = session.get('current_shop_id')
-                return render_template(
+                response = render_template(
                     "pricelist_edit.html",
                     pricelist=None,
-                    error="名前を入力してください" if not name else shop_error,
+                    error=validation_error,
                     selected_layout=layout,
                     selected_theme=theme,
                     selected_shop_id=selected_shop_id,
+                    selected_unpublish_at=selected_unpublish_at,
+                    selected_name=name,
+                    selected_notes=notes,
+                    selected_currency_rate=selected_currency_rate,
                     all_shops=all_shops,
                     current_shop_id=current_shop_id,
                 )
+                return response, 400
 
             new_pl = PriceList(
                 user_id=current_user.id,
@@ -128,6 +212,7 @@ def pricelist_create():
                 currency_rate=currency_rate,
                 layout=layout,
                 theme=theme,
+                unpublish_at=unpublish_at,
             )
             session_db.add(new_pl)
             session_db.commit()
@@ -141,6 +226,7 @@ def pricelist_create():
             selected_layout="grid",
             selected_theme="dark",
             selected_shop_id=str(current_shop_id) if current_shop_id else "",
+            selected_unpublish_at="",
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
@@ -166,29 +252,53 @@ def pricelist_edit(pricelist_id):
             return redirect(url_for("pricelist.pricelist_list"))
 
         if request.method == "POST":
+            selected_name = (request.form.get("name") or "").strip()
+            selected_notes = _sanitize_notes(request.form.get("notes", "").strip())
+            selected_currency_rate = (
+                request.form.get("currency_rate", str(pl.currency_rate or 150))
+                or ""
+            ).strip()
+            currency_rate, currency_error = _parse_currency_rate(
+                selected_currency_rate
+            )
             selected_shop_id = (request.form.get("shop_id") or "").strip()
             shop, shop_error = _resolve_owned_shop(session_db, selected_shop_id)
-            if shop_error:
+            selected_unpublish_at = (request.form.get("unpublish_at") or "").strip()
+            unpublish_at, unpublish_error = _parse_unpublish_at_jst(selected_unpublish_at)
+            validation_error = (
+                "名前を入力してください"
+                if not selected_name
+                else shop_error or currency_error or unpublish_error
+            )
+            if validation_error:
                 all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
                 current_shop_id = session.get('current_shop_id')
-                return render_template(
+                response = render_template(
                     "pricelist_edit.html",
                     pricelist=pl,
-                    error=shop_error,
+                    error=validation_error,
                     selected_layout=_normalize_layout(request.form.get("layout")),
                     selected_theme=_normalize_theme(request.form.get("theme")),
                     selected_shop_id=selected_shop_id,
+                    selected_unpublish_at=selected_unpublish_at,
+                    selected_name=selected_name,
+                    selected_notes=selected_notes,
+                    selected_currency_rate=selected_currency_rate,
+                    selected_is_active="is_active" in request.form,
+                    publication_state=pl.publication_state_at(),
                     all_shops=all_shops,
                     current_shop_id=current_shop_id,
                 )
+                return response, 400
 
-            pl.name = request.form.get("name", pl.name).strip()
-            pl.notes = _sanitize_notes(request.form.get("notes", "").strip())
-            pl.currency_rate = int(request.form.get("currency_rate", 150))
+            pl.name = selected_name
+            pl.notes = selected_notes
+            pl.currency_rate = currency_rate
             pl.layout = _normalize_layout(request.form.get("layout"))
             pl.theme = _normalize_theme(request.form.get("theme"))
             pl.shop_id = shop.id if shop else None
             pl.is_active = "is_active" in request.form
+            pl.unpublish_at = unpublish_at
             pl.updated_at = utc_now()
             session_db.commit()
             return redirect(url_for("pricelist.pricelist_list"))
@@ -201,6 +311,9 @@ def pricelist_edit(pricelist_id):
             selected_layout=pl.layout or "grid",
             selected_theme=pl.theme or "dark",
             selected_shop_id=str(pl.shop_id) if pl.shop_id else "",
+            selected_unpublish_at=_format_unpublish_at_jst(pl.unpublish_at),
+            selected_is_active=pl.is_active,
+            publication_state=pl.publication_state_at(),
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
@@ -225,32 +338,6 @@ def pricelist_items(pricelist_id):
         if not pl:
             return redirect(url_for("pricelist.pricelist_list"))
 
-        if request.method == "POST":
-            action = request.form.get("action")
-
-            if action == "update_items":
-                # Update visibility and custom prices for existing items
-                for item in pl.items:
-                    item.visible = f"visible_{item.id}" in request.form
-                    custom_price = request.form.get(f"custom_price_{item.id}", "").strip()
-                    item.custom_price = int(custom_price) if custom_price else None
-
-                pl.updated_at = utc_now()
-                session_db.commit()
-
-            elif action == "remove_items":
-                item_ids = request.form.getlist("remove_ids")
-                if item_ids:
-                    session_db.query(PriceListItem).filter(
-                        PriceListItem.id.in_([int(i) for i in item_ids]),
-                        PriceListItem.price_list_id == pl.id,
-                    ).delete(synchronize_session=False)
-                    pl.updated_at = utc_now()
-                    session_db.commit()
-
-            return redirect(url_for("pricelist.pricelist_items", pricelist_id=pl.id))
-
-        # Get items with product data
         items = (
             session_db.query(PriceListItem)
             .filter(PriceListItem.price_list_id == pl.id)
@@ -260,6 +347,54 @@ def pricelist_items(pricelist_id):
             .order_by(PriceListItem.sort_order)
             .all()
         )
+        form_error = None
+        submitted_custom_prices = {}
+
+        if request.method == "POST":
+            action = request.form.get("action")
+
+            if action == "update_items":
+                pending_updates = []
+                for item in items:
+                    raw_custom_price = request.form.get(
+                        f"custom_price_{item.id}",
+                        "",
+                    ).strip()
+                    submitted_custom_prices[item.id] = raw_custom_price
+                    custom_price, custom_price_error = _parse_optional_custom_price(
+                        raw_custom_price
+                    )
+                    if custom_price_error and form_error is None:
+                        form_error = custom_price_error
+                    pending_updates.append(
+                        (
+                            item,
+                            f"visible_{item.id}" in request.form,
+                            custom_price,
+                        )
+                    )
+
+                if form_error is None:
+                    for item, visible, custom_price in pending_updates:
+                        item.visible = visible
+                        item.custom_price = custom_price
+                    pl.updated_at = utc_now()
+                    session_db.commit()
+
+            elif action == "remove_items":
+                raw_item_ids = request.form.getlist("remove_ids")
+                if any(not str(item_id).isdigit() for item_id in raw_item_ids):
+                    form_error = "削除する商品を選び直してください"
+                elif raw_item_ids:
+                    session_db.query(PriceListItem).filter(
+                        PriceListItem.id.in_([int(i) for i in raw_item_ids]),
+                        PriceListItem.price_list_id == pl.id,
+                    ).delete(synchronize_session=False)
+                    pl.updated_at = utc_now()
+                    session_db.commit()
+
+            if form_error is None:
+                return redirect(url_for("pricelist.pricelist_items", pricelist_id=pl.id))
 
         # Process items for display
         for item in items:
@@ -271,7 +406,11 @@ def pricelist_items(pricelist_id):
             image_urls = split_image_url_string(snapshot.image_urls if snapshot else None)
             item.thumb_url = image_urls[0] if image_urls else ""
             item.display_title = p.custom_title or p.last_title or "(タイトルなし)"
-            item.display_price = item.custom_price or p.selling_price or p.last_price
+            item.display_price = (
+                item.custom_price
+                if item.custom_price is not None
+                else resolve_product_display_price(p, p.variants)
+            )
             item.total_stock = sum(v.inventory_qty or 0 for v in p.variants)
 
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
@@ -281,9 +420,11 @@ def pricelist_items(pricelist_id):
             "pricelist_items.html",
             pricelist=pl,
             items=items,
+            error=form_error,
+            submitted_custom_prices=submitted_custom_prices,
             all_shops=all_shops,
             current_shop_id=current_shop_id,
-        )
+        ), (400 if form_error else 200)
     except Exception:
         session_db.rollback()
         raise
@@ -328,7 +469,10 @@ def pricelist_add_products(pricelist_id):
 
         added = 0
         for pid in product_ids:
-            pid_int = int(pid)
+            try:
+                pid_int = int(pid)
+            except (TypeError, ValueError):
+                continue
             if pid_int not in existing_product_ids:
                 # Verify ownership
                 product = session_db.query(Product).filter(

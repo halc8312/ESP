@@ -1,3 +1,5 @@
+import pytest
+
 from jobs.scrape_tasks import execute_scrape_job
 from services.scrape_request import build_scrape_task_request
 
@@ -44,7 +46,7 @@ def test_execute_scrape_job_returns_filtered_result(monkeypatch):
     assert result["search_url"].startswith("https://jp.mercari.com/search?")
 
 
-def test_execute_scrape_job_converts_exceptions_to_error_payload(monkeypatch):
+def test_execute_scrape_job_propagates_exceptions_for_retry(monkeypatch):
     monkeypatch.setattr(
         "jobs.scrape_tasks.scrape_search_result",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
@@ -66,12 +68,67 @@ def test_execute_scrape_job_converts_exceptions_to_error_payload(monkeypatch):
         shop_id=None,
     )
 
+    with pytest.raises(RuntimeError, match="boom"):
+        execute_scrape_job(request_payload)
+
+
+def test_execute_scrape_job_preserves_legitimate_empty_result(monkeypatch):
+    monkeypatch.setattr("jobs.scrape_tasks.scrape_search_result", lambda *args, **kwargs: [])
+    monkeypatch.setattr("jobs.scrape_tasks.filter_excluded_items", lambda items, user_id: (items, 0))
+    monkeypatch.setattr(
+        "jobs.scrape_tasks.filter_items_by_price",
+        lambda items, price_min, price_max: (items, 0),
+    )
+
+    request_payload = build_scrape_task_request(
+        site="mercari",
+        target_url="",
+        keyword="no-match",
+        price_min=None,
+        price_max=None,
+        sort="created_desc",
+        category=None,
+        limit=2,
+        user_id=1,
+        persist_to_db=False,
+        shop_id=None,
+    )
+
     result = execute_scrape_job(request_payload)
 
     assert result["items"] == []
-    assert result["new_count"] == 0
-    assert result["updated_count"] == 0
-    assert result["error_msg"] == "boom"
+    assert result["error_msg"] == ""
+
+
+def test_execute_scrape_job_propagates_blocked_result(monkeypatch):
+    monkeypatch.setattr(
+        "jobs.scrape_tasks.scrape_search_result",
+        lambda *args, **kwargs: [
+            {
+                "url": "https://jp.mercari.com/item/m-blocked",
+                "title": "",
+                "price": None,
+                "status": "blocked",
+            }
+        ],
+    )
+
+    request_payload = build_scrape_task_request(
+        site="mercari",
+        target_url="",
+        keyword="blocked",
+        price_min=None,
+        price_max=None,
+        sort="created_desc",
+        category=None,
+        limit=2,
+        user_id=1,
+        persist_to_db=False,
+        shop_id=None,
+    )
+
+    with pytest.raises(RuntimeError, match="アクセスが制限"):
+        execute_scrape_job(request_payload)
 
 
 def test_execute_scrape_job_uses_internal_smoke_payload(monkeypatch):

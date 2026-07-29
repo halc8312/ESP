@@ -28,7 +28,8 @@
             </div>
 
             <div class="catalog-header-actions">
-                <button type="button" id="themeToggleBtn" class="theme-toggle" title="Toggle light or dark mode">☀️</button>
+                <button type="button" id="themeToggleBtn" class="theme-toggle" title="Toggle light or dark mode"
+                    aria-label="Toggle light or dark mode">☀️</button>
                 <div class="currency-switcher">
                     <label for="currencySelect">💱 Currency:</label>
                     <select id="currencySelect">
@@ -86,10 +87,10 @@
         </div>
     </div>
 
-    {% if pricelist.notes %}
+    {% if catalog_notes %}
     <div class="catalog-notes">
         <div class="catalog-notes-content rich-text-content">
-            {{ pricelist.notes | safe }}
+            {{ catalog_notes | safe }}
         </div>
     </div>
     {% endif %}
@@ -99,11 +100,11 @@
         <div class="stat-badge">
             <strong>{{ items|selectattr('in_stock')|list|length }}</strong> in stock
         </div>
-        <div class="stat-badge"><strong>{{ {'editorial': 'Editorial', 'list': 'List', 'grid': 'Grid'}.get(pricelist.layout, 'Grid') }}</strong> layout
+        <div class="stat-badge"><strong>{{ {'editorial': 'Large photos', 'list': 'Compact list', 'grid': 'Cards'}.get(pricelist.layout, 'Cards') }}</strong> view
         </div>
         <div class="stat-badge"><strong>{{ 'Light' if (pricelist.theme or 'dark') == 'light' else 'Dark' }}</strong> theme</div>
-        <div class="stat-badge" id="rateDisplay">⏳ Loading live rates...</div>
-        <div class="stat-badge" id="rateSource">Powered by open.er-api.com</div>
+        <div class="stat-badge" id="rateDisplay">⏳ Updating exchange rates...</div>
+        <div class="stat-badge" id="rateSource">Rates update automatically</div>
     </div>
 
     <section class="catalog-grid">
@@ -111,7 +112,7 @@
         <article class="product-card" data-product-id="{{ item.product_id }}"
             data-title="{{ item.title|lower }} {{ item.title_en|lower }}"
             data-tags="{{ item.tags|join(',')|lower }}"
-            data-jpy-price="{{ item.price }}">
+            data-jpy-price="{{ item.price if item.price is not none else '' }}">
             <div class="product-card-media">
                 {% if item.thumb_url %}
                 <img src="{{ item.thumb_url }}" alt="{{ item.title }}" class="product-card-image" loading="lazy">
@@ -137,9 +138,13 @@
                 {% if pricelist.layout == 'list' %}
                 <div class="product-card-desc-snippet">{{ item.description_snippet }}</div>
                 {% endif %}
+                {% if item.price is not none %}
                 <div class="product-card-price" data-jpy-price="{{ item.price }}">
                     ¥{{ "{:,}".format(item.price) }}
                 </div>
+                {% else %}
+                <div class="product-card-price">Price on request</div>
+                {% endif %}
                 <div class="product-card-footer">
                     {% if item.in_stock %}
                     <span class="stock-badge in-stock">In Stock</span>
@@ -182,7 +187,7 @@
                         <h2 id="modalTitle" class="modal-product-title">Loading...</h2>
                         <div id="modalTitleEn" class="modal-product-title-en" hidden></div>
                     </div>
-                    <div id="modalPrice" class="modal-product-price" data-jpy-price="">¥0</div>
+                    <div id="modalPrice" class="modal-product-price">Price on request</div>
                     <div id="modalStock" class="modal-stock-info"></div>
                     <div id="modalDescription" class="modal-description rich-text-content">
                         <span class="modal-loading">Loading product details...</span>
@@ -262,17 +267,26 @@
         function filterProducts() {
             const query = document.getElementById('searchInput').value.toLowerCase();
             const selectedTag = (document.getElementById('tagSelect').value || '').toLowerCase();
-            const minPrice = parseFloat(document.getElementById('priceMin').value) || 0;
-            const maxPrice = parseFloat(document.getElementById('priceMax').value) || Infinity;
+            const minPriceRaw = document.getElementById('priceMin').value.trim();
+            const maxPriceRaw = document.getElementById('priceMax').value.trim();
+            const minPrice = minPriceRaw === '' ? null : parseFloat(minPriceRaw);
+            const maxPrice = maxPriceRaw === '' ? null : parseFloat(maxPriceRaw);
             const cards = document.querySelectorAll('.product-card');
 
             cards.forEach(card => {
                 const title = card.getAttribute('data-title') || '';
                 const tags = card.getAttribute('data-tags') || '';
-                const price = parseFloat(card.getAttribute('data-jpy-price')) || 0;
+                const priceRaw = card.getAttribute('data-jpy-price') || '';
+                const price = priceRaw === '' ? null : parseFloat(priceRaw);
                 const matchesQuery = !query || title.includes(query);
                 const matchesTag = !selectedTag || tags.split(',').filter(Boolean).includes(selectedTag);
-                const matchesPrice = price >= minPrice && price <= maxPrice;
+                const hasPriceFilter = minPrice !== null || maxPrice !== null;
+                const matchesPrice = !hasPriceFilter || (
+                    price !== null
+                    && !Number.isNaN(price)
+                    && (minPrice === null || price >= minPrice)
+                    && (maxPrice === null || price <= maxPrice)
+                );
 
                 if (matchesQuery && matchesTag && matchesPrice) {
                     card.style.display = '';
@@ -300,8 +314,21 @@
             const withIndex = cards.map((card, index) => ({ card, index }));
 
             withIndex.sort((left, right) => {
-                const leftPrice = parseFloat(left.card.getAttribute('data-jpy-price')) || 0;
-                const rightPrice = parseFloat(right.card.getAttribute('data-jpy-price')) || 0;
+                const leftPriceRaw = left.card.getAttribute('data-jpy-price') || '';
+                const rightPriceRaw = right.card.getAttribute('data-jpy-price') || '';
+                const leftPrice = leftPriceRaw === '' ? null : parseFloat(leftPriceRaw);
+                const rightPrice = rightPriceRaw === '' ? null : parseFloat(rightPriceRaw);
+
+                if (sortValue === 'price-asc' || sortValue === 'price-desc') {
+                    if (leftPrice === null || Number.isNaN(leftPrice)) {
+                        return rightPrice === null || Number.isNaN(rightPrice)
+                            ? left.index - right.index
+                            : 1;
+                    }
+                    if (rightPrice === null || Number.isNaN(rightPrice)) {
+                        return -1;
+                    }
+                }
 
                 if (sortValue === 'price-asc') {
                     return leftPrice - rightPrice || left.index - right.index;
@@ -330,7 +357,7 @@
 
         async function fetchLiveRates() {
             const rateDisplay = document.getElementById('rateDisplay');
-            rateDisplay.textContent = '⏳ Loading rates...';
+            rateDisplay.textContent = '⏳ Updating exchange rates...';
 
             try {
                 const resp = await fetch('https://open.er-api.com/v6/latest/JPY');
@@ -340,10 +367,10 @@
                     RATES_FROM_JPY = data.rates;
                     ratesReady = true;
                     const jpyPerUsd = 1 / data.rates['USD'];
-                    rateDisplay.textContent = `✅ Live Rate: 1 USD = ¥${Math.round(jpyPerUsd)}`;
+                    rateDisplay.textContent = `1 USD = ¥${Math.round(jpyPerUsd)}`;
                     const rateSource = document.getElementById('rateSource');
                     if (rateSource) {
-                        rateSource.textContent = `✅ API: open.er-api.com (updated: ${data.time_last_update_utc || 'now'})`;
+                        rateSource.textContent = 'Exchange rates updated';
                     }
                     return;
                 }
@@ -368,10 +395,10 @@
             };
             ratesReady = true;
             const rateDisplay = document.getElementById('rateDisplay');
-            rateDisplay.textContent = `⚠️ Fallback Rate: 1 USD = ¥${jpyRate}`;
+            rateDisplay.textContent = `1 USD = ¥${jpyRate}`;
             const rateSource = document.getElementById('rateSource');
             if (rateSource) {
-                rateSource.textContent = '⚠️ API unavailable — using fallback rates';
+                rateSource.textContent = 'Using the saved exchange rate';
             }
         }
 
@@ -539,8 +566,13 @@
                 titleEn.textContent = '';
             }
 
-            price.dataset.jpyPrice = String(data.price || 0);
-            price.textContent = formatPriceFromJpy(data.price || 0, currentCurrency());
+            if (data.price === null || data.price === undefined) {
+                price.removeAttribute('data-jpy-price');
+                price.textContent = 'Price on request';
+            } else {
+                price.dataset.jpyPrice = String(data.price);
+                price.textContent = formatPriceFromJpy(data.price, currentCurrency());
+            }
 
             stock.innerHTML = '';
             const stockBadge = document.createElement('span');

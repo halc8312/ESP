@@ -51,7 +51,12 @@ from services.bg_remover.job_store import (
     serialize_job,
     serialize_jobs,
 )
-from services.image_service import IMAGE_STORAGE_PATH, split_image_url_string
+from services.image_service import (
+    IMAGE_STORAGE_PATH,
+    ImageValidationError,
+    split_image_url_string,
+    validate_image_url,
+)
 from services.media_queue import (
     enqueue_media_job,
     resolve_media_queue_name,
@@ -96,12 +101,13 @@ def _iter_current_image_urls(session_db, product: Product) -> list[str]:
 def _is_allowed_source_image_url(url: str) -> bool:
     if not url:
         return False
-    lower = url.lower()
-    return (
-        lower.startswith("http://")
-        or lower.startswith("https://")
-        or url.startswith("/")
-    )
+    if url.startswith("/"):
+        return not url.startswith("//")
+    try:
+        validate_image_url(url)
+    except ImageValidationError:
+        return False
+    return True
 
 
 def _processed_image_dir() -> str:
@@ -227,19 +233,16 @@ def _load_source_bytes_for_inline(source_url: str) -> bytes:
             return fh.read()
 
     if source_url.startswith(("http://", "https://")):
-        import requests
-
         from services.bg_remover.image_fetch import build_image_fetch_headers
+        from services.image_service import ImageValidationError, download_external_image
 
         try:
-            response = requests.get(
+            data, _extension = download_external_image(
                 source_url,
-                timeout=30,
                 headers=build_image_fetch_headers(source_url),
             )
-            response.raise_for_status()
-            return response.content
-        except requests.RequestException as exc:
+            return data
+        except ImageValidationError as exc:
             raise BackgroundRemovalError(
                 f"failed to download source image: {exc}"
             ) from exc

@@ -170,10 +170,24 @@ def _fetch_source_bytes(source_image_url: str) -> bytes:
     resolved = _resolve_source_url(source_image_url)
 
     from services.bg_remover.image_fetch import build_image_fetch_headers
+    from services.image_service import ImageValidationError, download_external_image
 
     headers = build_image_fetch_headers(resolved)
+    if (
+        source_image_url.startswith(("http://", "https://"))
+        and not _uses_internal_http_port(source_image_url)
+    ):
+        try:
+            data, _extension = download_external_image(resolved, headers=headers)
+        except ImageValidationError as exc:
+            raise BackgroundRemovalError(
+                f"unsafe or invalid external source image: {exc}"
+            ) from exc
+        return data
+
     timeout = _resolve_source_fetch_timeout()
     current_url = resolved
+    initial_origin = urlparse(current_url)
     try:
         for _attempt in range(MAX_SOURCE_FETCH_REDIRECTS + 1):
             request_headers = dict(headers)
@@ -192,7 +206,19 @@ def _fetch_source_bytes(source_image_url: str) -> bytes:
             if not location:
                 response.raise_for_status()
                 break
-            current_url = _resolve_redirect_url(current_url, location)
+            next_url = _resolve_redirect_url(current_url, location)
+            next_origin = urlparse(next_url)
+            if (
+                next_origin.scheme not in {"http", "https"}
+                or next_origin.hostname != initial_origin.hostname
+                or next_origin.port != initial_origin.port
+                or next_origin.username is not None
+                or next_origin.password is not None
+            ):
+                raise BackgroundRemovalError(
+                    "managed source image redirected outside the web service"
+                )
+            current_url = next_url
         else:
             raise BackgroundRemovalError("source image fetch exceeded redirects")
 
@@ -229,6 +255,7 @@ def _upload_result_bytes(
 
     timeout = _resolve_upload_timeout()
     current_url = url
+    initial_origin = urlparse(current_url)
     try:
         for _attempt in range(MAX_UPLOAD_REDIRECTS + 1):
             request_headers = dict(headers)
@@ -247,7 +274,19 @@ def _upload_result_bytes(
             if not location:
                 response.raise_for_status()
                 break
-            current_url = _resolve_redirect_url(current_url, location)
+            next_url = _resolve_redirect_url(current_url, location)
+            next_origin = urlparse(next_url)
+            if (
+                next_origin.scheme not in {"http", "https"}
+                or next_origin.hostname != initial_origin.hostname
+                or next_origin.port != initial_origin.port
+                or next_origin.username is not None
+                or next_origin.password is not None
+            ):
+                raise BackgroundRemovalError(
+                    "internal upload redirected outside the web service"
+                )
+            current_url = next_url
         else:
             raise BackgroundRemovalError("internal upload endpoint exceeded redirects")
     except requests.RequestException as exc:

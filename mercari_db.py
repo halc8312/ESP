@@ -34,6 +34,17 @@ from services.mercari_browser_fetch import (
 )
 from services.scraping_client import fetch_dynamic, gather_with_concurrency, get_async_fetch_settings, run_coro_sync
 from services.scrape_alerts import report_detail_result
+from services.scrape_safety import (
+    UnsafeScrapeUrlError,
+    install_navigation_guard,
+    is_usable_detail_result,
+    raise_for_blocked_navigation,
+    raise_for_unsafe_detail_result,
+    require_search_outcome,
+    require_usable_details,
+    validate_fetch_response,
+    validate_marketplace_url,
+)
 from utils.env_helpers import env_flag as _env_flag
 
 # Import metrics logging
@@ -258,9 +269,11 @@ def _maybe_refetch_mercari_detail_with_browser_pool(url: str, item: dict, meta: 
             url, network_idle=True,
         )
     except Exception as exc:
+        raise_for_unsafe_detail_result("mercari", exc)
         logger.warning("Mercari browser-pool detail refetch failed for %s: %s", url, exc)
         return item, meta
 
+    validate_fetch_response(refetched_page, "mercari", kind="detail")
     refetched_page = _normalize_mercari_detail_page(refetched_page, url)
     refetched_item, refetched_meta = parse_mercari_item_page(refetched_page, url)
 
@@ -481,10 +494,13 @@ def _merge_target_photo_url_union(
 
 
 async def _capture_mercari_network_payload_async(url: str) -> dict:
+    url = validate_marketplace_url(url, "mercari", kind="detail")
     captured_payloads = []
     response_tasks = []
 
     async def _task(page, context):
+        blocked_urls = await install_navigation_guard(context, "mercari", kind="detail")
+
         async def _capture_response(response):
             try:
                 headers = await response.all_headers()
@@ -499,7 +515,16 @@ async def _capture_mercari_network_payload_async(url: str) -> dict:
                 return
 
         page.on("response", lambda response: response_tasks.append(asyncio.create_task(_capture_response(response))))
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        try:
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        except Exception:
+            raise_for_blocked_navigation(blocked_urls, "mercari")
+            raise
+        raise_for_blocked_navigation(blocked_urls, "mercari")
+        validate_fetch_response(response, "mercari", kind="detail")
+        final_url = getattr(page, "url", None)
+        if isinstance(final_url, str) and final_url:
+            validate_marketplace_url(final_url, "mercari", kind="detail")
         try:
             await page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
@@ -510,6 +535,7 @@ async def _capture_mercari_network_payload_async(url: str) -> dict:
             pass
         if response_tasks:
             await asyncio.gather(*response_tasks, return_exceptions=True)
+        raise_for_blocked_navigation(blocked_urls, "mercari")
 
     await run_browser_page_task(
         "mercari",
@@ -728,8 +754,20 @@ async def _extract_shops_variants_async(page, label_texts: list) -> list:
 
 async def _scrape_shops_product_async(url: str) -> dict:
     """メルカリShops商品ページを Playwright で取得"""
+    url = validate_marketplace_url(url, "mercari", kind="detail")
+
     async def _task(page, context):
-            await page.goto(url, wait_until="domcontentloaded")
+            blocked_urls = await install_navigation_guard(context, "mercari", kind="detail")
+            try:
+                response = await page.goto(url, wait_until="domcontentloaded")
+            except Exception:
+                raise_for_blocked_navigation(blocked_urls, "mercari")
+                raise
+            raise_for_blocked_navigation(blocked_urls, "mercari")
+            validate_fetch_response(response, "mercari", kind="detail")
+            final_url = getattr(page, "url", None)
+            if isinstance(final_url, str) and final_url:
+                validate_marketplace_url(final_url, "mercari", kind="detail")
             try:
                 await page.wait_for_load_state("networkidle", timeout=5000)
             except Exception:
@@ -740,6 +778,17 @@ async def _scrape_shops_product_async(url: str) -> dict:
                 pass
             await page.wait_for_timeout(3000)  # Shopsはロードが遅いことがあるため待機
             body_text = await page.evaluate("document.body.innerText")
+            try:
+                challenge_html = await page.content()
+            except Exception:
+                challenge_html = ""
+            validate_fetch_response(
+                response,
+                "mercari",
+                kind="detail",
+                text=f"{body_text}\n{challenge_html}",
+            )
+            raise_for_blocked_navigation(blocked_urls, "mercari")
             
             # ---- タイトル ----
             title_selectors = get_selectors('mercari', 'shops', 'title') or ["[data-testid='product-name']", "h1"]
@@ -884,6 +933,7 @@ async def _scrape_shops_product_async(url: str) -> dict:
 
 def scrape_shops_product(url: str, driver=None) -> dict:
     """メルカリShops商品ページ用スクレイピング（同期ラッパー）"""
+    url = validate_marketplace_url(url, "mercari", kind="detail")
     item = run_coro_sync(_scrape_shops_product_async(url))
     meta = dict(item.get("_scrape_meta") or {})
     report_detail_result("mercari", url, item, meta, page_type="shops_detail")
@@ -893,6 +943,7 @@ def scrape_shops_product(url: str, driver=None) -> dict:
 
 def scrape_item_detail(url: str, driver=None):
     """1つの商品ページから詳細情報を取得して dict で返す"""
+    url = validate_marketplace_url(url, "mercari", kind="detail")
 
     # Shops URL判定
     if "/shops/product/" in url:
@@ -924,6 +975,7 @@ def scrape_item_detail(url: str, driver=None):
             network_capture["observed_response_urls"] = list(payload_result.get("observed_response_urls") or [])
             network_capture["captured"] = _has_usable_payload_item(payload_item)
         except Exception as exc:
+            raise_for_unsafe_detail_result("mercari", exc)
             network_capture["capture_error"] = str(exc)
             logger.warning("Mercari payload capture failed for %s: %s", url, exc)
 
@@ -946,6 +998,7 @@ def scrape_item_detail(url: str, driver=None):
         else:
             page = fetch_dynamic(url, headless=True, network_idle=True)
     except Exception as e:
+        raise_for_unsafe_detail_result("mercari", e)
         if use_payload and _has_usable_payload_item(payload_item):
             payload_item = dict(payload_item)
             payload_meta = dict(payload_meta)
@@ -984,6 +1037,7 @@ def scrape_item_detail(url: str, driver=None):
             "url": url, "title": "", "price": None, "status": "error",
             "description": "", "image_urls": [], "variants": []
         }
+    validate_fetch_response(page, "mercari", kind="detail")
     page = _normalize_mercari_detail_page(page, url)
     dom_item, dom_meta = parse_mercari_item_page(page, url)
     if not used_browser_pool_detail:
@@ -1067,9 +1121,21 @@ async def _scrape_search_async(
     max_scroll: int,
 ) -> list[str]:
     """ページスクロールしながら商品リンクを収集する非同期関数"""
+    search_url = validate_marketplace_url(search_url, "mercari", kind="search")
+
     async def _task(page, context):
+            blocked_urls = await install_navigation_guard(context, "mercari", kind="search")
             print(f"DEBUG: Navigating to {search_url}")
-            await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+            try:
+                response = await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+            except Exception:
+                raise_for_blocked_navigation(blocked_urls, "mercari")
+                raise
+            raise_for_blocked_navigation(blocked_urls, "mercari")
+            validate_fetch_response(response, "mercari", kind="search")
+            final_url = getattr(page, "url", None)
+            if isinstance(final_url, str) and final_url:
+                validate_marketplace_url(final_url, "mercari", kind="search")
             try:
                 # Wait up to 10 seconds for at least one item link to render
                 await page.wait_for_selector("a[data-testid='thumbnail-link'], a[href*='/item/']", timeout=10000)
@@ -1094,6 +1160,11 @@ async def _scrape_search_async(
                         # 絶対URLに変換
                         if href.startswith("/"):
                             href = f"https://jp.mercari.com{href}"
+                        try:
+                            href = validate_marketplace_url(href, "mercari", kind="detail")
+                        except UnsafeScrapeUrlError:
+                            logger.warning("Ignored unsafe Mercari detail URL discovered in search HTML")
+                            continue
                         if href not in seen_urls:
                             seen_urls.add(href)
                             item_urls.append(href)
@@ -1116,6 +1187,16 @@ async def _scrape_search_async(
                     # 成長していなければストップ
                     break
             
+            try:
+                body_text = await page.locator("body").inner_text(timeout=3000)
+            except Exception:
+                body_text = ""
+            raise_for_blocked_navigation(blocked_urls, "mercari")
+            require_search_outcome(
+                "mercari",
+                candidate_count=len(item_urls),
+                text=body_text,
+            )
             print(f"DEBUG: Found {len(item_urls)} valid item URLs.")
             return item_urls[:max_items * 2]  # 最大 max_items * 2 件
 
@@ -1161,6 +1242,9 @@ async def _collect_search_items_async(item_urls: list[str], max_items: int) -> l
         concurrency=settings.concurrency,
     )
 
+    for data in detail_results:
+        raise_for_unsafe_detail_result("mercari", data)
+
     filtered_items = []
     for url, data in zip(candidate_urls, detail_results):
         if len(filtered_items) >= max_items:
@@ -1170,12 +1254,17 @@ async def _collect_search_items_async(item_urls: list[str], max_items: int) -> l
         if isinstance(data, Exception):
             print(f"DEBUG: Error scraping {url}: {data}")
             continue
-        if data and data.get("title") and data.get("status") != "error":
+        if is_usable_detail_result(data):
             print(f"DEBUG: Success -> {data['title']}")
             filtered_items.append(data)
         else:
             print("DEBUG: Failed to get valid data (empty title or error)")
 
+    require_usable_details(
+        "mercari",
+        candidate_count=len(candidate_urls),
+        item_count=len(filtered_items),
+    )
     return filtered_items
 
 
@@ -1189,13 +1278,14 @@ def scrape_search_result(
     メルカリ検索URLから複数商品をスクレイピングして list[dict] を返す。
     Playwright を直接使用してページスクロール取得を実現。
     """
+    search_url = validate_marketplace_url(search_url, "mercari", kind="search")
     try:
         item_urls = run_coro_sync(
             _scrape_search_async(search_url, max_items, max_scroll)
         )
     except Exception as e:
-        logging.error(f"Search scrape failed: {e}")
-        return []
+        logging.exception("Search scrape failed: %s", e)
+        raise
     
     return run_coro_sync(_collect_search_items_async(item_urls, max_items))
 
@@ -1222,9 +1312,7 @@ def scrape_single_item(url: str, headless: bool = True):
         return [data]
 
     except Exception as e:
-        print(f"CRITICAL ERROR during single scraping: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("Critical error during Mercari single scraping: %s", e)
         metrics.record_attempt(False, url, str(e))
         metrics.finish()
-        return []
+        raise

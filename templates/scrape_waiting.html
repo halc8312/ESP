@@ -2,6 +2,7 @@
 
 {% block title %}商品抽出中{% endblock %}
 {% block header_title %}商品抽出中{% endblock %}
+{% block body_class %}has-bottom-nav scrape-page{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -15,13 +16,13 @@
             <div class="scrape-wait-hero">
                 <div class="scrape-wait-head">
                     <span id="status-badge" class="scrape-wait-badge is-queued">準備中</span>
-                    <span class="scrape-wait-job">Job {{ job_id[:8] }}</span>
+                    <span class="scrape-wait-job">受付番号 {{ job_id[:8] }}</span>
                 </div>
 
                 <div class="scrape-wait-main">
                     <div id="status-spinner" class="loading-spinner scrape-wait-spinner" aria-hidden="true"></div>
                     <div>
-                        <p id="status-message" class="scrape-wait-title">抽出ジョブを開始しました</p>
+                        <p id="status-message" class="scrape-wait-title">商品抽出を受け付けました</p>
                         <p id="status-copy" class="scrape-wait-copy">順番が来たら自動で開始し、完了後に結果画面へ移動します。</p>
                     </div>
                 </div>
@@ -62,17 +63,17 @@
         <div class="content-card-body">
             <div class="scrape-wait-steps">
                 <div id="step-queued" class="scrape-wait-step is-active">
-                    <small>Step 1</small>
-                    <strong>キュー登録</strong>
-                    <span>リクエストを受け付けて、実行順を確保します。</span>
+                    <small>手順 1</small>
+                    <strong>受付完了</strong>
+                    <span>抽出条件を受け付け、開始を待ちます。</span>
                 </div>
                 <div id="step-running" class="scrape-wait-step">
-                    <small>Step 2</small>
+                    <small>手順 2</small>
                     <strong>候補を収集</strong>
                     <span>検索結果と商品ページを確認しながら、表示できるデータへ整えます。</span>
                 </div>
                 <div id="step-result" class="scrape-wait-step">
-                    <small>Step 3</small>
+                    <small>手順 3</small>
                     <strong>結果を反映</strong>
                     <span>抽出が完了すると、このページから自動で結果画面へ移動します。</span>
                 </div>
@@ -157,12 +158,12 @@
             setStepState(stepQueued, "is-active");
             setStepState(stepRunning, "");
             setStepState(stepResult, "");
-            statusMessage.textContent = "キューで順番待ちです";
+            statusMessage.textContent = "順番を待っています";
             statusCopy.textContent = "順番が来たら自動で開始します。別タブで作業を続けても問題ありません。";
             queuePosition.textContent = data.queue_position ? data.queue_position + "番目" : "待機中";
             phaseMessage.textContent = data.queue_position
-                ? data.queue_position + "番目で待機しています。前のジョブ完了後に抽出を開始します。"
-                : "ジョブをキューへ登録しています。";
+                ? data.queue_position + "番目で待機しています。前の処理が終わると自動で始まります。"
+                : "抽出の開始を準備しています。";
             return;
         }
 
@@ -189,7 +190,7 @@
         fetch("/api/scrape/status/" + jobId)
             .then(function (response) {
                 if (!response.ok) {
-                    throw new Error("HTTPエラー: " + response.status);
+                    throw new Error("通信に失敗しました。ページを再読み込みして、もう一度お試しください。");
                 }
                 return response.json();
             })

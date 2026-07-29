@@ -527,7 +527,8 @@ class TestMainRoutes:
         variant = db_session.query(Variant).filter_by(product_id=product.id).one()
         assert variant.option1_value == 'Default Title'
         assert variant.sku == 'MANUAL-001'
-        assert variant.price == 4200
+        assert variant.price == 2500
+        assert variant.selling_price == 4200
         assert variant.inventory_qty == 3
 
     def test_manual_add_rejects_other_users_shop(self, client, db_session):
@@ -881,6 +882,7 @@ class TestPriceListRoutes:
             last_title='Catalog Layout Product',
             last_price=3200,
             last_status='on_sale',
+            custom_description='Catalog description',
             status='active',
             tags='PSA10,ONEPIECE,Rare',
             created_at=utc_now(),
@@ -903,8 +905,8 @@ class TestPriceListRoutes:
             title='Catalog Layout Product',
             price=3200,
             status='on_sale',
-            description='Catalog description',
-            image_urls='https://img.example.com/catalog-layout.jpg|https://img.example.com/catalog-layout-2.jpg',
+            description='Raw catalog source description',
+            image_urls='/media/product_images/catalog-layout.jpg|/static/images/catalog-layout-2.jpg',
             scraped_at=utc_now()
         )
         db_session.add(snapshot)
@@ -1120,14 +1122,14 @@ class TestPriceListRoutes:
             username='cataloglogotest',
             layout='grid',
             theme='dark',
-            shop_logo_url='https://img.example.com/shop-logo.png',
+            shop_logo_url='/media/shop_logos/shop-logo.png',
             explicit_pricelist_shop=True,
         )
 
         response = client.get(f'/catalog/{pricelist.token}')
         assert response.status_code == 200
         html = response.data.decode('utf-8')
-        assert 'https://img.example.com/shop-logo.png' in html
+        assert '/media/shop_logos/shop-logo.png' in html
         assert 'cataloglogotest-shop' in html
 
     def test_catalog_view_renders_product_modal_shell(self, client, db_session):
@@ -1187,8 +1189,8 @@ class TestPriceListRoutes:
         assert data['description_snippet'] == 'Catalog description'
         assert data['in_stock'] is True
         assert data['image_urls'] == [
-            'https://img.example.com/catalog-layout.jpg',
-            'https://img.example.com/catalog-layout-2.jpg',
+            '/media/product_images/catalog-layout.jpg',
+            '/static/images/catalog-layout-2.jpg',
         ]
         # Information boundary: source/supplier data must not leak
         assert 'source_url' not in data
@@ -1528,7 +1530,8 @@ class TestProductRoutes:
         db_session.refresh(variant)
         assert product.pricing_rule_id == rule.id
         assert product.selling_price == 3450
-        assert variant.price == 3450
+        assert variant.price == 1000
+        assert variant.selling_price == 3450
         assert variant.inventory_qty == 7
 
     def test_product_detail_does_not_expose_other_users_pricing_rules(self, client, db_session):
@@ -1935,7 +1938,7 @@ class TestProductRoutes:
         assert response.json['skipped_count'] == 0
 
         db_session.refresh(product)
-        assert product.selling_price == 1250
+        assert product.selling_price == 1200
 
     def test_bulk_price_reset(self, client, db_session):
         """Test bulk price API can reset manual selling prices"""
@@ -1966,12 +1969,12 @@ class TestProductRoutes:
             json={
                 'ids': [product.id],
                 'mode': 'margin',
-                'value': 100
+                'value': 501
             }
         )
 
         assert response.status_code == 400
-        assert response.json['error'] == 'margin must satisfy 0 <= margin < 100'
+        assert response.json['error'] == 'margin must satisfy 0 <= margin <= 500'
 
 
 class TestScrapeRoutes:

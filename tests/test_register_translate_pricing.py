@@ -196,7 +196,7 @@ def test_register_selected_pricing_noop_without_default(client, db_session, monk
 
 # -- translate tests --
 
-def test_register_selected_translate_creates_auto_apply_suggestion(client, db_session, monkeypatch):
+def test_register_selected_translates_and_auto_applies_by_default(client, db_session, monkeypatch):
     user = _login(client, db_session, "translate_auto_user")
     monkeypatch.setattr("routes.scrape.get_queue", lambda: _make_completed_job(user.id))
 
@@ -205,7 +205,6 @@ def test_register_selected_translate_creates_auto_apply_suggestion(client, db_se
         json={
             "job_id": "job-p3",
             "selected_indices": [0, 1],
-            "translate": True,
         },
     )
     assert response.status_code == 200
@@ -223,6 +222,29 @@ def test_register_selected_translate_creates_auto_apply_suggestion(client, db_se
     for p in products:
         assert p.custom_title_en is not None
         assert p.custom_title_en.startswith("EN[")
+
+
+def test_register_selected_can_explicitly_disable_translation(client, db_session, monkeypatch):
+    user = _login(client, db_session, "translate_opt_out_user")
+    monkeypatch.setattr("routes.scrape.get_queue", lambda: _make_completed_job(user.id))
+
+    response = client.post(
+        "/scrape/register-selected",
+        json={
+            "job_id": "job-p3",
+            "selected_indices": [0],
+            "translate": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["translation_jobs_enqueued"] == 0
+    assert (
+        db_session.query(TranslationSuggestion)
+        .filter_by(user_id=user.id)
+        .count()
+        == 0
+    )
 
 
 # -- register-to-pricelist + options --
@@ -246,7 +268,6 @@ def test_register_to_pricelist_with_translate_and_pricing(client, db_session, mo
             "job_id": "job-p3",
             "selected_indices": [0],
             "price_list_id": price_list.id,
-            "translate": True,
             "apply_pricing": True,
         },
     )

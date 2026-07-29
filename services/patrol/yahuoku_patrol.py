@@ -24,9 +24,13 @@ class YahuokuPatrol(BasePatrol):
 
     def _fetch_with_scrapling(self, url: str) -> PatrolResult:
         try:
-            from services.scraping_client import fetch_static
+            from services.scraping_client import fetch_marketplace_static
 
-            page = fetch_static(url)
+            page = fetch_marketplace_static(
+                url,
+                site="yahuoku",
+                kind="detail",
+            )
             item_detail = _extract_auction_item(page)
             if not item_detail:
                 return PatrolResult(error="No auction item data found")

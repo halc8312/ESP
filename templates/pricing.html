@@ -21,7 +21,7 @@
                     <input type="text" id="name" name="name" placeholder="例: 標準利益率" required>
                 </div>
                 <div class="form-group">
-                    <label for="margin_rate">利益率 (%)</label>
+                    <label for="margin_rate">利益上乗せ率 (%)</label>
                     <input type="number" id="margin_rate" name="margin_rate" value="30" min="0" max="500" required>
                 </div>
                 <div class="form-group">
@@ -39,7 +39,7 @@
         </form>
         <div class="formula-preview"
             style="margin-top: 12px; padding: 12px; background: #f5f5f5; border-radius: 8px; font-size: 0.9em;">
-            <strong>計算式:</strong> 販売価格 = (仕入値 + 送料上乗せ) × (1 + 利益率/100) + 固定手数料
+            <strong>計算式:</strong> 販売価格 = (仕入値 + 送料上乗せ) × (1 + 利益上乗せ率/100) + 固定手数料
         </div>
     </div>
 </div>
@@ -55,7 +55,7 @@
                 <thead>
                     <tr>
                         <th>ルール名</th>
-                        <th>利益率</th>
+                        <th>利益上乗せ率</th>
                         <th>送料上乗せ</th>
                         <th>固定手数料</th>
                         <th>計算例 (仕入1000円の場合)</th>
@@ -107,7 +107,7 @@
                 <input type="text" name="name" id="edit_name" required style="width: 100%;">
             </div>
             <div class="form-group" style="margin-bottom: 12px;">
-                <label>利益率 (%)</label>
+                <label>利益上乗せ率 (%)</label>
                 <input type="number" name="margin_rate" id="edit_margin_rate" min="0" max="500" required
                     style="width: 100%;">
             </div>

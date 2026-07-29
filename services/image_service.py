@@ -3,12 +3,15 @@ Image caching and validation service for external product images.
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
+import socket
 from io import BytesIO
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import requests
+import urllib3
 from PIL import Image, UnidentifiedImageError
 
 logger = logging.getLogger("services.image_service")
@@ -25,6 +28,26 @@ ALLOWED_IMAGE_CONTENT_TYPES = {
     "image/webp": ".webp",
     "image/gif": ".gif",
 }
+MAX_IMAGE_REDIRECTS = 5
+_CROSS_HOST_REDIRECT_HEADERS = frozenset(
+    {"accept", "accept-encoding", "accept-language", "user-agent"}
+)
+
+# Product pages may contain arbitrary third-party URLs.  Keep the default
+# boundary deliberately narrow; deployments can add exact hosts through
+# ALLOWED_IMAGE_HOSTS when a marketplace starts serving images elsewhere.
+DEFAULT_ALLOWED_IMAGE_HOSTS = frozenset(
+    {
+        "static.mercdn.net",
+        "item-shopping.c.yimg.jp",
+        "auctions.c.yimg.jp",
+        "img.fril.jp",
+        "cdn.suruga-ya.jp",
+        "www.suruga-ya.jp",
+        "netmall.hardoff.co.jp",
+        "cdn.snkrdunk.com",
+    }
+)
 
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
@@ -51,19 +74,145 @@ def split_image_url_string(pipe_separated: str | None) -> list[str]:
 
 def _allowed_hosts():
     raw_hosts = os.environ.get("ALLOWED_IMAGE_HOSTS", "")
-    return {host.strip().lower() for host in raw_hosts.split(",") if host.strip()}
+    configured = {
+        host.strip().rstrip(".").lower()
+        for host in raw_hosts.split(",")
+        if host.strip()
+    }
+    return set(DEFAULT_ALLOWED_IMAGE_HOSTS) | configured
 
 
 def validate_image_url(url: str) -> str:
-    parsed = urlparse(url or "")
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ImageValidationError("Image URL must be HTTP(S).")
-
-    allowed_hosts = _allowed_hosts()
-    if allowed_hosts and parsed.hostname and parsed.hostname.lower() not in allowed_hosts:
+    try:
+        parsed = urlparse(str(url or "").strip())
+    except ValueError as exc:
+        raise ImageValidationError("Image URL is invalid.") from exc
+    if parsed.scheme.lower() != "https" or not parsed.netloc or not parsed.hostname:
+        raise ImageValidationError("Image URL must use HTTPS.")
+    if parsed.username is not None or parsed.password is not None:
+        raise ImageValidationError("Image URL must not contain credentials.")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ImageValidationError("Image URL port is invalid.") from exc
+    if port not in (None, 443):
+        raise ImageValidationError("Image URL must use the standard HTTPS port.")
+    try:
+        host = parsed.hostname.rstrip(".").lower().encode("idna").decode("ascii")
+    except (AttributeError, UnicodeError) as exc:
+        raise ImageValidationError("Image host is invalid.") from exc
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        raise ImageValidationError("Image URL must not use an IP address.")
+    if host not in _allowed_hosts():
         raise ImageValidationError("Image host is not allowed.")
 
-    return url
+    netloc = host if port is None else f"{host}:443"
+    return urlunparse(parsed._replace(scheme="https", netloc=netloc, fragment=""))
+
+
+def _resolve_public_image_addresses(host: str) -> tuple[str, ...]:
+    try:
+        answers = socket.getaddrinfo(
+            host,
+            443,
+            family=socket.AF_UNSPEC,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError as exc:
+        raise ImageValidationError("Image host could not be resolved.") from exc
+
+    addresses = tuple(dict.fromkeys(answer[4][0] for answer in answers if answer[4]))
+    if not addresses:
+        raise ImageValidationError("Image host could not be resolved.")
+    for address in addresses:
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError as exc:
+            raise ImageValidationError("Image host resolved to an invalid address.") from exc
+        if not ip.is_global:
+            raise ImageValidationError("Image host resolved to a non-public address.")
+    return addresses
+
+
+def _open_pinned_image_response(url: str, headers: dict | None = None):
+    """Open one HTTPS hop against a DNS-pinned public IP.
+
+    TLS still authenticates the original hostname.  Pinning the connection to
+    the address checked above closes the DNS-rebinding gap between validation
+    and connect.
+    """
+    parsed = urlparse(url)
+    host = str(parsed.hostname or "")
+    addresses = _resolve_public_image_addresses(host)
+    connect_host = addresses[0]
+    pool = urllib3.HTTPSConnectionPool(
+        connect_host,
+        port=443,
+        cert_reqs="CERT_REQUIRED",
+        ca_certs=requests.certs.where(),
+        assert_hostname=host,
+        server_hostname=host,
+        maxsize=1,
+        block=True,
+    )
+    request_target = parsed.path or "/"
+    if parsed.query:
+        request_target += f"?{parsed.query}"
+    request_headers = {
+        str(key): value
+        for key, value in dict(headers or {}).items()
+        if str(key).lower() != "host"
+    }
+    request_headers["Host"] = host
+    response = pool.urlopen(
+        "GET",
+        request_target,
+        headers=request_headers,
+        redirect=False,
+        retries=False,
+        preload_content=False,
+        timeout=urllib3.Timeout(connect=3.05, read=10),
+    )
+    # Retain the pool until the streaming response has been released.
+    response._image_connection_pool = pool
+    return response
+
+
+def _close_image_response(response) -> None:
+    try:
+        response.close()
+    except Exception:
+        pass
+    try:
+        response.release_conn()
+    except Exception:
+        pass
+
+
+def _response_status(response) -> int:
+    status = getattr(response, "status", None)
+    if not isinstance(status, int):
+        status = getattr(response, "status_code", 0)
+    try:
+        return int(status)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _iter_response_chunks(response):
+    streamer = getattr(response, "stream", None)
+    if callable(streamer):
+        yield from streamer(64 * 1024)
+        return
+    iterator = getattr(response, "iter_content", None)
+    if callable(iterator):
+        yield from iterator(chunk_size=64 * 1024)
+        return
+    raise ImageValidationError("Image response cannot be streamed.")
 
 
 def _content_type_ext(content_type: str) -> str:
@@ -107,26 +256,63 @@ def validate_image_bytes(data: bytes, content_type: str | None = None) -> tuple[
 
 
 def download_external_image(url: str, headers: dict | None = None) -> tuple[bytes, str]:
-    validate_image_url(url)
-    request_headers = headers or {}
-    with requests.get(url, headers=request_headers, stream=True, timeout=(3.05, 10)) as resp:
-        resp.raise_for_status()
-        content_type = resp.headers.get("Content-Type", "")
+    current_url = validate_image_url(url)
+    request_headers = dict(headers or {})
+    response = None
+    content_type = ""
+    chunks: list[bytes] = []
+    total = 0
+
+    for redirect_count in range(MAX_IMAGE_REDIRECTS + 1):
+        response = _open_pinned_image_response(current_url, request_headers)
+        status = _response_status(response)
+        if status in {301, 302, 303, 307, 308}:
+            location = str(response.headers.get("Location", "") or "").strip()
+            _close_image_response(response)
+            response = None
+            if not location:
+                raise ImageValidationError("Image redirect is missing a destination.")
+            if redirect_count >= MAX_IMAGE_REDIRECTS:
+                raise ImageValidationError("Image redirect limit exceeded.")
+            next_url = validate_image_url(urljoin(current_url, location))
+            if urlparse(next_url).hostname != urlparse(current_url).hostname:
+                request_headers = {
+                    key: value
+                    for key, value in request_headers.items()
+                    if str(key).lower() in _CROSS_HOST_REDIRECT_HEADERS
+                }
+            current_url = next_url
+            continue
+        if status < 200 or status >= 300:
+            _close_image_response(response)
+            response = None
+            raise ImageValidationError(f"Image download failed with HTTP {status}.")
+        break
+    else:  # pragma: no cover - loop always exits through return/raise
+        raise ImageValidationError("Image redirect limit exceeded.")
+
+    try:
+        content_type = response.headers.get("Content-Type", "")
         _content_type_ext(content_type)
 
-        content_length = resp.headers.get("Content-Length")
-        if content_length and int(content_length) > MAX_IMAGE_DOWNLOAD_BYTES:
-            raise ImageValidationError("Image exceeds the configured byte limit.")
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                declared_length = int(content_length)
+            except (TypeError, ValueError) as exc:
+                raise ImageValidationError("Image Content-Length is invalid.") from exc
+            if declared_length > MAX_IMAGE_DOWNLOAD_BYTES:
+                raise ImageValidationError("Image exceeds the configured byte limit.")
 
-        chunks = []
-        total = 0
-        for chunk in resp.iter_content(chunk_size=64 * 1024):
+        for chunk in _iter_response_chunks(response):
             if not chunk:
                 continue
             total += len(chunk)
             if total > MAX_IMAGE_DOWNLOAD_BYTES:
                 raise ImageValidationError("Image exceeds the configured byte limit.")
-            chunks.append(chunk)
+            chunks.append(bytes(chunk))
+    finally:
+        _close_image_response(response)
 
     data = b"".join(chunks)
     ext, _size = validate_image_bytes(data, content_type=content_type)

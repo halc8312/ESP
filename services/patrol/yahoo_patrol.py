@@ -21,9 +21,13 @@ class YahooPatrol(BasePatrol):
 
     def _fetch_with_scrapling(self, url: str) -> PatrolResult:
         try:
-            from services.scraping_client import fetch_static
+            from services.scraping_client import fetch_marketplace_static
 
-            page = fetch_static(url)
+            page = fetch_marketplace_static(
+                url,
+                site="yahoo",
+                kind="detail",
+            )
             script_el = page.find("#__NEXT_DATA__")
             if not script_el:
                 return PatrolResult(error="No __NEXT_DATA__ found")

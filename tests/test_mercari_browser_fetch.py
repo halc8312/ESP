@@ -4,6 +4,11 @@ from services.mercari_browser_fetch import (
 )
 
 
+class FakeBrowserContext:
+    async def route(self, _pattern, _handler):
+        return None
+
+
 def test_fetch_mercari_page_via_browser_pool_sync_builds_html_adapter(monkeypatch):
     captured = {}
 
@@ -65,7 +70,7 @@ def test_fetch_mercari_page_via_browser_pool_sync_builds_html_adapter(monkeypatc
                 </html>
                 """
 
-        await task_coro_factory(FakePage(), object())
+        await task_coro_factory(FakePage(), FakeBrowserContext())
 
     monkeypatch.setattr("services.mercari_browser_fetch.run_browser_page_task", fake_run_browser_page_task)
 
@@ -147,7 +152,7 @@ def test_fetch_mercari_page_and_payloads_waits_for_target_items_get(monkeypatch)
             async def content(self):
                 return "<html><body></body></html>"
 
-        await task_coro_factory(FakePage(), object())
+        await task_coro_factory(FakePage(), FakeBrowserContext())
 
     monkeypatch.setattr(
         "services.mercari_browser_fetch.run_browser_page_task",
@@ -241,7 +246,7 @@ def test_fetch_mercari_page_and_payloads_reloads_when_target_items_get_missing(m
             async def content(self):
                 return "<html><body></body></html>"
 
-        await task_coro_factory(FakePage(), object())
+        await task_coro_factory(FakePage(), FakeBrowserContext())
 
     monkeypatch.setattr(
         "services.mercari_browser_fetch.run_browser_page_task",
@@ -322,7 +327,7 @@ def test_fetch_mercari_page_and_payloads_skips_reload_when_target_captured(monke
             async def content(self):
                 return "<html></html>"
 
-        await task_coro_factory(FakePage(), object())
+        await task_coro_factory(FakePage(), FakeBrowserContext())
 
     monkeypatch.setattr(
         "services.mercari_browser_fetch.run_browser_page_task",
@@ -380,7 +385,7 @@ def test_fetch_mercari_page_and_payloads_skips_reload_for_non_item_urls(monkeypa
             async def content(self):
                 return "<html></html>"
 
-        await task_coro_factory(FakePage(), object())
+        await task_coro_factory(FakePage(), FakeBrowserContext())
 
     monkeypatch.setattr(
         "services.mercari_browser_fetch.run_browser_page_task",
@@ -435,7 +440,7 @@ def test_fetch_mercari_page_and_payloads_skips_wait_for_non_item_urls(monkeypatc
             async def content(self):
                 return "<html></html>"
 
-        await task_coro_factory(FakePage(), object())
+        await task_coro_factory(FakePage(), FakeBrowserContext())
 
     monkeypatch.setattr(
         "services.mercari_browser_fetch.run_browser_page_task",

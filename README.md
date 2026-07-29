@@ -287,8 +287,10 @@ Shopify 用 CSV を生成して一括出品
 | `last_status` | String | ステータス（on_sale / sold / deleted） |
 | `custom_title` | String | カスタムタイトル（日本語） |
 | `custom_title_en` | String | カスタムタイトル（英語） |
-| `selling_price` | Float | 算出済み販売価格 |
+| `selling_price` | Integer | 商品共通の算出済み販売価格（0も有効） |
 | `patrol_fail_count` | Integer | パトロール連続失敗回数 |
+
+`variants.price` は取得元価格、`variants.selling_price` はバリエーション別の販売価格です。販売画面とCSVは共通の価格解決処理を使い、バリエーション別価格が未設定なら商品の共通販売価格へ戻ります。
 
 ---
 
@@ -355,6 +357,13 @@ flask db-smoke --require-backend postgresql --apply-migrations
 flask detail-fixture-smoke --site mercari --fixture-path mercari_page_dump_live.html --target-url https://jp.mercari.com/item/m71383569733
 # search result dump が skeleton/challenge ではなく実結果を含むか確認:
 flask search-fixture-smoke --site mercari --fixture-path search_dump.html --target-url https://jp.mercari.com/search?keyword=sneaker
+# 7サイトの実URLを使う受入確認（各URLは SITE=URL 形式で1つずつ指定）:
+python scripts/live_search_acceptance.py \
+  --target "mercari=<検索結果URL>" --target "rakuma=<検索結果URL>" \
+  --target "yahoo=<検索結果URL>" --target "surugaya=<検索結果URL>" \
+  --target "offmall=<検索結果URL>" --target "yahuoku=<検索結果URL>" \
+  --target "snkrdunk=<検索結果URL>"
+# GitHub Actions の「Live Search URL Acceptance」からも同じ7サイト確認を手動実行できる。
 # local-first の順序つき総合確認:
 flask local-verify --profile full --require-backend postgresql --apply-migrations
 # queue + worker + status/result までまとめて通す:
@@ -368,7 +377,7 @@ flask stack-smoke --require-backend postgresql --apply-migrations --mode persist
 # その後 web/worker を起動:
 flask run --port 5000
 # Worker は別端末で dedicated entrypoint を起動:
-# 定期 patrol / trash purge を持たせる worker は 1 台だけ `WORKER_ENABLE_SCHEDULER=1`
+# 定期 patrol / trash purge / translation lease recovery を持たせる worker は 1 台だけ `WORKER_ENABLE_SCHEDULER=1`
 py -3 worker.py
 # 旧 `run_rq_worker.py` も互換ラッパとして残してある。
 # `worker.py` は既定で shared browser runtime を有効化し、Mercari browser を warm する。
@@ -425,9 +434,9 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 
 - live では `esp-web` と `esp-worker` が同じ `DATABASE_URL` / `REDIS_URL` / `SECRET_KEY` 契約を共有する
 - `SCRAPE_QUEUE_BACKEND` を含む queue 契約は web / worker / keyvalue の3者で揃える
-- Blueprint の web は `/healthz` を health check に使い、worker は `python worker.py` で起動する
+- Blueprint の web は web 自身に必須な DB/Redis 到達性だけを確認する `/readyz` を health check に使う。live worker と worker 所有 scheduler の heartbeat は運用確認用 `/stack-readyz` で判定し、worker は `python worker.py` で起動する
 - `SECRET_KEY` は `esp-web` / `esp-worker` の両方に同じ値を手動設定する。開発用デフォルト値のまま本番起動しない
-- `SCHEMA_BOOTSTRAP_MODE=auto` を維持し、初回起動時に web / worker のどちらが先に立っても schema を揃えられる状態にしておく
+- `SCHEMA_BOOTSTRAP_MODE=auto` を維持する。PostgreSQL の Alembic upgrade は advisory lock で全処理を直列化するため、web / worker が同時起動しても migration DDL を競合させない
 - 画像とショップロゴの永続化がまだ filesystem 前提なので、Blueprint では web に小さい persistent disk を付け、`IMAGE_STORAGE_PATH=/var/data/images` を使う
 
 ---
@@ -454,10 +463,15 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 | `SCRAPE_JOB_HEARTBEAT_SECONDS` | `30` | running job の heartbeat 間隔 |
 | `SCRAPE_JOB_STALL_TIMEOUT_SECONDS` | `900` | heartbeat が止まった running job を failed 扱いに切り替える秒数 |
 | `SCRAPE_JOB_ORPHAN_TIMEOUT_SECONDS` | `60` | durable state は non-terminal だが Redis/RQ 上に job 本体が見つからない場合に failed 扱いへ切り替える猶予秒数 |
-| `WORKER_ENABLE_SCHEDULER` | `false` | patrol / trash purge の APScheduler をこの worker が所有するか。`true` にする worker は 1 台だけ |
+| `WORKER_ENABLE_SCHEDULER` | `false` | patrol / trash purge / translation lease recovery の APScheduler をこの worker が所有するか。`true` にする worker は 1 台だけ |
 | `WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP` | `true` | worker 起動時に、stall timeout を超えた `running` job を durable state 上で `failed` に掃除するか |
 | `WORKER_BACKLOG_WARN_COUNT` | `25` | worker 起動時 backlog 診断で warning を出す queued job 件数しきい値。`0` で無効 |
 | `WORKER_BACKLOG_WARN_AGE_SECONDS` | `900` | worker 起動時 backlog 診断で warning を出す oldest queued/running age しきい値。`0` で無効 |
+| `WORKER_HEARTBEAT_ENABLED` | `false` (`worker.py` では `true` 既定) | dedicated worker が一意な Redis key をTTL付きで更新するか |
+| `WORKER_HEARTBEAT_KEY_PREFIX` | `esp:worker:heartbeat` | worker heartbeat key の共有prefix。web / worker で同じ値を使う |
+| `WORKER_HEARTBEAT_INTERVAL_SECONDS` | `15` | worker heartbeat の更新間隔 |
+| `WORKER_HEARTBEAT_TTL_SECONDS` | `90` | worker heartbeat key のTTL。停止時は自分の一意keyだけを削除する |
+| `WORKER_HEARTBEAT_FRESHNESS_SECONDS` | `60` | `/stack-readyz` が live worker と判定できる最終更新からの最大秒数 |
 | `SELECTOR_ALERT_WEBHOOK_URL` | unset | selector healer / repair candidate 通知の送信先 webhook。Discord raw webhook も利用可 |
 | `OPERATIONAL_ALERT_WEBHOOK_URL` | unset | worker backlog などの silent operational alert 送信先 webhook |
 | `OPERATIONAL_ALERT_COOLDOWN_SECONDS` | `900` | 同一 operational alert の再送 cooldown |
@@ -467,6 +481,9 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 | `SCHEDULER_LOCK_BACKEND` | `auto` | scheduler lock。`auto` は single-service web/inmemory では file lock、worker/rq 側では Redis lock を優先する |
 | `SCHEDULER_LOCK_KEY` | `esp:scheduler:lock` | Redis lock key |
 | `SCHEDULER_LOCK_TTL_SECONDS` | `120` | Redis scheduler lock の TTL |
+| `SCHEDULER_HEARTBEAT_ENABLED` | Redis設定時に有効 (`worker.py` では `true` 既定) | scheduler owner が Redis hash heartbeat を更新するか |
+| `SCHEDULER_HEARTBEAT_KEY` | `esp:scheduler:heartbeat` | scheduler heartbeat hash key。web / worker で同じ値を使う |
+| `SCHEDULER_HEARTBEAT_FRESHNESS_SECONDS` | `1200` | `/stack-readyz` が worker role の scheduler heartbeat を新鮮とみなす秒数。15分patrol周期に5分の余裕を持つ |
 | `ENABLE_SHARED_BROWSER_RUNTIME` | `false` (`worker.py` では `true` 既定) | shared Playwright browser runtime を使うか |
 | `WARM_BROWSER_POOL` | `false` (`worker.py` では `true` 既定) | worker 起動時に browser pool を warm するか |
 | `BROWSER_POOL_WARM_SITES` | `mercari` | 起動時に warm する browser site 一覧 |
@@ -508,7 +525,7 @@ shared browser runtime を有効にした worker は、起動時の durable back
 
 `flask single-web-redeploy-checklist` は、legacy single-web 互換 path を安全に再デプロイするための operator 向け JSON checklist です。local gate、Dashboard 上で崩してはいけない env 前提、post-deploy smoke、rollback を一つにまとめます。post-deploy smoke のコマンド列には cautious default として `--retries 4 --retry-delay-seconds 2` を含めています。手順全体は `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` にまとめています。
 
-`flask single-web-postdeploy-smoke --base-url https://...` は、legacy single-web path 向け post-deploy smoke です。`render-postdeploy-smoke` の single-web 版で、`queue_backend=inmemory`、`runtime_role=web`、`scheduler_enabled=true` を前提に `/healthz`、`/login`、`/scrape`、`/api/scrape/jobs` を確認します。`--username` と `--password` を付けると authenticated route も見られ、`--ensure-user` を付けると必要時だけ `/register` を試します。deploy 直後の cold start や一時的な 502/503 を吸収したい時は `--retries` と `--retry-delay-seconds` で再試行回数を上げられます。
+`flask single-web-postdeploy-smoke --base-url https://...` は、legacy single-web path 向け post-deploy smoke です。`render-postdeploy-smoke` の single-web 版で、`queue_backend=inmemory`、`runtime_role=web`、`scheduler_enabled=true` を前提に `/stack-readyz`、`/healthz`、`/login`、`/scrape`、`/api/scrape/jobs` を確認します。`--username` と `--password` を付けると authenticated route も見られ、`--ensure-user` を付けると必要時だけ `/register` を試します。deploy 直後の cold start や一時的な 502/503 を吸収したい時は `--retries` と `--retry-delay-seconds` で再試行回数を上げられます。
 
 `flask single-web-smoke` は、`single-web + SCRAPE_QUEUE_BACKEND=inmemory` の互換 path を live site なしで end-to-end に確認するコマンドです。内部 smoke payload を使って job enqueue、`/api/scrape/status/<job_id>`、`/api/scrape/jobs`、`/scrape/result/<job_id>` まで確認します。`--mode preview` では DB に商品が保存されないこと、`--mode persist` では保存経路まで確認できます。
 
@@ -524,7 +541,7 @@ shared browser runtime を有効にした worker は、起動時の durable back
 
 `flask render-cutover-readiness` は、現在の Render split 構成に対するローカル判定 gate です。single-web predeploy は advisory として残しつつ、persistent DB の `schema-drift-check`、split-render predeploy、split worker health、`local-verify --profile full` を一つに束ねます。手順全体は `docs/RENDER_CUTOVER_RUNBOOK.md` にまとめています。
 
-`flask render-blueprint-audit` は `render.yaml` の静的監査です。`esp-web` / `esp-worker` / `esp-keyvalue` / `esp-postgres` の service 名、`autoDeployTrigger: off`、`/healthz`、`python worker.py`、managed `DATABASE_URL` / `REDIS_URL`、manual secret env の棚卸しを確認します。Render Dashboard に入る前の secret/env チェックとして使えます。
+`flask render-blueprint-audit` は `render.yaml` の静的監査です。`esp-web` / `esp-worker` / `esp-keyvalue` / `esp-postgres` の service 名、`autoDeployTrigger: off`、`/readyz`、`python worker.py`、managed `DATABASE_URL` / `REDIS_URL`、manual secret env の棚卸しを確認します。Render Dashboard に入る前の secret/env チェックとして使えます。
 
 `flask render-budget-guardrail-audit --blueprint-path render.yaml` は、repo に記録した budget guardrail 前提と `render.yaml` の plan を照合する監査です。いまの前提では `esp-web=starter`, `esp-worker=standard`, `esp-keyvalue=starter`, `esp-postgres=basic-1gb` を要求し、core recurring cost estimate は `$61/month` として扱います。これは repo に固定した planning assumption で、actual purchase 前には Render 側の価格再確認が別途必要です。
 
@@ -536,7 +553,7 @@ shared browser runtime を有効にした worker は、起動時の durable back
 
 `flask render-dashboard-inputs` は `render.yaml` から Dashboard 入力用の env 一覧を JSON で出します。service ごとの `manual_envs`、`managed_envs`、`fixed_envs` を分けて見られるので、「Render 側で手入力するもの」と「Blueprint に任せるもの」を混ぜにくくなります。
 
-`flask render-postdeploy-smoke --base-url https://...` は、初回 paid activation 後の web 健全性チェックです。`/healthz` の JSON を見て `runtime_role=web`、`queue_backend=rq`、`scheduler_enabled=false` を確認し、加えて `/login`、`/scrape`、`/api/scrape/jobs` が 500 を返していないことを見ます。`--username` と `--password` を付けるとログイン後の `/scrape` と `/api/scrape/jobs` も確認するので、今回 staging で実際に壊れた「認証後にだけ 500 になる」系も Deploy 後すぐに検知できます。初回 smoke user がまだ存在しない場合は `--ensure-user` を付けると、login が通らなかった時だけ `/register` を試してから authenticated route smoke へ進みます。deploy 直後の一時 502/503 や cold start を見越すなら `--retries` と `--retry-delay-seconds` を増やして判定を安定化できます。
+`flask render-postdeploy-smoke --base-url https://...` は、初回 paid activation 後の full-stack 健全性チェックです。Render lifecycle 用 `/readyz` はweb自身に必須なDB・Redis到達性だけを判定し、CLIは運用確認用 `/stack-readyz` でそれらに加えて live worker heartbeat、worker role の scheduler heartbeat、`queue_backend=rq`、web scheduler無効化を必須確認します。最小情報だけを返す `/healthz` では `runtime_role=web` を確認します。加えて `/login`、`/scrape`、`/api/scrape/jobs` が 500 を返していないことも見ます。`--username` と `--password` を付けるとログイン後の `/scrape` と `/api/scrape/jobs` も確認するので、今回 staging で実際に壊れた「認証後にだけ 500 になる」系も Deploy 後すぐに検知できます。初回 smoke user がまだ存在しない場合は `--ensure-user` を付けると、login が通らなかった時だけ `/register` を試してから authenticated route smoke へ進みます。deploy 直後の一時 502/503 や cold start を見越すなら `--retries` と `--retry-delay-seconds` を増やして判定を安定化できます。
 
 `flask render-worker-postdeploy-checklist --blueprint-path render.yaml` は、paid split の worker post-deploy で見るべき log marker と runtime 契約を JSON で出します。`esp-worker` の fixed / managed / manual env、`python worker.py` 前提、scheduler owner、browser warm、backlog warning 閾値を `render.yaml` から読み取り、worker 起動ログで何を確認すべきかを operator 向けに固定します。
 

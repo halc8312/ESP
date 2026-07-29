@@ -12,7 +12,10 @@ import models  # noqa: F401
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Migrations run in-process during application bootstrap.  The stdlib
+    # default would disable every existing non-Alembic logger permanently,
+    # which makes runtime failures after a successful migration invisible.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 configured_sqlalchemy_url = config.attributes.get("configured_sqlalchemy_url") or get_database_url()
 config.set_main_option("sqlalchemy.url", configured_sqlalchemy_url)

@@ -5,16 +5,17 @@ No login required.
 import hashlib
 from collections import Counter
 from datetime import timedelta
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from flask import Blueprint, render_template, abort, jsonify, request, session
 from flask_login import login_required, current_user
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import joinedload, subqueryload
 
 from database import SessionLocal, _session_factory
 from models import Shop, PriceList, PriceListItem, Product, ProductSnapshot, CatalogPageView
 from services.image_service import split_image_url_string
+from services.pricing_service import resolve_product_display_price
 from services.rich_text import build_rich_text_excerpt, normalize_rich_text, rich_text_to_plain_text
 from time_utils import utc_now
 
@@ -22,6 +23,7 @@ catalog_bp = Blueprint('catalog', __name__)
 
 SEARCH_REFERRERS = ("google.", "bing.", "yahoo.", "duckduckgo.", "baidu.", "ecosia.")
 SOCIAL_REFERRERS = ("facebook.", "instagram.", "tiktok.", "twitter.", "x.com", "youtube.", "line.", "pinterest.")
+DEFAULT_CURRENCY_RATE = 150
 
 
 def _latest_snapshot(product):
@@ -30,6 +32,15 @@ def _latest_snapshot(product):
     if not product.snapshots:
         return None
     return sorted(product.snapshots, key=lambda s: s.scraped_at, reverse=True)[0]
+
+
+def _safe_currency_rate(raw_value):
+    """Keep legacy/corrupt rows from producing Infinity in catalog JavaScript."""
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        return DEFAULT_CURRENCY_RATE
+    return parsed if parsed > 0 else DEFAULT_CURRENCY_RATE
 
 
 def _attach_latest_snapshots(session_db, products):
@@ -63,25 +74,120 @@ def _attach_latest_snapshots(session_db, products):
             product.latest_snapshot = snapshots_by_product.get(product.id)
 
 
+def _public_catalog_image_url(raw_url):
+    """Return only an application-served media/static URL.
+
+    Snapshot rows intentionally retain source CDN URLs for the operator UI.
+    Public catalogs, however, must never make a customer's browser contact
+    those procurement sources.
+    """
+    value = str(raw_url or "").strip()
+    if not value:
+        return None
+
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc or parsed.params:
+        return None
+
+    decoded_path = unquote(parsed.path or "")
+    if "\\" in decoded_path or "\x00" in decoded_path:
+        return None
+    path_parts = decoded_path.split("/")
+    if ".." in path_parts:
+        return None
+    if not decoded_path.startswith(("/media/", "/static/")):
+        return None
+    # Query strings/fragments are unnecessary for managed images and could
+    # otherwise smuggle a source URL back into the public response.
+    return parsed.path
+
+
+def _public_catalog_image_urls(raw_urls):
+    public_urls = []
+    seen = set()
+    for raw_url in raw_urls:
+        public_url = _public_catalog_image_url(raw_url)
+        if public_url and public_url not in seen:
+            public_urls.append(public_url)
+            seen.add(public_url)
+    return public_urls
+
+
+def _public_catalog_title(product):
+    curated_title = str(product.custom_title or "").strip()
+    if curated_title:
+        return curated_title
+
+    fallback_title = str(product.last_title or "").strip()
+    if not fallback_title:
+        return "(No Title)"
+
+    normalized_title = fallback_title.lower()
+    if "://" in normalized_title or normalized_title.startswith("//"):
+        return "(No Title)"
+
+    source_url = str(product.source_url or "").strip()
+    source_parts = urlparse(source_url)
+    source_identifiers = {
+        source_url.lower(),
+        str(source_parts.hostname or "").lower(),
+    }
+    source_path_parts = [
+        part.strip().lower()
+        for part in (source_parts.path or "").split("/")
+        if part.strip()
+    ]
+    if source_path_parts and len(source_path_parts[-1]) >= 6:
+        source_identifiers.add(source_path_parts[-1])
+    source_identifiers.discard("")
+    if any(identifier in normalized_title for identifier in source_identifiers):
+        return "(No Title)"
+
+    source_site = str(product.site or "").strip().lower()
+    if source_site and normalized_title == source_site:
+        return "(No Title)"
+    return fallback_title
+
+
 def _pricelist_by_token(session_db, token):
+    now = utc_now()
     return (
         session_db.query(PriceList)
         .options(joinedload(PriceList.shop))
-        .filter(PriceList.token == token, PriceList.is_active == True)
+        .filter(
+            PriceList.token == token,
+            PriceList.is_active.is_(True),
+            or_(PriceList.unpublish_at.is_(None), PriceList.unpublish_at > now),
+        )
         .first()
     )
 
 
 def _resolve_catalog_shop_branding(pricelist, items):
-    explicit_shop = getattr(pricelist, "shop", None)
-    if explicit_shop and explicit_shop.logo_url:
-        return explicit_shop.logo_url, explicit_shop.name
+    owner_id = getattr(pricelist, "user_id", None)
+    related_shop = getattr(pricelist, "shop", None)
+    explicit_shop = (
+        related_shop
+        if related_shop is not None and related_shop.user_id == owner_id
+        else None
+    )
+    if explicit_shop:
+        logo_url = _public_catalog_image_url(explicit_shop.logo_url)
+        if logo_url:
+            return logo_url, explicit_shop.name
 
     for item in items:
         product = getattr(item, "product", None)
         shop = getattr(product, "shop", None)
-        if shop and shop.logo_url:
-            return shop.logo_url, shop.name
+        if (
+            product is not None
+            and product.user_id == owner_id
+            and shop is not None
+            and shop.user_id == owner_id
+        ):
+            logo_url = _public_catalog_image_url(shop.logo_url)
+            if logo_url:
+                return logo_url, shop.name
 
     if explicit_shop:
         return None, explicit_shop.name
@@ -115,17 +221,22 @@ def _build_catalog_item(item):
         return None
 
     snapshot = _latest_snapshot(p)
-    image_urls = split_image_url_string(snapshot.image_urls if snapshot else None)
+    image_urls = _public_catalog_image_urls(
+        split_image_url_string(snapshot.image_urls if snapshot else None)
+    )
 
-    display_title = p.custom_title or p.last_title or "(No Title)"
-    display_price = item.custom_price or p.selling_price or p.last_price or 0
+    display_title = _public_catalog_title(p)
+    resolved_product_price = resolve_product_display_price(p, p.variants)
+    display_price = (
+        item.custom_price
+        if item.custom_price is not None
+        else resolved_product_price
+    )
     total_stock = sum(v.inventory_qty or 0 for v in p.variants)
 
     # Public catalog: prefer curated custom content over raw scraped text.
     # Never expose source_url, site, or other internal sourcing details.
     description = p.custom_description or ""
-    if not description and snapshot:
-        description = snapshot.description or ""
     description_en = p.custom_description_en or ""
     description_html = normalize_rich_text(description)
     description_en_html = normalize_rich_text(description_en)
@@ -221,6 +332,7 @@ def catalog_view(token):
                 PriceListItem.visible == True,
             )
             .join(Product)
+            .filter(Product.user_id == pl.user_id)
             .options(joinedload(PriceListItem.product).subqueryload(Product.variants))
             .options(joinedload(PriceListItem.product).joinedload(Product.shop))
             .order_by(PriceListItem.sort_order)
@@ -243,9 +355,10 @@ def catalog_view(token):
         return render_template(
             "catalog.html",
             pricelist=pl,
+            catalog_notes=normalize_rich_text(pl.notes),
             items=catalog_items,
             available_tags=available_tags,
-            currency_rate=pl.currency_rate,
+            currency_rate=_safe_currency_rate(pl.currency_rate),
             shop_logo=shop_logo,
             shop_name=shop_name,
         )
@@ -273,6 +386,7 @@ def catalog_product_detail(token, product_id):
                 PriceListItem.visible == True,
             )
             .join(Product)
+            .filter(Product.user_id == pl.user_id)
             .options(joinedload(PriceListItem.product).subqueryload(Product.variants))
             .first()
         )
