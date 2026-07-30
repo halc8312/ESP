@@ -532,3 +532,62 @@ def test_snkrdunk_patrol_marks_ambiguous_inventory_unknown():
 
     assert result.price == 21111
     assert result.status == "unknown"
+
+
+def test_snkrdunk_patrol_parses_app_router_flight_data_without_css_first():
+    class CssCollectionOnlyPage(MockPage):
+        def css_first(self, selector):
+            raise AssertionError("Scrapling Response does not expose css_first")
+
+    sneaker_data = {
+        "sneaker": {
+            "id": "CT8013-170",
+            "name": 'Nike Air Jordan 12 "Royalty"',
+            "imageUrl": "https://cdn.snkrdunk.com/product.webp",
+        },
+        "sneakerSummary": {
+            "minPrice": 32500,
+            "usedMinPrice": 20000,
+            "listingCount": 28,
+            "usedListingCount": 3,
+        },
+    }
+    flight_record = ["$", "$L79", None, {"sneakerData": sneaker_data}]
+    flight_data = f"57:{json.dumps(flight_record, ensure_ascii=False)}"
+    flight_script = f"self.__next_f.push({json.dumps([1, flight_data], ensure_ascii=False)})"
+    page = CssCollectionOnlyPage(
+        css_map={
+            "script": [MockElement(text=flight_script)],
+            "script[type='application/ld+json']": [],
+        },
+    )
+
+    with patch("services.scraping_client.fetch_static", return_value=page):
+        result = SnkrdunkPatrol().fetch(
+            "https://snkrdunk.com/products/CT8013-170"
+    )
+
+    assert result.success is True
+    assert result.price == 32500
+    assert result.status == "active"
+
+
+def test_static_patrols_normalize_missing_item_http_status_as_deleted():
+    patrol_cases = (
+        (OffmallPatrol, "https://netmall.hardoff.co.jp/product/123/"),
+        (YahooPatrol, "https://store.shopping.yahoo.co.jp/test/item-1.html"),
+        (YahuokuPatrol, "https://auctions.yahoo.co.jp/jp/auction/f123456789"),
+        (SnkrdunkPatrol, "https://snkrdunk.com/products/CT8013-170"),
+        (SurugayaPatrol, "https://www.suruga-ya.jp/product/detail/1"),
+    )
+
+    for patrol_class, url in patrol_cases:
+        page = MockPage()
+        page.status = 404
+        page.body = ""
+        with patch("services.scraping_client.fetch_static", return_value=page):
+            result = patrol_class().fetch(url)
+
+        assert result.success is True, patrol_class.__name__
+        assert result.status == "deleted", patrol_class.__name__
+        assert result.reason == "http-404", patrol_class.__name__

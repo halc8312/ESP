@@ -65,6 +65,7 @@ def test_monitor_service_skips_deleted_products(client, db_session, monkeypatch)
     summary = MonitorService.check_stale_products(limit=10)
 
     assert summary["status"] == "completed"
+    assert summary["eligible_count"] == 1
     assert summary["selected_count"] == 1
     assert summary["updated_count"] == 1
     assert summary["error_count"] == 0

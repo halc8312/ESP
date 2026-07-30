@@ -1,6 +1,8 @@
 import asyncio
 import time
 
+import pytest
+
 from services.browser_runtime import BrowserRuntimeConfig, SharedBrowserRuntime
 
 
@@ -111,3 +113,30 @@ def test_shared_browser_runtime_recycles_after_max_age(monkeypatch):
     assert second is not first
     assert runtime.restart_count == 1
     assert len(launches) == 2
+
+
+def test_shared_browser_runtime_closes_cleanly_after_startup_failure(monkeypatch):
+    runtime = SharedBrowserRuntime(
+        BrowserRuntimeConfig(site="mercari", startup_timeout_seconds=1)
+    )
+
+    async def fail_launch():
+        runtime._playwright = object()
+        raise RuntimeError("browser executable missing")
+
+    async def fake_shutdown():
+        runtime._playwright = None
+        runtime._browser = None
+
+    monkeypatch.setattr(runtime, "_launch_async", fail_launch)
+    monkeypatch.setattr(runtime, "_shutdown_async", fake_shutdown)
+
+    with pytest.raises(RuntimeError, match="Failed to start browser runtime"):
+        runtime.start()
+
+    runtime.close()
+
+    snapshot = runtime.snapshot()
+    assert snapshot["state"] == "closed"
+    assert snapshot["loop_running"] is False
+    assert snapshot["thread_alive"] is False

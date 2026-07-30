@@ -4,7 +4,12 @@ Uses Scrapling HTTP fetches only.
 """
 import logging
 
-from services.patrol.base_patrol import BasePatrol, PatrolResult
+from services.patrol.base_patrol import (
+    DELETED_HTTP_STATUSES,
+    BasePatrol,
+    PatrolResult,
+    deleted_http_result,
+)
 from yahuoku_db import (
     _extract_auction_item,
     _extract_tax_inclusive_price,
@@ -30,7 +35,11 @@ class YahuokuPatrol(BasePatrol):
                 url,
                 site="yahuoku",
                 kind="detail",
+                allowed_statuses=DELETED_HTTP_STATUSES,
             )
+            missing_result = deleted_http_result(page)
+            if missing_result is not None:
+                return missing_result
             item_detail = _extract_auction_item(page)
             if not item_detail:
                 return PatrolResult(error="No auction item data found")

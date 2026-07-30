@@ -23,6 +23,7 @@ from services.worker_runtime import (
     emit_backlog_operational_alert,
     evaluate_backlog_issues,
     get_worker_health_snapshot,
+    inspect_patrol_heartbeat,
     inspect_scheduler_heartbeat,
     inspect_worker_heartbeat,
     load_worker_runtime_settings,
@@ -264,6 +265,72 @@ def test_translation_recovery_scheduler_job_runs_every_five_minutes_and_contains
 
     assert captured["heartbeats"][-1]["event"] == "translation_recovery_failed"
     assert "scheduler will continue" in caplog.text
+
+
+def test_patrol_scheduler_runs_immediately_with_configured_batch_size(monkeypatch):
+    captured = {"jobs": {}, "heartbeats": [], "limits": []}
+
+    class FakeScheduler:
+        def add_job(self, *, id, func, trigger, **kwargs):
+            captured["jobs"][id] = {
+                "id": id,
+                "func": func,
+                "trigger": trigger,
+                **kwargs,
+            }
+
+        def get_jobs(self):
+            return [SimpleNamespace(id=job_id) for job_id in captured["jobs"]]
+
+    app = create_app(
+        runtime_role="worker",
+        config_overrides={
+            "REGISTER_CLI_COMMANDS": False,
+            "PATROL_BATCH_SIZE": "37",
+        },
+    )
+    app.extensions["esp_scheduler"] = FakeScheduler()
+    monkeypatch.setattr(
+        "app._write_scheduler_heartbeat",
+        lambda current_app, **fields: captured["heartbeats"].append(fields),
+    )
+
+    from services.monitor_service import MonitorService
+
+    monkeypatch.setattr(
+        MonitorService,
+        "check_stale_products",
+        staticmethod(
+            lambda limit: (
+                captured["limits"].append(limit)
+                or {
+                    "status": "completed",
+                    "eligible_count": 1123,
+                    "selected_count": limit,
+                    "updated_count": 2,
+                    "error_count": 1,
+                    "site_counts": {"snkrdunk": limit},
+                }
+            )
+        ),
+    )
+
+    before_registration = datetime.now(timezone.utc)
+    _register_scheduler_jobs(app)
+    patrol_job = captured["jobs"]["patrol_job"]
+
+    assert patrol_job["trigger"] == "interval"
+    assert patrol_job["minutes"] == 15
+    assert patrol_job["max_instances"] == 1
+    assert patrol_job["coalesce"] is True
+    assert patrol_job["next_run_time"] >= before_registration
+
+    patrol_job["func"]()
+
+    assert captured["limits"] == [37]
+    assert captured["heartbeats"][-1]["event"] == "patrol_completed"
+    assert captured["heartbeats"][-1]["last_patrol_eligible_count"] == 1123
+    assert captured["heartbeats"][-1]["last_patrol_selected_count"] == 37
 
 
 def test_worker_scheduler_lock_retry_defaults_on_for_worker_runtime():
@@ -839,6 +906,63 @@ def test_scheduler_heartbeat_inspection_requires_fresh_worker_role():
         freshness_seconds=1200,
         now=now,
     ) == "unavailable"
+
+
+def test_patrol_heartbeat_inspection_is_not_masked_by_other_scheduler_jobs():
+    redis_client = FakeWorkerHeartbeatRedis()
+    now = datetime.now(timezone.utc)
+    key = "test:scheduler:heartbeat"
+    redis_client.hashes[key] = {
+        b"runtime_role": b"worker",
+        b"recorded_at": now.isoformat().replace("+00:00", "Z").encode(),
+        b"event": b"translation_recovery_completed",
+        b"last_patrol_completed_at": (
+            now - timedelta(seconds=1201)
+        ).isoformat().replace("+00:00", "Z").encode(),
+        b"last_patrol_status": b"completed",
+        b"last_patrol_selected_count": b"15",
+        b"last_patrol_error_count": b"0",
+    }
+
+    assert inspect_scheduler_heartbeat(
+        redis_client,
+        key=key,
+        freshness_seconds=1200,
+        now=now,
+    ) == "ok"
+    assert inspect_patrol_heartbeat(
+        redis_client,
+        key=key,
+        freshness_seconds=1200,
+        now=now,
+    ) == "stale"
+
+    redis_client.hashes[key][b"last_patrol_completed_at"] = (
+        now.isoformat().replace("+00:00", "Z").encode()
+    )
+    assert inspect_patrol_heartbeat(
+        redis_client,
+        key=key,
+        freshness_seconds=1200,
+        now=now,
+    ) == "ok"
+
+    redis_client.hashes[key][b"last_patrol_error_count"] = b"15"
+    assert inspect_patrol_heartbeat(
+        redis_client,
+        key=key,
+        freshness_seconds=1200,
+        now=now,
+    ) == "failed"
+
+    redis_client.hashes[key][b"last_patrol_error_count"] = b"0"
+    redis_client.hashes[key][b"last_patrol_status"] = b"fatal_error"
+    assert inspect_patrol_heartbeat(
+        redis_client,
+        key=key,
+        freshness_seconds=1200,
+        now=now,
+    ) == "failed"
 
 
 def test_worker_heartbeat_cleanup_deletes_only_its_unique_key():

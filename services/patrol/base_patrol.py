@@ -7,8 +7,11 @@ from typing import Optional, List, Dict
 import logging
 
 from services.scrape_alerts import report_patrol_result
+from services.scrape_safety import response_status
 
 logger = logging.getLogger("patrol")
+
+DELETED_HTTP_STATUSES = frozenset({404, 410})
 
 
 class PatrolResult:
@@ -41,6 +44,18 @@ class PatrolResult:
             f"price={self.price}, status={self.status}, "
             f"confidence={self.confidence}, variants={len(self.variants)})"
         )
+
+
+def deleted_http_result(response) -> PatrolResult | None:
+    """Normalize definitive missing-resource responses across patrol sites."""
+    status = response_status(response)
+    if status not in DELETED_HTTP_STATUSES:
+        return None
+    return PatrolResult(
+        status="deleted",
+        confidence="high",
+        reason=f"http-{status}",
+    )
 
 
 class BasePatrol(ABC):

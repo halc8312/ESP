@@ -223,7 +223,7 @@ flask render-postdeploy-smoke --base-url https://<current-web-url> --expect-queu
 Also verify manually:
 
 - `/readyz` returns `200` with `database=ok` and `redis=ok`
-- `/stack-readyz` returns `200` with `database=ok`, `redis=ok`, `worker=ok`, and `scheduler=ok`
+- `/stack-readyz` returns `200` with `database=ok`, `redis=ok`, `worker=ok`, `scheduler=ok`, and `patrol=ok`
 - `/healthz` returns `200`
 - `/login` returns `200`
 - `/scrape` returns `200` after login

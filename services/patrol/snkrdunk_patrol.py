@@ -2,12 +2,15 @@
 SNKRDUNK lightweight patrol scraper.
 Uses Scrapling HTTP fetches only.
 """
-import json
 import logging
-import re
 
-from services.patrol.base_patrol import BasePatrol, PatrolResult
-from snkrdunk_db import _extract_jsonld_availability, _extract_product_jsonld, _infer_snkrdunk_status
+from services.patrol.base_patrol import (
+    DELETED_HTTP_STATUSES,
+    BasePatrol,
+    PatrolResult,
+    deleted_http_result,
+)
+from snkrdunk_db import _parse_detail_page
 
 logger = logging.getLogger("patrol.snkrdunk")
 
@@ -27,87 +30,14 @@ class SnkrdunkPatrol(BasePatrol):
                 url,
                 site="snkrdunk",
                 kind="detail",
+                allowed_statuses=DELETED_HTTP_STATUSES,
             )
-            price = None
-            status = "unknown"
-            item = {}
-            jsonld_availability = ""
-
-            script_el = page.find("#__NEXT_DATA__")
-            if script_el:
-                json_text = str(script_el.text or "").strip()
-                if json_text:
-                    try:
-                        data = json.loads(json_text)
-                        props = data.get("props", {})
-                        page_props = props.get("pageProps", {})
-                        item = (
-                            page_props.get("item")
-                            or page_props.get("product")
-                            or page_props.get("initialState", {}).get("item", {})
-                            or page_props.get("initialState", {}).get("product", {})
-                            or {}
-                        )
-                        if item:
-                            price_raw = item.get("price") or item.get("lowestPrice") or item.get("minPrice")
-                            if price_raw is not None:
-                                try:
-                                    price = int(price_raw)
-                                except (ValueError, TypeError):
-                                    pass
-                    except (json.JSONDecodeError, Exception) as exc:
-                        logger.debug("SNKRDUNK __NEXT_DATA__ parse error: %s", exc)
-
-            if price is None:
-                try:
-                    ld_els = page.css("script[type='application/ld+json']")
-                    for ld_el in ld_els:
-                        ld_text = str(ld_el.text or "").strip()
-                        if not ld_text:
-                            continue
-                        ld_data = json.loads(ld_text)
-                        offers = ld_data.get("offers") or ld_data.get("Offers")
-                        if offers:
-                            if isinstance(offers, list):
-                                offers = offers[0]
-                            raw = offers.get("price") or offers.get("lowPrice")
-                            if raw is not None:
-                                try:
-                                    price = int(float(str(raw)))
-                                    jsonld_availability = _extract_jsonld_availability(offers)
-                                    break
-                                except (ValueError, TypeError):
-                                    pass
-                except Exception as exc:
-                    logger.debug("SNKRDUNK ld+json parse error: %s", exc)
-
-            if not jsonld_availability:
-                try:
-                    product_jsonld = _extract_product_jsonld(page)
-                    if product_jsonld:
-                        jsonld_availability = _extract_jsonld_availability(product_jsonld.get("offers"))
-                except Exception as exc:
-                    logger.debug("SNKRDUNK product jsonld availability parse error: %s", exc)
-
-            if price is None:
-                css_price_selectors = [
-                    ".new-buy-button",
-                    "[class*='buy-button']",
-                    "[class*='price']",
-                    "[class*='Price']",
-                ]
-                for selector in css_price_selectors:
-                    el = page.css_first(selector)
-                    if not el:
-                        continue
-                    text = el.text or ""
-                    match = re.search(r"[¥￥]\s*([\d,]+)", text) or re.search(r"([\d,]+)", text)
-                    if match:
-                        price = int(match.group(1).replace(",", ""))
-                        break
-
-            page_text = str(page.get_all_text())
-            detail_status, _ = _infer_snkrdunk_status(item, page_text, jsonld_availability)
+            missing_result = deleted_http_result(page)
+            if missing_result is not None:
+                return missing_result
+            parsed = _parse_detail_page(page, url)
+            price = parsed.get("price")
+            detail_status = parsed.get("status", "unknown")
             status = "active" if detail_status == "on_sale" else detail_status
 
             if price is None and status == "active":

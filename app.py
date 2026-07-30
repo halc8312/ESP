@@ -456,6 +456,7 @@ def _register_health_route(app: Flask) -> None:
                         {
                             "worker": "unavailable",
                             "scheduler": "unavailable",
+                            "patrol": "unavailable",
                         }
                     )
                 ready = False
@@ -466,6 +467,7 @@ def _register_health_route(app: Flask) -> None:
                     checks["redis"] = "ok"
                     if include_stack:
                         from services.worker_runtime import (
+                            inspect_patrol_heartbeat,
                             inspect_scheduler_heartbeat,
                             inspect_worker_heartbeat,
                         )
@@ -500,7 +502,25 @@ def _register_health_route(app: Flask) -> None:
                                 1200,
                             ),
                         )
-                        if checks["worker"] != "ok" or checks["scheduler"] != "ok":
+                        checks["patrol"] = inspect_patrol_heartbeat(
+                            redis_client,
+                            key=str(
+                                app.config.get(
+                                    "SCHEDULER_HEARTBEAT_KEY",
+                                    "esp:scheduler:heartbeat",
+                                )
+                                or "esp:scheduler:heartbeat"
+                            ),
+                            freshness_seconds=_read_positive_int_config(
+                                app,
+                                "PATROL_HEARTBEAT_FRESHNESS_SECONDS",
+                                1200,
+                            ),
+                        )
+                        if any(
+                            checks[name] != "ok"
+                            for name in ("worker", "scheduler", "patrol")
+                        ):
                             ready = False
                 except Exception as exc:
                     logger.warning(
@@ -513,6 +533,7 @@ def _register_health_route(app: Flask) -> None:
                             {
                                 "worker": "unavailable",
                                 "scheduler": "unavailable",
+                                "patrol": "unavailable",
                             }
                         )
                     ready = False
@@ -659,6 +680,11 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
                 "SCHEDULER_HEARTBEAT_FRESHNESS_SECONDS",
                 "1200",
             ),
+            "PATROL_HEARTBEAT_FRESHNESS_SECONDS": os.environ.get(
+                "PATROL_HEARTBEAT_FRESHNESS_SECONDS",
+                "1200",
+            ),
+            "PATROL_BATCH_SIZE": os.environ.get("PATROL_BATCH_SIZE", "50"),
             "WORKER_HEARTBEAT_ENABLED": os.environ.get("WORKER_HEARTBEAT_ENABLED", "0"),
             "WORKER_HEARTBEAT_KEY_PREFIX": os.environ.get(
                 "WORKER_HEARTBEAT_KEY_PREFIX",
@@ -752,7 +778,7 @@ def _register_scheduler_jobs(app: Flask) -> None:
         from services.monitor_service import MonitorService
 
         with app.app_context():
-            limit = 15
+            limit = _read_positive_int_config(app, "PATROL_BATCH_SIZE", 50)
             started_at = _utc_iso_now()
             started_monotonic = time.monotonic()
             _write_scheduler_heartbeat(
@@ -791,6 +817,7 @@ def _register_scheduler_jobs(app: Flask) -> None:
                 last_patrol_completed_at=_utc_iso_now(),
                 last_patrol_duration_seconds=duration_seconds,
                 last_patrol_status=summary.get("status", "completed"),
+                last_patrol_eligible_count=summary.get("eligible_count", ""),
                 last_patrol_selected_count=summary.get("selected_count", ""),
                 last_patrol_updated_count=summary.get("updated_count", ""),
                 last_patrol_error_count=summary.get("error_count", ""),
@@ -852,6 +879,9 @@ def _register_scheduler_jobs(app: Flask) -> None:
         func=patrol_job,
         trigger="interval",
         minutes=15,
+        next_run_time=datetime.now(timezone.utc),
+        max_instances=1,
+        coalesce=True,
         replace_existing=True,
     )
     scheduler.add_job(

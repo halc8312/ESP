@@ -45,6 +45,8 @@ services:
         value: esp:scheduler:heartbeat
       - key: SCHEDULER_HEARTBEAT_FRESHNESS_SECONDS
         value: "1200"
+      - key: PATROL_HEARTBEAT_FRESHNESS_SECONDS
+        value: "1200"
       - key: WEB_SCHEDULER_MODE
         value: disabled
       - key: SCHEMA_BOOTSTRAP_MODE
@@ -122,6 +124,8 @@ services:
         value: "8080"
       - key: WORKER_ENABLE_SCHEDULER
         value: "1"
+      - key: PATROL_BATCH_SIZE
+        value: "50"
       - key: SCHEDULER_HEARTBEAT_ENABLED
         value: "1"
       - key: SCHEDULER_HEARTBEAT_KEY

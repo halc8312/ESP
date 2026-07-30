@@ -1278,6 +1278,11 @@ def run_render_postdeploy_smoke(
                     and readiness_checks.get("scheduler") != "ok"
                 ):
                     blockers.append("stack_readyz_scheduler_not_ready")
+                if (
+                    str(expect_queue_backend or "").strip().lower() == "rq"
+                    and readiness_checks.get("patrol") != "ok"
+                ):
+                    blockers.append("stack_readyz_patrol_not_ready")
 
     health_snapshot = _request_with_retries(
         requests.get,

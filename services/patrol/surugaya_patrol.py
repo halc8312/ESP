@@ -6,7 +6,12 @@ import json
 import logging
 import re
 
-from services.patrol.base_patrol import BasePatrol, PatrolResult
+from services.patrol.base_patrol import (
+    DELETED_HTTP_STATUSES,
+    BasePatrol,
+    PatrolResult,
+    deleted_http_result,
+)
 
 logger = logging.getLogger("patrol.surugaya")
 
@@ -139,6 +144,7 @@ class SurugayaPatrol(BasePatrol):
                     url,
                     site="surugaya",
                     kind="detail",
+                    allowed_statuses=DELETED_HTTP_STATUSES,
                 )
             except ScrapeBlockedError as exc:
                 external_page = fetch_surugaya_external(url)
@@ -171,6 +177,9 @@ class SurugayaPatrol(BasePatrol):
                 result = self._parse_html(external_html)
                 result.price_source = external_page.source
                 return result
+            missing_result = deleted_http_result(page)
+            if missing_result is not None:
+                return missing_result
             response_status = _response_status(page)
             html = _body_text(page)
             if _is_blocked_response(response_status, html):

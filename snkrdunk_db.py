@@ -65,6 +65,7 @@ _SNKRDUNK_SOLD_STATUS_VALUES = {
     "closed",
     "unavailable",
 }
+_NEXT_FLIGHT_PREFIX = "self.__next_f.push("
 
 
 def _empty_result(url: str, status: str = "error") -> dict:
@@ -150,6 +151,136 @@ def _extract_unique_price_from_page_text(page_text: str):
     if len(unique_prices) == 1:
         return next(iter(unique_prices))
     return None
+
+
+def _iter_next_flight_records(page):
+    """Yield JSON records embedded by the Next.js App Router flight stream."""
+    for script in page.css("script"):
+        raw = str(script.text or "").strip()
+        if not raw.startswith(_NEXT_FLIGHT_PREFIX) or not raw.endswith(")"):
+            continue
+        try:
+            flight_entry = json.loads(raw[len(_NEXT_FLIGHT_PREFIX):-1])
+        except (TypeError, ValueError):
+            continue
+        if (
+            not isinstance(flight_entry, list)
+            or len(flight_entry) < 2
+            or not isinstance(flight_entry[1], str)
+        ):
+            continue
+        for line in flight_entry[1].splitlines():
+            _record_id, separator, payload = line.partition(":")
+            if not separator or not payload:
+                continue
+            try:
+                yield json.loads(payload)
+            except (TypeError, ValueError):
+                continue
+
+
+def _extract_app_router_sneaker_data(page, expected_sneaker_id: str = "") -> dict:
+    """Extract the target sneaker payload without evaluating page JavaScript."""
+    expected = str(expected_sneaker_id or "").strip().lower()
+    for record in _iter_next_flight_records(page):
+        stack = [record]
+        visited = 0
+        while stack and visited < 10000:
+            value = stack.pop()
+            visited += 1
+            if isinstance(value, dict):
+                sneaker_data = value.get("sneakerData")
+                if isinstance(sneaker_data, dict):
+                    sneaker = sneaker_data.get("sneaker")
+                    sneaker_id = (
+                        str(sneaker.get("id") or "").strip().lower()
+                        if isinstance(sneaker, dict)
+                        else ""
+                    )
+                    if not expected or sneaker_id == expected:
+                        return sneaker_data
+                stack.extend(value.values())
+            elif isinstance(value, list):
+                stack.extend(value)
+    return {}
+
+
+def _parse_app_router_detail(page, url: str, page_text: str) -> dict:
+    sneaker_id = str(url or "").rstrip("/").rsplit("/", 1)[-1]
+    sneaker_data = _extract_app_router_sneaker_data(page, sneaker_id)
+    if not sneaker_data:
+        return {}
+
+    sneaker = sneaker_data.get("sneaker")
+    summary = sneaker_data.get("sneakerSummary")
+    if not isinstance(sneaker, dict) or not isinstance(summary, dict):
+        return {}
+
+    result = _empty_result(url, status="unknown")
+    field_sources = {}
+
+    title = str(sneaker.get("name") or sneaker.get("localizedName") or "").strip()
+    if title:
+        result["title"] = title
+        field_sources["title"] = "app_router"
+
+    for raw_price in (summary.get("minPrice"), summary.get("usedMinPrice")):
+        price = _extract_price_value(raw_price)
+        if price is not None and price > 0:
+            result["price"] = price
+            field_sources["price"] = "app_router"
+            break
+
+    listing_counts = []
+    for raw_count in (
+        summary.get("listingCount"),
+        summary.get("usedListingCount"),
+    ):
+        try:
+            listing_counts.append(max(0, int(raw_count)))
+        except (TypeError, ValueError):
+            pass
+    if listing_counts and sum(listing_counts) > 0:
+        result["status"] = "on_sale"
+        field_sources["status"] = "app_router"
+    elif len(listing_counts) == 2 and sum(listing_counts) == 0:
+        result["status"] = "sold"
+        field_sources["status"] = "app_router"
+    else:
+        status, status_source = _infer_snkrdunk_status({}, page_text)
+        result["status"] = status
+        if status_source:
+            field_sources["status"] = status_source
+
+    description = str(
+        sneaker.get("metaDescription")
+        or sneaker.get("description")
+        or _get_first_meta_content(
+            page,
+            ["meta[name='description']", "meta[property='og:description']"],
+        )
+        or ""
+    ).strip()
+    if description:
+        result["description"] = description
+        field_sources["description"] = (
+            "app_router"
+            if sneaker.get("metaDescription") or sneaker.get("description")
+            else "meta"
+        )
+
+    image_url = str(sneaker.get("imageUrl") or "").strip()
+    if image_url.startswith("http"):
+        result["image_urls"] = [image_url]
+        field_sources["images"] = "app_router"
+
+    if not result["title"]:
+        return {}
+    return attach_extraction_trace(
+        result,
+        strategy="app_router",
+        field_sources=field_sources,
+    )
 
 
 def _collect_image_urls(raw_value) -> list:
@@ -391,6 +522,10 @@ def _parse_detail_page(page, url: str) -> dict:
 
             if result.get("title"):
                 return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
+
+    app_router_result = _parse_app_router_detail(page, url, page_text)
+    if app_router_result:
+        return app_router_result
 
     product_jsonld = _extract_product_jsonld(page)
     if product_jsonld:
