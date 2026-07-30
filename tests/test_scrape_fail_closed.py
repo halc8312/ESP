@@ -16,6 +16,7 @@ from services.scrape_safety import (
     UnsafeScrapeUrlError,
     fetch_with_safe_redirects,
     install_navigation_guard,
+    raise_for_blocked_navigation,
     require_search_outcome,
     validate_fetch_response,
     validate_marketplace_url,
@@ -232,6 +233,121 @@ def test_browser_guard_blocks_document_but_leaves_cdn_subresource_untouched():
     assert blocked_urls == ["https://169.254.169.254/latest/meta-data/"]
     assert image_route.continued is True
     assert image_route.aborted is False
+
+
+class GuardRoute:
+    def __init__(self):
+        self.aborted = False
+        self.continued = False
+
+    async def abort(self, _reason):
+        self.aborted = True
+
+    async def continue_(self):
+        self.continued = True
+
+
+class GuardFrame:
+    def __init__(self, parent=None):
+        self.parent_frame = parent
+
+
+class GuardRequest:
+    def __init__(self, url, resource_type="document", *, frame=None):
+        self.url = url
+        self.resource_type = resource_type
+        self.frame = frame
+
+    def is_navigation_request(self):
+        return self.resource_type == "document"
+
+
+def _install_guard(site, kind):
+    captured = {}
+
+    class Context:
+        async def route(self, pattern, handler):
+            captured["pattern"] = pattern
+            captured["handler"] = handler
+
+    blocked_urls = run_coro_sync(install_navigation_guard(Context(), site, kind=kind))
+    return blocked_urls, captured["handler"]
+
+
+@pytest.mark.parametrize(
+    "site, kind, frame_url",
+    [
+        # Mercari and Rakuma search pages both load Google Publisher Tag /
+        # Tag Manager, which inserts cross-origin <iframe> documents.
+        ("mercari", "search", "https://securepubads.g.doubleclick.net/gampad/ads?iu=/1/x"),
+        ("mercari", "detail", "https://www.google.com/recaptcha/api2/anchor?k=abc"),
+        ("rakuma", "search", "https://www.googletagmanager.com/ns.html?id=GTM-PBGNRW"),
+    ],
+)
+def test_third_party_subframe_is_aborted_without_failing_the_scrape(site, kind, frame_url):
+    """Regression: ad/tag-manager iframes must not abort a whole extraction."""
+    blocked_urls, handler = _install_guard(site, kind)
+    main_frame = GuardFrame()
+    route = GuardRoute()
+
+    run_coro_sync(
+        handler(route, GuardRequest(frame_url, frame=GuardFrame(parent=main_frame)))
+    )
+
+    assert route.aborted is True
+    assert route.continued is False
+    assert blocked_urls == []
+    raise_for_blocked_navigation(blocked_urls, site)
+
+
+def test_same_marketplace_subframe_is_allowed_to_load():
+    blocked_urls, handler = _install_guard("mercari", "detail")
+    route = GuardRoute()
+
+    run_coro_sync(
+        handler(
+            route,
+            GuardRequest(
+                "https://jp.mercari.com/embed/widget",
+                frame=GuardFrame(parent=GuardFrame()),
+            ),
+        )
+    )
+
+    assert route.continued is True
+    assert route.aborted is False
+    assert blocked_urls == []
+
+
+def test_top_level_navigation_off_domain_still_fails_closed():
+    blocked_urls, handler = _install_guard("mercari", "search")
+    route = GuardRoute()
+
+    run_coro_sync(
+        handler(
+            route,
+            GuardRequest("https://169.254.169.254/latest/meta-data/", frame=GuardFrame()),
+        )
+    )
+
+    assert route.aborted is True
+    assert blocked_urls == ["https://169.254.169.254/latest/meta-data/"]
+    with pytest.raises(UnsafeScrapeUrlError, match="許可ドメイン外"):
+        raise_for_blocked_navigation(blocked_urls, "mercari")
+
+
+def test_top_level_navigation_to_wrong_page_kind_reports_off_target():
+    blocked_urls, handler = _install_guard("mercari", "detail")
+    route = GuardRoute()
+
+    run_coro_sync(
+        handler(route, GuardRequest("https://jp.mercari.com/", frame=GuardFrame()))
+    )
+
+    assert route.aborted is True
+    assert blocked_urls == ["https://jp.mercari.com/"]
+    with pytest.raises(UnsafeScrapeUrlError, match="対象外ページ"):
+        raise_for_blocked_navigation(blocked_urls, "mercari")
 
 
 def test_dynamic_fetch_surfaces_blocked_redirect_when_goto_aborts(monkeypatch):

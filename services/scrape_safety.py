@@ -8,8 +8,11 @@ explicit failures instead of an ambiguous empty list.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import re
 from urllib.parse import urljoin, urlparse, urlunparse
+
+logger = logging.getLogger(__name__)
 
 
 class ScrapeFailure(RuntimeError):
@@ -350,12 +353,65 @@ async def fetch_with_safe_redirects_async(
     raise ScrapeHttpError(f"{site}の取得で転送回数が上限を超えました。")
 
 
+def is_marketplace_host_url(url: str, site: str) -> bool:
+    """Report whether a URL stays on the marketplace, ignoring page kind.
+
+    Used for sub-frame documents, where the path contract of the page being
+    scraped (search vs detail) does not apply.
+    """
+    try:
+        parsed = urlparse(str(url or "").strip())
+    except ValueError:
+        return False
+    if parsed.scheme.lower() != "https":
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    try:
+        if parsed.port not in (None, 443):
+            return False
+    except ValueError:
+        return False
+    if not parsed.hostname:
+        return False
+    try:
+        host = _normalize_host(parsed.hostname)
+    except UnsafeScrapeUrlError:
+        return False
+    return host in marketplace_hosts(site)
+
+
+def _is_subframe_request(request) -> bool:
+    """Detect a document request for a nested frame rather than the tab itself.
+
+    Playwright exposes the owning frame on every request; the top-level frame
+    is the one without a parent.  Adapters that do not expose ``frame`` are
+    treated as top-level so the strict guard still applies to them.
+    """
+    frame = getattr(request, "frame", None)
+    if frame is None:
+        return False
+    try:
+        return getattr(frame, "parent_frame", None) is not None
+    except Exception:
+        return False
+
+
 async def install_navigation_guard(context, site: str, *, kind: str) -> list[str]:
     """Abort disallowed browser document navigations before network dispatch.
 
-    Subresources such as marketplace CDNs remain untouched. Main documents and
-    frames are guarded because either can otherwise be used to reach a private
-    or cross-domain URL through an HTTP redirect.
+    Subresources such as marketplace CDNs remain untouched.
+
+    Only *top-level* navigations are scrape failures: those are the ones that
+    can swap the page we are reading for an off-site or private-network
+    document.  Marketplace pages also embed third-party ``<iframe>`` documents
+    (tag managers, ad slots, captcha widgets) whose URLs are cross-domain by
+    design.  Those are still aborted so the browser never fetches them, but
+    they are page furniture, not a redirect escape, so they must not fail the
+    scrape.  Returning them as failures made every Mercari/Rakuma search abort
+    with "許可ドメイン外へのページ転送を遮断しました。".
+
+    Returns the list of blocked *top-level* navigation URLs.
     """
     blocked_urls: list[str] = []
 
@@ -370,12 +426,22 @@ async def install_navigation_guard(context, site: str, *, kind: str) -> list[str
         resource_type = str(getattr(request, "resource_type", "") or "").lower()
         if is_navigation or resource_type == "document":
             request_url = str(getattr(request, "url", "") or "")
-            try:
-                validate_marketplace_url(request_url, site, kind=kind)
-            except UnsafeScrapeUrlError:
-                blocked_urls.append(request_url)
-                await route.abort("blockedbyclient")
-                return
+            if _is_subframe_request(request):
+                if not is_marketplace_host_url(request_url, site):
+                    logger.debug(
+                        "Blocked third-party %s sub-frame document: %s",
+                        site,
+                        request_url[:200],
+                    )
+                    await route.abort("blockedbyclient")
+                    return
+            else:
+                try:
+                    validate_marketplace_url(request_url, site, kind=kind)
+                except UnsafeScrapeUrlError:
+                    blocked_urls.append(request_url)
+                    await route.abort("blockedbyclient")
+                    return
         await route.continue_()
 
     router = getattr(context, "route", None)
@@ -386,8 +452,11 @@ async def install_navigation_guard(context, site: str, *, kind: str) -> list[str
 
 
 def raise_for_blocked_navigation(blocked_urls: list[str], site: str) -> None:
-    if blocked_urls:
-        raise UnsafeScrapeUrlError(f"{site}の許可ドメイン外へのページ転送を遮断しました。")
+    if not blocked_urls:
+        return
+    if is_marketplace_host_url(blocked_urls[0], site):
+        raise UnsafeScrapeUrlError(f"{site}の対象外ページへのページ転送を遮断しました。")
+    raise UnsafeScrapeUrlError(f"{site}の許可ドメイン外へのページ転送を遮断しました。")
 
 
 _BLOCK_MARKERS = (
