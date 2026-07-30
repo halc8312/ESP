@@ -27,6 +27,7 @@ def _ready_payload():
             "redis": "ok",
             "worker": "ok",
             "scheduler": "ok",
+            "patrol": "ok",
         },
         "runtime_role": "web",
         "queue_backend": "rq",
@@ -149,6 +150,7 @@ def test_run_render_postdeploy_smoke_blocks_stale_worker_and_scheduler(monkeypat
     assert snapshot["ready"] is False
     assert "stack_readyz_worker_not_ready" in snapshot["blockers"]
     assert "stack_readyz_scheduler_not_ready" in snapshot["blockers"]
+    assert "stack_readyz_patrol_not_ready" in snapshot["blockers"]
 
 
 def test_run_render_postdeploy_smoke_rejects_empty_ready_payload(monkeypatch):

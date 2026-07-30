@@ -90,6 +90,7 @@ class MonitorService:
         summary = {
             "status": "started",
             "limit": limit,
+            "eligible_count": 0,
             "selected_count": 0,
             "updated_count": 0,
             "error_count": 0,
@@ -101,13 +102,19 @@ class MonitorService:
             # product-list updated_at sort.
             now = utc_now()
             patrol_cursor = func.coalesce(Product.last_patrolled_at, Product.updated_at, Product.created_at)
-            products = session_db.query(Product).filter(
+            eligible_products = session_db.query(Product).filter(
                 Product.site.in_(list(MonitorService._patrols.keys())),
                 Product.archived != True,
                 Product.is_listed.isnot(False),
                 Product.deleted_at == None,
                 or_(Product.next_patrol_at == None, Product.next_patrol_at <= now),
-            ).order_by(asc(patrol_cursor), asc(Product.id)).limit(limit).all()
+            )
+            summary["eligible_count"] = eligible_products.count()
+            products = (
+                eligible_products.order_by(asc(patrol_cursor), asc(Product.id))
+                .limit(limit)
+                .all()
+            )
 
             summary["selected_count"] = len(products)
             summary["site_counts"] = {

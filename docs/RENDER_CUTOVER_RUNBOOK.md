@@ -81,7 +81,7 @@ Use the dormant Blueprint in `render.yaml`.
 
 - Service name: `esp-web`
 - Health check: `/readyz`（web自身に必須なDB/Redisのみ）
-- Full-stack check: `/stack-readyz`（live worker、worker role scheduler の heartbeat も含む）
+- Full-stack check: `/stack-readyz`（live worker、worker role scheduler、patrol完了の heartbeat も含む）
 - Queue backend: `rq`
 - Scheduler: disabled on web
 - Image storage path: `/var/data/images`
@@ -154,7 +154,7 @@ These stay manual because they are deployment-specific and should not be hardcod
 5. Fill selector repair canary URL env vars on `esp-worker`.
 6. Keep `WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP=0` for the first paid split deploy.
 7. Provision `esp-postgres` and `esp-keyvalue`.
-8. Deploy `esp-worker` first, compare its startup logs against `flask render-worker-postdeploy-checklist --blueprint-path render.yaml`, and wait for both worker and scheduler heartbeats.
+8. Deploy `esp-worker` first, compare its startup logs against `flask render-worker-postdeploy-checklist --blueprint-path render.yaml`, and wait for worker, scheduler, and patrol heartbeats.
 9. Deploy `esp-web`, confirm `/healthz` reports the expected runtime role, confirm `/readyz` returns `200`, and verify `/stack-readyz` after the worker is live.
 10. Run `flask render-postdeploy-smoke --base-url https://<esp-web-url> --retries 4 --retry-delay-seconds 2`.
 11. Run `flask process-selector-repairs --limit 1 --dry-run`.
@@ -174,7 +174,7 @@ After provisioning, verify at minimum:
 - `WEB_SCHEDULER_MODE=disabled` on web
 - `WORKER_ENABLE_SCHEDULER=1` only on the intended worker
 - `/readyz` reports `database=ok` and `redis=ok`; worker/scheduler loss must not recycle a healthy web process
-- `/stack-readyz` reports `database=ok`, `redis=ok`, `worker=ok`, and `scheduler=ok`
+- `/stack-readyz` reports `database=ok`, `redis=ok`, `worker=ok`, `scheduler=ok`, and `patrol=ok`
 - `WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP=0` on the first deploy
 - `SELECTOR_REPAIR_MIN_SCORE=90`
 - `SELECTOR_REPAIR_MIN_CANARIES=2`

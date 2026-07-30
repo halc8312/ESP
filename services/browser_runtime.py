@@ -136,8 +136,13 @@ class SharedBrowserRuntime:
             loop = self._loop
             thread = self._thread
 
-        if loop is not None:
-            loop.call_soon_threadsafe(loop.stop)
+        if loop is not None and not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(loop.stop)
+            except RuntimeError:
+                # The startup thread can close its loop while close() is
+                # taking the snapshot above.
+                pass
         if thread is not None:
             thread.join(timeout=5.0)
 
@@ -267,12 +272,22 @@ class SharedBrowserRuntime:
         try:
             loop.run_until_complete(self._launch_async())
         except Exception as exc:
+            try:
+                loop.run_until_complete(self._shutdown_async())
+            except Exception:
+                logger.exception(
+                    "Failed to clean up browser runtime after startup error: site=%s",
+                    self.config.site,
+                )
+            finally:
+                loop.close()
             with self._lock:
                 self._startup_error = exc
                 self._state = "error"
                 self._last_error = str(exc)
+                if self._loop is loop:
+                    self._loop = None
             self._ready_event.set()
-            loop.close()
             return
 
         self._ready_event.set()
@@ -282,6 +297,9 @@ class SharedBrowserRuntime:
         finally:
             loop.run_until_complete(self._shutdown_async())
             loop.close()
+            with self._lock:
+                if self._loop is loop:
+                    self._loop = None
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:

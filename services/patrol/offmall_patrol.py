@@ -5,7 +5,12 @@ Uses Scrapling HTTP fetches only.
 import logging
 
 from offmall_db import _extract_json_ld_product, _extract_visible_price, _get_page_text, _infer_offmall_status
-from services.patrol.base_patrol import BasePatrol, PatrolResult
+from services.patrol.base_patrol import (
+    DELETED_HTTP_STATUSES,
+    BasePatrol,
+    PatrolResult,
+    deleted_http_result,
+)
 
 logger = logging.getLogger("patrol.offmall")
 
@@ -25,7 +30,11 @@ class OffmallPatrol(BasePatrol):
                 url,
                 site="offmall",
                 kind="detail",
+                allowed_statuses=DELETED_HTTP_STATUSES,
             )
+            missing_result = deleted_http_result(page)
+            if missing_result is not None:
+                return missing_result
             page_text = _get_page_text(page)
             json_ld = _extract_json_ld_product(page)
             offers = json_ld.get("offers", {}) if isinstance(json_ld, dict) else {}

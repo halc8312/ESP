@@ -88,6 +88,7 @@ def test_stack_readyz_reports_only_non_secret_dependency_states(client):
             "redis": "unavailable",
             "worker": "unavailable",
             "scheduler": "unavailable",
+            "patrol": "unavailable",
         },
         "runtime_role": "test",
         "queue_backend": "rq",
@@ -135,6 +136,12 @@ def _heartbeat_payload(
         "runtime_role": runtime_role,
         "recorded_at": recorded_at.isoformat().replace("+00:00", "Z"),
         "event": event,
+        "last_patrol_completed_at": recorded_at.isoformat().replace(
+            "+00:00", "Z"
+        ),
+        "last_patrol_status": "completed",
+        "last_patrol_selected_count": "1",
+        "last_patrol_error_count": "0",
     }
 
 
@@ -188,6 +195,7 @@ def test_stack_readyz_requires_live_worker_and_scheduler_for_rq_backend(client, 
         "redis": "ok",
         "worker": "ok",
         "scheduler": "ok",
+        "patrol": "ok",
     }
     assert redis_client.closed is True
 
@@ -221,7 +229,39 @@ def test_stack_readyz_reports_only_stale_state_for_expired_worker_heartbeat(clie
         "redis": "ok",
         "worker": "stale",
         "scheduler": "ok",
+        "patrol": "ok",
     }
+
+
+def test_stack_readyz_fails_when_latest_patrol_processed_no_items_successfully(
+    client,
+    monkeypatch,
+):
+    now = datetime.now(timezone.utc)
+    scheduler_payload = _heartbeat_payload(recorded_at=now)
+    scheduler_payload["last_patrol_selected_count"] = "5"
+    scheduler_payload["last_patrol_error_count"] = "5"
+    redis_client = _FakeReadinessRedis(
+        worker_payload=json.dumps(_heartbeat_payload(recorded_at=now)),
+        scheduler_payload=scheduler_payload,
+    )
+    client.application.config.update(
+        {
+            "SCRAPE_QUEUE_BACKEND": "rq",
+            "REDIS_URL": "redis://example.test:6379/0",
+        }
+    )
+    monkeypatch.setattr(
+        app_module,
+        "_create_readiness_redis_client",
+        lambda _redis_url: redis_client,
+    )
+
+    response = client.get("/stack-readyz")
+
+    assert response.status_code == 503
+    assert response.get_json()["checks"]["scheduler"] == "ok"
+    assert response.get_json()["checks"]["patrol"] == "failed"
 
 
 def test_stack_readyz_rejects_scheduler_heartbeat_from_web_role(client, monkeypatch):

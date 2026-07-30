@@ -6,7 +6,12 @@ import json
 import logging
 from typing import Optional
 
-from services.patrol.base_patrol import BasePatrol, PatrolResult
+from services.patrol.base_patrol import (
+    DELETED_HTTP_STATUSES,
+    BasePatrol,
+    PatrolResult,
+    deleted_http_result,
+)
 from yahoo_db import _get_page_text, _infer_detail_status
 
 logger = logging.getLogger("patrol.yahoo")
@@ -27,7 +32,11 @@ class YahooPatrol(BasePatrol):
                 url,
                 site="yahoo",
                 kind="detail",
+                allowed_statuses=DELETED_HTTP_STATUSES,
             )
+            missing_result = deleted_http_result(page)
+            if missing_result is not None:
+                return missing_result
             script_el = page.find("#__NEXT_DATA__")
             if not script_el:
                 return PatrolResult(error="No __NEXT_DATA__ found")
