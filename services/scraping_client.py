@@ -512,6 +512,8 @@ def fetch_dynamic(url: str, headless: bool = True, network_idle: bool = True, **
         url: 取得するURL
         headless: ヘッドレスモードで実行するか (default: True)
         network_idle: ネットワークアイドル待機するか (default: True)
+        allowed_statuses: 失敗として扱わないHTTPステータス。巡回のように
+            404を「削除済み」と解釈したい呼び出し元が指定する。
     """
     from services.browser_pool import run_browser_page_task
     from services.html_page_adapter import HtmlPageAdapter
@@ -529,6 +531,7 @@ def fetch_dynamic(url: str, headless: bool = True, network_idle: bool = True, **
     timeout = max(1, int(kwargs.pop("timeout", 30000) or 30000))
     wait_selector = str(kwargs.pop("wait_selector", "") or "")
     wait_ms = max(0, int(kwargs.pop("wait", 0) or 0))
+    allowed_statuses = frozenset(kwargs.pop("allowed_statuses", None) or ())
     if kwargs:
         unsupported = ", ".join(sorted(kwargs))
         raise TypeError(f"Unsupported guarded dynamic fetch options: {unsupported}")
@@ -584,7 +587,7 @@ def fetch_dynamic(url: str, headless: bool = True, network_idle: bool = True, **
             url=str(page_state.get("url") or normalized_url),
             status=int(page_state.get("status") or 200),
         )
-        validate_fetch_response(result, site, kind=kind)
+        validate_fetch_response(result, site, kind=kind, allowed_statuses=allowed_statuses)
         return result
 
     return run_coro_sync(_fetch_guarded())

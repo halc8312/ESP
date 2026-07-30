@@ -12,7 +12,12 @@ from services.mercari_browser_fetch import (
 )
 from mercari_db import scrape_shops_product
 from services.mercari_item_parser import parse_mercari_item_page, parse_mercari_network_payload
-from services.patrol.base_patrol import BasePatrol, PatrolResult
+from services.patrol.base_patrol import (
+    DELETED_HTTP_STATUSES,
+    BasePatrol,
+    PatrolResult,
+    deleted_http_result,
+)
 from services.scraping_client import fetch_dynamic
 
 logger = logging.getLogger("patrol.mercari")
@@ -100,6 +105,7 @@ class MercariPatrol(BasePatrol):
                         url,
                         network_idle=True,
                         wait_selector=self._WAIT_SELECTOR,
+                        allowed_statuses=DELETED_HTTP_STATUSES,
                     )
                 else:
                     page = fetch_dynamic(
@@ -108,7 +114,14 @@ class MercariPatrol(BasePatrol):
                         # Changed from False → True so the page is more likely
                         # to have finished hydration before we scrape.
                         network_idle=True,
+                        allowed_statuses=DELETED_HTTP_STATUSES,
                     )
+                # A removed listing answers 404/410.  That is a definitive
+                # "gone" signal, not a scrape failure, so it must not surface
+                # as a patrol error alert.
+                missing_result = deleted_http_result(page)
+                if missing_result is not None:
+                    return self._finalize_result("mercari", url, missing_result)
                 item, meta = parse_mercari_item_page(page, url)
                 if captured_payloads:
                     payload_item, payload_meta = self._select_best_payload(captured_payloads, url)

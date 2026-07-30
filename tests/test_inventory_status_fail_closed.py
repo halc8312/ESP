@@ -1,11 +1,18 @@
 import json
 from unittest.mock import patch
 
+import pytest
+
+from services import scraping_client
+from services.html_page_adapter import HtmlPageAdapter
+from services.patrol.base_patrol import DELETED_HTTP_STATUSES
+from services.patrol.mercari_patrol import MercariPatrol
 from services.patrol.offmall_patrol import OffmallPatrol
 from services.patrol.snkrdunk_patrol import SnkrdunkPatrol
 from services.patrol.surugaya_patrol import SurugayaPatrol
 from services.patrol.yahoo_patrol import YahooPatrol
 from services.patrol.yahuoku_patrol import YahuokuPatrol
+from services.scrape_safety import ScrapeHttpError
 
 import mercari_db
 import offmall_db
@@ -591,3 +598,82 @@ def test_static_patrols_normalize_missing_item_http_status_as_deleted():
         assert result.success is True, patrol_class.__name__
         assert result.status == "deleted", patrol_class.__name__
         assert result.reason == "http-404", patrol_class.__name__
+
+
+def test_mercari_patrol_normalizes_removed_listing_as_deleted():
+    """A removed Mercari listing answers 404; that is "gone", not an error."""
+    page = HtmlPageAdapter("", url="https://jp.mercari.com/item/m64539483055", status=404)
+
+    with patch(
+        "services.patrol.mercari_patrol.fetch_dynamic", return_value=page
+    ) as fetch:
+        result = MercariPatrol().fetch("https://jp.mercari.com/item/m64539483055")
+
+    assert result.success is True
+    assert result.error is None
+    assert result.status == "deleted"
+    assert result.reason == "http-404"
+    assert fetch.call_args.kwargs["allowed_statuses"] == DELETED_HTTP_STATUSES
+
+
+def test_mercari_patrol_browser_pool_path_also_normalizes_404():
+    page = HtmlPageAdapter("", url="https://jp.mercari.com/item/m1", status=410)
+
+    with patch(
+        "services.patrol.mercari_patrol.should_use_mercari_browser_pool_patrol",
+        return_value=True,
+    ), patch(
+        "services.patrol.mercari_patrol.fetch_mercari_page_and_payloads_via_browser_pool_sync",
+        return_value=(page, []),
+    ) as fetch:
+        result = MercariPatrol().fetch("https://jp.mercari.com/item/m1")
+
+    assert result.success is True
+    assert result.status == "deleted"
+    assert result.reason == "http-410"
+    assert fetch.call_args.kwargs["allowed_statuses"] == DELETED_HTTP_STATUSES
+
+
+def test_dynamic_fetch_returns_404_page_when_status_is_allowed(monkeypatch):
+    """Without allowed_statuses a 404 must still fail closed."""
+    async def fake_run_browser_page_task(_site, task, **_kwargs):
+        class Response:
+            status = 404
+
+        class Page:
+            url = "https://jp.mercari.com/item/m1"
+
+            async def goto(self, *_a, **_k):
+                return Response()
+
+            async def content(self):
+                return "<html></html>"
+
+            async def wait_for_load_state(self, *_a, **_k):
+                return None
+
+            async def wait_for_timeout(self, *_a, **_k):
+                return None
+
+        class Context:
+            async def route(self, _pattern, _handler):
+                return None
+
+        return await task(Page(), Context())
+
+    monkeypatch.setattr(
+        "services.browser_pool.run_browser_page_task", fake_run_browser_page_task
+    )
+
+    page = scraping_client.fetch_dynamic(
+        "https://jp.mercari.com/item/m1",
+        network_idle=False,
+        allowed_statuses=DELETED_HTTP_STATUSES,
+    )
+    assert page.status == 404
+
+    with pytest.raises(ScrapeHttpError, match="404"):
+        scraping_client.fetch_dynamic(
+            "https://jp.mercari.com/item/m1",
+            network_idle=False,
+        )

@@ -114,6 +114,7 @@ async def fetch_mercari_page_and_payloads_via_browser_pool_async(
     *,
     network_idle: bool = True,
     wait_selector: str = "h1, [data-testid='price']",
+    allowed_statuses: frozenset[int] = frozenset(),
 ) -> tuple[HtmlPageAdapter, list[dict]]:
     request_kind, site = classify_target_url(url)
     if site != "mercari":
@@ -274,7 +275,7 @@ async def fetch_mercari_page_and_payloads_via_browser_pool_async(
         url=str(page_state.get("url") or url),
         status=int(page_state.get("status") or 200),
     )
-    validate_fetch_response(page, "mercari", kind=kind)
+    validate_fetch_response(page, "mercari", kind=kind, allowed_statuses=allowed_statuses)
     return page, captured_payloads
 
 
@@ -283,12 +284,14 @@ def fetch_mercari_page_and_payloads_via_browser_pool_sync(
     *,
     network_idle: bool = True,
     wait_selector: str = "h1, [data-testid='price']",
+    allowed_statuses: frozenset[int] = frozenset(),
 ) -> tuple[HtmlPageAdapter, list[dict]]:
     return run_coro_sync(
         fetch_mercari_page_and_payloads_via_browser_pool_async(
             url,
             network_idle=network_idle,
             wait_selector=wait_selector,
+            allowed_statuses=allowed_statuses,
         )
     )
 

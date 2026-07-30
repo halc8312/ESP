@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+from services.patrol.base_patrol import DELETED_HTTP_STATUSES
+
 
 def _make_mock_page(
     *,
@@ -150,6 +152,7 @@ def test_fetch_can_use_browser_pool(monkeypatch):
         "https://jp.mercari.com/item/xxx",
         network_idle=True,
         wait_selector="h1, [data-testid='price'], [data-testid='checkout-button']",
+        allowed_statuses=DELETED_HTTP_STATUSES,
     )
     mock_fetch_dynamic.assert_not_called()
     assert result.success
