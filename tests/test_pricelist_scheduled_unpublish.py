@@ -462,5 +462,5 @@ def test_pricelist_list_shows_scheduled_and_expired_states(client, db_session):
     response = client.get("/pricelists")
 
     assert response.status_code == 200
-    assert "自動非公開".encode() in response.data
+    assert "自動で非公開".encode() in response.data
     assert "公開終了済み".encode() in response.data
