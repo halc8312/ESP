@@ -2081,23 +2081,29 @@ body.has-bottom-nav .main-content {
         display: none !important;
     }
 
+    /* Content fills the space beside the navigation by default.
+       Per-page maximums come from the wrap-* classes below. */
     body.has-bottom-nav .main-content {
         margin-left: var(--sidebar-width);
-        padding: 24px 30px;
-        max-width: calc(1200px + 60px);
+        padding: 24px 32px 96px;
+        width: calc(100% - var(--sidebar-width));
+        max-width: none;
     }
 
-    /* Product edit page uses full-width layout per client spec */
-    body.product-edit-page .main-content {
+    /* Page-type width classes (set via the body_class block in each template).
+       wrap-fluid  : tables / lists — use every available pixel
+       wrap-form   : input-heavy screens — wide, but still a readable maximum
+       wrap-narrow : text-heavy screens */
+    body.wrap-fluid .main-content {
         max-width: none;
-        width: calc(100% - var(--sidebar-width));
     }
 
-    /* High-density work screens use all space beside the navigation. */
-    body.product-list-page .main-content,
-    body.scrape-page .main-content {
-        max-width: none;
-        width: calc(100% - var(--sidebar-width));
+    body.wrap-form .main-content {
+        max-width: 1600px;
+    }
+
+    body.wrap-narrow .main-content {
+        max-width: 1100px;
     }
 
     /* Hide legacy nav on desktop when using new layout */

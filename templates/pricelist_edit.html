@@ -2,6 +2,7 @@
 
 {% block title %}{% if pricelist %}価格表編集{% else %}新規価格表作成{% endif %}{% endblock %}
 {% block header_title %}{% if pricelist %}価格表編集{% else %}新規価格表作成{% endif %}{% endblock %}
+{% block body_class %}has-bottom-nav wrap-form{% endblock %}
 
 {% block content %}
 <a href="{{ url_for('pricelist.pricelist_list') }}" class="back-link">&laquo; 価格表一覧に戻る</a>
