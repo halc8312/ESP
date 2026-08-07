@@ -690,6 +690,21 @@
         list-style: none;
         margin: 0;
         padding: 0;
+        grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+    }
+
+    /* Nothing missing: the heading says so, and the five green boxes would
+       only push the form further down the page. */
+    .product-edit-checklist-card[data-ready="ok"] .content-card-body {
+        display: none;
+    }
+
+    .product-edit-check-content a {
+        text-decoration: none;
+    }
+
+    .product-edit-check-content a:hover strong {
+        text-decoration: underline;
     }
 
     .product-edit-checklist-item {
@@ -1401,6 +1416,36 @@
     {{ error }}
 </div>
 {% endif %}
+
+<!-- The header chip only reveals the detail on hover, which never happens on a
+     touch screen. This says what is missing without being asked. -->
+<section class="content-card product-edit-checklist-card" id="productChecklistCard"
+    data-ready="{% if edit_summary.completed_count >= edit_summary.total_count %}ok{% else %}todo{% endif %}">
+    <div class="content-card-header">
+        <h2 id="productChecklistHeading">
+            {% if edit_summary.completed_count >= edit_summary.total_count %}
+            出品前チェック：すべて入力できています
+            {% else %}
+            出品前チェック：あと{{ edit_summary.total_count - edit_summary.completed_count }}つ
+            {% endif %}
+        </h2>
+        <p>お客様に見せる前に埋めておきたい項目です。足りない項目を押すと、その入力欄へ移動します。</p>
+    </div>
+    <div class="content-card-body">
+        <ul class="product-edit-checklist-list">
+            {% for item in edit_summary.checklist %}
+            <li class="product-edit-checklist-item{% if item.done %} is-complete{% endif %}"
+                data-check-key="{{ item.key }}">
+                <span class="product-edit-check-icon">{% if item.done %}OK{% else %}要{% endif %}</span>
+                <span class="product-edit-check-content">
+                    <a href="#{{ item.anchor }}"><strong>{{ item.label }}</strong></a>
+                    <span class="product-edit-check-note">{{ item.done_text if item.done else item.todo_text }}</span>
+                </span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+</section>
 
 <form id="productEditForm" method="POST" enctype="multipart/form-data" class="product-edit-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
@@ -2755,21 +2800,37 @@
     }
 
     function setChecklistItemState(key, done, message) {
-        var item = document.querySelector('[data-check-key="' + key + '"]');
-        if (!item) {
+        // The same item appears in the header popover and in the inline card,
+        // so every copy has to move together.
+        document.querySelectorAll('[data-check-key="' + key + '"]').forEach(function (item) {
+            item.classList.toggle('is-complete', done);
+
+            var icon = item.querySelector('.product-edit-check-icon');
+            if (icon) {
+                icon.textContent = done ? 'OK' : '要';
+            }
+
+            var note = item.querySelector('.product-edit-check-note');
+            if (note) {
+                note.textContent = message;
+            }
+        });
+    }
+
+    function setChecklistCardState(completedCount, totalCount) {
+        var card = document.getElementById('productChecklistCard');
+        if (!card) {
             return;
         }
 
-        item.classList.toggle('is-complete', done);
+        var remaining = Math.max(totalCount - completedCount, 0);
+        card.dataset.ready = remaining === 0 ? 'ok' : 'todo';
 
-        var icon = item.querySelector('.product-edit-check-icon');
-        if (icon) {
-            icon.textContent = done ? 'OK' : '要';
-        }
-
-        var note = item.querySelector('.product-edit-check-note');
-        if (note) {
-            note.textContent = message;
+        var heading = document.getElementById('productChecklistHeading');
+        if (heading) {
+            heading.textContent = remaining === 0
+                ? '出品前チェック：すべて入力できています'
+                : '出品前チェック：あと' + remaining + 'つ';
         }
     }
 
@@ -2893,13 +2954,17 @@
             heroReadinessBadge.setAttribute('data-ready', completedCount >= 5 ? 'ok' : 'todo');
             var heroReadinessText = document.getElementById('heroReadinessText');
             if (heroReadinessText) {
-                heroReadinessText.textContent = 'チェック ' + completedCount + '/5';
+                // Keep the same wording the server rendered; this used to drop
+                // back to the shorter "チェック" on the first edit.
+                heroReadinessText.textContent = '出品前チェック ' + completedCount + '/5';
             }
         }
 
         if (checklistCountBadge) {
             checklistCountBadge.textContent = completedCount + '/5';
         }
+
+        setChecklistCardState(completedCount, 5);
     }
 
     // Bridge for product_bg_removal.js: when the user applies a bg-removal
