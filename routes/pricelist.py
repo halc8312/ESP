@@ -412,6 +412,15 @@ def pricelist_items(pricelist_id):
             )
             item.total_stock = sum(v.inventory_qty or 0 for v in p.variants)
 
+        # Selling below cost is the one mistake worth surfacing above the table.
+        loss_count = sum(
+            1
+            for item in items
+            if item.display_price is not None
+            and item.product.last_price is not None
+            and item.display_price < item.product.last_price
+        )
+
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         current_shop_id = session.get('current_shop_id')
 
@@ -419,6 +428,7 @@ def pricelist_items(pricelist_id):
             "pricelist_items.html",
             pricelist=pl,
             items=items,
+            loss_count=loss_count,
             error=form_error,
             submitted_custom_prices=submitted_custom_prices,
             all_shops=all_shops,

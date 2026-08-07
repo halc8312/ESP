@@ -4,6 +4,7 @@
 {% block header_title %}{{ pricelist.name }} 商品管理{% endblock %}
 {% block body_class %}has-bottom-nav wrap-fluid{% endblock %}
 
+{% import "_money.html" as money %}
 {% block content %}
 <a href="{{ url_for('pricelist.pricelist_list') }}" class="back-link">&laquo; 価格表一覧に戻る</a>
 
@@ -14,6 +15,10 @@
 
 {% if error %}
 <div class="alert alert-error" role="alert">{{ error }}</div>
+{% endif %}
+
+{% if loss_count %}
+<div class="alert alert-warning" role="alert">⚠ 利益がマイナスの商品が {{ loss_count }}商品あります。「利益」の列が赤い行を確認してください。</div>
 {% endif %}
 
 <div style="margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
@@ -45,8 +50,9 @@
                             <th>リストから外す</th>
                             <th>サムネイル</th>
                             <th>商品名</th>
-                            <th>仕入価格</th>
-                            <th>お客様に見せる価格</th>
+                            <th class="num">仕入価格</th>
+                            <th class="num">お客様に見せる価格</th>
+                            <th class="num">利益</th>
                             <th>在庫</th>
                             <th>顧客に表示</th>
                         </tr>
@@ -66,18 +72,16 @@
                                 {% endif %}
                             </td>
                             <td class="product-title-cell" style="max-width: 200px;">{{ item.display_title }}</td>
-                            <td>
-                                {% if item.product.last_price is not none %}
-                                ¥{{ "{:,}".format(item.product.last_price) }}
-                                {% else %}
-                                -
-                                {% endif %}
-                            </td>
-                            <td>
+                            <td class="num">{{ money.cost(item.product.last_price) }}</td>
+                            <td class="num">
+                                {{ money.sell(item.display_price) }}
                                 <input type="number" name="custom_price_{{ item.id }}"
+                                    class="pricelist-item-price-input"
                                     value="{{ submitted_custom_prices.get(item.id) if item.id in submitted_custom_prices else (item.custom_price if item.custom_price is not none else '') }}"
-                                    min="0" step="1" inputmode="numeric" placeholder="空欄なら自動計算" style="width: 100px;">
+                                    min="0" step="1" inputmode="numeric" placeholder="空欄なら自動計算"
+                                    aria-label="{{ item.display_title }} の販売価格">
                             </td>
+                            <td class="num">{{ money.profit(item.product.last_price, item.display_price) }}</td>
                             <td>
                                 {% if item.total_stock > 0 %}
                                 <span style="color: #22c55e; font-weight: 600;">{{ item.total_stock }}</span>

@@ -3,6 +3,7 @@
 {% block title %}価格ルール管理{% endblock %}
 {% block header_title %}価格ルール管理{% endblock %}
 {% block body_class %}has-bottom-nav wrap-form{% endblock %}
+{% import "_money.html" as money %}
 
 {% block content %}
 <div class="page-header">
@@ -59,7 +60,8 @@
                         <th>利益上乗せ率</th>
                         <th>送料上乗せ</th>
                         <th>固定手数料</th>
-                        <th>計算例 (仕入1000円の場合)</th>
+                        <th class="num">販売価格（仕入1,000円の場合）</th>
+                        <th class="num">利益</th>
                         <th>操作</th>
                     </tr>
                 </thead>
@@ -70,11 +72,10 @@
                         <td>{{ rule.margin_rate }}%</td>
                         <td>¥{{ "{:,}".format(rule.shipping_cost or 0) }}</td>
                         <td>¥{{ "{:,}".format(rule.fixed_fee or 0) }}</td>
-                        <td style="color: #2e7d32; font-weight: bold;">
-                            {% set example_price = ((1000 + (rule.shipping_cost or 0)) * (1 + (rule.margin_rate or 0) /
-                            100) + (rule.fixed_fee or 0)) | int %}
-                            ¥{{ "{:,}".format(example_price) }}
-                        </td>
+                        {% set example_price = ((1000 + (rule.shipping_cost or 0)) * (1 + (rule.margin_rate or 0) /
+                        100) + (rule.fixed_fee or 0)) | int %}
+                        <td class="num">{{ money.sell(example_price) }}</td>
+                        <td class="num">{{ money.profit(1000, example_price) }}</td>
                         <td>
                             <button class="btn btn-sm"
                                 onclick="editRule({{ rule.id }}, '{{ rule.name }}', {{ rule.margin_rate }}, {{ rule.shipping_cost or 0 }}, {{ rule.fixed_fee or 0 }})">編集</button>

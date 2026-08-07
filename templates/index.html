@@ -4,6 +4,7 @@
 {% block header_title %}商品一覧{% endblock %}
 {% block body_class %}has-bottom-nav product-list-page wrap-fluid{% endblock %}
 
+{% import "_money.html" as money %}
 {% block content %}
 {% set site_display = {'mercari': 'メルカリ', 'yahuoku': 'ヤフオク', 'yahoo': 'Yahoo!ショッピング', 'snkrdunk': 'SNKRDUNK', 'surugaya': '駿河屋',
     'rakuma': 'ラクマ', 'offmall': 'オフモール', 'manual': '手動'} %}
@@ -248,7 +249,9 @@
                         <th class="hide-mobile">商品番号</th>
                         <th>サムネイル</th>
                         <th>商品名</th>
-                        <th>価格</th>
+                        <th class="num">仕入価格</th>
+                        <th class="num">販売価格</th>
+                        <th class="num">利益</th>
                         <th>在庫</th>
                         <th>抽出サイト</th>
                         <th>詳細</th>
@@ -283,15 +286,9 @@
                                 <div class="inline-edit-feedback" aria-live="polite"></div>
                             </div>
                         </td>
-                        <td class="price-cell">
-                            <div class="price-row price-cost">
-                                <span class="price-label">仕入:</span>
-                                <span class="price-value">{% if p.last_price is not none %}¥{{ "{:,}".format(p.last_price) }}{% else %}—{% endif %}</span>
-                            </div>
-                            <div class="price-row price-sell">
-                                <span class="price-label">販売:</span>
-                                <span class="price-value" data-price-display="{{ p.id }}">{% if p.selling_price is not none %}¥{{ "{:,}".format(p.selling_price) }}{% else %}未設定{% endif %}</span>
-                            </div>
+                        <td class="num price-cell">{{ money.cost(p.last_price) }}</td>
+                        <td class="num price-cell">
+                            <span class="money money--sell" data-price-display="{{ p.id }}">{{ money.sell_body(p.selling_price, url_for('product_detail', product_id=p.id)) }}</span>
                             <div class="inline-edit-group inline-edit-group--price">
                                 <label for="selling_price_desktop_{{ p.id }}" class="inline-edit-label">販売価格</label>
                                 <input type="number" id="selling_price_desktop_{{ p.id }}"
@@ -302,6 +299,9 @@
                                 <div class="inline-edit-feedback" aria-live="polite"></div>
                             </div>
                         </td>
+                        <td class="num price-cell" data-profit-display="{{ p.id }}"
+                            data-cost-price="{{ p.last_price if p.last_price is not none else '' }}"><span
+                                data-profit-body>{{ money.profit(p.last_price, p.selling_price) }}</span></td>
                         <td>
                             {% if p.last_status == 'deleted' %}
                             <span class="stock-badge stock-out">在庫なし</span>
@@ -351,8 +351,11 @@
                         <div class="inline-edit-feedback" aria-live="polite"></div>
                     </div>
                     <div class="product-card-price">
-                        <div class="price-row price-sell"><span class="price-label">販売:</span> <span class="price-value" data-price-display="{{ p.id }}">{% if p.selling_price is not none %}¥{{ "{:,}".format(p.selling_price) }}{% else %}未設定{% endif %}</span></div>
-                        <div class="price-row price-cost"><span class="price-label">仕入:</span> <span class="price-value">{% if p.last_price is not none %}¥{{ "{:,}".format(p.last_price) }}{% else %}—{% endif %}</span></div>
+                        <div class="price-row price-cost"><span class="price-label">仕入:</span> {{ money.cost(p.last_price) }}</div>
+                        <div class="price-row price-sell"><span class="price-label">販売:</span> <span class="money money--sell" data-price-display="{{ p.id }}">{{ money.sell_body(p.selling_price, url_for('product_detail', product_id=p.id)) }}</span></div>
+                        <div class="price-row price-profit" data-profit-display="{{ p.id }}"
+                            data-cost-price="{{ p.last_price if p.last_price is not none else '' }}"><span class="price-label">利益:</span> <span
+                                data-profit-body>{{ money.profit(p.last_price, p.selling_price) }}</span></div>
                     </div>
                     <div class="inline-edit-group inline-edit-group--price">
                         <label for="selling_price_mobile_{{ p.id }}" class="inline-edit-label">販売価格</label>
@@ -565,9 +568,40 @@
         });
     }
 
+    function formatProfitMarkup(costValue, sellValue) {
+        if (costValue === null || sellValue === null) {
+            return '<span class="money money--cost">—</span>';
+        }
+        const amount = sellValue - costValue;
+        const rate = costValue ? Math.round((amount * 100) / costValue) : null;
+        const yen = '¥' + Math.abs(amount).toLocaleString('ja-JP');
+        if (amount < 0) {
+            const note = rate === null ? '赤字' : '−' + Math.abs(rate) + '%（赤字）';
+            return '<span class="profit profit--minus">⚠ −' + yen +
+                '<span class="profit__rate">' + note + '</span></span>';
+        }
+        const note = rate === null ? '—' : '+' + rate + '%';
+        return '<span class="profit">+' + yen + '<span class="profit__rate">' + note + '</span></span>';
+    }
+
+    function toPriceNumber(value) {
+        if (value === null || value === undefined || value === '') {
+            return null;
+        }
+        const numeric = Number(value);
+        return Number.isNaN(numeric) ? null : numeric;
+    }
+
     function syncPriceDisplays(productId, value) {
         document.querySelectorAll('[data-price-display="' + productId + '"]').forEach(function (node) {
             node.textContent = formatPriceDisplay(value);
+        });
+        const sellValue = toPriceNumber(value);
+        document.querySelectorAll('[data-profit-display="' + productId + '"]').forEach(function (container) {
+            const body = container.querySelector('[data-profit-body]');
+            if (body) {
+                body.innerHTML = formatProfitMarkup(toPriceNumber(container.dataset.costPrice), sellValue);
+            }
         });
     }
 

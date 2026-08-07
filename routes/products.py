@@ -274,6 +274,11 @@ def _build_product_edit_summary(product, snapshot, images, variants):
         "variant_count": variant_count,
         "in_stock_count": in_stock_count,
         "price_label": price_label,
+        # Cost / sale pair behind the profit figure on the sales panel. The
+        # lowest priced variant stands in for the product when prices differ,
+        # matching the "from" end of price_label.
+        "cost_price": product.last_price,
+        "sell_price": min(priced_variants) if priced_variants else None,
         "completed_count": completed_count,
         "total_count": len(checklist),
         "checklist": checklist,

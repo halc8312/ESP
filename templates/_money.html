@@ -1,0 +1,50 @@
+{#
+  Shared money / profit display helpers.
+
+  The admin screens show cost, sale price and profit as three independent,
+  right-aligned columns so figures can be compared down the column. Profit is
+  always "sale - cost" in yen; a negative profit is flagged in red so a
+  loss-making price is impossible to miss.
+#}
+
+{% macro yen(value) -%}
+{%- if value is none -%}—{%- else -%}¥{{ "{:,}".format(value|int) }}{%- endif -%}
+{%- endmacro %}
+
+{% macro cost(value) -%}
+<span class="money money--cost">{{ yen(value) }}</span>
+{%- endmacro %}
+
+{#
+  sell_body is the cell's inner content only, so callers that update the price
+  in place (the product list's inline editor) can own the wrapper element.
+#}
+{% macro sell_body(value, set_price_url=none) -%}
+{%- if value is not none -%}
+{{ yen(value) }}
+{%- elif set_price_url -%}
+<a class="money-unset" href="{{ set_price_url }}">未設定 → 決める</a>
+{%- else -%}
+<span class="money-unset">未設定</span>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro sell(value, set_price_url=none) -%}
+<span class="money money--sell">{{ sell_body(value, set_price_url) }}</span>
+{%- endmacro %}
+
+{% macro profit(cost_value, sell_value) -%}
+{%- if cost_value is none or sell_value is none -%}
+<span class="money money--cost">—</span>
+{%- else -%}
+{%- set amount = sell_value|int - cost_value|int -%}
+{%- set rate = ((amount * 100.0) / cost_value)|round|int if cost_value else none -%}
+{%- if amount < 0 -%}
+<span class="profit profit--minus">⚠ −{{ yen(-amount) }}<span
+        class="profit__rate">{% if rate is not none %}−{{ -rate }}%（赤字）{% else %}赤字{% endif %}</span></span>
+{%- else -%}
+<span class="profit">+{{ yen(amount) }}<span
+        class="profit__rate">{% if rate is not none %}+{{ rate }}%{% else %}—{% endif %}</span></span>
+{%- endif -%}
+{%- endif -%}
+{%- endmacro %}

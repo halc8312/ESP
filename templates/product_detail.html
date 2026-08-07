@@ -3,6 +3,7 @@
 {% block title %}商品編集 - {{ product.last_title }}{% endblock %}
 {% block header_title %}商品編集{% endblock %}
 {% block body_class %}has-bottom-nav has-sticky-save product-edit-page wrap-fluid{% endblock %}
+{% import "_money.html" as money %}
 {% block head %}
 {{ super() }}
 <style>
@@ -1578,7 +1579,20 @@
                     </span>
                 </header>
                 <div class="content-card-body">
-                    <div class="product-variant-overview">
+                    <div class="product-variant-overview"
+                        data-cost-price="{{ edit_summary.cost_price if edit_summary.cost_price is not none else '' }}">
+                        <article class="product-variant-overview-card">
+                            <span>仕入価格</span>
+                            <strong>{{ money.cost(edit_summary.cost_price) }}</strong>
+                        </article>
+                        <article class="product-variant-overview-card">
+                            <span>販売価格</span>
+                            <strong id="variantPriceValue">{{ edit_summary.price_label }}</strong>
+                        </article>
+                        <article class="product-variant-overview-card">
+                            <span>利益</span>
+                            <strong id="variantProfitValue">{{ money.profit(edit_summary.cost_price, edit_summary.sell_price) }}</strong>
+                        </article>
                         <article class="product-variant-overview-card">
                             <span>登録件数</span>
                             <strong id="variantCountValue">{{ edit_summary.variant_count }}件</strong>
@@ -1586,10 +1600,6 @@
                         <article class="product-variant-overview-card">
                             <span>在庫あり</span>
                             <strong id="variantStockValue">{{ edit_summary.in_stock_count }}件</strong>
-                        </article>
-                        <article class="product-variant-overview-card">
-                            <span>価格の目安</span>
-                            <strong id="variantPriceValue">{{ edit_summary.price_label }}</strong>
                         </article>
                     </div>
 
@@ -1963,6 +1973,7 @@
     var variantCountValue = null;
     var variantStockValue = null;
     var variantPriceValue = null;
+    var variantProfitValue = null;
     var variantGenerationSummary = null;
     var formDirty = false;
 
@@ -2010,6 +2021,7 @@
         variantCountValue = document.getElementById('variantCountValue');
         variantStockValue = document.getElementById('variantStockValue');
         variantPriceValue = document.getElementById('variantPriceValue');
+        variantProfitValue = document.getElementById('variantProfitValue');
         variantGenerationSummary = document.getElementById('variantGenerationSummary');
 
         imageUrls = safeParseImageUrls(imageHiddenInput ? imageHiddenInput.value : '[]');
@@ -2715,6 +2727,33 @@
         return min === max ? formatCurrency(min) : formatCurrency(min) + ' - ' + formatCurrency(max);
     }
 
+    function readOverviewCostPrice() {
+        var overview = document.querySelector('.product-variant-overview');
+        if (!overview) {
+            return null;
+        }
+        return parseInteger(overview.dataset.costPrice || '');
+    }
+
+    function formatProfitMarkup(costValue, sellValue) {
+        if (costValue === null || sellValue === null) {
+            return '<span class="money money--cost">—</span>';
+        }
+
+        var amount = sellValue - costValue;
+        var rate = costValue ? Math.round((amount * 100) / costValue) : null;
+        var yen = '¥' + Math.abs(amount).toLocaleString('ja-JP');
+
+        if (amount < 0) {
+            var lossNote = rate === null ? '赤字' : '−' + Math.abs(rate) + '%（赤字）';
+            return '<span class="profit profit--minus">⚠ −' + yen +
+                '<span class="profit__rate">' + lossNote + '</span></span>';
+        }
+
+        var gainNote = rate === null ? '—' : '+' + rate + '%';
+        return '<span class="profit">+' + yen + '<span class="profit__rate">' + gainNote + '</span></span>';
+    }
+
     function setChecklistItemState(key, done, message) {
         var item = document.querySelector('[data-check-key="' + key + '"]');
         if (!item) {
@@ -2803,6 +2842,13 @@
 
         if (variantPriceValue) {
             variantPriceValue.textContent = priceLabel;
+        }
+
+        if (variantProfitValue) {
+            variantProfitValue.innerHTML = formatProfitMarkup(
+                readOverviewCostPrice(),
+                pricedValues.length ? Math.min.apply(null, pricedValues) : null
+            );
         }
 
         var imageDone = imageCount > 0;
