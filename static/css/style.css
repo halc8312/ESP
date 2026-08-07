@@ -5631,3 +5631,88 @@ input.pricelist-item-price-input {
     background: #fff8e1;
     color: var(--warning-color);
 }
+
+/* ── Price list: permanent vs time-limited ── */
+.pricelist-section {
+    margin-bottom: 32px;
+}
+
+.pricelist-section-head {
+    margin-bottom: 12px;
+}
+
+.pricelist-section-title {
+    font-size: 1.1rem;
+    margin: 0;
+}
+
+.pricelist-section-note {
+    margin: 4px 0 0;
+    font-size: 0.9em;
+    color: var(--text-muted);
+}
+
+.pricelist-section-empty {
+    color: var(--text-muted);
+    background: var(--surface-muted);
+    border: 1px dashed var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 0;
+}
+
+.pricelist-meta-countdown {
+    color: var(--warning-color);
+    font-weight: 600;
+}
+
+.list-type-choices {
+    display: grid;
+    gap: 12px;
+}
+
+.list-type-choice {
+    display: block;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 14px;
+    cursor: pointer;
+    background: var(--card-bg);
+}
+
+.list-type-choice.is-selected {
+    border-color: var(--primary-color);
+    background: #eef5ff;
+}
+
+.list-type-choice strong {
+    display: block;
+    margin-top: 6px;
+}
+
+.list-type-choice span {
+    display: block;
+    margin-top: 4px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.deadline-presets {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.deadline-presets-label {
+    font-size: 0.9em;
+    color: var(--text-muted);
+}
+
+.form-group.is-highlighted {
+    background: #fff8e1;
+    border: 1px solid #ffe08a;
+    border-radius: 8px;
+    padding: 14px;
+}

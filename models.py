@@ -221,6 +221,9 @@ class PriceList(Base):
     name = Column(String, nullable=False)                # 例: "Customer A Price List"
     token = Column(String, unique=True, nullable=False)  # UUID公開アクセス用
     is_active = Column(Boolean, default=True)            # 有効/無効
+    # 常設(permanent) = 常にお客様が見るメインリスト
+    # 期間限定(limited) = 一時的に見せ、期限で閉じるリスト
+    list_type = Column(String, default="permanent", nullable=False)
     unpublish_at = Column(DateTime, nullable=True)       # 自動非公開日時（naive UTC）
     currency_rate = Column(Integer, default=150)         # JPY→USD換算レート
     layout = Column(String, default="grid")              # grid / editorial / list

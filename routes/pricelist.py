@@ -20,6 +20,7 @@ pricelist_bp = Blueprint('pricelist', __name__)
 
 PRICE_LIST_LAYOUTS = {"grid", "editorial", "list"}
 PRICE_LIST_THEMES = {"dark", "light"}
+PRICE_LIST_TYPES = {"permanent", "limited"}
 JAPAN_TIMEZONE = ZoneInfo("Asia/Tokyo")
 DATETIME_LOCAL_FORMAT = "%Y-%m-%dT%H:%M"
 
@@ -41,6 +42,35 @@ def _normalize_theme(value):
     if theme in PRICE_LIST_THEMES:
         return theme
     return "dark"
+
+
+def _normalize_list_type(value):
+    list_type = (value or "").strip().lower()
+    if list_type in PRICE_LIST_TYPES:
+        return list_type
+    return "permanent"
+
+
+def _describe_remaining_time(unpublish_at, now=None):
+    """Return e.g. "あと2日" for an upcoming deadline, or None."""
+    if unpublish_at is None:
+        return None
+
+    remaining = unpublish_at - (now or utc_now())
+    total_seconds = remaining.total_seconds()
+    if total_seconds <= 0:
+        return None
+
+    days = int(total_seconds // 86400)
+    if days >= 1:
+        return f"あと{days}日"
+
+    hours = int(total_seconds // 3600)
+    if hours >= 1:
+        return f"あと{hours}時間"
+
+    minutes = max(1, int(total_seconds // 60))
+    return f"あと{minutes}分"
 
 
 def _parse_currency_rate(raw_value):
@@ -139,6 +169,10 @@ def pricelist_list():
                 .count()
             )
             pl.publication_state = pl.publication_state_at(now)
+            pl.remaining_label = _describe_remaining_time(pl.unpublish_at, now)
+
+        permanent_lists = [pl for pl in pricelists if pl.list_type != "limited"]
+        limited_lists = [pl for pl in pricelists if pl.list_type == "limited"]
 
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         current_shop_id = session.get('current_shop_id')
@@ -146,6 +180,8 @@ def pricelist_list():
         return render_template(
             "pricelist_list.html",
             pricelists=pricelists,
+            permanent_lists=permanent_lists,
+            limited_lists=limited_lists,
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
@@ -177,6 +213,7 @@ def pricelist_create():
             shop, shop_error = _resolve_owned_shop(session_db, selected_shop_id)
             selected_unpublish_at = (request.form.get("unpublish_at") or "").strip()
             unpublish_at, unpublish_error = _parse_unpublish_at_jst(selected_unpublish_at)
+            list_type = _normalize_list_type(request.form.get("list_type"))
 
             validation_error = (
                 "名前を入力してください"
@@ -194,6 +231,7 @@ def pricelist_create():
                     selected_theme=theme,
                     selected_shop_id=selected_shop_id,
                     selected_unpublish_at=selected_unpublish_at,
+                    selected_list_type=list_type,
                     selected_name=name,
                     selected_notes=notes,
                     selected_currency_rate=selected_currency_rate,
@@ -211,6 +249,7 @@ def pricelist_create():
                 currency_rate=currency_rate,
                 layout=layout,
                 theme=theme,
+                list_type=list_type,
                 unpublish_at=unpublish_at,
             )
             session_db.add(new_pl)
@@ -226,6 +265,7 @@ def pricelist_create():
             selected_theme="dark",
             selected_shop_id=str(current_shop_id) if current_shop_id else "",
             selected_unpublish_at="",
+            selected_list_type="permanent",
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
@@ -264,6 +304,7 @@ def pricelist_edit(pricelist_id):
             shop, shop_error = _resolve_owned_shop(session_db, selected_shop_id)
             selected_unpublish_at = (request.form.get("unpublish_at") or "").strip()
             unpublish_at, unpublish_error = _parse_unpublish_at_jst(selected_unpublish_at)
+            selected_list_type = _normalize_list_type(request.form.get("list_type"))
             validation_error = (
                 "名前を入力してください"
                 if not selected_name
@@ -280,6 +321,7 @@ def pricelist_edit(pricelist_id):
                     selected_theme=_normalize_theme(request.form.get("theme")),
                     selected_shop_id=selected_shop_id,
                     selected_unpublish_at=selected_unpublish_at,
+                    selected_list_type=selected_list_type,
                     selected_name=selected_name,
                     selected_notes=selected_notes,
                     selected_currency_rate=selected_currency_rate,
@@ -297,6 +339,7 @@ def pricelist_edit(pricelist_id):
             pl.theme = _normalize_theme(request.form.get("theme"))
             pl.shop_id = shop.id if shop else None
             pl.is_active = "is_active" in request.form
+            pl.list_type = selected_list_type
             pl.unpublish_at = unpublish_at
             pl.updated_at = utc_now()
             session_db.commit()
@@ -311,6 +354,7 @@ def pricelist_edit(pricelist_id):
             selected_theme=pl.theme or "dark",
             selected_shop_id=str(pl.shop_id) if pl.shop_id else "",
             selected_unpublish_at=_format_unpublish_at_jst(pl.unpublish_at),
+            selected_list_type=_normalize_list_type(pl.list_type),
             selected_is_active=pl.is_active,
             publication_state=pl.publication_state_at(),
             all_shops=all_shops,

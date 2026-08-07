@@ -35,6 +35,25 @@
                     placeholder="例: Customer A Price List" required>
             </div>
 
+            {% set list_type_value = selected_list_type or 'permanent' %}
+            <div class="form-group">
+                <label>このリストの使い方</label>
+                <div class="list-type-choices">
+                    <label class="list-type-choice{% if list_type_value == 'permanent' %} is-selected{% endif %}">
+                        <input type="radio" name="list_type" value="permanent"
+                            {% if list_type_value == 'permanent' %}checked{% endif %}>
+                        <strong>常設リスト（メイン）</strong>
+                        <span>いつでもお客様に見てもらう常設のリストです。在庫と価格を調整しながらずっと使います。</span>
+                    </label>
+                    <label class="list-type-choice{% if list_type_value == 'limited' %} is-selected{% endif %}">
+                        <input type="radio" name="list_type" value="limited"
+                            {% if list_type_value == 'limited' %}checked{% endif %}>
+                        <strong>期間限定リスト</strong>
+                        <span>一時的に見せて、期限が来たら自動的に閉じるリストです。下で期限を決めてください。</span>
+                    </label>
+                </div>
+            </div>
+
             <div class="form-group">
                 <label for="shop_id">表示ショップ / ロゴ</label>
                 <select id="shop_id" name="shop_id">
@@ -109,8 +128,16 @@
                 </p>
             </div>
 
-            <div class="form-group">
+            <div class="form-group" id="unpublishGroup">
                 <label for="unpublish_at">いつまで公開するか（日本時間・任意）</label>
+                <div class="deadline-presets" id="deadlinePresets">
+                    <span class="deadline-presets-label">かんたん設定:</span>
+                    <button type="button" class="btn btn-secondary btn-sm" data-deadline-hours="24">24時間後</button>
+                    <button type="button" class="btn btn-secondary btn-sm" data-deadline-hours="72">3日後</button>
+                    <button type="button" class="btn btn-secondary btn-sm" data-deadline-hours="168">1週間後</button>
+                    <button type="button" class="btn btn-secondary btn-sm" data-deadline-hours="720">1か月後</button>
+                    <button type="button" class="btn btn-secondary btn-sm" data-deadline-clear>期限なしに戻す</button>
+                </div>
                 <input type="datetime-local" id="unpublish_at" name="unpublish_at"
                     value="{{ selected_unpublish_at or '' }}">
                 <p class="text-small text-muted mb-0" style="margin-top: 6px;">
@@ -159,6 +186,56 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tinymce/6.8.3/tinymce.min.js" referrerpolicy="origin"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
+        var deadlineInput = document.getElementById('unpublish_at');
+        var presets = document.getElementById('deadlinePresets');
+        var unpublishGroup = document.getElementById('unpublishGroup');
+        var typeRadios = document.querySelectorAll('input[name="list_type"]');
+
+        // datetime-local wants local wall-clock text, and the field is labelled
+        // as Japan time, so build the value in JST regardless of the browser's
+        // own timezone.
+        function toJstInputValue(date) {
+            var jst = new Date(date.getTime() + (9 * 60 + date.getTimezoneOffset()) * 60000);
+            function pad(n) { return String(n).padStart(2, '0'); }
+            return jst.getFullYear() + '-' + pad(jst.getMonth() + 1) + '-' + pad(jst.getDate()) +
+                'T' + pad(jst.getHours()) + ':' + pad(jst.getMinutes());
+        }
+
+        if (presets && deadlineInput) {
+            presets.addEventListener('click', function (event) {
+                var button = event.target.closest('button');
+                if (!button) {
+                    return;
+                }
+                if (button.hasAttribute('data-deadline-clear')) {
+                    deadlineInput.value = '';
+                    return;
+                }
+                var hours = Number(button.dataset.deadlineHours);
+                if (!hours) {
+                    return;
+                }
+                deadlineInput.value = toJstInputValue(new Date(Date.now() + hours * 3600000));
+            });
+        }
+
+        function syncDeadlineEmphasis() {
+            var limited = document.querySelector('input[name="list_type"][value="limited"]');
+            var isLimited = !!(limited && limited.checked);
+            if (unpublishGroup) {
+                unpublishGroup.classList.toggle('is-highlighted', isLimited);
+            }
+            document.querySelectorAll('.list-type-choice').forEach(function (choice) {
+                var radio = choice.querySelector('input[name="list_type"]');
+                choice.classList.toggle('is-selected', !!(radio && radio.checked));
+            });
+        }
+
+        typeRadios.forEach(function (radio) {
+            radio.addEventListener('change', syncDeadlineEmphasis);
+        });
+        syncDeadlineEmphasis();
+
         tinymce.init({
             selector: '#notes',
             menubar: false,

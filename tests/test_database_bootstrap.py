@@ -11,6 +11,11 @@ from models import ScrapeJob, ScrapeJobEvent
 from time_utils import utc_now
 
 
+# Every "upgrade runs all the way to head" assertion below shares this, so a new
+# migration only needs the revision updated in one place.
+ALEMBIC_HEAD_REVISION = "20260807_0015"
+
+
 def _coerce_datetime(value):
     if isinstance(value, str):
         return datetime.fromisoformat(value)
@@ -565,7 +570,7 @@ def test_run_alembic_upgrade_for_database_url_backfills_tracker_dismissed_at_fro
     assert "ix_scrape_jobs_tracker_dismissed_at" in indexes
     assert "selector_repair_candidates" in table_names
     assert "selector_active_rule_sets" in table_names
-    assert version_num == "20260729_0014"
+    assert version_num == ALEMBIC_HEAD_REVISION
 
 
 def test_run_alembic_upgrade_adds_product_patrol_schedule_columns_from_previous_head():
@@ -649,7 +654,7 @@ def test_run_alembic_upgrade_adds_product_patrol_schedule_columns_from_previous_
     assert "next_patrol_at" in product_columns
     assert "ix_products_last_patrolled_at" in product_indexes
     assert "ix_products_next_patrol_at" in product_indexes
-    assert version_num == "20260729_0014"
+    assert version_num == ALEMBIC_HEAD_REVISION
     assert _coerce_datetime(migrated_product["next_patrol_at"]) == legacy_backoff_until
     assert _coerce_datetime(migrated_product["updated_at"]) <= utc_now()
     assert _coerce_datetime(migrated_product["last_patrolled_at"]) <= utc_now()
@@ -699,7 +704,7 @@ def test_run_alembic_upgrade_adds_pricelist_unpublish_at_from_previous_head():
         smoke_db.unlink(missing_ok=True)
 
     assert "unpublish_at" in columns
-    assert version_num == "20260729_0014"
+    assert version_num == ALEMBIC_HEAD_REVISION
 
 
 def test_run_alembic_upgrade_adds_translation_manual_flags():
@@ -812,7 +817,7 @@ def test_run_alembic_upgrade_adds_translation_manual_flags():
         (2, 1, 1),
         (3, 0, 0),
     ]
-    assert version_num == "20260729_0014"
+    assert version_num == ALEMBIC_HEAD_REVISION
 
 
 def test_run_alembic_upgrade_adds_variant_selling_price():
@@ -862,7 +867,7 @@ def test_run_alembic_upgrade_adds_variant_selling_price():
         smoke_db.unlink(missing_ok=True)
 
     assert "selling_price" in variant_columns
-    assert version_num == "20260729_0014"
+    assert version_num == ALEMBIC_HEAD_REVISION
 
 
 def test_run_alembic_upgrade_adds_translation_worker_lease_and_recovers_legacy_running(
@@ -955,7 +960,7 @@ def test_run_alembic_upgrade_adds_translation_worker_lease_and_recovers_legacy_r
     assert {"worker_token", "lease_expires_at"}.issubset(columns)
     assert "ix_translation_suggestions_lease_expires_at" in indexes
     assert _coerce_datetime(lease_expires_at) == updated_at
-    assert version_num == "20260729_0014"
+    assert version_num == ALEMBIC_HEAD_REVISION
     assert app_logger.disabled is False
     assert worker_logger.disabled is False
 
