@@ -5474,3 +5474,60 @@ body.product-edit-page .sticky-save-container {
         flex: 1 1 140px;
     }
 }
+
+/* ── CSV import: Japanese column reference table ── */
+.csv-column-guide {
+    background: var(--surface-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 20px;
+}
+
+.csv-column-guide-title {
+    margin: 0 0 12px;
+    font-size: 0.95em;
+    color: var(--text-muted);
+}
+
+.csv-column-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card-bg);
+}
+
+.csv-column-table th,
+.csv-column-table td {
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    text-align: left;
+    vertical-align: top;
+    font-size: 0.95em;
+}
+
+.csv-column-table thead th {
+    background: var(--surface-subtle);
+    white-space: nowrap;
+}
+
+.csv-column-table tbody th {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.csv-column-table code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--surface-subtle);
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+
+.csv-column-required {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: #fdecea;
+    color: var(--danger-color);
+    font-weight: 600;
+    font-size: 0.9em;
+}

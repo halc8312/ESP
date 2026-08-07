@@ -78,7 +78,7 @@
 
 <div class="content-card">
     <div class="content-card-header">
-        <h2>抽出登録オプション</h2>
+        <h2>商品を取り込むときの初期設定</h2>
     </div>
     <div class="content-card-body">
         <p class="text-muted settings-summary-text">抽出した商品を登録するとき、自動で利益を上乗せするデフォルトルールを選べます。</p>
@@ -86,7 +86,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="settings-form-row">
                 <div class="form-group settings-form-main">
-                    <label for="default_pricing_rule_id">デフォルト利益ルール</label>
+                    <label for="default_pricing_rule_id">自動で使う価格ルール</label>
                     <select id="default_pricing_rule_id" name="default_pricing_rule_id">
                         <option value="">未設定</option>
                         {% for rule in pricing_rules|default([]) %}

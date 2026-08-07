@@ -33,27 +33,27 @@
     <article class="dashboard-summary-card dashboard-summary-card--neutral">
         <span class="dashboard-summary-label">管理対象商品</span>
         <strong class="dashboard-summary-value">{{ total_items }}</strong>
-        <span class="dashboard-summary-note">現在のスコープ内の商品数</span>
+        <span class="dashboard-summary-note">いま管理している商品の数</span>
     </article>
     <article class="dashboard-summary-card dashboard-summary-card--positive">
         <span class="dashboard-summary-label">公開中</span>
         <strong class="dashboard-summary-value">{{ publication_counts.get('active', 0) }}</strong>
-        <span class="dashboard-summary-note">`Product.status = active`</span>
+        <span class="dashboard-summary-note">公開中（お客様に見えます）</span>
     </article>
     <article class="dashboard-summary-card dashboard-summary-card--neutral">
         <span class="dashboard-summary-label">下書き</span>
         <strong class="dashboard-summary-value">{{ publication_counts.get('draft', 0) }}</strong>
-        <span class="dashboard-summary-note">`Product.status = draft`</span>
+        <span class="dashboard-summary-note">下書き（まだ見えません）</span>
     </article>
     <article class="dashboard-summary-card dashboard-summary-card--positive">
         <span class="dashboard-summary-label">公開準備OK</span>
         <strong class="dashboard-summary-value">{{ ready_count }}</strong>
-        <span class="dashboard-summary-note">現行バリデーションで問題なし</span>
+        <span class="dashboard-summary-note">すぐ公開できます</span>
     </article>
     <article class="dashboard-summary-card dashboard-summary-card--attention">
-        <span class="dashboard-summary-label">要対応商品</span>
+        <span class="dashboard-summary-label">直したほうがいい商品</span>
         <strong class="dashboard-summary-value">{{ issue_summary.products_with_issues }}</strong>
-        <span class="dashboard-summary-note">バリデーションで警告またはエラーあり</span>
+        <span class="dashboard-summary-note">入力もれ・設定ミスがあります</span>
     </article>
 </div>
 
@@ -61,14 +61,14 @@
     <div class="dashboard-main">
         <section class="content-card">
             <div class="content-card-header">
-                <h2>要対応商品</h2>
+                <h2>直したほうがいい商品</h2>
             </div>
             <div class="content-card-body">
                 {% if attention_items %}
                 <div class="dashboard-section-note">エラー件数の多い順に表示しています。まずは「編集」から詳細を開いて不足項目を埋めてください。</div>
                 <div class="table-responsive">
                     <table class="product-table">
-                        <caption class="visually-hidden">要対応商品の一覧</caption>
+                        <caption class="visually-hidden">直したほうがいい商品の一覧</caption>
                         <thead>
                             <tr>
                                 <th>商品</th>
@@ -133,7 +133,7 @@
                     </table>
                 </div>
                 {% else %}
-                <p class="text-muted">現在のスコープでは要対応商品はありません。</p>
+                <p class="text-muted">直したほうがいい商品はありません。</p>
                 {% endif %}
             </div>
         </section>

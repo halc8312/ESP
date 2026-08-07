@@ -87,7 +87,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="site">サイト区分</label>
+                        <label for="site">どこから仕入れた商品か</label>
                         <input type="text" id="site" name="site" value="{{ form_data.site }}" placeholder="manual">
                     </div>
 
@@ -133,7 +133,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="publish_status">Shopify公開状態</label>
+                        <label for="publish_status">公開状態</label>
                         <select id="publish_status" name="publish_status">
                             <option value="draft" {% if form_data.publish_status=='draft' %}selected{% endif %}>下書き
                             </option>
@@ -143,7 +143,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="sku">SKU（任意）</label>
+                        <label for="sku">管理番号（任意・空欄でOK）</label>
                         <input type="text" id="sku" name="sku" value="{{ form_data.sku }}" placeholder="MANUAL-001">
                     </div>
                 </div>

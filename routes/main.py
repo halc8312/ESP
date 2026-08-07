@@ -348,7 +348,7 @@ def dashboard():
             },
             {
                 "count": zero_stock_variant_count,
-                "label": "0在庫バリアント",
+                "label": "仕入先で在庫切れの商品",
             },
             {
                 "count": sum(1 for row in dashboard_rows if row["selling_price"] is not None and row["selling_price"] > 0),

@@ -27,7 +27,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <input type="text" id="newShopName" name="name" placeholder="ショップ名 (例: 文具店A)" required autocomplete="organization"
                 class="shop-form-field shop-form-field--name">
-            <input type="url" id="newShopLogoUrl" name="logo_url" placeholder="外部ロゴURL (任意)" class="shop-form-field shop-form-field--url">
+            <input type="url" id="newShopLogoUrl" name="logo_url" placeholder="ロゴ画像のURL（お持ちの方のみ）" class="shop-form-field shop-form-field--url">
             <input type="file" id="newShopLogoFile" name="logo_file" accept="image/*" class="shop-form-field shop-form-field--file">
             <div class="shop-logo-preview" id="newShopLogoPreview" aria-live="polite">
                 <span class="shop-logo-preview-empty">ロゴプレビュー</span>

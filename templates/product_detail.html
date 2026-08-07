@@ -1376,7 +1376,7 @@
             aria-haspopup="true"
             data-ready="{% if edit_summary.completed_count >= edit_summary.total_count %}ok{% else %}todo{% endif %}"
             title="保存前チェックの状態">
-            <span id="heroReadinessText">チェック {{ edit_summary.completed_count }}/{{ edit_summary.total_count }}</span>
+            <span id="heroReadinessText">出品前チェック {{ edit_summary.completed_count }}/{{ edit_summary.total_count }}</span>
             <span class="product-edit-checklist-popover" role="tooltip">
                 <ul>
                     {% for item in edit_summary.checklist %}

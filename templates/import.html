@@ -90,10 +90,64 @@
         <h2>商品データをインポート</h2>
     </div>
     <div class="content-card-body">
-        <div style="background: #f5f5f5; padding: 12px 16px; border-radius: 6px; margin-bottom: 20px;">
-            <strong>対応カラム:</strong>
-            <div style="font-family: monospace; font-size: 0.9em; margin-top: 8px;">
-                <span style="color: #c62828;">title（必須）</span>, price, url, sku, description, image_urls, inventory
+        <div class="csv-column-guide">
+            <p class="csv-column-guide-title">CSVの1行目（列名）は英語のままにしてください。意味は下の表のとおりです。</p>
+            <div class="table-responsive">
+                <table class="csv-column-table">
+                    <caption class="visually-hidden">CSVの列名と日本語の対照表</caption>
+                    <thead>
+                        <tr>
+                            <th>日本語の見出し</th>
+                            <th>CSVの列名</th>
+                            <th>必須</th>
+                            <th>説明</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <th scope="row">商品名</th>
+                            <td><code>title</code></td>
+                            <td><span class="csv-column-required">必須</span></td>
+                            <td>日本語でも英語でもかまいません</td>
+                        </tr>
+                        <tr>
+                            <th scope="row">価格</th>
+                            <td><code>price</code></td>
+                            <td>任意</td>
+                            <td>空欄なら、仕入価格をもとに価格ルールで自動計算します</td>
+                        </tr>
+                        <tr>
+                            <th scope="row">商品ページURL</th>
+                            <td><code>url</code></td>
+                            <td>任意</td>
+                            <td>仕入元の商品ページのURL（あとで見返すときに便利です）</td>
+                        </tr>
+                        <tr>
+                            <th scope="row">管理番号</th>
+                            <td><code>sku</code></td>
+                            <td>任意</td>
+                            <td>ご自身が分かる番号でかまいません</td>
+                        </tr>
+                        <tr>
+                            <th scope="row">商品説明</th>
+                            <td><code>description</code></td>
+                            <td>任意</td>
+                            <td>商品の状態や付属品などを書きます</td>
+                        </tr>
+                        <tr>
+                            <th scope="row">画像URL</th>
+                            <td><code>image_urls</code></td>
+                            <td>任意</td>
+                            <td>複数枚ある場合は <code>|</code>（縦棒）で区切ります</td>
+                        </tr>
+                        <tr>
+                            <th scope="row">在庫数</th>
+                            <td><code>inventory</code></td>
+                            <td>任意</td>
+                            <td>空欄なら「1」として登録します</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -116,7 +170,7 @@
             </div>
 
             <div class="form-group" style="margin-bottom: 16px;">
-                <label for="site">サイト区分</label>
+                <label for="site">どこから仕入れた商品か</label>
                 <select id="site" name="site">
                     <option value="import">インポート</option>
                     <option value="mercari">メルカリ</option>
