@@ -62,8 +62,9 @@ class TestAuthenticationRoutes:
     
     def test_login_success(self, client, db_session):
         """Test successful login redirects to index"""
-        # Create user
-        user = User(username='logintest')
+        # A prior login, so this exercises the returning-user path; the first
+        # sign-in deliberately starts on the guide instead.
+        user = User(username='logintest', last_login_at=utc_now())
         user.set_password('testpassword')
         db_session.add(user)
         db_session.commit()

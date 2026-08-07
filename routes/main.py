@@ -287,6 +287,28 @@ def _build_dashboard_product_row(product):
     }
 
 
+@main_bp.route("/guide")
+@login_required
+def guide():
+    """
+    Static "start here" page.
+
+    Students get stuck on the order of operations rather than on any one
+    screen, so this is the one place that says what to do first. No database
+    access — the shop picker in the sidebar just needs an empty list.
+    """
+    session_db = SessionLocal()
+    try:
+        all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
+        return render_template(
+            "guide.html",
+            all_shops=all_shops,
+            current_shop_id=session.get("current_shop_id"),
+        )
+    finally:
+        session_db.close()
+
+
 @main_bp.route("/dashboard")
 @login_required
 def dashboard():

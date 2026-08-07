@@ -2,6 +2,7 @@ import pytest
 from models import User
 import uuid
 from services.password_policy import validate_password_strength
+from time_utils import utc_now
 
 def test_login_page_loads(client):
     response = client.get('/login')
@@ -37,7 +38,9 @@ def test_login_flow(client, db_session):
     # Setup user
     password = "password123"
     username = f"testadmin_{uuid.uuid4().hex[:8]}"
-    user = User(username=username)
+    # A prior login, so this exercises the returning-user path; the first
+    # sign-in deliberately starts on the guide instead.
+    user = User(username=username, last_login_at=utc_now())
     user.set_password(password)
     db_session.add(user)
     db_session.commit()

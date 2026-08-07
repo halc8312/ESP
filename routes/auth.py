@@ -65,11 +65,16 @@ def login():
                 session.pop("current_shop_id", None)
                 # Recorded before login_user so the admin dashboard can tell a
                 # student who has gone quiet from one who is still working.
+                is_first_login = user.last_login_at is None
                 user.last_login_at = utc_now()
                 session_db.commit()
                 login_user(user)
                 reset_attempts("login-ip", client_ip)
                 reset_attempts("login-user", normalized_username)
+                # Students get stuck on what to do first, so the very first
+                # sign-in starts on the guide rather than an empty list.
+                if is_first_login:
+                    return redirect(url_for('main.guide'))
                 return redirect(url_for('main.index'))
             else:
                 record_attempt("login-ip", client_ip, window)

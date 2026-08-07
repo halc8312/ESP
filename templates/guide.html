@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+
+{% block title %}はじめての方へ{% endblock %}
+{% block header_title %}はじめての方へ{% endblock %}
+{% block body_class %}has-bottom-nav wrap-form{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📖 はじめての方へ</h1>
+    <p class="page-subtitle">何をどの順番でやるかをまとめました。この順番どおりに進めれば、お客様に見せるリストが作れます。</p>
+</div>
+
+<section class="content-card">
+    <div class="content-card-header">
+        <h2>🚩 価格表ができるまで（5ステップ）</h2>
+    </div>
+    <div class="content-card-body">
+        <p class="text-muted">はじめての方は、この順番どおりに進めてください。全部で15分ほどです。</p>
+        <ol class="guide-steps">
+            <li class="guide-step">
+                <span class="guide-step-number">1</span>
+                <div class="guide-step-body">
+                    <h3>商品を取り込む</h3>
+                    <p>メルカリなどで売りたい商品のページを開き、URLをコピーして貼り付けるだけです。写真も価格も自動で入ります。</p>
+                    <a href="{{ url_for('scrape_form') }}" class="btn btn-secondary">商品抽出をひらく</a>
+                </div>
+            </li>
+            <li class="guide-step">
+                <span class="guide-step-number">2</span>
+                <div class="guide-step-body">
+                    <h3>販売価格を決める</h3>
+                    <p>「仕入値に何％上乗せするか」を一度決めておけば、あとの商品は自動で計算されます。</p>
+                    <a href="{{ url_for('pricing.pricing_list') }}" class="btn btn-secondary">価格ルールをひらく</a>
+                </div>
+            </li>
+            <li class="guide-step">
+                <span class="guide-step-number">3</span>
+                <div class="guide-step-body">
+                    <h3>英語のタイトルを付ける</h3>
+                    <p>「翻訳する」ボタンで日本語から自動で作れます。おかしいところだけ直せば大丈夫です。</p>
+                    <a href="{{ url_for('index') }}" class="btn btn-secondary">商品一覧をひらく</a>
+                </div>
+            </li>
+            <li class="guide-step">
+                <span class="guide-step-number">4</span>
+                <div class="guide-step-body">
+                    <h3>価格表を作る</h3>
+                    <p>見せたい商品を選んで1つのリストにまとめます。<strong>ここがこのツールの目的です。</strong></p>
+                    <a href="{{ url_for('pricelist.pricelist_list') }}" class="btn btn-secondary">価格表をひらく</a>
+                </div>
+            </li>
+            <li class="guide-step">
+                <span class="guide-step-number">5</span>
+                <div class="guide-step-body">
+                    <h3>URLをお客様に送る</h3>
+                    <p>できあがったURLをコピーして、InstagramのDMに貼り付けて送ります。価格表の一覧に「URLコピー」ボタンがあります。</p>
+                </div>
+            </li>
+        </ol>
+
+        <div class="guide-tip">
+            <strong>💡 まずは3商品だけで試してみてください</strong>
+            <p>
+                最初から全部の商品を入れようとすると手が止まります。3商品でひととおり作ってURLを開いてみると、
+                「お客様にどう見えるか」がわかって、あとの作業がぐっと楽になります。
+            </p>
+        </div>
+    </div>
+</section>
+
+<section class="content-card">
+    <div class="content-card-header">
+        <h2>📋 2種類のリストを使い分ける</h2>
+    </div>
+    <div class="content-card-body">
+        <p class="text-muted">用途がちがう2つのリストがあります。迷ったら「いつも見せるリスト」を作ってください。</p>
+        <div class="guide-compare">
+            <article class="guide-compare-card guide-compare-card--permanent">
+                <h3>🔵 いつも見せるリスト<span class="guide-compare-tag">常設</span></h3>
+                <p>お客様がいつ開いても見られる、あなたのお店のメインのカタログです。</p>
+                <dl>
+                    <dt>こんなときに</dt>
+                    <dd>「どんな商品がありますか？」と聞かれたとき。プロフィールのリンクに常に置いておく。</dd>
+                    <dt>公開期限</dt>
+                    <dd>なし。ずっと公開したままにします。</dd>
+                    <dt>お手入れ</dt>
+                    <dd>売れた商品を消す・在庫切れを隠す・価格を見直す。週に1回ほど見直すのがおすすめです。</dd>
+                    <dt>作り方</dt>
+                    <dd>価格表の画面で新規作成し、「常設リスト（メイン）」を選びます。</dd>
+                </dl>
+            </article>
+            <article class="guide-compare-card guide-compare-card--limited">
+                <h3>🟡 期間限定のリスト<span class="guide-compare-tag">自動で閉じる</span></h3>
+                <p>特定のお客様に、一時的に見せたい商品だけを集めたリストです。</p>
+                <dl>
+                    <dt>こんなときに</dt>
+                    <dd>「ポケモンのPSA10だけ見たい」と言われたとき。入荷したての商品を先行で見せたいとき。</dd>
+                    <dt>公開期限</dt>
+                    <dd>「24時間後」「3日後」「1週間後」などを選ぶと、その時刻に<strong>自動で見えなくなります</strong>。</dd>
+                    <dt>お手入れ</dt>
+                    <dd>不要。期限がきたら自動で閉じるので、消し忘れの心配がありません。</dd>
+                    <dt>作り方</dt>
+                    <dd>価格表の画面で新規作成し、「期間限定リスト」を選んで、いつまで公開するかを決めます。</dd>
+                </dl>
+            </article>
+        </div>
+        <div class="guide-tip">
+            <strong>📌 期間限定リストが便利な理由</strong>
+            <p>
+                お客様ごとに「その人向けのリスト」を作って送れます。他のお客様には見えませんし、
+                商談が終われば自動で閉じるので、あとから見られる心配もありません。
+                リストを消しても商品データは残るので、また同じ商品を別のリストに入れられます。
+            </p>
+        </div>
+    </div>
+</section>
+
+<section class="content-card">
+    <div class="content-card-header">
+        <h2>🔤 画面に出てくる言葉</h2>
+    </div>
+    <div class="content-card-body">
+        <div class="table-responsive">
+            <table class="guide-glossary">
+                <caption class="visually-hidden">画面に出てくる言葉の説明</caption>
+                <thead>
+                    <tr>
+                        <th>言葉</th>
+                        <th>意味</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <th scope="row">商品抽出</th>
+                        <td>メルカリなどのURLから、商品の名前・価格・写真を自動で読み取って登録すること。</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">下書き</th>
+                        <td>まだお客様に見えない状態。準備中の商品はここに置いておきます。</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">公開中</th>
+                        <td>価格表に載せられる状態。お客様が見られます。</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">価格ルール</th>
+                        <td>「仕入値に○％上乗せする」という計算のきまり。一度決めれば自動で計算されます。</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">説明文テンプレート</th>
+                        <td>商品説明によく使う文章を登録しておく機能。毎回書かずに1クリックで入れられます。</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">アーカイブ</th>
+                        <td>売り切れた商品の保管場所。<strong>データは消えません。</strong>また売るときに戻せます。</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">ゴミ箱</th>
+                        <td>削除した商品の一時置き場。<strong>30日で完全に消えます。</strong>それまでは元に戻せます。</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">為替レート</th>
+                        <td>
+                            外貨が何円かの数字。<strong>管理画面の金額はすべて円</strong>で、為替はお客様がリストの通貨を
+                            切り替えたときの計算にだけ使われます。毎日自動で更新されるので、あなたが直す必要はありません。
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">利益</th>
+                        <td>販売価格から仕入価格を引いた金額。商品一覧と価格表の画面で、仕入・販売の隣に表示されます。マイナス（赤字）のときは赤く出ます。</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">管理番号</th>
+                        <td>自分が商品を見分けるための番号。<strong>空欄のままで問題ありません。</strong></td>
+                    </tr>
+                    <tr>
+                        <th scope="row">ショップ</th>
+                        <td>商品のグループ分け。1つだけで運用しても大丈夫です。</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<section class="content-card">
+    <div class="content-card-header">
+        <h2>❓ よくあるご質問</h2>
+    </div>
+    <div class="content-card-body">
+        <details class="guide-faq">
+            <summary>価格表のURLは、他の人に見られてしまいませんか？</summary>
+            <p>
+                URLを知っている人しか開けません。検索しても出てきません。
+                ただしURLを受け取った方が別の人に転送することはできるので、大切な商品は期間限定リストをお使いください。
+            </p>
+        </details>
+        <details class="guide-faq">
+            <summary>価格はドルで入れるのですか？</summary>
+            <p>
+                いいえ、<strong>すべて円で入力・管理します。</strong>お客様が見るリストははじめ円で表示され、
+                お客様のほうでドル・ユーロなどに切り替えられます。そのときのレート計算は自動なので、あなたが通貨を意識する必要はありません。
+            </p>
+        </details>
+        <details class="guide-faq">
+            <summary>お客様が外貨で見るときは、いつの為替レートですか？</summary>
+            <p>
+                お客様が通貨を切り替えた瞬間の最新レートで計算されます。取得できないときは、こちらで毎朝取得している
+                レートを使います。円安・円高が動いても、あなたが直す必要はありません。あなたが決めた円の価格そのものは変わりません。
+            </p>
+        </details>
+        <details class="guide-faq">
+            <summary>売れた商品はどうすればいいですか？</summary>
+            <p>
+                価格表の商品管理で「顧客に表示」をオフにするか、アーカイブに移してください。
+                在庫が0の商品をまとめて隠すこともできます。
+            </p>
+        </details>
+        <details class="guide-faq">
+            <summary>英語が苦手でも使えますか？</summary>
+            <p>
+                使えます。商品名も説明文も「翻訳する」ボタンで日本語から自動で作れます。
+                よく使う英語の文章はテンプレートに登録しておけるので、選ぶだけで入ります。
+            </p>
+        </details>
+        <details class="guide-faq">
+            <summary>対応していないサイトの商品は登録できませんか？</summary>
+            <p>
+                「商品を手動追加」から、商品名と仕入価格だけ入れれば登録できます。写真はあとから追加できます。
+            </p>
+        </details>
+        <details class="guide-faq">
+            <summary>まちがえて商品を消してしまいました。</summary>
+            <p>
+                ゴミ箱に30日間残っています。ゴミ箱の画面から元に戻してください。
+            </p>
+        </details>
+        <details class="guide-faq">
+            <summary>スマホからも使えますか？</summary>
+            <p>
+                使えます。画面下のメニューから主要な機能に移動できます。
+                商品の取り込みや価格表のURLコピーはスマホでも問題なくできます。
+            </p>
+        </details>
+    </div>
+</section>
+{% endblock %}

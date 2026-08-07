@@ -143,6 +143,12 @@
                         <span class="nav-icon">👤</span>
                         <span class="nav-text">アカウント</span>
                     </a>
+                    <a href="{{ url_for('main.guide') }}"
+                        class="sidebar-link {% if current_endpoint == 'main.guide' %}active{% endif %}" {% if
+                        current_endpoint == 'main.guide' %}aria-current="page" {% endif %}>
+                        <span class="nav-icon">📖</span>
+                        <span class="nav-text">はじめての方へ</span>
+                    </a>
                     {% if current_user.is_authenticated and current_user.is_admin %}
                     <a href="{{ url_for('admin.admin_dashboard') }}"
                         class="sidebar-link {% if current_endpoint.startswith('admin.') %}active{% endif %}" {% if
