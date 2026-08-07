@@ -5792,3 +5792,54 @@ input.pricelist-item-price-input {
     border-left: 3px solid var(--border-color);
     color: var(--text-color);
 }
+
+/* ── Form field grids ──
+   The wider layout leaves room to place short fields side by side instead of
+   stacking every one of them. auto-fit collapses back to a single column on
+   narrow screens, so no separate mobile rule is needed. */
+.field-grid {
+    display: grid;
+    gap: 0 20px;
+    align-items: start;
+}
+
+.field-grid--2 {
+    grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+}
+
+.field-grid--3 {
+    grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+}
+
+/* Choice cards (theme / layout / list type) read better in a row once there
+   is room, and the cards keep their own internal spacing. */
+.choice-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+}
+
+.field-grid > .form-group,
+.field-grid > .filter-group {
+    min-width: 0;
+}
+
+/* A trailing submit button inside a grid row lines up with the inputs above
+   it rather than floating against the label. */
+.field-grid .form-group--submit {
+    display: flex;
+    align-items: flex-end;
+}
+
+.field-grid .form-group--submit button {
+    width: 100%;
+}
+
+/* Two cards side by side once the screen is wide enough: a list on the left,
+   the form that adds to it on the right. */
+.page-split {
+    display: grid;
+    gap: 0 20px;
+    grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+    align-items: start;
+}
