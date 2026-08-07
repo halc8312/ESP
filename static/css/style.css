@@ -3396,6 +3396,8 @@ button:active {
     border-radius: 12px;
     font-size: 12px;
     font-weight: 600;
+    /* Narrow tablet columns must not break "在庫なし" into a vertical stack. */
+    white-space: nowrap;
 }
 .stock-badge.stock-in {
     background: #dcfce7;
@@ -5591,9 +5593,22 @@ table td.num {
 
 input.pricelist-item-price-input {
     display: block;
-    width: 180px;
+    width: min(180px, 100%);
     margin: 6px 0 0 auto;
     text-align: right;
+}
+
+/* On the phone card layout the profit reads as one line ("+¥18,500 +150%")
+   rather than the stacked form the right-aligned table columns use. */
+.product-card-price .profit__rate {
+    display: inline;
+    margin-left: 6px;
+}
+
+/* The select already names the current shop, so the extra caption only
+   overflowed the fixed 56px header. */
+.mobile-header-shop .shop-current {
+    display: none;
 }
 
 /* ── Inline alerts ── */
