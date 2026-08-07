@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+
+{% block title %}生徒の利用状況{% endblock %}
+{% block header_title %}生徒の利用状況{% endblock %}
+{% block body_class %}has-bottom-nav wrap-fluid{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>🎓 生徒の利用状況</h1>
+    <p class="page-subtitle">つまずいている生徒に先回りで声をかけるための画面です。売上や仕入の金額は表示しません。</p>
+</div>
+
+<div class="dashboard-summary-grid">
+    <article class="dashboard-summary-card dashboard-summary-card--neutral">
+        <span class="dashboard-summary-label">生徒数</span>
+        <strong class="dashboard-summary-value">{{ summary.student_count }}</strong>
+        <span class="dashboard-summary-note">管理者を除いた人数</span>
+    </article>
+    <article class="dashboard-summary-card dashboard-summary-card--attention">
+        <span class="dashboard-summary-label">声をかけたい生徒</span>
+        <strong class="dashboard-summary-value">{{ summary.follow_up_count }}</strong>
+        <span class="dashboard-summary-note">下の理由に1つでも当てはまる人</span>
+    </article>
+    <article class="dashboard-summary-card dashboard-summary-card--positive">
+        <span class="dashboard-summary-label">商品を登録した生徒</span>
+        <strong class="dashboard-summary-value">{{ summary.started_count }}</strong>
+        <span class="dashboard-summary-note">1件以上登録している人</span>
+    </article>
+    <article class="dashboard-summary-card dashboard-summary-card--neutral">
+        <span class="dashboard-summary-label">商品の合計</span>
+        <strong class="dashboard-summary-value">{{ summary.product_count }}</strong>
+        <span class="dashboard-summary-note">全生徒の登録数</span>
+    </article>
+    <article class="dashboard-summary-card dashboard-summary-card--neutral">
+        <span class="dashboard-summary-label">価格表の合計</span>
+        <strong class="dashboard-summary-value">{{ summary.pricelist_count }}</strong>
+        <span class="dashboard-summary-note">常設・期間限定の合計</span>
+    </article>
+</div>
+
+<section class="content-card">
+    <div class="content-card-header">
+        <h2>声をかけたい生徒</h2>
+    </div>
+    <div class="content-card-body">
+        {% if follow_ups %}
+        <div class="dashboard-section-note">
+            次のいずれかに当てはまる生徒です。①{{ inactive_login_days }}日以上ログインなし
+            ②商品はあるのに価格表なし ③公開中なのに直近{{ no_view_window_days }}日の閲覧が0 ④閲覧数が先月の半分以下
+        </div>
+        <div class="table-responsive">
+            <table class="product-table">
+                <caption class="visually-hidden">声をかけたい生徒の一覧</caption>
+                <thead>
+                    <tr>
+                        <th>生徒</th>
+                        <th>気になる点</th>
+                        <th class="num">商品</th>
+                        <th class="num">価格表</th>
+                        <th class="num">直近{{ no_view_window_days }}日の閲覧</th>
+                        <th>最終ログイン</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for student in follow_ups %}
+                    <tr>
+                        <td class="product-title-cell">{{ student.username }}</td>
+                        <td>
+                            <ul class="admin-reason-list">
+                                {% for reason in student.follow_up_reasons %}
+                                <li>{{ reason }}</li>
+                                {% endfor %}
+                            </ul>
+                        </td>
+                        <td class="num">{{ student.product_count }}</td>
+                        <td class="num">{{ student.pricelist_count }}</td>
+                        <td class="num">{{ student.recent_view_count }}</td>
+                        <td>{{ student.last_login_at | jst(default='ログインなし') }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">いま声をかけたほうがよい生徒はいません。</p>
+        {% endif %}
+    </div>
+</section>
+
+<section class="content-card">
+    <div class="content-card-header">
+        <h2>生徒の一覧</h2>
+    </div>
+    <div class="content-card-body">
+        {% if students %}
+        <div class="table-responsive">
+            <table class="product-table">
+                <caption class="visually-hidden">生徒ごとの利用状況</caption>
+                <thead>
+                    <tr>
+                        <th>生徒</th>
+                        <th class="num">公開中</th>
+                        <th class="num">下書き</th>
+                        <th class="num">常設リスト</th>
+                        <th class="num">期間限定</th>
+                        <th class="num">閲覧数（累計）</th>
+                        <th class="num">直近{{ no_view_window_days }}日</th>
+                        <th>最終ログイン</th>
+                        <th>状態</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for student in students %}
+                    <tr>
+                        <td class="product-title-cell">{{ student.username }}</td>
+                        <td class="num">{{ student.active_product_count }}</td>
+                        <td class="num">{{ student.draft_product_count }}</td>
+                        <td class="num">{{ student.permanent_list_count }}</td>
+                        <td class="num">{{ student.limited_list_count }}</td>
+                        <td class="num">{{ student.total_view_count }}</td>
+                        <td class="num">{{ student.recent_view_count }}</td>
+                        <td>{{ student.last_login_at | jst(default='ログインなし') }}</td>
+                        <td>
+                            {% if student.needs_follow_up %}
+                            <span class="dashboard-badge is-draft">要フォロー</span>
+                            {% else %}
+                            <span class="dashboard-badge is-clean">順調</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">まだ生徒アカウントがありません。</p>
+        {% endif %}
+    </div>
+</section>
+
+<div class="admin-privacy-note">
+    <strong>受講生へのご案内について</strong>
+    <p>
+        この画面では、ログイン日・登録件数・リストの閲覧回数のみを表示しています。売上や仕入の金額は含みません。
+        実際に運用される際は、入会案内や利用規約に次のような一文を添えることをおすすめします。
+    </p>
+    <blockquote>
+        サポートの一環として、スクール事務局が受講生の利用状況（ログイン日・登録件数・リストの閲覧回数）を
+        確認する場合があります。売上や仕入の金額を事務局が閲覧することはありません。
+    </blockquote>
+</div>
+{% endblock %}

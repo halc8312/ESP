@@ -5763,3 +5763,32 @@ input.pricelist-item-price-input {
     margin-left: auto;
     white-space: nowrap;
 }
+
+/* ── Admin: student activity ── */
+.admin-reason-list {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 0.9em;
+    color: var(--warning-color);
+}
+
+.admin-privacy-note {
+    background: var(--surface-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-top: 24px;
+    font-size: 0.9em;
+    color: var(--text-muted);
+}
+
+.admin-privacy-note p {
+    margin: 8px 0;
+}
+
+.admin-privacy-note blockquote {
+    margin: 8px 0 0;
+    padding-left: 12px;
+    border-left: 3px solid var(--border-color);
+    color: var(--text-color);
+}

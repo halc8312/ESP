@@ -309,6 +309,7 @@ def _register_template_filters(app: Flask) -> None:
 
 
 def _register_blueprints(app: Flask) -> None:
+    from routes.admin import admin_bp
     from routes.api import api_bp
     from routes.archive import archive_bp
     from routes.auth import auth_bp
@@ -326,6 +327,7 @@ def _register_blueprints(app: Flask) -> None:
     from routes.bg_removal import bg_removal_bp
     from routes.trash import trash_bp
 
+    app.register_blueprint(admin_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(shops_bp)
     app.register_blueprint(main_bp)

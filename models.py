@@ -12,6 +12,10 @@ class User(UserMixin, Base):
     username = Column(String(100), unique=True, nullable=False)
     password_hash = Column(String(200), nullable=False)
     default_pricing_rule_id = Column(Integer, ForeignKey("pricing_rules.id"), nullable=True)
+    # student = スクール生 / admin = スクール事務局
+    role = Column(String(16), default="student", server_default="student", nullable=False)
+    # フォロー判断に使う最終ログイン日時（naive UTC）
+    last_login_at = Column(DateTime, nullable=True)
     # 外貨表示にだけ差し引く安全マージン（円）。円の販売価格には影響しません。
     # server_default keeps rows copied by the existing-web migration (which
     # inserts only the columns the source database has) from failing NOT NULL.
@@ -24,6 +28,10 @@ class User(UserMixin, Base):
         
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+    @property
+    def is_admin(self):
+        return self.role == "admin"
 
 class Shop(Base):
     __tablename__ = "shops"
