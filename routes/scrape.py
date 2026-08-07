@@ -17,6 +17,10 @@ from services.media_queue import (
     enqueue_media_job,
     resolve_queue_backend_name,
 )
+from services.generic_product_fetch import (
+    GENERIC_SITE,
+    fetch_generic_product,
+)
 from services.pricing_service import update_product_selling_price
 from services.product_service import save_scraped_items_to_db
 from services.queue_backend import get_queue_backend
@@ -122,6 +126,54 @@ def scrape_form():
     except Exception:
         session_db.rollback()
         raise
+    finally:
+        session_db.close()
+
+
+@scrape_bp.route("/scrape/other-site", methods=["POST"])
+@login_required
+def scrape_other_site():
+    """
+    Read a product page from a site outside the supported marketplaces.
+
+    Generic extraction is never complete, so the result goes to the manual add
+    form pre-filled with whatever was found, and the page says which fields the
+    operator still has to supply. A failed read lands on the same form, empty,
+    rather than on a dead end.
+    """
+    from routes.main import render_manual_add_prefilled
+
+    target_url = (request.form.get("target_url") or "").strip()
+    session_db = SessionLocal()
+    try:
+        if not target_url:
+            return render_manual_add_prefilled(
+                session_db,
+                errors=["商品ページのURLを入力してください"],
+            ), 400
+
+        outcome = fetch_generic_product(target_url)
+        product = outcome.get("product")
+
+        if outcome["status"] != "ok":
+            return render_manual_add_prefilled(
+                session_db,
+                source_url=target_url,
+                errors=[outcome["error"]],
+            ), 400
+
+        return render_manual_add_prefilled(
+            session_db,
+            source_url=product["source_url"],
+            title=product["title"],
+            price=product["price"],
+            description=product["description"],
+            image_urls=product["image_urls"],
+            site=GENERIC_SITE,
+            found_fields=product["found_fields"],
+            missing_fields=product["missing_fields"],
+            currency_warning=product["currency_warning"],
+        )
     finally:
         session_db.close()
 

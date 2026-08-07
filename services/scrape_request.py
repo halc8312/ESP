@@ -24,6 +24,8 @@ SITE_LABELS = {
     "offmall": "オフモール",
     "yahuoku": "ヤフオク",
     "snkrdunk": "SNKRDUNK",
+    # Products read from a site outside the supported marketplaces.
+    "other": "その他のサイト",
 }
 
 SEARCH_DEPTH_RULES = {

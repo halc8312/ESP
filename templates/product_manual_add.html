@@ -25,6 +25,33 @@
 </div>
 {% endif %}
 
+{% if extraction_found_fields or extraction_missing_fields %}
+<div class="content-card extraction-report">
+    <div class="content-card-header">
+        <h2>読み取り結果</h2>
+    </div>
+    <div class="content-card-body">
+        <p class="text-muted">
+            対応表にないサイトのため、ページから読み取れた項目だけを下の欄に入れてあります。
+            足りない項目はこの画面で直接入力してください。
+        </p>
+        <ul class="extraction-field-list">
+            {% for field in extraction_found_fields %}
+            <li class="extraction-field is-found">✅ {{ extraction_field_labels.get(field, field) }}</li>
+            {% endfor %}
+            {% for field in extraction_missing_fields %}
+            <li class="extraction-field is-missing">△ {{ extraction_field_labels.get(field, field) }}（読み取れませんでした）</li>
+            {% endfor %}
+        </ul>
+        {% if extraction_currency_warning %}
+        <p class="extraction-note">
+            価格が円以外の通貨で書かれていたため、入れていません。日本円の仕入価格をご自身で入力してください。
+        </p>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
 <form method="POST">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <div class="product-edit-layout">

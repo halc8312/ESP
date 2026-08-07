@@ -33,7 +33,8 @@
     var tabButtons = Array.from(document.querySelectorAll("[data-scrape-tab]"));
     var tabPanels = {
         url: document.getElementById("scrapeTabUrl"),
-        search: document.getElementById("scrapeTabSearch")
+        search: document.getElementById("scrapeTabSearch"),
+        other: document.getElementById("scrapeTabOther")
     };
     var stepOrder = ["setup", "queued", "running", "review"];
 
@@ -776,6 +777,11 @@
     });
 
     document.querySelectorAll(".scrape-form-compact").forEach(function (form) {
+        // The "other site" reader renders a pre-filled manual add page rather
+        // than queueing a preview job, so it posts normally.
+        if (form.dataset.scrapeForm === "other") {
+            return;
+        }
         form.addEventListener("submit", function (event) {
             if (!window.fetch || !window.FormData) {
                 return;

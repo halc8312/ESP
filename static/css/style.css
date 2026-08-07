@@ -5998,3 +5998,42 @@ input.pricelist-item-price-input {
     margin: 10px 0 0;
     color: var(--text-muted);
 }
+
+/* ── Generic (unsupported site) extraction report ── */
+.extraction-report {
+    border-left: 4px solid var(--primary-color);
+    margin-bottom: 20px;
+}
+
+.extraction-field-list {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.extraction-field {
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 0.9em;
+    border: 1px solid var(--border-color);
+}
+
+.extraction-field.is-found {
+    background: #ecfdf3;
+    border-color: #bbf7d0;
+    color: #166534;
+}
+
+.extraction-field.is-missing {
+    background: #fff8e1;
+    border-color: #ffe08a;
+    color: var(--warning-color);
+}
+
+.extraction-note {
+    margin: 12px 0 0;
+    color: var(--warning-color);
+}

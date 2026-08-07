@@ -12,6 +12,7 @@ from sqlalchemy import func, or_, select
 from database import SessionLocal
 from models import Shop, Product, Variant, ProductSnapshot
 from services.exchange_rate_service import get_exchange_rates
+from services.generic_product_fetch import FIELD_LABELS
 from services.image_service import split_image_url_string
 from services.rich_text import normalize_rich_text
 from services.validation_service import validate_product, get_issue_summary
@@ -83,6 +84,54 @@ def _render_manual_add(session_db, form_data=None, errors=None):
         errors=errors or [],
         all_shops=all_shops,
         current_shop_id=current_shop_id,
+    )
+
+
+def render_manual_add_prefilled(
+    session_db,
+    *,
+    source_url="",
+    title="",
+    price=None,
+    description="",
+    image_urls=None,
+    site="manual",
+    errors=None,
+    found_fields=None,
+    missing_fields=None,
+    currency_warning=False,
+):
+    """
+    Render the manual add form seeded with whatever generic extraction found.
+
+    Used by the "other site" reader, which cannot promise a complete result;
+    the caller passes which fields it managed to read so the page can tell the
+    operator exactly what is left to fill in.
+    """
+    form_data = _manual_form_defaults(session.get("current_shop_id"))
+    form_data.update(
+        {
+            "source_url": source_url or "",
+            "title": title or "",
+            "cost_price": str(price) if price is not None else "",
+            "description": description or "",
+            "image_urls": "\n".join(image_urls or []),
+            "site": site or "manual",
+        }
+    )
+
+    current_shop_id = session.get("current_shop_id")
+    all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
+    return render_template(
+        "product_manual_add.html",
+        form_data=form_data,
+        errors=errors or [],
+        all_shops=all_shops,
+        current_shop_id=current_shop_id,
+        extraction_found_fields=found_fields or [],
+        extraction_missing_fields=missing_fields or [],
+        extraction_currency_warning=currency_warning,
+        extraction_field_labels=FIELD_LABELS,
     )
 
 
