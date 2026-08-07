@@ -122,7 +122,7 @@
                 <tbody>
                     {% for view in recent_views %}
                     <tr>
-                        <td>{{ view.viewed_at.strftime('%Y-%m-%d %H:%M') if view.viewed_at else '-' }}</td>
+                        <td>{{ view.viewed_at | jst }}</td>
                         <td>{{ view.device }}</td>
                         <td>{{ view.referrer_group }}</td>
                         <td>{{ view.referrer_domain }}</td>

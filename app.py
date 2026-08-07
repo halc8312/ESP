@@ -23,6 +23,7 @@ from database import SessionLocal, bootstrap_schema, ensure_additive_schema_read
 from models import User
 from security_config import build_hsts_header, configure_app_security, parse_bool
 from services.image_service import IMAGE_STORAGE_PATH
+from time_utils import format_jst, format_jst_date
 
 try:
     import fcntl as _fcntl
@@ -299,6 +300,12 @@ def load_user(user_id):
 
 def _get_runtime_defaults(runtime_role: str) -> dict[str, Any]:
     return dict(RUNTIME_DEFAULTS.get(runtime_role, RUNTIME_DEFAULTS["base"]))
+
+
+def _register_template_filters(app: Flask) -> None:
+    """Expose the shared Japan-time display formats to every template."""
+    app.jinja_env.filters["jst"] = format_jst
+    app.jinja_env.filters["jst_date"] = format_jst_date
 
 
 def _register_blueprints(app: Flask) -> None:
@@ -738,6 +745,7 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
     def shutdown_session(exception=None):
         SessionLocal.remove()
 
+    _register_template_filters(app)
     _register_https_enforcement(app)
     _register_security_headers(app)
     _register_error_handlers(app)

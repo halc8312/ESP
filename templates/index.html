@@ -273,7 +273,7 @@
                         </td>
                         <td>
                             <div class="product-title-cell">{{ p.custom_title or p.last_title }}</div>
-                            <div class="product-meta-inline text-muted">{{ site_display.get(p.site, p.site) }} / 更新 {{ p.updated_at }}</div>
+                            <div class="product-meta-inline text-muted">{{ site_display.get(p.site, p.site) }} / 更新 {{ p.updated_at | jst }}</div>
                             <div class="inline-edit-group">
                                 <label for="title_en_desktop_{{ p.id }}" class="inline-edit-label">英語の商品名</label>
                                 <input type="text" id="title_en_desktop_{{ p.id }}" class="inline-edit-input"
@@ -319,7 +319,7 @@
                             {% endif %}
                         </td>
                         <td><a href="{{ url_for('product_detail', product_id=p.id) }}">編集</a></td>
-                        <td class="hide-mobile">{{ p.updated_at }}</td>
+                        <td class="hide-mobile">{{ p.updated_at | jst }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -341,7 +341,7 @@
                 {% endif %}
                 <div class="product-card-content">
                     <div class="product-card-title">{{ p.custom_title or p.last_title }}</div>
-                    <div class="product-meta-inline text-muted">{{ site_display.get(p.site, p.site) }} / 更新 {{ p.updated_at }}</div>
+                    <div class="product-meta-inline text-muted">{{ site_display.get(p.site, p.site) }} / 更新 {{ p.updated_at | jst }}</div>
                     <div class="inline-edit-group">
                         <label for="title_en_mobile_{{ p.id }}" class="inline-edit-label">英語の商品名</label>
                         <input type="text" id="title_en_mobile_{{ p.id }}" class="inline-edit-input"

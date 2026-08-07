@@ -43,7 +43,7 @@
                             <td>{{ p.custom_title or p.last_title }}</td>
                             <td>¥{{ "{:,}".format(p.last_price or 0) }}</td>
                             <td>{{ p.site }}</td>
-                            <td>{{ p.updated_at.strftime('%Y-%m-%d') }}</td>
+                            <td>{{ p.updated_at | jst_date }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>

@@ -17,8 +17,8 @@
 </div>
 
 <div class="dashboard-meta-bar">
-    <span>生成: {{ generated_at.strftime('%Y-%m-%d %H:%M') if generated_at else '-' }}</span>
-    <span>最終更新商品: {{ last_updated_at.strftime('%Y-%m-%d %H:%M') if last_updated_at else 'まだありません' }}</span>
+    <span>生成: {{ generated_at | jst }}</span>
+    <span>最終更新商品: {{ last_updated_at | jst(default='まだありません') }}</span>
 </div>
 
 {% if total_items == 0 %}
@@ -123,7 +123,7 @@
                                         {% endif %}
                                     </span>
                                 </td>
-                                <td class="hide-mobile">{{ item.updated_at.strftime('%Y-%m-%d %H:%M') if item.updated_at else '-' }}</td>
+                                <td class="hide-mobile">{{ item.updated_at | jst }}</td>
                                 <td>
                                     <a href="{{ item.detail_url }}" class="btn">編集</a>
                                 </td>
@@ -215,7 +215,7 @@
                                     <span class="dashboard-badge is-clean">問題なし</span>
                                     {% endif %}
                                 </td>
-                                <td class="hide-mobile">{{ item.updated_at.strftime('%Y-%m-%d %H:%M') if item.updated_at else '-' }}</td>
+                                <td class="hide-mobile">{{ item.updated_at | jst }}</td>
                                 <td>
                                     <div class="dashboard-row-actions">
                                         <a href="{{ item.detail_url }}" class="btn">編集</a>

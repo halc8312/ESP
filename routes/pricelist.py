@@ -139,7 +139,6 @@ def pricelist_list():
                 .count()
             )
             pl.publication_state = pl.publication_state_at(now)
-            pl.unpublish_at_jst = _format_unpublish_at_jst(pl.unpublish_at)
 
         all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
         current_shop_id = session.get('current_shop_id')

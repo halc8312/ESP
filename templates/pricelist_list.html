@@ -31,9 +31,9 @@
                     <span>🏬 {{ pl.shop.name }}</span>
                     {% endif %}
                     {% if pl.publication_state == 'expired' %}
-                    <span class="pricelist-meta-status is-inactive">● 公開終了済み（{{ pl.unpublish_at_jst | replace('T', ' ') }} JST）</span>
+                    <span class="pricelist-meta-status is-inactive">● 公開終了済み（{{ pl.unpublish_at | jst }} 日本時間）</span>
                     {% elif pl.publication_state == 'scheduled' %}
-                    <span class="pricelist-meta-status is-active">● 公開中（{{ pl.unpublish_at_jst | replace('T', ' ') }} JSTに自動非公開）</span>
+                    <span class="pricelist-meta-status is-active">● 公開中（{{ pl.unpublish_at | jst }} 日本時間に自動で非公開）</span>
                     {% elif pl.publication_state == 'active' %}
                     <span class="pricelist-meta-status is-active">● 公開中</span>
                     {% else %}
