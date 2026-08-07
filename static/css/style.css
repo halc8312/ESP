@@ -5716,3 +5716,50 @@ input.pricelist-item-price-input {
     border-radius: 8px;
     padding: 14px;
 }
+
+/* ── Reference exchange rates (read-only; the admin works in yen) ── */
+.ratebar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-sm);
+}
+
+.ratebar-label {
+    font-size: 0.9em;
+    font-weight: 700;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.ratebar-chip {
+    font-size: 0.85em;
+    color: var(--text-muted);
+    background: var(--surface-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 3px 10px;
+    white-space: nowrap;
+}
+
+.ratebar-chip b {
+    color: var(--text-color);
+    font-variant-numeric: tabular-nums;
+}
+
+.ratebar-note {
+    font-size: 0.85em;
+    color: var(--text-muted);
+}
+
+.ratebar-link {
+    font-size: 0.85em;
+    margin-left: auto;
+    white-space: nowrap;
+}

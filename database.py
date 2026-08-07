@@ -119,6 +119,7 @@ ADDITIVE_STARTUP_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("translation_suggestions", "worker_token", "ALTER TABLE translation_suggestions ADD COLUMN worker_token VARCHAR(64)"),
     ("translation_suggestions", "lease_expires_at", "ALTER TABLE translation_suggestions ADD COLUMN lease_expires_at TIMESTAMP"),
     ("users", "default_pricing_rule_id", "ALTER TABLE users ADD COLUMN default_pricing_rule_id INTEGER"),
+    ("users", "exchange_rate_margin", "ALTER TABLE users ADD COLUMN exchange_rate_margin INTEGER DEFAULT 0 NOT NULL"),
 )
 
 

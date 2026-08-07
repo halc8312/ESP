@@ -849,6 +849,20 @@ def _register_scheduler_jobs(app: Flask) -> None:
             if count > 0:
                 logger.info("Auto-purged %s items from trash", count)
 
+    def exchange_rate_refresh_job():
+        with app.app_context():
+            from services.exchange_rate_service import refresh_exchange_rates
+
+            summary = refresh_exchange_rates()
+            _write_scheduler_heartbeat(
+                app,
+                event="exchange_rate_refresh_completed",
+                last_exchange_rate_refresh_completed_at=_utc_iso_now(),
+                last_exchange_rate_refresh_status=summary.get("status", ""),
+                last_exchange_rate_refresh_updated_count=len(summary.get("updated") or []),
+                last_exchange_rate_refresh_error=summary.get("error") or "",
+            )
+
     def translation_recovery_job():
         with app.app_context():
             try:
@@ -897,6 +911,14 @@ def _register_scheduler_jobs(app: Flask) -> None:
         func=trash_purge_job,
         trigger="cron",
         hour=3,
+        replace_existing=True,
+    )
+    # 00:00 UTC is 09:00 JST, the "every morning" refresh the catalog relies on.
+    scheduler.add_job(
+        id="exchange_rate_refresh_job",
+        func=exchange_rate_refresh_job,
+        trigger="cron",
+        hour=0,
         replace_existing=True,
     )
     scheduler.add_job(

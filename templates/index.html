@@ -140,6 +140,17 @@
 </section>
 
 
+{% if exchange_rates %}
+<div class="ratebar">
+    <span class="ratebar-label">💱 参考レート</span>
+    {% for rate in exchange_rates %}
+    <span class="ratebar-chip">{{ rate.label }} <b>{{ '%.2f'|format(rate.jpy_per_unit) if rate.jpy_per_unit >= 1 else '%.3f'|format(rate.jpy_per_unit) }}</b></span>
+    {% endfor %}
+    <span class="ratebar-note">{{ exchange_rates[0].fetched_at | jst }} 自動更新 ／ お客様のリストの外貨表示に使われます</span>
+    <a class="ratebar-link" href="{{ url_for('settings.settings_list') }}">レートの設定 →</a>
+</div>
+{% endif %}
+
 <!-- エクスポート用フォーム -->
 <form method="GET">
     <!-- エクスポート設定（モバイルでは折りたたみ） -->
@@ -165,10 +176,6 @@
                 <div class="filter-group">
                     <label>在庫数</label>
                     <input type="number" name="qty" value="{{ default_qty }}" step="1" min="0" inputmode="numeric">
-                </div>
-                <div class="filter-group">
-                    <label>為替レート（1ドルあたりの円）</label>
-                    <input type="number" name="rate" value="{{ default_rate }}" step="0.01" inputmode="decimal">
                 </div>
             </div>
 
@@ -199,11 +206,6 @@
                 <div class="filter-group">
                     <label>一括設定する在庫数</label>
                     <input type="number" name="qty" value="{{ default_qty }}" step="1" min="0" inputmode="numeric">
-                </div>
-                <div class="filter-group">
-                    <label>為替レート（1ドルあたりの円）</label>
-                    <input type="number" name="rate" value="{{ default_rate }}" step="0.01" inputmode="decimal">
-                    <span class="text-small text-muted">1ドルあたりの円</span>
                 </div>
             </div>
 

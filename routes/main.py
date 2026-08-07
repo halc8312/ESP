@@ -11,6 +11,7 @@ from sqlalchemy import func, or_, select
 
 from database import SessionLocal
 from models import Shop, Product, Variant, ProductSnapshot
+from services.exchange_rate_service import get_exchange_rates
 from services.image_service import split_image_url_string
 from services.rich_text import normalize_rich_text
 from services.validation_service import validate_product, get_issue_summary
@@ -505,7 +506,6 @@ def index():
         defaults = {
             "markup": request.args.get("markup", "1.2"),
             "qty": request.args.get("qty", "1"),
-            "rate": request.args.get("rate", "155"),
         }
 
         return render_template(
@@ -534,7 +534,7 @@ def index():
             has_next=has_next,
             default_markup=defaults["markup"],
             default_qty=defaults["qty"],
-            default_rate=defaults["rate"],
+            exchange_rates=get_exchange_rates(session_db),
             all_shops=all_shops,
             current_shop_id=current_shop_id
         )

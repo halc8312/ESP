@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
 from flask_login import UserMixin
@@ -12,6 +12,12 @@ class User(UserMixin, Base):
     username = Column(String(100), unique=True, nullable=False)
     password_hash = Column(String(200), nullable=False)
     default_pricing_rule_id = Column(Integer, ForeignKey("pricing_rules.id"), nullable=True)
+    # 外貨表示にだけ差し引く安全マージン（円）。円の販売価格には影響しません。
+    # server_default keeps rows copied by the existing-web migration (which
+    # inserts only the columns the source database has) from failing NOT NULL.
+    exchange_rate_margin = Column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -223,7 +229,9 @@ class PriceList(Base):
     is_active = Column(Boolean, default=True)            # 有効/無効
     # 常設(permanent) = 常にお客様が見るメインリスト
     # 期間限定(limited) = 一時的に見せ、期限で閉じるリスト
-    list_type = Column(String, default="permanent", nullable=False)
+    list_type = Column(
+        String, default="permanent", server_default="permanent", nullable=False
+    )
     unpublish_at = Column(DateTime, nullable=True)       # 自動非公開日時（naive UTC）
     currency_rate = Column(Integer, default=150)         # JPY→USD換算レート
     layout = Column(String, default="grid")              # grid / editorial / list
@@ -507,3 +515,19 @@ class ImageProcessingJob(Base):
 
     product = relationship("Product")
     user = relationship("User")
+
+
+class ExchangeRate(Base):
+    """
+    Latest known conversion rate for one foreign currency, refreshed daily.
+
+    Only the customer-facing catalog converts prices; the admin screens are
+    always in yen. Rates are stored as "how many yen one unit is worth" so the
+    admin reference bar can print them without further arithmetic.
+    """
+    __tablename__ = "exchange_rates"
+
+    id = Column(Integer, primary_key=True)
+    quote_currency = Column(String(3), nullable=False, unique=True, index=True)
+    jpy_per_unit = Column(Float, nullable=False)
+    fetched_at = Column(DateTime, nullable=False, default=utc_now)
