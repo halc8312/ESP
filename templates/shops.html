@@ -28,6 +28,8 @@
             <input type="text" id="newShopName" name="name" placeholder="ショップ名 (例: 文具店A)" required autocomplete="organization"
                 class="shop-form-field shop-form-field--name">
             <input type="url" id="newShopLogoUrl" name="logo_url" placeholder="ロゴ画像のURL（お持ちの方のみ）" class="shop-form-field shop-form-field--url">
+            <input type="text" id="newShopInstagram" name="instagram_username"
+                placeholder="InstagramのID（例: my_shop・@は不要）" class="shop-form-field shop-form-field--url">
             <input type="file" id="newShopLogoFile" name="logo_file" accept="image/*" class="shop-form-field shop-form-field--file">
             <div class="shop-logo-preview" id="newShopLogoPreview" aria-live="polite">
                 <span class="shop-logo-preview-empty">ロゴプレビュー</span>
@@ -36,6 +38,7 @@
             <button type="submit" class="add-btn">追加</button>
         </form>
         <p class="text-small text-muted mt-1 mb-0">画像を選択した場合はアップロード画像を優先して登録します。</p>
+        <p class="text-small text-muted mb-0">InstagramのIDを入れると、お客様が見るリストに「Ask about this item」ボタンが出て、DMを送れるようになります。</p>
     </div>
 </div>
 
@@ -53,6 +56,7 @@
                         <th>ID</th>
                         <th>ロゴ</th>
                         <th>ショップ名</th>
+                        <th>Instagram</th>
                         <th>商品数</th>
                         <th>操作</th>
                     </tr>
@@ -60,6 +64,7 @@
                 <tbody>
                     {% for s in shops %}
                     <tr data-shop-row data-shop-id="{{ s.id }}" data-shop-name="{{ s.name }}" data-shop-logo-url="{{ s.logo_url or '' }}"
+                        data-shop-instagram="{{ s.instagram_username or '' }}"
                         data-shop-product-count="{{ s.product_count }}" data-shop-edit-url="{{ url_for('shops.edit_shop', shop_id=s.id) }}">
                         <td>{{ s.id }}</td>
                         <td class="shops-logo-cell">
@@ -70,6 +75,13 @@
                             {% endif %}
                         </td>
                         <td>{{ s.name }}</td>
+                        <td>
+                            {% if s.instagram_username %}
+                            @{{ s.instagram_username }}
+                            {% else %}
+                            <span class="text-muted">未設定</span>
+                            {% endif %}
+                        </td>
                         <td>{{ s.product_count }}</td>
                         <td>
                             <div class="shops-row-actions">
@@ -142,6 +154,16 @@
         refresh();
     }
 
+    // These values are interpolated into an innerHTML string below, so they
+    // have to be escaped before they land inside an attribute.
+    function escapeAttribute(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
     function buildEditShopForm(row) {
         const form = document.createElement('form');
         form.method = 'POST';
@@ -153,11 +175,15 @@
             '<input type="hidden" name="csrf_token" value="' + document.querySelector('meta[name="csrf-token"]').content + '">' +
             '<div class="form-group">' +
             '<label for="modalShopName">ショップ名</label>' +
-            '<input type="text" id="modalShopName" name="name" value="' + row.dataset.shopName + '" required>' +
+            '<input type="text" id="modalShopName" name="name" value="' + escapeAttribute(row.dataset.shopName) + '" required>' +
             '</div>' +
             '<div class="form-group">' +
             '<label for="modalShopLogoUrl">ロゴURL</label>' +
-            '<input type="url" id="modalShopLogoUrl" name="logo_url" value="' + (row.dataset.shopLogoUrl || '') + '" placeholder="ロゴURL">' +
+            '<input type="url" id="modalShopLogoUrl" name="logo_url" value="' + escapeAttribute(row.dataset.shopLogoUrl) + '" placeholder="ロゴURL">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label for="modalShopInstagram">InstagramのID</label>' +
+            '<input type="text" id="modalShopInstagram" name="instagram_username" value="' + escapeAttribute(row.dataset.shopInstagram) + '" placeholder="例: my_shop（@は不要）">' +
             '</div>' +
             '<div class="form-group">' +
             '<label for="modalShopLogoFile">画像アップロード</label>' +
@@ -167,7 +193,8 @@
             '<span class="shop-logo-preview-empty">ロゴプレビュー</span>' +
             '<img src="" alt="" hidden>' +
             '</div>' +
-            '<p class="text-small text-muted mb-0">画像を選択した場合はアップロード画像を優先します。URL欄を空にして保存するとロゴを解除できます。</p>';
+            '<p class="text-small text-muted mb-0">画像を選択した場合はアップロード画像を優先します。URL欄を空にして保存するとロゴを解除できます。</p>' +
+            '<p class="text-small text-muted mb-0">InstagramのIDを入れると、お客様のリストに「Ask about this item」ボタンが出ます。</p>';
 
         window.setTimeout(function () {
             bindPreview('modalShopLogoUrl', 'modalShopLogoFile', 'modalShopLogoPreview');

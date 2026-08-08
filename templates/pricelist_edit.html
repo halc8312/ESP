@@ -14,6 +14,7 @@
 {% set layout_value = selected_layout or (pricelist.layout if pricelist and pricelist.layout else 'grid') %}
 {% set name_value = selected_name if selected_name is defined else (pricelist.name if pricelist else '') %}
 {% set notes_value = selected_notes if selected_notes is defined else ((pricelist.notes or '') if pricelist else '') %}
+{% set shipping_note_value = selected_shipping_note if selected_shipping_note is defined else ((pricelist.shipping_note or '') if pricelist else '') %}
 {% set currency_rate_value = selected_currency_rate if selected_currency_rate is defined else (pricelist.currency_rate if pricelist else 150) %}
 
 {% if error %}
@@ -68,6 +69,15 @@
                         <span>一時的に見せて、期限が来たら自動的に閉じるリストです。下で期限を決めてください。</span>
                     </label>
                 </div>
+            </div>
+
+            <div class="form-group">
+                <label for="shipping_note">送料の目安（英語・任意）</label>
+                <input type="text" id="shipping_note" name="shipping_note" maxlength="200"
+                    value="{{ shipping_note_value }}" placeholder="例: Shipping: worldwide, tracked">
+                <p class="text-small text-muted mb-0" style="margin-top: 6px;">
+                    お客様が見るリストで、価格のすぐ下に出ます。海外のお客様が読むので英語で書いてください。空欄なら何も出ません。
+                </p>
             </div>
 
             <div class="form-group">

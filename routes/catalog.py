@@ -3,6 +3,7 @@ Public catalog routes: token-based access for overseas customers.
 No login required.
 """
 import hashlib
+import re
 from collections import Counter
 from datetime import timedelta
 from urllib.parse import unquote, urlparse
@@ -184,6 +185,55 @@ def _pricelist_by_token(session_db, token):
         )
         .first()
     )
+
+
+def _normalize_instagram_username(raw_value):
+    """
+    Return a bare Instagram username, or "" if it does not look like one.
+
+    Operators paste all sorts of things into this field — "@name", a profile
+    URL, a name with spaces — and the value goes straight into a link on a
+    public page, so anything unexpected is dropped rather than rendered.
+    """
+    value = str(raw_value or "").strip()
+    if not value:
+        return ""
+
+    if "instagram.com" in value.lower():
+        value = value.rstrip("/").rsplit("/", 1)[-1]
+    value = value.lstrip("@").strip()
+    value = value.split("?", 1)[0]
+
+    if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", value):
+        return ""
+    return value
+
+
+def _resolve_catalog_contact(pricelist, items):
+    """Find the Instagram handle to offer customers, the same way the logo is found."""
+    owner_id = getattr(pricelist, "user_id", None)
+    related_shop = getattr(pricelist, "shop", None)
+    if (
+        related_shop is not None
+        and related_shop.user_id == owner_id
+    ):
+        username = _normalize_instagram_username(related_shop.instagram_username)
+        if username:
+            return username
+
+    for item in items:
+        product = getattr(item, "product", None)
+        shop = getattr(product, "shop", None)
+        if (
+            product is not None
+            and product.user_id == owner_id
+            and shop is not None
+            and shop.user_id == owner_id
+        ):
+            username = _normalize_instagram_username(shop.instagram_username)
+            if username:
+                return username
+    return ""
 
 
 def _resolve_catalog_shop_branding(pricelist, items):
@@ -385,6 +435,8 @@ def catalog_view(token):
             server_rates=_build_server_rates(session_db, pl.user_id),
             shop_logo=shop_logo,
             shop_name=shop_name,
+            instagram_username=_resolve_catalog_contact(pl, items),
+            shipping_note=(pl.shipping_note or "").strip(),
         )
     except Exception:
         session_db.rollback()

@@ -97,6 +97,8 @@ ADDITIVE_STARTUP_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("price_lists", "unpublish_at", "ALTER TABLE price_lists ADD COLUMN unpublish_at TIMESTAMP"),
     ("price_lists", "list_type", "ALTER TABLE price_lists ADD COLUMN list_type VARCHAR DEFAULT 'permanent' NOT NULL"),
     ("shops", "logo_url", "ALTER TABLE shops ADD COLUMN logo_url VARCHAR"),
+    ("shops", "instagram_username", "ALTER TABLE shops ADD COLUMN instagram_username VARCHAR(64)"),
+    ("price_lists", "shipping_note", "ALTER TABLE price_lists ADD COLUMN shipping_note VARCHAR(200)"),
     ("description_templates", "user_id", "ALTER TABLE description_templates ADD COLUMN user_id INTEGER"),
     ("products", "patrol_fail_count", "ALTER TABLE products ADD COLUMN patrol_fail_count INTEGER DEFAULT 0"),
     ("products", "last_patrolled_at", "ALTER TABLE products ADD COLUMN last_patrolled_at TIMESTAMP"),
