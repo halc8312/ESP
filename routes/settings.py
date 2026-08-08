@@ -5,6 +5,10 @@ from flask import Blueprint, flash, redirect, render_template, request, session,
 from flask_login import login_required, current_user
 from database import SessionLocal
 from models import ExclusionKeyword, PricingRule, Shop, User
+from services.exchange_rate_service import (
+    get_exchange_rates,
+    refresh_exchange_rates,
+)
 
 settings_bp = Blueprint('settings', __name__)
 
@@ -26,6 +30,8 @@ def settings_list():
             current_shop_id=session.get("current_shop_id"),
             pricing_rules=pricing_rules,
             default_pricing_rule_id=user.default_pricing_rule_id,
+            exchange_rates=get_exchange_rates(session_db),
+            exchange_rate_margin=user.exchange_rate_margin or 0,
         )
     except Exception:
         session_db.rollback()
@@ -128,3 +134,45 @@ def set_default_pricing_rule():
         return redirect(url_for('settings.settings_list'))
     finally:
         session_db.close()
+
+
+@settings_bp.route('/settings/exchange-rate/margin', methods=['POST'])
+@login_required
+def set_exchange_rate_margin():
+    """Store the safety margin used only for the catalog's foreign prices."""
+    session_db = SessionLocal()
+    try:
+        raw_margin = (request.form.get('exchange_rate_margin') or '0').strip()
+        try:
+            margin = int(raw_margin or 0)
+        except ValueError:
+            flash('安全マージンは0以上の整数で入力してください。', 'error')
+            return redirect(url_for('settings.settings_list'))
+
+        if margin < 0:
+            flash('安全マージンは0以上の整数で入力してください。', 'error')
+            return redirect(url_for('settings.settings_list'))
+
+        user = session_db.query(User).filter_by(id=current_user.id).one()
+        user.exchange_rate_margin = margin
+        session_db.commit()
+        flash('安全マージンを保存しました。', 'success')
+        return redirect(url_for('settings.settings_list'))
+    except Exception:
+        session_db.rollback()
+        flash('保存できませんでした。', 'error')
+        return redirect(url_for('settings.settings_list'))
+    finally:
+        session_db.close()
+
+
+@settings_bp.route('/settings/exchange-rate/refresh', methods=['POST'])
+@login_required
+def refresh_exchange_rate_now():
+    """Fetch the rates on demand instead of waiting for the morning run."""
+    summary = refresh_exchange_rates()
+    if summary.get("status") == "ok":
+        flash('為替レートを更新しました。', 'success')
+    else:
+        flash('為替レートを取得できませんでした。前回のレートを使い続けます。', 'error')
+    return redirect(url_for('settings.settings_list'))

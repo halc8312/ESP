@@ -13,7 +13,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import joinedload, subqueryload
 
 from database import SessionLocal, _session_factory
-from models import Shop, PriceList, PriceListItem, Product, ProductSnapshot, CatalogPageView
+from models import Shop, PriceList, PriceListItem, Product, ProductSnapshot, CatalogPageView, User
+from services.exchange_rate_service import apply_safety_margin, get_exchange_rates
 from services.image_service import split_image_url_string
 from services.pricing_service import resolve_product_display_price
 from services.rich_text import build_rich_text_excerpt, normalize_rich_text, rich_text_to_plain_text
@@ -41,6 +42,28 @@ def _safe_currency_rate(raw_value):
     except (TypeError, ValueError):
         return DEFAULT_CURRENCY_RATE
     return parsed if parsed > 0 else DEFAULT_CURRENCY_RATE
+
+
+def _build_server_rates(session_db, owner_user_id):
+    """
+    Return {currency: units per 1 JPY} from the daily refresh.
+
+    The owner's safety margin shades each rate so a market move between two
+    morning refreshes cannot make the foreign price undercut the yen price.
+    Returns an empty dict when nothing has been fetched yet, which leaves the
+    catalog on its own client-side lookup.
+    """
+    owner = session_db.query(User).filter(User.id == owner_user_id).first()
+    margin = owner.exchange_rate_margin if owner else 0
+
+    server_rates = {}
+    for rate in get_exchange_rates(session_db):
+        jpy_per_unit = apply_safety_margin(rate["jpy_per_unit"], margin)
+        if jpy_per_unit > 0:
+            server_rates[rate["code"]] = 1 / jpy_per_unit
+    if server_rates:
+        server_rates["JPY"] = 1
+    return server_rates
 
 
 def _attach_latest_snapshots(session_db, products):
@@ -359,6 +382,7 @@ def catalog_view(token):
             items=catalog_items,
             available_tags=available_tags,
             currency_rate=_safe_currency_rate(pl.currency_rate),
+            server_rates=_build_server_rates(session_db, pl.user_id),
             shop_logo=shop_logo,
             shop_name=shop_name,
         )

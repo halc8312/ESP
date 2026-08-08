@@ -2081,23 +2081,29 @@ body.has-bottom-nav .main-content {
         display: none !important;
     }
 
+    /* Content fills the space beside the navigation by default.
+       Per-page maximums come from the wrap-* classes below. */
     body.has-bottom-nav .main-content {
         margin-left: var(--sidebar-width);
-        padding: 24px 30px;
-        max-width: calc(1200px + 60px);
+        padding: 24px 32px 96px;
+        width: calc(100% - var(--sidebar-width));
+        max-width: none;
     }
 
-    /* Product edit page uses full-width layout per client spec */
-    body.product-edit-page .main-content {
+    /* Page-type width classes (set via the body_class block in each template).
+       wrap-fluid  : tables / lists — use every available pixel
+       wrap-form   : input-heavy screens — wide, but still a readable maximum
+       wrap-narrow : text-heavy screens */
+    body.wrap-fluid .main-content {
         max-width: none;
-        width: calc(100% - var(--sidebar-width));
     }
 
-    /* High-density work screens use all space beside the navigation. */
-    body.product-list-page .main-content,
-    body.scrape-page .main-content {
-        max-width: none;
-        width: calc(100% - var(--sidebar-width));
+    body.wrap-form .main-content {
+        max-width: 1600px;
+    }
+
+    body.wrap-narrow .main-content {
+        max-width: 1100px;
     }
 
     /* Hide legacy nav on desktop when using new layout */
@@ -3390,6 +3396,8 @@ button:active {
     border-radius: 12px;
     font-size: 12px;
     font-weight: 600;
+    /* Narrow tablet columns must not break "在庫なし" into a vertical stack. */
+    white-space: nowrap;
 }
 .stock-badge.stock-in {
     background: #dcfce7;
@@ -5467,4 +5475,565 @@ body.product-edit-page .sticky-save-container {
     .shops-row-actions > * {
         flex: 1 1 140px;
     }
+}
+
+/* ── CSV import: Japanese column reference table ── */
+.csv-column-guide {
+    background: var(--surface-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 20px;
+}
+
+.csv-column-guide-title {
+    margin: 0 0 12px;
+    font-size: 0.95em;
+    color: var(--text-muted);
+}
+
+.csv-column-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card-bg);
+}
+
+.csv-column-table th,
+.csv-column-table td {
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    text-align: left;
+    vertical-align: top;
+    font-size: 0.95em;
+}
+
+.csv-column-table thead th {
+    background: var(--surface-subtle);
+    white-space: nowrap;
+}
+
+.csv-column-table tbody th {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.csv-column-table code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--surface-subtle);
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+
+.csv-column-required {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: #fdecea;
+    color: var(--danger-color);
+    font-weight: 600;
+    font-size: 0.9em;
+}
+
+/* ── Cost / sale price / profit columns ── */
+.product-table th.num,
+.product-table td.num,
+table th.num,
+table td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.money {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.money--cost {
+    color: var(--text-muted);
+}
+
+.money--sell {
+    font-weight: 700;
+    color: var(--text-color);
+}
+
+.money-unset {
+    font-size: 0.85em;
+    font-weight: 700;
+    color: var(--danger-color);
+}
+
+.profit {
+    display: inline-block;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    font-weight: 700;
+    color: var(--success-color);
+}
+
+.profit--minus {
+    color: var(--danger-color);
+}
+
+.profit__rate {
+    display: block;
+    font-size: 0.8em;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.profit--minus .profit__rate {
+    color: var(--danger-color);
+}
+
+.price-row.price-profit {
+    margin-top: 2px;
+}
+
+input.pricelist-item-price-input {
+    display: block;
+    width: min(180px, 100%);
+    margin: 6px 0 0 auto;
+    text-align: right;
+}
+
+/* On the phone card layout the profit reads as one line ("+¥18,500 +150%")
+   rather than the stacked form the right-aligned table columns use. */
+.product-card-price .profit__rate {
+    display: inline;
+    margin-left: 6px;
+}
+
+/* The select already names the current shop, so the extra caption only
+   overflowed the fixed 56px header. */
+.mobile-header-shop .shop-current {
+    display: none;
+}
+
+/* ── Inline alerts ── */
+.alert {
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--surface-muted);
+    margin-bottom: 16px;
+}
+
+.alert-error {
+    border-color: #f5c2c7;
+    background: #fdecea;
+    color: #842029;
+}
+
+.alert-warning {
+    border-color: #ffe08a;
+    background: #fff8e1;
+    color: var(--warning-color);
+}
+
+/* ── Price list: permanent vs time-limited ── */
+.pricelist-section {
+    margin-bottom: 32px;
+}
+
+.pricelist-section-head {
+    margin-bottom: 12px;
+}
+
+.pricelist-section-title {
+    font-size: 1.1rem;
+    margin: 0;
+}
+
+.pricelist-section-note {
+    margin: 4px 0 0;
+    font-size: 0.9em;
+    color: var(--text-muted);
+}
+
+.pricelist-section-empty {
+    color: var(--text-muted);
+    background: var(--surface-muted);
+    border: 1px dashed var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 0;
+}
+
+.pricelist-meta-countdown {
+    color: var(--warning-color);
+    font-weight: 600;
+}
+
+.list-type-choices {
+    display: grid;
+    gap: 12px;
+}
+
+.list-type-choice {
+    display: block;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 14px;
+    cursor: pointer;
+    background: var(--card-bg);
+}
+
+.list-type-choice.is-selected {
+    border-color: var(--primary-color);
+    background: #eef5ff;
+}
+
+.list-type-choice strong {
+    display: block;
+    margin-top: 6px;
+}
+
+.list-type-choice span {
+    display: block;
+    margin-top: 4px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.deadline-presets {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.deadline-presets-label {
+    font-size: 0.9em;
+    color: var(--text-muted);
+}
+
+.form-group.is-highlighted {
+    background: #fff8e1;
+    border: 1px solid #ffe08a;
+    border-radius: 8px;
+    padding: 14px;
+}
+
+/* ── Reference exchange rates (read-only; the admin works in yen) ── */
+.ratebar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-sm);
+}
+
+.ratebar-label {
+    font-size: 0.9em;
+    font-weight: 700;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.ratebar-chip {
+    font-size: 0.85em;
+    color: var(--text-muted);
+    background: var(--surface-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 3px 10px;
+    white-space: nowrap;
+}
+
+.ratebar-chip b {
+    color: var(--text-color);
+    font-variant-numeric: tabular-nums;
+}
+
+.ratebar-note {
+    font-size: 0.85em;
+    color: var(--text-muted);
+}
+
+.ratebar-link {
+    font-size: 0.85em;
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+/* ── Admin: student activity ── */
+.admin-reason-list {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 0.9em;
+    color: var(--warning-color);
+}
+
+.admin-privacy-note {
+    background: var(--surface-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-top: 24px;
+    font-size: 0.9em;
+    color: var(--text-muted);
+}
+
+.admin-privacy-note p {
+    margin: 8px 0;
+}
+
+.admin-privacy-note blockquote {
+    margin: 8px 0 0;
+    padding-left: 12px;
+    border-left: 3px solid var(--border-color);
+    color: var(--text-color);
+}
+
+/* ── Form field grids ──
+   The wider layout leaves room to place short fields side by side instead of
+   stacking every one of them. auto-fit collapses back to a single column on
+   narrow screens, so no separate mobile rule is needed. */
+.field-grid {
+    display: grid;
+    gap: 0 20px;
+    align-items: start;
+}
+
+.field-grid--2 {
+    grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+}
+
+.field-grid--3 {
+    grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+}
+
+/* Choice cards (theme / layout / list type) read better in a row once there
+   is room, and the cards keep their own internal spacing. */
+.choice-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+}
+
+.field-grid > .form-group,
+.field-grid > .filter-group {
+    min-width: 0;
+}
+
+/* A trailing submit button inside a grid row lines up with the inputs above
+   it rather than floating against the label. */
+.field-grid .form-group--submit {
+    display: flex;
+    align-items: flex-end;
+}
+
+.field-grid .form-group--submit button {
+    width: 100%;
+}
+
+/* Two cards side by side once the screen is wide enough: a list on the left,
+   the form that adds to it on the right. */
+.page-split {
+    display: grid;
+    gap: 0 20px;
+    grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+    align-items: start;
+}
+
+/* ── "Start here" guide ── */
+.guide-steps {
+    list-style: none;
+    margin: 16px 0 0;
+    padding: 0;
+    display: grid;
+    gap: 14px;
+}
+
+.guide-step {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    background: var(--surface-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 16px;
+}
+
+.guide-step-number {
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    color: #fff;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.guide-step-body {
+    min-width: 0;
+}
+
+.guide-step-body h3 {
+    margin: 0 0 6px;
+    font-size: 1.05rem;
+}
+
+.guide-step-body p {
+    margin: 0 0 10px;
+    color: var(--text-muted);
+}
+
+.guide-tip {
+    margin-top: 18px;
+    background: #fff8e1;
+    border: 1px solid #ffe08a;
+    border-radius: 10px;
+    padding: 14px 16px;
+}
+
+.guide-tip p {
+    margin: 6px 0 0;
+    color: var(--text-color);
+}
+
+.guide-compare {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+    margin-top: 16px;
+}
+
+.guide-compare-card {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 16px;
+    background: var(--card-bg);
+}
+
+.guide-compare-card--permanent {
+    border-top: 4px solid var(--primary-color);
+}
+
+.guide-compare-card--limited {
+    border-top: 4px solid var(--warning-color);
+}
+
+.guide-compare-card h3 {
+    margin: 0 0 8px;
+    font-size: 1.05rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.guide-compare-tag {
+    font-size: 0.72em;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--surface-subtle);
+    color: var(--text-muted);
+}
+
+.guide-compare-card dl {
+    margin: 12px 0 0;
+}
+
+.guide-compare-card dt {
+    font-weight: 700;
+    font-size: 0.9em;
+    color: var(--text-muted);
+    margin-top: 10px;
+}
+
+.guide-compare-card dd {
+    margin: 2px 0 0;
+}
+
+.guide-glossary {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.guide-glossary th,
+.guide-glossary td {
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    text-align: left;
+    vertical-align: top;
+}
+
+.guide-glossary thead th {
+    background: var(--surface-subtle);
+}
+
+.guide-glossary tbody th {
+    white-space: nowrap;
+    font-weight: 700;
+    width: 1%;
+}
+
+.guide-faq {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 10px;
+    background: var(--card-bg);
+}
+
+.guide-faq > summary {
+    cursor: pointer;
+    font-weight: 700;
+}
+
+.guide-faq p {
+    margin: 10px 0 0;
+    color: var(--text-muted);
+}
+
+/* ── Generic (unsupported site) extraction report ── */
+.extraction-report {
+    border-left: 4px solid var(--primary-color);
+    margin-bottom: 20px;
+}
+
+.extraction-field-list {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.extraction-field {
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 0.9em;
+    border: 1px solid var(--border-color);
+}
+
+.extraction-field.is-found {
+    background: #ecfdf3;
+    border-color: #bbf7d0;
+    color: #166534;
+}
+
+.extraction-field.is-missing {
+    background: #fff8e1;
+    border-color: #ffe08a;
+    color: var(--warning-color);
+}
+
+.extraction-note {
+    margin: 12px 0 0;
+    color: var(--warning-color);
 }

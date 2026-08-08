@@ -23,6 +23,7 @@ from database import SessionLocal, bootstrap_schema, ensure_additive_schema_read
 from models import User
 from security_config import build_hsts_header, configure_app_security, parse_bool
 from services.image_service import IMAGE_STORAGE_PATH
+from time_utils import format_jst, format_jst_date
 
 try:
     import fcntl as _fcntl
@@ -301,7 +302,14 @@ def _get_runtime_defaults(runtime_role: str) -> dict[str, Any]:
     return dict(RUNTIME_DEFAULTS.get(runtime_role, RUNTIME_DEFAULTS["base"]))
 
 
+def _register_template_filters(app: Flask) -> None:
+    """Expose the shared Japan-time display formats to every template."""
+    app.jinja_env.filters["jst"] = format_jst
+    app.jinja_env.filters["jst_date"] = format_jst_date
+
+
 def _register_blueprints(app: Flask) -> None:
+    from routes.admin import admin_bp
     from routes.api import api_bp
     from routes.archive import archive_bp
     from routes.auth import auth_bp
@@ -319,6 +327,7 @@ def _register_blueprints(app: Flask) -> None:
     from routes.bg_removal import bg_removal_bp
     from routes.trash import trash_bp
 
+    app.register_blueprint(admin_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(shops_bp)
     app.register_blueprint(main_bp)
@@ -738,6 +747,7 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
     def shutdown_session(exception=None):
         SessionLocal.remove()
 
+    _register_template_filters(app)
     _register_https_enforcement(app)
     _register_security_headers(app)
     _register_error_handlers(app)
@@ -841,6 +851,20 @@ def _register_scheduler_jobs(app: Flask) -> None:
             if count > 0:
                 logger.info("Auto-purged %s items from trash", count)
 
+    def exchange_rate_refresh_job():
+        with app.app_context():
+            from services.exchange_rate_service import refresh_exchange_rates
+
+            summary = refresh_exchange_rates()
+            _write_scheduler_heartbeat(
+                app,
+                event="exchange_rate_refresh_completed",
+                last_exchange_rate_refresh_completed_at=_utc_iso_now(),
+                last_exchange_rate_refresh_status=summary.get("status", ""),
+                last_exchange_rate_refresh_updated_count=len(summary.get("updated") or []),
+                last_exchange_rate_refresh_error=summary.get("error") or "",
+            )
+
     def translation_recovery_job():
         with app.app_context():
             try:
@@ -889,6 +913,14 @@ def _register_scheduler_jobs(app: Flask) -> None:
         func=trash_purge_job,
         trigger="cron",
         hour=3,
+        replace_existing=True,
+    )
+    # 00:00 UTC is 09:00 JST, the "every morning" refresh the catalog relies on.
+    scheduler.add_job(
+        id="exchange_rate_refresh_job",
+        func=exchange_rate_refresh_job,
+        trigger="cron",
+        hour=0,
         replace_existing=True,
     )
     scheduler.add_job(

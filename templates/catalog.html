@@ -203,6 +203,9 @@
 
     <script>
         const FALLBACK_JPY_RATE = {{ currency_rate }};
+        // Rates from the shop's own daily refresh, already shaded by its safety
+        // margin. Used when the live lookup below cannot be reached.
+        const SERVER_RATES = {{ server_rates | tojson }};
         const CATALOG_TOKEN = {{ pricelist.token| tojson }};
         const DETAIL_CACHE = {};
         let RATES_FROM_JPY = {};
@@ -382,8 +385,8 @@
         }
 
         function useFallbackRates() {
-            const jpyRate = FALLBACK_JPY_RATE;
-            RATES_FROM_JPY = {
+            const jpyRate = SERVER_RATES['USD'] ? (1 / SERVER_RATES['USD']) : FALLBACK_JPY_RATE;
+            RATES_FROM_JPY = Object.keys(SERVER_RATES).length ? Object.assign({}, SERVER_RATES) : {
                 'JPY': 1,
                 'USD': 1 / jpyRate,
                 'EUR': 0.92 / jpyRate,
@@ -395,7 +398,7 @@
             };
             ratesReady = true;
             const rateDisplay = document.getElementById('rateDisplay');
-            rateDisplay.textContent = `1 USD = ¥${jpyRate}`;
+            rateDisplay.textContent = `1 USD = ¥${Math.round(jpyRate)}`;
             const rateSource = document.getElementById('rateSource');
             if (rateSource) {
                 rateSource.textContent = 'Using the saved exchange rate';

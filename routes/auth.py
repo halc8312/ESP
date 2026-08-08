@@ -3,6 +3,7 @@ Authentication routes: login, register, logout, account.
 """
 import logging
 
+import click
 from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 
@@ -15,6 +16,7 @@ from services.rate_limit_service import (
     record_attempt,
     reset_attempts,
 )
+from time_utils import utc_now
 
 auth_bp = Blueprint('auth', __name__)
 logger = logging.getLogger(__name__)
@@ -61,9 +63,18 @@ def login():
                 # logout/login cycles, so never carry a previous account's
                 # selection into the newly authenticated account.
                 session.pop("current_shop_id", None)
+                # Recorded before login_user so the admin dashboard can tell a
+                # student who has gone quiet from one who is still working.
+                is_first_login = user.last_login_at is None
+                user.last_login_at = utc_now()
+                session_db.commit()
                 login_user(user)
                 reset_attempts("login-ip", client_ip)
                 reset_attempts("login-user", normalized_username)
+                # Students get stuck on what to do first, so the very first
+                # sign-in starts on the guide rather than an empty list.
+                if is_first_login:
+                    return redirect(url_for('main.guide'))
                 return redirect(url_for('main.index'))
             else:
                 record_attempt("login-ip", client_ip, window)
@@ -220,6 +231,27 @@ def register_cli_commands(app):
             session_db.add(new_user)
             session_db.commit()
             print(f"User {username} created successfully.")
+        except Exception as e:
+            print(f"Error: {e}")
+            session_db.rollback()
+        finally:
+            session_db.close()
+
+    @app.cli.command("set-user-role")
+    @click.argument("username")
+    @click.argument("role", type=click.Choice(["student", "admin"]))
+    def set_user_role(username, role):
+        """Grant or revoke access to the school office's admin screens."""
+        session_db = SessionLocal()
+        try:
+            user = session_db.query(User).filter_by(username=username).first()
+            if user is None:
+                print(f"User {username} not found.")
+                return
+
+            user.role = role
+            session_db.commit()
+            print(f"User {username} is now {role}.")
         except Exception as e:
             print(f"Error: {e}")
             session_db.rollback()

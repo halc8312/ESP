@@ -2,6 +2,7 @@
 
 {% block title %}設定{% endblock %}
 {% block header_title %}設定{% endblock %}
+{% block body_class %}has-bottom-nav wrap-form{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -77,7 +78,7 @@
 
 <div class="content-card">
     <div class="content-card-header">
-        <h2>抽出登録オプション</h2>
+        <h2>商品を取り込むときの初期設定</h2>
     </div>
     <div class="content-card-body">
         <p class="text-muted settings-summary-text">抽出した商品を登録するとき、自動で利益を上乗せするデフォルトルールを選べます。</p>
@@ -85,7 +86,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="settings-form-row">
                 <div class="form-group settings-form-main">
-                    <label for="default_pricing_rule_id">デフォルト利益ルール</label>
+                    <label for="default_pricing_rule_id">自動で使う価格ルール</label>
                     <select id="default_pricing_rule_id" name="default_pricing_rule_id">
                         <option value="">未設定</option>
                         {% for rule in pricing_rules|default([]) %}
@@ -94,6 +95,53 @@
                         </option>
                         {% endfor %}
                     </select>
+                </div>
+                <div class="form-group settings-form-action">
+                    <button type="submit" class="btn btn-primary">保存する</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="content-card">
+    <div class="content-card-header">
+        <h2>為替レートの設定</h2>
+    </div>
+    <div class="content-card-body">
+        <p class="text-muted settings-summary-text">
+            管理画面の金額はすべて円です。為替は<strong>お客様が見るリストで外貨表示に切り替えたとき</strong>にだけ使います。
+            毎朝9時に自動で取得し、取得できなかった日は前回のレートをそのまま使い続けます。
+        </p>
+
+        {% if exchange_rates %}
+        <div class="ratebar">
+            <span class="ratebar-label">💱 参考レート（1通貨あたりの円）</span>
+            {% for rate in exchange_rates %}
+            <span class="ratebar-chip">{{ rate.label }} <b>{{ '%.2f'|format(rate.jpy_per_unit) if rate.jpy_per_unit >= 1 else '%.3f'|format(rate.jpy_per_unit) }}</b></span>
+            {% endfor %}
+            <span class="ratebar-note">{{ exchange_rates[0].fetched_at | jst }} 取得</span>
+        </div>
+        {% else %}
+        <p class="text-muted">まだレートを取得していません。「今すぐ取得」を押すか、翌朝の自動取得をお待ちください。</p>
+        {% endif %}
+
+        <form action="{{ url_for('settings.refresh_exchange_rate_now') }}" method="POST" class="settings-form-row">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <button type="submit" class="btn btn-secondary">今すぐ取得</button>
+        </form>
+
+        <form action="{{ url_for('settings.set_exchange_rate_margin') }}" method="POST" class="form-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <div class="settings-form-row">
+                <div class="form-group settings-form-main">
+                    <label for="exchange_rate_margin">安全マージン（円）</label>
+                    <input type="number" id="exchange_rate_margin" name="exchange_rate_margin"
+                        value="{{ exchange_rate_margin }}" min="0" step="1" inputmode="numeric">
+                    <p class="field-helper-text">
+                        外貨に換算するときだけ、このぶんレートを低く見積もります（例: 2 と入れると1ドル158円を156円として計算）。
+                        円の販売価格は変わりません。0のままでもかまいません。
+                    </p>
                 </div>
                 <div class="form-group settings-form-action">
                     <button type="submit" class="btn btn-primary">保存する</button>

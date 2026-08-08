@@ -218,6 +218,8 @@ def _build_product_edit_summary(product, snapshot, images, variants):
     else:
         price_label = "未設定"
 
+    # "anchor" points the inline checklist at the panel that fixes the item, so
+    # a student can go straight there instead of hunting down the form.
     checklist = [
         {
             "key": "images",
@@ -225,6 +227,7 @@ def _build_product_edit_summary(product, snapshot, images, variants):
             "done": bool(images),
             "done_text": f"{len(images)}枚登録済み",
             "todo_text": "まずは1枚以上の画像を追加すると分かりやすくなります",
+            "anchor": "productImagesPanel",
         },
         {
             "key": "title",
@@ -232,6 +235,7 @@ def _build_product_edit_summary(product, snapshot, images, variants):
             "done": bool(public_title),
             "done_text": "公開用の商品名が入力されています",
             "todo_text": "日本語の商品名を入力してください",
+            "anchor": "productDescriptionPanel",
         },
         {
             "key": "description",
@@ -239,6 +243,7 @@ def _build_product_edit_summary(product, snapshot, images, variants):
             "done": _has_visible_text(public_description),
             "done_text": "説明文が入力されています",
             "todo_text": "状態や付属品をひとこと入れると親切です",
+            "anchor": "productDescriptionPanel",
         },
         {
             "key": "variants",
@@ -246,6 +251,7 @@ def _build_product_edit_summary(product, snapshot, images, variants):
             "done": variant_count > 0,
             "done_text": f"{variant_count}件登録済み",
             "todo_text": "バリエーションを1件以上追加してください",
+            "anchor": "productVariantPanel",
         },
         {
             "key": "price",
@@ -253,6 +259,7 @@ def _build_product_edit_summary(product, snapshot, images, variants):
             "done": bool(priced_variants),
             "done_text": price_label,
             "todo_text": "販売価格を入力してください",
+            "anchor": "productSalesPanel",
         },
     ]
     completed_count = sum(1 for item in checklist if item["done"])
@@ -274,6 +281,11 @@ def _build_product_edit_summary(product, snapshot, images, variants):
         "variant_count": variant_count,
         "in_stock_count": in_stock_count,
         "price_label": price_label,
+        # Cost / sale pair behind the profit figure on the sales panel. The
+        # lowest priced variant stands in for the product when prices differ,
+        # matching the "from" end of price_label.
+        "cost_price": product.last_price,
+        "sell_price": min(priced_variants) if priced_variants else None,
         "completed_count": completed_count,
         "total_count": len(checklist),
         "checklist": checklist,

@@ -51,6 +51,7 @@ scraping_test_report*.json
 e2e_test_results_*/
 test_db_patchset_*.sqlite
 tests/.tmp/
+.pytest_tmp/
 !tests/fixtures/**/*.html
 pytest_test.log
 test_stdout.log

@@ -2,7 +2,8 @@
 
 {% block title %}商品編集 - {{ product.last_title }}{% endblock %}
 {% block header_title %}商品編集{% endblock %}
-{% block body_class %}has-bottom-nav has-sticky-save product-edit-page{% endblock %}
+{% block body_class %}has-bottom-nav has-sticky-save product-edit-page wrap-fluid{% endblock %}
+{% import "_money.html" as money %}
 {% block head %}
 {{ super() }}
 <style>
@@ -689,6 +690,21 @@
         list-style: none;
         margin: 0;
         padding: 0;
+        grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+    }
+
+    /* Nothing missing: the heading says so, and the five green boxes would
+       only push the form further down the page. */
+    .product-edit-checklist-card[data-ready="ok"] .content-card-body {
+        display: none;
+    }
+
+    .product-edit-check-content a {
+        text-decoration: none;
+    }
+
+    .product-edit-check-content a:hover strong {
+        text-decoration: underline;
     }
 
     .product-edit-checklist-item {
@@ -1376,7 +1392,7 @@
             aria-haspopup="true"
             data-ready="{% if edit_summary.completed_count >= edit_summary.total_count %}ok{% else %}todo{% endif %}"
             title="保存前チェックの状態">
-            <span id="heroReadinessText">チェック {{ edit_summary.completed_count }}/{{ edit_summary.total_count }}</span>
+            <span id="heroReadinessText">出品前チェック {{ edit_summary.completed_count }}/{{ edit_summary.total_count }}</span>
             <span class="product-edit-checklist-popover" role="tooltip">
                 <ul>
                     {% for item in edit_summary.checklist %}
@@ -1400,6 +1416,36 @@
     {{ error }}
 </div>
 {% endif %}
+
+<!-- The header chip only reveals the detail on hover, which never happens on a
+     touch screen. This says what is missing without being asked. -->
+<section class="content-card product-edit-checklist-card" id="productChecklistCard"
+    data-ready="{% if edit_summary.completed_count >= edit_summary.total_count %}ok{% else %}todo{% endif %}">
+    <div class="content-card-header">
+        <h2 id="productChecklistHeading">
+            {% if edit_summary.completed_count >= edit_summary.total_count %}
+            出品前チェック：すべて入力できています
+            {% else %}
+            出品前チェック：あと{{ edit_summary.total_count - edit_summary.completed_count }}つ
+            {% endif %}
+        </h2>
+        <p>お客様に見せる前に埋めておきたい項目です。足りない項目を押すと、その入力欄へ移動します。</p>
+    </div>
+    <div class="content-card-body">
+        <ul class="product-edit-checklist-list">
+            {% for item in edit_summary.checklist %}
+            <li class="product-edit-checklist-item{% if item.done %} is-complete{% endif %}"
+                data-check-key="{{ item.key }}">
+                <span class="product-edit-check-icon">{% if item.done %}OK{% else %}要{% endif %}</span>
+                <span class="product-edit-check-content">
+                    <a href="#{{ item.anchor }}"><strong>{{ item.label }}</strong></a>
+                    <span class="product-edit-check-note">{{ item.done_text if item.done else item.todo_text }}</span>
+                </span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+</section>
 
 <form id="productEditForm" method="POST" enctype="multipart/form-data" class="product-edit-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
@@ -1578,7 +1624,20 @@
                     </span>
                 </header>
                 <div class="content-card-body">
-                    <div class="product-variant-overview">
+                    <div class="product-variant-overview"
+                        data-cost-price="{{ edit_summary.cost_price if edit_summary.cost_price is not none else '' }}">
+                        <article class="product-variant-overview-card">
+                            <span>仕入価格</span>
+                            <strong>{{ money.cost(edit_summary.cost_price) }}</strong>
+                        </article>
+                        <article class="product-variant-overview-card">
+                            <span>販売価格</span>
+                            <strong id="variantPriceValue">{{ edit_summary.price_label }}</strong>
+                        </article>
+                        <article class="product-variant-overview-card">
+                            <span>利益</span>
+                            <strong id="variantProfitValue">{{ money.profit(edit_summary.cost_price, edit_summary.sell_price) }}</strong>
+                        </article>
                         <article class="product-variant-overview-card">
                             <span>登録件数</span>
                             <strong id="variantCountValue">{{ edit_summary.variant_count }}件</strong>
@@ -1586,10 +1645,6 @@
                         <article class="product-variant-overview-card">
                             <span>在庫あり</span>
                             <strong id="variantStockValue">{{ edit_summary.in_stock_count }}件</strong>
-                        </article>
-                        <article class="product-variant-overview-card">
-                            <span>価格の目安</span>
-                            <strong id="variantPriceValue">{{ edit_summary.price_label }}</strong>
                         </article>
                     </div>
 
@@ -1963,6 +2018,7 @@
     var variantCountValue = null;
     var variantStockValue = null;
     var variantPriceValue = null;
+    var variantProfitValue = null;
     var variantGenerationSummary = null;
     var formDirty = false;
 
@@ -2010,6 +2066,7 @@
         variantCountValue = document.getElementById('variantCountValue');
         variantStockValue = document.getElementById('variantStockValue');
         variantPriceValue = document.getElementById('variantPriceValue');
+        variantProfitValue = document.getElementById('variantProfitValue');
         variantGenerationSummary = document.getElementById('variantGenerationSummary');
 
         imageUrls = safeParseImageUrls(imageHiddenInput ? imageHiddenInput.value : '[]');
@@ -2715,22 +2772,65 @@
         return min === max ? formatCurrency(min) : formatCurrency(min) + ' - ' + formatCurrency(max);
     }
 
+    function readOverviewCostPrice() {
+        var overview = document.querySelector('.product-variant-overview');
+        if (!overview) {
+            return null;
+        }
+        return parseInteger(overview.dataset.costPrice || '');
+    }
+
+    function formatProfitMarkup(costValue, sellValue) {
+        if (costValue === null || sellValue === null) {
+            return '<span class="money money--cost">—</span>';
+        }
+
+        var amount = sellValue - costValue;
+        var rate = costValue ? Math.round((amount * 100) / costValue) : null;
+        var yen = '¥' + Math.abs(amount).toLocaleString('ja-JP');
+
+        if (amount < 0) {
+            var lossNote = rate === null ? '赤字' : '−' + Math.abs(rate) + '%（赤字）';
+            return '<span class="profit profit--minus">⚠ −' + yen +
+                '<span class="profit__rate">' + lossNote + '</span></span>';
+        }
+
+        var gainNote = rate === null ? '—' : '+' + rate + '%';
+        return '<span class="profit">+' + yen + '<span class="profit__rate">' + gainNote + '</span></span>';
+    }
+
     function setChecklistItemState(key, done, message) {
-        var item = document.querySelector('[data-check-key="' + key + '"]');
-        if (!item) {
+        // The same item appears in the header popover and in the inline card,
+        // so every copy has to move together.
+        document.querySelectorAll('[data-check-key="' + key + '"]').forEach(function (item) {
+            item.classList.toggle('is-complete', done);
+
+            var icon = item.querySelector('.product-edit-check-icon');
+            if (icon) {
+                icon.textContent = done ? 'OK' : '要';
+            }
+
+            var note = item.querySelector('.product-edit-check-note');
+            if (note) {
+                note.textContent = message;
+            }
+        });
+    }
+
+    function setChecklistCardState(completedCount, totalCount) {
+        var card = document.getElementById('productChecklistCard');
+        if (!card) {
             return;
         }
 
-        item.classList.toggle('is-complete', done);
+        var remaining = Math.max(totalCount - completedCount, 0);
+        card.dataset.ready = remaining === 0 ? 'ok' : 'todo';
 
-        var icon = item.querySelector('.product-edit-check-icon');
-        if (icon) {
-            icon.textContent = done ? 'OK' : '要';
-        }
-
-        var note = item.querySelector('.product-edit-check-note');
-        if (note) {
-            note.textContent = message;
+        var heading = document.getElementById('productChecklistHeading');
+        if (heading) {
+            heading.textContent = remaining === 0
+                ? '出品前チェック：すべて入力できています'
+                : '出品前チェック：あと' + remaining + 'つ';
         }
     }
 
@@ -2805,6 +2905,13 @@
             variantPriceValue.textContent = priceLabel;
         }
 
+        if (variantProfitValue) {
+            variantProfitValue.innerHTML = formatProfitMarkup(
+                readOverviewCostPrice(),
+                pricedValues.length ? Math.min.apply(null, pricedValues) : null
+            );
+        }
+
         var imageDone = imageCount > 0;
         var titleDone = title.length > 0;
         var descriptionDone = descriptionText.length > 0;
@@ -2847,13 +2954,17 @@
             heroReadinessBadge.setAttribute('data-ready', completedCount >= 5 ? 'ok' : 'todo');
             var heroReadinessText = document.getElementById('heroReadinessText');
             if (heroReadinessText) {
-                heroReadinessText.textContent = 'チェック ' + completedCount + '/5';
+                // Keep the same wording the server rendered; this used to drop
+                // back to the shorter "チェック" on the first edit.
+                heroReadinessText.textContent = '出品前チェック ' + completedCount + '/5';
             }
         }
 
         if (checklistCountBadge) {
             checklistCountBadge.textContent = completedCount + '/5';
         }
+
+        setChecklistCardState(completedCount, 5);
     }
 
     // Bridge for product_bg_removal.js: when the user applies a bg-removal

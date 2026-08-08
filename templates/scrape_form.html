@@ -2,7 +2,7 @@
 
 {% block title %}商品抽出{% endblock %}
 {% block header_title %}商品抽出{% endblock %}
-{% block body_class %}has-bottom-nav scrape-page{% endblock %}
+{% block body_class %}has-bottom-nav scrape-page wrap-fluid{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -19,10 +19,10 @@
     </div>
     <div class="content-card-body">
         <ol class="scrape-stepper" id="scrapeStepper" aria-label="抽出ステップ">
-            <li class="scrape-step is-active" data-step="setup">1. 条件入力</li>
-            <li class="scrape-step" data-step="queued">2. 受付</li>
-            <li class="scrape-step" data-step="running">3. 抽出中</li>
-            <li class="scrape-step" data-step="review">4. 選択登録</li>
+            <li class="scrape-step is-active" data-step="setup">1. URL・キーワードを入力</li>
+            <li class="scrape-step" data-step="queued">2. 読み取りの順番待ち</li>
+            <li class="scrape-step" data-step="running">3. 読み取り中</li>
+            <li class="scrape-step" data-step="review">4. 結果を確認して登録</li>
         </ol>
 
         <div class="scrape-mode-tabs" role="tablist" aria-label="抽出方法">
@@ -30,6 +30,8 @@
                 aria-controls="scrapeTabUrl" id="scrapeTabButtonUrl" data-scrape-tab="url">URLから抽出</button>
             <button type="button" class="scrape-mode-tab" role="tab" aria-selected="false"
                 aria-controls="scrapeTabSearch" id="scrapeTabButtonSearch" data-scrape-tab="search">検索して抽出</button>
+            <button type="button" class="scrape-mode-tab" role="tab" aria-selected="false"
+                aria-controls="scrapeTabOther" id="scrapeTabButtonOther" data-scrape-tab="other">その他のサイト</button>
         </div>
 
         <section id="scrapeTabUrl" class="scrape-tab-panel" role="tabpanel" aria-labelledby="scrapeTabButtonUrl">
@@ -59,6 +61,37 @@
                         <button type="submit" class="btn btn-primary" data-loading-label="URLを解析しています...">URLから商品を抽出</button>
                     </div>
                 </div>
+            </form>
+        </section>
+
+        <section id="scrapeTabOther" class="scrape-tab-panel" role="tabpanel" aria-labelledby="scrapeTabButtonOther" hidden>
+            <form method="POST" action="{{ url_for('scrape.scrape_other_site') }}" class="scrape-form-compact"
+                data-scrape-form="other">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="scrape-form-intro">
+                    <strong>その他のサイト（自動判定）</strong>
+                    <p class="text-muted mb-0">
+                        上の一覧にないサイトでも、商品ページのURLを貼ると読み取れる範囲で自動登録します。
+                        BASE・STORES・楽天・Amazon など、一般的なECサイトの商品ページに対応しています。
+                        読み取れなかった項目は、次の画面でご自身で入力していただきます。
+                    </p>
+                </div>
+                <div class="form-row">
+                    <div class="form-group form-group--keyword">
+                        <label for="scrapeOtherUrl">商品ページのURL</label>
+                        <input type="url" id="scrapeOtherUrl" name="target_url"
+                            placeholder="https://..." required inputmode="url" autocomplete="url">
+                    </div>
+                    <div class="form-group form-group--submit">
+                        <button type="submit" class="btn btn-primary" data-loading-label="ページを読み取っています...">
+                            このページを読み取る
+                        </button>
+                    </div>
+                </div>
+                <p class="text-small text-muted mb-0">
+                    ※ 検索結果のURLではなく、商品1つのページのURLを貼ってください。
+                    うまく読み取れないときは <a href="{{ url_for('main.product_manual_add') }}">商品を手動追加</a> からご登録ください。
+                </p>
             </form>
         </section>
 

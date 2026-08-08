@@ -2,6 +2,7 @@
 
 {% block title %}商品追加 - {{ pricelist.name }}{% endblock %}
 {% block header_title %}商品追加{% endblock %}
+{% block body_class %}has-bottom-nav wrap-fluid{% endblock %}
 
 {% block content %}
 <a href="{{ url_for('pricelist.pricelist_items', pricelist_id=pricelist.id) }}" class="back-link">&laquo; 商品管理に戻る</a>

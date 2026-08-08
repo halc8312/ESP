@@ -62,8 +62,9 @@ class TestAuthenticationRoutes:
     
     def test_login_success(self, client, db_session):
         """Test successful login redirects to index"""
-        # Create user
-        user = User(username='logintest')
+        # A prior login, so this exercises the returning-user path; the first
+        # sign-in deliberately starts on the guide instead.
+        user = User(username='logintest', last_login_at=utc_now())
         user.set_password('testpassword')
         db_session.add(user)
         db_session.commit()
@@ -324,11 +325,11 @@ class TestMainRoutes:
         assert re.search(r'公開中</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
         assert re.search(r'下書き</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
         assert re.search(r'公開準備OK</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
-        assert re.search(r'要対応商品</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
+        assert re.search(r'直したほうがいい商品</span>\s*<strong class="dashboard-summary-value">1</strong>', html)
 
         assert re.search(r'仕入先在庫あり</span>\s*<strong>1</strong>', html)
         assert re.search(r'仕入先売切れ</span>\s*<strong>1</strong>', html)
-        assert re.search(r'0在庫バリアント</span>\s*<strong>1</strong>', html)
+        assert re.search(r'仕入先で在庫切れの商品</span>\s*<strong>1</strong>', html)
 
         assert 'Active Product' in html
         assert 'Draft Product' in html

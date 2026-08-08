@@ -2,6 +2,7 @@
 
 {% block title %}商品手動追加{% endblock %}
 {% block header_title %}商品手動追加{% endblock %}
+{% block body_class %}has-bottom-nav wrap-form{% endblock %}
 
 {% block content %}
 <a href="{{ url_for('index') }}" class="back-link">&laquo; 一覧に戻る</a>
@@ -20,6 +21,33 @@
             <li>{{ error }}</li>
             {% endfor %}
         </ul>
+    </div>
+</div>
+{% endif %}
+
+{% if extraction_found_fields or extraction_missing_fields %}
+<div class="content-card extraction-report">
+    <div class="content-card-header">
+        <h2>読み取り結果</h2>
+    </div>
+    <div class="content-card-body">
+        <p class="text-muted">
+            対応表にないサイトのため、ページから読み取れた項目だけを下の欄に入れてあります。
+            足りない項目はこの画面で直接入力してください。
+        </p>
+        <ul class="extraction-field-list">
+            {% for field in extraction_found_fields %}
+            <li class="extraction-field is-found">✅ {{ extraction_field_labels.get(field, field) }}</li>
+            {% endfor %}
+            {% for field in extraction_missing_fields %}
+            <li class="extraction-field is-missing">△ {{ extraction_field_labels.get(field, field) }}（読み取れませんでした）</li>
+            {% endfor %}
+        </ul>
+        {% if extraction_currency_warning %}
+        <p class="extraction-note">
+            価格が円以外の通貨で書かれていたため、入れていません。日本円の仕入価格をご自身で入力してください。
+        </p>
+        {% endif %}
     </div>
 </div>
 {% endif %}
@@ -86,7 +114,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="site">サイト区分</label>
+                        <label for="site">どこから仕入れた商品か</label>
                         <input type="text" id="site" name="site" value="{{ form_data.site }}" placeholder="manual">
                     </div>
 
@@ -132,7 +160,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="publish_status">Shopify公開状態</label>
+                        <label for="publish_status">公開状態</label>
                         <select id="publish_status" name="publish_status">
                             <option value="draft" {% if form_data.publish_status=='draft' %}selected{% endif %}>下書き
                             </option>
@@ -142,7 +170,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="sku">SKU（任意）</label>
+                        <label for="sku">管理番号（任意・空欄でOK）</label>
                         <input type="text" id="sku" name="sku" value="{{ form_data.sku }}" placeholder="MANUAL-001">
                     </div>
                 </div>

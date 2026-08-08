@@ -2,6 +2,67 @@
 
 {% block title %}価格表管理{% endblock %}
 {% block header_title %}価格表管理{% endblock %}
+{% block body_class %}has-bottom-nav wrap-fluid{% endblock %}
+
+{% macro pricelist_card(pl) %}
+<div class="content-card">
+    <div class="content-card-body pricelist-list-card">
+        <div class="pricelist-list-copy">
+            <h3 class="pricelist-list-title">{{ pl.name }}</h3>
+            <div class="pricelist-list-meta">
+                <span>📦 {{ pl.item_count }}商品</span>
+                <span>💱 為替を自動換算</span>
+                <span>🧭 {{ '写真を大きく表示' if pl.layout == 'editorial' else ('コンパクトな一覧' if pl.layout == 'list' else 'カード表示') }}</span>
+                {% if pl.shop %}
+                <span>🏬 {{ pl.shop.name }}</span>
+                {% endif %}
+                {% if pl.publication_state == 'expired' %}
+                <span class="pricelist-meta-status is-inactive">● 公開終了済み（{{ pl.unpublish_at | jst }} 日本時間）</span>
+                {% elif pl.publication_state == 'scheduled' %}
+                <span class="pricelist-meta-status is-active">● 公開中（{{ pl.unpublish_at | jst }} 日本時間に自動で非公開）</span>
+                {% elif pl.publication_state == 'active' %}
+                <span class="pricelist-meta-status is-active">● 公開中</span>
+                {% else %}
+                <span class="pricelist-meta-status is-inactive">● 非公開</span>
+                {% endif %}
+                {% if pl.remaining_label and pl.publication_state == 'scheduled' %}
+                <span class="pricelist-meta-countdown">⏳ {{ pl.remaining_label }}で自動的に非公開になります</span>
+                {% endif %}
+            </div>
+            {% if pl.notes %}
+            <p class="pricelist-list-notes">{{ (pl.notes | striptags)[:80] }}{% if (pl.notes | striptags)|length > 80 %}...{% endif %}</p>
+            {% endif %}
+        </div>
+        <div class="pricelist-list-buttons">
+            <button type="button" class="btn pricelist-action-button pricelist-action-button--copy"
+                data-copy-text="{{ request.host_url }}catalog/{{ pl.token }}"
+                data-copy-success="公開URLをコピーしました。">
+                🔗 URLコピー
+            </button>
+            <a href="{{ url_for('pricelist.pricelist_items', pricelist_id=pl.id) }}" class="btn pricelist-action-button pricelist-action-button--items">
+                📦 商品管理
+            </a>
+            <a href="{{ url_for('pricelist.pricelist_edit', pricelist_id=pl.id) }}" class="btn pricelist-action-button pricelist-action-button--edit">
+                ✏️ 編集
+            </a>
+            <a href="{{ url_for('catalog.catalog_view', token=pl.token) }}" target="_blank" class="btn pricelist-action-button pricelist-action-button--preview">
+                👁️ 顧客表示を確認
+            </a>
+            <a href="{{ url_for('catalog.pricelist_analytics', pricelist_id=pl.id) }}" class="btn pricelist-action-button pricelist-action-button--analytics">
+                📊 閲覧数を確認
+            </a>
+            <form action="{{ url_for('pricelist.pricelist_delete', pricelist_id=pl.id) }}" method="post"
+                data-confirm-title="価格表を削除" data-confirm-message="「{{ pl.name }}」を削除します。{{ pl.item_count }}件の商品との紐付けも解除されます。よろしいですか？"
+                data-confirm-label="削除する" data-confirm-variant="danger">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button type="submit" class="btn pricelist-action-button pricelist-action-button--delete">
+                    🗑️ 削除
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endmacro %}
 
 {% block content %}
 <div class="page-header">
@@ -16,64 +77,33 @@
 </div>
 
 {% if pricelists %}
-<div class="pricelist-list-grid">
-    {% for pl in pricelists %}
-    <div class="content-card">
-        <div class="content-card-body pricelist-list-card">
-            <div class="pricelist-list-copy">
-                <h3 class="pricelist-list-title">{{ pl.name }}</h3>
-                <div class="pricelist-list-meta">
-                    <span>📦 {{ pl.item_count }}商品</span>
-                    <span>💱 為替を自動換算</span>
-                    <span>🧭 {{ '写真を大きく表示' if pl.layout == 'editorial' else ('コンパクトな一覧' if pl.layout == 'list' else 'カード表示') }}</span>
-                    {% if pl.shop %}
-                    <span>🏬 {{ pl.shop.name }}</span>
-                    {% endif %}
-                    {% if pl.publication_state == 'expired' %}
-                    <span class="pricelist-meta-status is-inactive">● 公開終了済み（{{ pl.unpublish_at_jst | replace('T', ' ') }} JST）</span>
-                    {% elif pl.publication_state == 'scheduled' %}
-                    <span class="pricelist-meta-status is-active">● 公開中（{{ pl.unpublish_at_jst | replace('T', ' ') }} JSTに自動非公開）</span>
-                    {% elif pl.publication_state == 'active' %}
-                    <span class="pricelist-meta-status is-active">● 公開中</span>
-                    {% else %}
-                    <span class="pricelist-meta-status is-inactive">● 非公開</span>
-                    {% endif %}
-                </div>
-                {% if pl.notes %}
-                <p class="pricelist-list-notes">{{ (pl.notes | striptags)[:80] }}{% if (pl.notes | striptags)|length > 80 %}...{% endif %}</p>
-                {% endif %}
-            </div>
-            <div class="pricelist-list-buttons">
-                <button type="button" class="btn pricelist-action-button pricelist-action-button--copy"
-                    data-copy-text="{{ request.host_url }}catalog/{{ pl.token }}"
-                    data-copy-success="公開URLをコピーしました。">
-                    🔗 URLコピー
-                </button>
-                <a href="{{ url_for('pricelist.pricelist_items', pricelist_id=pl.id) }}" class="btn pricelist-action-button pricelist-action-button--items">
-                    📦 商品管理
-                </a>
-                <a href="{{ url_for('pricelist.pricelist_edit', pricelist_id=pl.id) }}" class="btn pricelist-action-button pricelist-action-button--edit">
-                    ✏️ 編集
-                </a>
-                <a href="{{ url_for('catalog.catalog_view', token=pl.token) }}" target="_blank" class="btn pricelist-action-button pricelist-action-button--preview">
-                    👁️ 顧客表示を確認
-                </a>
-                <a href="{{ url_for('catalog.pricelist_analytics', pricelist_id=pl.id) }}" class="btn pricelist-action-button pricelist-action-button--analytics">
-                    📊 閲覧数を確認
-                </a>
-                <form action="{{ url_for('pricelist.pricelist_delete', pricelist_id=pl.id) }}" method="post"
-                    data-confirm-title="価格表を削除" data-confirm-message="「{{ pl.name }}」を削除します。{{ pl.item_count }}件の商品との紐付けも解除されます。よろしいですか？"
-                    data-confirm-label="削除する" data-confirm-variant="danger">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                    <button type="submit" class="btn pricelist-action-button pricelist-action-button--delete">
-                        🗑️ 削除
-                    </button>
-                </form>
-            </div>
-        </div>
+<section class="pricelist-section">
+    <div class="pricelist-section-head">
+        <h2 class="pricelist-section-title">📌 常設リスト（メイン）</h2>
+        <p class="pricelist-section-note">いつでもお客様に見てもらう常設のリストです。</p>
     </div>
-    {% endfor %}
-</div>
+    {% if permanent_lists %}
+    <div class="pricelist-list-grid">
+        {% for pl in permanent_lists %}{{ pricelist_card(pl) }}{% endfor %}
+    </div>
+    {% else %}
+    <p class="pricelist-section-empty">常設リストはまだありません。</p>
+    {% endif %}
+</section>
+
+<section class="pricelist-section">
+    <div class="pricelist-section-head">
+        <h2 class="pricelist-section-title">⏳ 期間限定リスト</h2>
+        <p class="pricelist-section-note">期限が来ると自動的に非公開になるリストです。</p>
+    </div>
+    {% if limited_lists %}
+    <div class="pricelist-list-grid">
+        {% for pl in limited_lists %}{{ pricelist_card(pl) }}{% endfor %}
+    </div>
+    {% else %}
+    <p class="pricelist-section-empty">期間限定リストはまだありません。</p>
+    {% endif %}
+</section>
 {% else %}
 <div class="content-card">
     <div class="content-card-body pricelist-list-empty">

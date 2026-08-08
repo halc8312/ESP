@@ -9,6 +9,7 @@ from flask_login import login_required, current_user
 
 from database import SessionLocal
 from models import Product, Variant, ProductSnapshot
+from services.exchange_rate_service import get_jpy_per_usd
 from services.image_service import cache_mercari_image, download_external_image, split_image_url_string
 from services.pricing_service import (
     resolve_product_selling_price,
@@ -236,10 +237,17 @@ def export_ebay():
         if not ebay_condition_id.isdigit():
             ebay_condition_id = "3000"
 
-        try:
-            exchange_rate = float(request.args.get("rate", "155.0"))
-        except ValueError:
-            exchange_rate = 155.0
+        # The rate is no longer typed in by hand on the product list; it comes
+        # from the daily refresh. An explicit ?rate= still wins for callers that
+        # need a fixed rate.
+        raw_rate = request.args.get("rate")
+        if raw_rate is None:
+            exchange_rate = get_jpy_per_usd(session_db)
+        else:
+            try:
+                exchange_rate = float(raw_rate)
+            except ValueError:
+                exchange_rate = get_jpy_per_usd(session_db)
         if not math.isfinite(exchange_rate) or exchange_rate <= 0:
             return "為替レートは0より大きい値を指定してください。", 400
 

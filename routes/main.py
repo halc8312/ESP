@@ -11,6 +11,8 @@ from sqlalchemy import func, or_, select
 
 from database import SessionLocal
 from models import Shop, Product, Variant, ProductSnapshot
+from services.exchange_rate_service import get_exchange_rates
+from services.generic_product_fetch import FIELD_LABELS
 from services.image_service import split_image_url_string
 from services.rich_text import normalize_rich_text
 from services.validation_service import validate_product, get_issue_summary
@@ -82,6 +84,54 @@ def _render_manual_add(session_db, form_data=None, errors=None):
         errors=errors or [],
         all_shops=all_shops,
         current_shop_id=current_shop_id,
+    )
+
+
+def render_manual_add_prefilled(
+    session_db,
+    *,
+    source_url="",
+    title="",
+    price=None,
+    description="",
+    image_urls=None,
+    site="manual",
+    errors=None,
+    found_fields=None,
+    missing_fields=None,
+    currency_warning=False,
+):
+    """
+    Render the manual add form seeded with whatever generic extraction found.
+
+    Used by the "other site" reader, which cannot promise a complete result;
+    the caller passes which fields it managed to read so the page can tell the
+    operator exactly what is left to fill in.
+    """
+    form_data = _manual_form_defaults(session.get("current_shop_id"))
+    form_data.update(
+        {
+            "source_url": source_url or "",
+            "title": title or "",
+            "cost_price": str(price) if price is not None else "",
+            "description": description or "",
+            "image_urls": "\n".join(image_urls or []),
+            "site": site or "manual",
+        }
+    )
+
+    current_shop_id = session.get("current_shop_id")
+    all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
+    return render_template(
+        "product_manual_add.html",
+        form_data=form_data,
+        errors=errors or [],
+        all_shops=all_shops,
+        current_shop_id=current_shop_id,
+        extraction_found_fields=found_fields or [],
+        extraction_missing_fields=missing_fields or [],
+        extraction_currency_warning=currency_warning,
+        extraction_field_labels=FIELD_LABELS,
     )
 
 
@@ -286,6 +336,28 @@ def _build_dashboard_product_row(product):
     }
 
 
+@main_bp.route("/guide")
+@login_required
+def guide():
+    """
+    Static "start here" page.
+
+    Students get stuck on the order of operations rather than on any one
+    screen, so this is the one place that says what to do first. No database
+    access — the shop picker in the sidebar just needs an empty list.
+    """
+    session_db = SessionLocal()
+    try:
+        all_shops = session_db.query(Shop).filter_by(user_id=current_user.id).all()
+        return render_template(
+            "guide.html",
+            all_shops=all_shops,
+            current_shop_id=session.get("current_shop_id"),
+        )
+    finally:
+        session_db.close()
+
+
 @main_bp.route("/dashboard")
 @login_required
 def dashboard():
@@ -348,7 +420,7 @@ def dashboard():
             },
             {
                 "count": zero_stock_variant_count,
-                "label": "0在庫バリアント",
+                "label": "仕入先で在庫切れの商品",
             },
             {
                 "count": sum(1 for row in dashboard_rows if row["selling_price"] is not None and row["selling_price"] > 0),
@@ -505,7 +577,6 @@ def index():
         defaults = {
             "markup": request.args.get("markup", "1.2"),
             "qty": request.args.get("qty", "1"),
-            "rate": request.args.get("rate", "155"),
         }
 
         return render_template(
@@ -534,7 +605,7 @@ def index():
             has_next=has_next,
             default_markup=defaults["markup"],
             default_qty=defaults["qty"],
-            default_rate=defaults["rate"],
+            exchange_rates=get_exchange_rates(session_db),
             all_shops=all_shops,
             current_shop_id=current_shop_id
         )

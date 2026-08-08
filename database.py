@@ -95,6 +95,7 @@ ADDITIVE_STARTUP_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("price_lists", "theme", "ALTER TABLE price_lists ADD COLUMN theme VARCHAR DEFAULT 'dark'"),
     ("price_lists", "shop_id", "ALTER TABLE price_lists ADD COLUMN shop_id INTEGER"),
     ("price_lists", "unpublish_at", "ALTER TABLE price_lists ADD COLUMN unpublish_at TIMESTAMP"),
+    ("price_lists", "list_type", "ALTER TABLE price_lists ADD COLUMN list_type VARCHAR DEFAULT 'permanent' NOT NULL"),
     ("shops", "logo_url", "ALTER TABLE shops ADD COLUMN logo_url VARCHAR"),
     ("description_templates", "user_id", "ALTER TABLE description_templates ADD COLUMN user_id INTEGER"),
     ("products", "patrol_fail_count", "ALTER TABLE products ADD COLUMN patrol_fail_count INTEGER DEFAULT 0"),
@@ -118,6 +119,9 @@ ADDITIVE_STARTUP_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("translation_suggestions", "worker_token", "ALTER TABLE translation_suggestions ADD COLUMN worker_token VARCHAR(64)"),
     ("translation_suggestions", "lease_expires_at", "ALTER TABLE translation_suggestions ADD COLUMN lease_expires_at TIMESTAMP"),
     ("users", "default_pricing_rule_id", "ALTER TABLE users ADD COLUMN default_pricing_rule_id INTEGER"),
+    ("users", "exchange_rate_margin", "ALTER TABLE users ADD COLUMN exchange_rate_margin INTEGER DEFAULT 0 NOT NULL"),
+    ("users", "role", "ALTER TABLE users ADD COLUMN role VARCHAR(16) DEFAULT 'student' NOT NULL"),
+    ("users", "last_login_at", "ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP"),
 )
 
 

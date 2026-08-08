@@ -2,12 +2,14 @@
 
 {% block title %}説明文テンプレート管理{% endblock %}
 {% block header_title %}テンプレート{% endblock %}
+{% block body_class %}has-bottom-nav wrap-form{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <h1>説明文テンプレート管理</h1>
 </div>
 
+<div class="page-split">
 <!-- 登録済みテンプレート -->
 <div class="content-card">
     <div class="content-card-header">
@@ -71,6 +73,7 @@
             </div>
         </form>
     </div>
+</div>
 </div>
 {% endblock %}
 
