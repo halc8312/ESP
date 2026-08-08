@@ -52,7 +52,9 @@
 </div>
 {% endif %}
 
-<form method="POST">
+{# An explicit action is required: the "other site" reader renders this page at
+   its own URL, and an action-less form would post the product back there. #}
+<form method="POST" action="{{ url_for('main.product_manual_add') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <div class="product-edit-layout">
         <div class="product-edit-main">

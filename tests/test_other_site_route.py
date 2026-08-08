@@ -149,3 +149,60 @@ class TestOtherSiteRoute:
 
         assert response.status_code == 400
         assert "社内ネットワーク" in response.get_data(as_text=True)
+
+
+class TestPrefilledFormPostsToTheRightPlace:
+    def test_the_prefilled_form_saves_to_the_manual_add_route(self, client, db_session, monkeypatch):
+        """
+        The reader renders the manual add page at its own URL, so an
+        action-less form would post the finished product back to the reader
+        and lose it.
+        """
+        _login(client, db_session, "other_action_user")
+        monkeypatch.setattr(
+            generic_product_fetch,
+            "_fetch_html",
+            lambda url: (JSON_LD_PAGE, url),
+        )
+
+        html = client.post(
+            "/scrape/other-site",
+            data={"target_url": "https://shop.example.com/item/1"},
+        ).get_data(as_text=True)
+
+        assert 'action="/products/manual-add"' in html
+
+    def test_a_product_read_from_another_site_can_actually_be_saved(
+        self, client, db_session, monkeypatch
+    ):
+        from models import Product
+
+        user = _login(client, db_session, "other_save_user")
+        monkeypatch.setattr(
+            generic_product_fetch,
+            "_fetch_html",
+            lambda url: (JSON_LD_PAGE, url),
+        )
+
+        client.post(
+            "/scrape/other-site",
+            data={"target_url": "https://shop.example.com/item/1"},
+        )
+        response = client.post(
+            "/products/manual-add",
+            data={
+                "title": "読み取れた商品",
+                "cost_price": "4800",
+                "source_url": "https://shop.example.com/item/1",
+                "site": "other",
+                "inventory_qty": "1",
+                "stock_state": "on_sale",
+                "publish_status": "draft",
+            },
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 302
+        saved = db_session.query(Product).filter_by(user_id=user.id).one()
+        assert saved.last_title == "読み取れた商品"
+        assert saved.site == "other"
