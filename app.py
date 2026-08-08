@@ -619,6 +619,10 @@ def _register_https_enforcement(app: Flask) -> None:
         return None
 
 
+#: Endpoints whose responses do not depend on the session and may be cached.
+_CACHEABLE_ENDPOINTS = frozenset({"static", "serve_image"})
+
+
 def _register_security_headers(app: Flask) -> None:
     @app.after_request
     def set_security_headers(response):
@@ -639,6 +643,16 @@ def _register_security_headers(app: Flask) -> None:
         )
         if app.config.get("HSTS_ENABLED") and request.is_secure:
             response.headers["Strict-Transport-Security"] = build_hsts_header(app)
+
+        # Every rendered page carries a per-session CSRF token, and most carry
+        # one account's data. Without this, a caching layer in front of the app
+        # can hand one visitor's login page (and its token) to another, whose
+        # session holds a different token — "The CSRF tokens do not match".
+        # Static files and /media images are session-independent, so they keep
+        # whatever caching they were served with.
+        if request.endpoint not in _CACHEABLE_ENDPOINTS:
+            response.headers.setdefault("Cache-Control", "no-store")
+            response.vary.add("Cookie")
         return response
 
 
