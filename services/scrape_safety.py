@@ -16,7 +16,16 @@ logger = logging.getLogger(__name__)
 
 
 class ScrapeFailure(RuntimeError):
-    """Base class for an operational scrape failure."""
+    """Base class for an operational scrape failure.
+
+    ``status_code`` keeps the observed HTTP status attached to the failure so
+    callers can tell a definitive missing-resource response (404/410) apart
+    from a transport or parsing problem.
+    """
+
+    def __init__(self, message: str = "", *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class ScrapeBlockedError(ScrapeFailure):
@@ -560,11 +569,17 @@ def validate_fetch_response(
 
     status = response_status(fetch_result)
     if status is not None and 300 <= status < 400:
-        raise ScrapeHttpError(f"{site}から未処理の転送応答が返されました（HTTP {status}）。")
+        raise ScrapeHttpError(
+            f"{site}から未処理の転送応答が返されました（HTTP {status}）。", status_code=status
+        )
     if status is not None and status >= 400 and status not in allowed_statuses:
         if status in {401, 403, 429, 503}:
-            raise ScrapeBlockedError(f"{site}へのアクセスが制限されました（HTTP {status}）。")
-        raise ScrapeHttpError(f"{site}の取得に失敗しました（HTTP {status}）。")
+            raise ScrapeBlockedError(
+                f"{site}へのアクセスが制限されました（HTTP {status}）。", status_code=status
+            )
+        raise ScrapeHttpError(
+            f"{site}の取得に失敗しました（HTTP {status}）。", status_code=status
+        )
 
     final_url = getattr(fetch_result, "url", None)
     if isinstance(final_url, str) and final_url.strip():

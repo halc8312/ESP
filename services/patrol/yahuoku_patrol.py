@@ -15,6 +15,7 @@ from yahuoku_db import (
     _extract_tax_inclusive_price,
     _get_page_text,
     _infer_auction_status,
+    infer_auction_status_without_item,
 )
 
 logger = logging.getLogger("patrol.yahuoku")
@@ -41,10 +42,20 @@ class YahuokuPatrol(BasePatrol):
             if missing_result is not None:
                 return missing_result
             item_detail = _extract_auction_item(page)
-            if not item_detail:
-                return PatrolResult(error="No auction item data found")
-
             page_text = _get_page_text(page)
+            if not item_detail:
+                fallback_status = infer_auction_status_without_item(page_text)
+                if fallback_status != "unknown":
+                    return PatrolResult(
+                        status=fallback_status,
+                        confidence="high",
+                        reason=f"page-text:{fallback_status}",
+                    )
+                return PatrolResult(
+                    error="No auction item data found",
+                    reason="auction item payload missing and page text was inconclusive",
+                )
+
             price = _extract_tax_inclusive_price(item_detail, page_text)
             status = _infer_auction_status(item_detail, page_text)
 

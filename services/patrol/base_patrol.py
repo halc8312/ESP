@@ -23,7 +23,7 @@ class PatrolResult:
         status: str = "unknown",
         variants: Optional[List[Dict]] = None,
         error: Optional[str] = None,
-        confidence: str = "high",
+        confidence: Optional[str] = None,
         reason: Optional[str] = None,
         price_source: Optional[str] = None,
         evidence_strength: str = "none",
@@ -32,7 +32,9 @@ class PatrolResult:
         self.status = status  # "active", "sold", "deleted", "unknown"
         self.variants = variants or []
         self.error = error
-        self.confidence = confidence
+        # A failed scrape never observed the product, so it cannot claim high
+        # confidence. Callers that know better still pass it explicitly.
+        self.confidence = confidence or ("low" if error else "high")
         self.reason = reason
         self.price_source = price_source
         self.evidence_strength = evidence_strength  # "hard", "soft", "none"
@@ -48,7 +50,21 @@ class PatrolResult:
 
 def deleted_http_result(response) -> PatrolResult | None:
     """Normalize definitive missing-resource responses across patrol sites."""
-    status = response_status(response)
+    return _deleted_result_for_status(response_status(response))
+
+
+def deleted_http_error_result(exc: BaseException) -> PatrolResult | None:
+    """Normalize a fetch failure that was really a removed listing.
+
+    Sites fetched through a browser cannot opt 404/410 out of the shared HTTP
+    validation, so the missing page surfaces as a ``ScrapeFailure`` carrying
+    its status code. A removed listing is a patrol outcome, not a scrape
+    error, and must not raise an operational alert.
+    """
+    return _deleted_result_for_status(getattr(exc, "status_code", None))
+
+
+def _deleted_result_for_status(status) -> PatrolResult | None:
     if status not in DELETED_HTTP_STATUSES:
         return None
     return PatrolResult(
