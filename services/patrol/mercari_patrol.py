@@ -12,7 +12,7 @@ from services.mercari_browser_fetch import (
 )
 from mercari_db import scrape_shops_product
 from services.mercari_item_parser import parse_mercari_item_page, parse_mercari_network_payload
-from services.patrol.base_patrol import BasePatrol, PatrolResult
+from services.patrol.base_patrol import BasePatrol, PatrolResult, deleted_http_error_result
 from services.scraping_client import fetch_dynamic
 
 logger = logging.getLogger("patrol.mercari")
@@ -150,6 +150,13 @@ class MercariPatrol(BasePatrol):
             ))
 
         except Exception as exc:
+            # Mercari answers a removed listing with HTTP 404/410. That is a
+            # definitive "deleted" observation, so record it instead of
+            # reporting a scrape error every patrol cycle.
+            deleted = deleted_http_error_result(exc)
+            if deleted is not None:
+                logger.info("Mercari item is gone (%s): %s", deleted.reason, url)
+                return self._finalize_result("mercari", url, deleted)
             logger.error("Patrol error for %s: %s", url, exc)
             return self._finalize_result("mercari", url, PatrolResult(error=str(exc), confidence="low", reason=str(exc)))
 

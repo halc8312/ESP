@@ -49,6 +49,20 @@ _OPEN_PAGE_MARKERS = (
     "今すぐ落札",
     "購入手続きへ",
 )
+# Wording Yahoo! Auctions uses when the auction ID no longer resolves to a page.
+_MISSING_PAGE_MARKERS = (
+    "終了しているか、存在しません",
+    "終了しているか存在しません",
+    "指定されたページは見つかりませんでした",
+    "ページが見つかりません",
+    "このオークションは存在しません",
+)
+# Only the unambiguous banners are trusted without the embedded item payload;
+# weaker hints such as "落札価格" also appear in recommendation modules.
+_DEFINITIVE_CLOSED_PAGE_MARKERS = (
+    "このオークションは終了しています",
+    "オークションは終了しました",
+)
 
 
 def _empty_result(url: str, status: str = "error") -> dict:
@@ -166,6 +180,23 @@ def _extract_tax_inclusive_price(item_detail: dict, page_text: str = ""):
             return price
 
     return None
+
+
+def infer_auction_status_without_item(page_text: str) -> str:
+    """Classify an auction page that carries no embedded item payload.
+
+    Ended auctions are occasionally served without ``__NEXT_DATA__`` and
+    removed auction IDs render a plain not-found page. Both are real product
+    states, so they are read off the visible text instead of being reported as
+    a scrape failure. ``active`` is never inferred here: an open auction always
+    ships the payload, and the open-page markers are too weak to stand alone.
+    """
+    text = str(page_text or "")
+    if any(marker in text for marker in _MISSING_PAGE_MARKERS):
+        return "deleted"
+    if any(marker in text for marker in _DEFINITIVE_CLOSED_PAGE_MARKERS):
+        return "sold"
+    return "unknown"
 
 
 def _infer_auction_status(item_detail: dict, page_text: str = "") -> str:
