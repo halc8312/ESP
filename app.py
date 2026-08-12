@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from flask import Flask, abort, redirect, render_template, request, send_from_directory
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf.csrf import CSRFError, CSRFProtect
 from flask_apscheduler import APScheduler
 from flask_login import LoginManager
 from sqlalchemy import text
@@ -657,6 +657,30 @@ def _register_security_headers(app: Flask) -> None:
 
 
 def _register_error_handlers(app: Flask) -> None:
+    @app.errorhandler(CSRFError)
+    def handle_csrf_error(error):
+        """
+        Turn a failed CSRF check into something the operator can act on.
+
+        The raw 400 "Bad Request / The CSRF tokens do not match." is a dead
+        end: it explains nothing and offers no way forward. The check fails
+        for ordinary reasons — a login page left open while another tab
+        replaced the session cookie, a page restored from history, a token
+        that sat unused past its lifetime — and in every one of them the
+        answer is the same: load the form again and resubmit. So say that,
+        on a page that carries a fresh token.
+        """
+        logger.info(
+            "CSRF validation failed: path=%s reason=%s",
+            request.path,
+            getattr(error, "description", ""),
+        )
+        message = "ページを開いたまま時間が経ったため、送信できませんでした。お手数ですが、もう一度お試しください。"
+
+        if request.endpoint == "auth.login":
+            return render_template("login.html", error=message), 400
+        return render_template("error.html", code=400, message=message), 400
+
     @app.errorhandler(404)
     def not_found(_error):
         return render_template("error.html", code=404, message="ページが見つかりません"), 404
