@@ -46,18 +46,19 @@ def upgrade() -> None:
     if "notes" not in {column["name"] for column in inspector.get_columns("price_lists")}:
         return
 
+    # The database narrows the candidates; Python decides, because "contains
+    # the word" and "is only the word" are not the same thing.
     rows = bind.execute(
-        sa.text("SELECT id, notes FROM price_lists WHERE notes IS NOT NULL")
+        sa.text("SELECT id, notes FROM price_lists WHERE notes LIKE '%None%'")
     ).fetchall()
     stale_ids = [row[0] for row in rows if row[1] and _is_only_the_word_none(row[1])]
     if not stale_ids:
         return
 
-    for stale_id in stale_ids:
-        bind.execute(
-            sa.text("UPDATE price_lists SET notes = NULL WHERE id = :id"),
-            {"id": stale_id},
-        )
+    statement = sa.text("UPDATE price_lists SET notes = NULL WHERE id IN :ids").bindparams(
+        sa.bindparam("ids", expanding=True)
+    )
+    bind.execute(statement, {"ids": stale_ids})
 
 
 def downgrade() -> None:

@@ -651,7 +651,10 @@ def _register_security_headers(app: Flask) -> None:
         # Static files and /media images are session-independent, so they keep
         # whatever caching they were served with.
         if request.endpoint not in _CACHEABLE_ENDPOINTS:
-            response.headers.setdefault("Cache-Control", "no-store")
+            # Assigned rather than defaulted: a route that sets its own
+            # Cache-Control would otherwise silently opt back into being
+            # stored. An endpoint that may be cached belongs in the set above.
+            response.headers["Cache-Control"] = "no-store"
             response.vary.add("Cookie")
         return response
 

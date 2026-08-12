@@ -187,22 +187,49 @@ def _pricelist_by_token(session_db, token):
     )
 
 
+#: Instagram path segments that are part of the site rather than a person.
+_INSTAGRAM_RESERVED_PATHS = frozenset(
+    {
+        "p", "reel", "reels", "tv", "stories", "s", "explore", "direct",
+        "accounts", "about", "developer", "legal", "privacy", "terms",
+    }
+)
+
+
+def _instagram_username_from_url(value):
+    """Pull the profile name out of an Instagram URL, or "" if it is not one."""
+    parsed = urlparse(value if "//" in value else "//" + value)
+    host = (parsed.hostname or "").lower()
+    if host != "instagram.com" and not host.endswith(".instagram.com"):
+        return ""
+
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    if not segments:
+        return ""
+    # Only a profile URL names a person; /p/<id> and friends do not.
+    if len(segments) > 1 or segments[0].lower() in _INSTAGRAM_RESERVED_PATHS:
+        return ""
+    return segments[0]
+
+
 def _normalize_instagram_username(raw_value):
     """
     Return a bare Instagram username, or "" if it does not look like one.
 
     Operators paste all sorts of things into this field — "@name", a profile
-    URL, a name with spaces — and the value goes straight into a link on a
-    public page, so anything unexpected is dropped rather than rendered.
+    URL, a name with spaces — and the value ends up as a direct message link
+    on a public page. A wrong guess sends customers to a stranger's inbox, so
+    anything that is not plainly a profile is dropped rather than rendered.
     """
     value = str(raw_value or "").strip()
     if not value:
         return ""
 
-    if "instagram.com" in value.lower():
-        value = value.rstrip("/").rsplit("/", 1)[-1]
+    if "/" in value or ":" in value:
+        value = _instagram_username_from_url(value)
+    else:
+        value = value.split("?", 1)[0]
     value = value.lstrip("@").strip()
-    value = value.split("?", 1)[0]
 
     if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", value):
         return ""

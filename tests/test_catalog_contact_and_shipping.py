@@ -89,10 +89,31 @@ class TestInstagramNormalisation:
             ("  @my.shop  ", "my.shop"),
             ("https://www.instagram.com/my_shop/", "my_shop"),
             ("https://instagram.com/my_shop?hl=ja", "my_shop"),
+            ("instagram.com/my_shop", "my_shop"),
+            ("http://www.instagram.com/my_shop", "my_shop"),
         ],
     )
     def test_the_usual_shapes_all_reduce_to_the_username(self, raw, expected):
         assert _normalize_instagram_username(raw) == expected
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            # A post, a reel and a story name content, not a person.
+            "https://www.instagram.com/p/CabcDEF123/",
+            "https://www.instagram.com/reel/CabcDEF123/",
+            "https://www.instagram.com/stories/my_shop/123456/",
+            "https://www.instagram.com/explore/tags/pokemon/",
+            "https://www.instagram.com/my_shop/reels/",
+            # A different site that merely ends in the same words.
+            "https://evilinstagram.com/attacker",
+            "https://instagram.com.example.net/attacker",
+            "https://instagram.com/",
+        ],
+    )
+    def test_a_url_that_does_not_name_a_profile_is_dropped(self, raw):
+        # Guessing here would send customers to a stranger's inbox.
+        assert _normalize_instagram_username(raw) == ""
 
     @pytest.mark.parametrize(
         "raw",
