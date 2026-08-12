@@ -1,6 +1,6 @@
 {
     "_comment": "Scraping selectors configuration. Update these when site structure changes.",
-    "_updated": "2026-08-12",
+    "_updated": "2026-03-22",
     "mercari": {
         "shops": {
             "title": [
@@ -206,7 +206,6 @@
                 "[itemprop='price']"
             ],
             "description": [
-                "html > body > div",
                 ".note.text-break",
                 "#item_detailInfo",
                 ".tbl_product_info",

@@ -30,6 +30,28 @@ def _reset_sqlite_test_database_schema(target_engine):
 
 
 @pytest.fixture(autouse=True)
+def _keep_selector_healing_out_of_the_repository(monkeypatch, tmp_path_factory):
+    """
+    Point the selector healer's output at a temporary directory.
+
+    Several scraping tests feed the healer a small HTML fixture that matches
+    none of the real selectors. It heals, and then writes what it learned to
+    config/scraping_selectors.json and config/heal_history.jsonl — the tracked
+    files the application ships. Running the suite therefore edited the
+    repository, once replacing Surugaya's description selector with
+    "html > body > div" at a match score of 60 and putting it first in the
+    list. Redirecting the paths keeps a test run from touching them.
+    """
+    import services.selector_healer as healer
+
+    config_dir = tmp_path_factory.mktemp("selector_config")
+    monkeypatch.setattr(healer, "_CONFIG_DIR", str(config_dir))
+    monkeypatch.setattr(healer, "_SELECTORS_PATH", str(config_dir / "scraping_selectors.json"))
+    monkeypatch.setattr(healer, "_FINGERPRINTS_PATH", str(config_dir / "element_fingerprints.json"))
+    monkeypatch.setattr(healer, "_HEAL_LOG_PATH", str(config_dir / "heal_history.jsonl"))
+
+
+@pytest.fixture(autouse=True)
 def _reset_feature_flag_env(monkeypatch):
     for env_name in (
         "ENABLE_SHARED_BROWSER_RUNTIME",
