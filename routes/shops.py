@@ -98,6 +98,10 @@ def _remove_managed_logo_file(logo_url):
             pass
 
 
+#: Largest value the shops.id column can hold (a 32-bit signed integer).
+_MAX_SHOP_ID = 2147483647
+
+
 def _normalize_instagram_input(raw_value):
     """
     Store a bare Instagram username.
@@ -271,21 +275,37 @@ def edit_shop(shop_id):
 @shops_bp.route("/set_current_shop", methods=["POST"])
 @login_required
 def set_current_shop():
-    shop_id = request.form.get("shop_id")
-    # Verify ownership before setting session
-    if shop_id:
-        session_db = SessionLocal()
-        try:
-            shop = session_db.query(Shop).filter_by(id=shop_id, user_id=current_user.id).first()
-            if shop:
-                session['current_shop_id'] = int(shop_id)
-        except Exception:
-            session_db.rollback()
-            raise
-        finally:
-            session_db.close()
-    else:
+    # The form value is text. PostgreSQL will not compare it against an
+    # integer column ("operator does not exist: integer = character varying"),
+    # so it has to become an int before the lookup; SQLite is happy either way,
+    # which is why this only ever failed in production.
+    raw_shop_id = (request.form.get("shop_id") or "").strip()
+    if not raw_shop_id:
         session.pop('current_shop_id', None)
+        return redirect(request.referrer or url_for('main.index'))
+
+    try:
+        shop_id = int(raw_shop_id)
+    except ValueError:
+        # Nothing that could name a shop; leave the current choice alone.
+        return redirect(request.referrer or url_for('main.index'))
+
+    # Python parses digit strings of any length, but the column is a 32-bit
+    # integer and PostgreSQL answers anything larger with "integer out of
+    # range" — another 500 from the same form field.
+    if not 0 < shop_id <= _MAX_SHOP_ID:
+        return redirect(request.referrer or url_for('main.index'))
+
+    session_db = SessionLocal()
+    try:
+        shop = session_db.query(Shop).filter_by(id=shop_id, user_id=current_user.id).first()
+        if shop:
+            session['current_shop_id'] = shop_id
+    except Exception:
+        session_db.rollback()
+        raise
+    finally:
+        session_db.close()
     return redirect(request.referrer or url_for('main.index'))
 
 
