@@ -8,6 +8,7 @@ rest of the codebase.
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 
@@ -16,6 +17,8 @@ from services.translator.base import (
     TranslatorUnavailableError,
 )
 
+
+logger = logging.getLogger("services.translator.registry")
 
 _BACKEND_LOCK = threading.Lock()
 _BACKEND_INSTANCE: TranslatorBackend | None = None
@@ -101,6 +104,14 @@ def get_fallback_translator_backend() -> TranslatorBackend | None:
             try:
                 _FALLBACK_INSTANCE = _instantiate_backend(FALLBACK_BACKEND_NAME)
             except Exception:
+                # The caller only learns that there is no stand-in, and the
+                # operator only sees "translation is unavailable" — so why it
+                # could not be built has to be written down here or it is lost.
+                logger.exception(
+                    "translator fallback %r could not be built; "
+                    "no stand-in is available for the configured backend",
+                    FALLBACK_BACKEND_NAME,
+                )
                 return None
         return _FALLBACK_INSTANCE
 

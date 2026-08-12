@@ -73,6 +73,29 @@ class TestWordingTheOperatorSees:
         assert message == "segment 3 exceeded the token limit"
 
 
+class TestWhenTheFallbackItselfCannotBeBuilt:
+    def test_the_reason_is_written_down(self, monkeypatch, caplog):
+        import logging
+
+        import services.translator.registry as registry
+
+        registry.reset_translator_backend_for_tests()
+        monkeypatch.setenv("TRANSLATOR_BACKEND", "openai")
+
+        def _broken(name):
+            raise ImportError("argostranslate is not installed")
+
+        monkeypatch.setattr(registry, "_instantiate_backend", _broken)
+
+        with caplog.at_level(logging.ERROR, logger="services.translator.registry"):
+            assert registry.get_fallback_translator_backend() is None
+
+        # Without this, the only trace of the problem is a generic message on
+        # the operator's screen.
+        assert "argostranslate is not installed" in caplog.text
+        registry.reset_translator_backend_for_tests()
+
+
 class _DeadBackend:
     name = "dead"
 
