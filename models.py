@@ -41,6 +41,8 @@ class Shop(Base):
     name = Column(String, nullable=False) # ユーザーごとにユニークであれば良いが、シンプルにグローバルユニークのままにするか、user_idと複合ユニークにするか。一旦nameはグローバルユニークの制約を外す方が無難だが、Existing logic relies on name. Let's keep name unique for now or just remove unique constraint if we want same shop names for diff users. Let's start with simple: user_id added.
 
     logo_url = Column(String, nullable=True) # ショップロゴ画像URL
+    # Instagram のユーザー名（@なし）。カタログの問い合わせボタンに使います。
+    instagram_username = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=utc_now)
     
     products = relationship("Product", back_populates="shop")
@@ -245,6 +247,8 @@ class PriceList(Base):
     layout = Column(String, default="grid")              # grid / editorial / list
     theme = Column(String, default="dark")               # dark / light
     notes = Column(Text)                                 # 備考（顧客へのメッセージ等）
+    # 送料の目安（英語・カタログの価格の下に表示）
+    shipping_note = Column(String(200), nullable=True)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now)
 

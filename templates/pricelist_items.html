@@ -21,6 +21,14 @@
 <div class="alert alert-warning" role="alert">⚠ 利益がマイナスの商品が {{ loss_count }}商品あります。「利益」の列が赤い行を確認してください。</div>
 {% endif %}
 
+{% if missing_english_count %}
+<div class="alert alert-warning" role="alert">
+    ⚠ 英語の商品名が未設定の商品が {{ missing_english_count }}商品あります。
+    このままだと日本語の商品名が海外のお客様に表示されます（「高騰中！」などの日本語がそのまま出ることがあります）。
+    商品一覧の「価格・英訳を編集」か商品編集の「翻訳する」から英語名を付けてください。
+</div>
+{% endif %}
+
 <div style="margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
     <a href="{{ url_for('pricelist.pricelist_add_products_page', pricelist_id=pricelist.id) }}" class="btn btn-primary"
         style="padding: 10px 16px; background: #0066cc; color: white; text-decoration: none; border-radius: 6px; font-weight: 600;">
@@ -50,6 +58,7 @@
                             <th>リストから外す</th>
                             <th>サムネイル</th>
                             <th>商品名</th>
+                            <th>英語名</th>
                             <th class="num">仕入価格</th>
                             <th class="num">お客様に見せる価格</th>
                             <th class="num">利益</th>
@@ -72,6 +81,14 @@
                                 {% endif %}
                             </td>
                             <td class="product-title-cell" style="max-width: 200px;">{{ item.display_title }}</td>
+                            <td>
+                                {% if item.has_english_title %}
+                                <span class="dashboard-badge is-clean">あり</span>
+                                {% else %}
+                                <a href="{{ url_for('product_detail', product_id=item.product.id) }}"
+                                    class="money-unset">未設定 → 付ける</a>
+                                {% endif %}
+                            </td>
                             <td class="num">{{ money.cost(item.product.last_price) }}</td>
                             <td class="num">
                                 {{ money.sell(item.display_price) }}

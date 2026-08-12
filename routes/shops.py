@@ -98,6 +98,19 @@ def _remove_managed_logo_file(logo_url):
             pass
 
 
+def _normalize_instagram_input(raw_value):
+    """
+    Store a bare Instagram username.
+
+    Operators paste "@name" or a full profile URL as often as the name itself,
+    and the catalog turns this into a public link, so it is normalized on the
+    way in and dropped when it cannot be one.
+    """
+    from routes.catalog import _normalize_instagram_username
+
+    return _normalize_instagram_username(raw_value) or None
+
+
 @shops_bp.route("/shops", methods=["GET", "POST"])
 @login_required
 def manage_shops():
@@ -120,7 +133,14 @@ def manage_shops():
                 return _render_manage_shops(session_db, error=upload_error)
 
             saved_logo_url = uploaded_logo_url or logo_url
-            new_shop = Shop(name=name, logo_url=saved_logo_url, user_id=current_user.id)
+            new_shop = Shop(
+                name=name,
+                logo_url=saved_logo_url,
+                instagram_username=_normalize_instagram_input(
+                    request.form.get("instagram_username")
+                ),
+                user_id=current_user.id,
+            )
             session_db.add(new_shop)
             try:
                 session_db.commit()
@@ -222,6 +242,9 @@ def edit_shop(shop_id):
 
             shop.name = name
             shop.logo_url = next_logo_url
+            shop.instagram_username = _normalize_instagram_input(
+                request.form.get("instagram_username")
+            )
 
             try:
                 session_db.commit()

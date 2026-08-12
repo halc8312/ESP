@@ -188,12 +188,18 @@ def test_unlisted_products_hidden_from_index_but_visible_in_catalog(client, db_s
 
     monkeypatch.setattr('routes.scrape.get_queue', lambda: make_completed_job(user.id))
 
+    # Registration translates by default, and a catalog card shows the English
+    # title once one exists. Whether a title actually gets translated depends
+    # on a translation engine being installed, so leaving it on would make this
+    # test pass or fail by environment. What is under test here is visibility.
     response = client.post('/scrape/register-to-pricelist', json={
         'job_id': 'job-1',
         'selected_indices': [0],
         'price_list_id': price_list.id,
+        'translate': False,
     })
     assert response.status_code == 200
+    assert response.json['translation_jobs_enqueued'] == 0
 
     index_response = client.get('/')
     assert index_response.status_code == 200

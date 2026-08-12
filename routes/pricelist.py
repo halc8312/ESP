@@ -44,6 +44,12 @@ def _normalize_theme(value):
     return "dark"
 
 
+def _normalize_shipping_note(value):
+    """Trim the customer-facing shipping line; empty means show nothing."""
+    note = " ".join(str(value or "").split())
+    return note[:200] or None
+
+
 def _normalize_list_type(value):
     list_type = (value or "").strip().lower()
     if list_type in PRICE_LIST_TYPES:
@@ -214,6 +220,7 @@ def pricelist_create():
             selected_unpublish_at = (request.form.get("unpublish_at") or "").strip()
             unpublish_at, unpublish_error = _parse_unpublish_at_jst(selected_unpublish_at)
             list_type = _normalize_list_type(request.form.get("list_type"))
+            shipping_note = _normalize_shipping_note(request.form.get("shipping_note"))
 
             validation_error = (
                 "名前を入力してください"
@@ -232,6 +239,7 @@ def pricelist_create():
                     selected_shop_id=selected_shop_id,
                     selected_unpublish_at=selected_unpublish_at,
                     selected_list_type=list_type,
+                    selected_shipping_note=shipping_note,
                     selected_name=name,
                     selected_notes=notes,
                     selected_currency_rate=selected_currency_rate,
@@ -250,6 +258,7 @@ def pricelist_create():
                 layout=layout,
                 theme=theme,
                 list_type=list_type,
+                shipping_note=shipping_note,
                 unpublish_at=unpublish_at,
             )
             session_db.add(new_pl)
@@ -266,6 +275,7 @@ def pricelist_create():
             selected_shop_id=str(current_shop_id) if current_shop_id else "",
             selected_unpublish_at="",
             selected_list_type="permanent",
+            selected_shipping_note="",
             all_shops=all_shops,
             current_shop_id=current_shop_id,
         )
@@ -305,6 +315,7 @@ def pricelist_edit(pricelist_id):
             selected_unpublish_at = (request.form.get("unpublish_at") or "").strip()
             unpublish_at, unpublish_error = _parse_unpublish_at_jst(selected_unpublish_at)
             selected_list_type = _normalize_list_type(request.form.get("list_type"))
+            selected_shipping_note = _normalize_shipping_note(request.form.get("shipping_note"))
             validation_error = (
                 "名前を入力してください"
                 if not selected_name
@@ -322,6 +333,7 @@ def pricelist_edit(pricelist_id):
                     selected_shop_id=selected_shop_id,
                     selected_unpublish_at=selected_unpublish_at,
                     selected_list_type=selected_list_type,
+                    selected_shipping_note=selected_shipping_note,
                     selected_name=selected_name,
                     selected_notes=selected_notes,
                     selected_currency_rate=selected_currency_rate,
@@ -340,6 +352,7 @@ def pricelist_edit(pricelist_id):
             pl.shop_id = shop.id if shop else None
             pl.is_active = "is_active" in request.form
             pl.list_type = selected_list_type
+            pl.shipping_note = selected_shipping_note
             pl.unpublish_at = unpublish_at
             pl.updated_at = utc_now()
             session_db.commit()
@@ -355,6 +368,7 @@ def pricelist_edit(pricelist_id):
             selected_shop_id=str(pl.shop_id) if pl.shop_id else "",
             selected_unpublish_at=_format_unpublish_at_jst(pl.unpublish_at),
             selected_list_type=_normalize_list_type(pl.list_type),
+            selected_shipping_note=pl.shipping_note or "",
             selected_is_active=pl.is_active,
             publication_state=pl.publication_state_at(),
             all_shops=all_shops,
@@ -455,6 +469,12 @@ def pricelist_items(pricelist_id):
                 else resolve_product_display_price(p, p.variants)
             )
             item.total_stock = sum(v.inventory_qty or 0 for v in p.variants)
+            item.has_english_title = bool((p.custom_title_en or "").strip())
+
+        # Overseas customers read this list in English. A product with no
+        # English title falls back to the Japanese one, which often still
+        # carries the seller's Japanese sales copy ("高騰中!", "メルカリ最安値").
+        missing_english_count = sum(1 for item in items if not item.has_english_title)
 
         # Selling below cost is the one mistake worth surfacing above the table.
         loss_count = sum(
@@ -473,6 +493,7 @@ def pricelist_items(pricelist_id):
             pricelist=pl,
             items=items,
             loss_count=loss_count,
+            missing_english_count=missing_english_count,
             error=form_error,
             submitted_custom_prices=submitted_custom_prices,
             all_shops=all_shops,

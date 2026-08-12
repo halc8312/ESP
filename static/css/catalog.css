@@ -982,3 +982,74 @@ body.light-mode .product-modal-content {
         height: 60px;
     }
 }
+
+/* ── Contact the seller / shipping estimate ── */
+.ask-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--accent-light, #7dd3fc);
+    background: transparent;
+    color: var(--accent-light, #7dd3fc);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.ask-btn:hover {
+    background: rgba(125, 211, 252, 0.12);
+    text-decoration: none;
+}
+
+.modal-ask-btn {
+    margin-top: 12px;
+    align-self: flex-start;
+}
+
+.product-card-shipping,
+.modal-shipping,
+.catalog-footer-shipping {
+    font-size: 12px;
+    opacity: 0.75;
+    margin-top: 4px;
+}
+
+.catalog-contact {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.catalog-contact-copy {
+    margin: 0;
+}
+
+.catalog-contact-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px 24px;
+    border-radius: 999px;
+    background: var(--accent-light, #7dd3fc);
+    color: #0b1220;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.catalog-contact-btn:hover {
+    text-decoration: none;
+    filter: brightness(1.05);
+}
+
+body.catalog-layout-list .product-card-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}

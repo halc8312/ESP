@@ -145,6 +145,9 @@
                 {% else %}
                 <div class="product-card-price">Price on request</div>
                 {% endif %}
+                {% if shipping_note %}
+                <div class="product-card-shipping">{{ shipping_note }}</div>
+                {% endif %}
                 <div class="product-card-footer">
                     {% if item.in_stock %}
                     <span class="stock-badge in-stock">In Stock</span>
@@ -157,6 +160,13 @@
                     <button type="button" class="quick-view-btn" data-product-id="{{ item.product_id }}">
                         Quick View
                     </button>
+                    {% if instagram_username %}
+                    <a class="ask-btn"
+                        href="https://ig.me/m/{{ instagram_username }}"
+                        target="_blank" rel="noopener noreferrer">
+                        Ask about this item
+                    </a>
+                    {% endif %}
                 </div>
             </div>
         </article>
@@ -189,6 +199,16 @@
                     </div>
                     <div id="modalPrice" class="modal-product-price">Price on request</div>
                     <div id="modalStock" class="modal-stock-info"></div>
+                    {% if shipping_note %}
+                    <div class="modal-shipping">{{ shipping_note }}</div>
+                    {% endif %}
+                    {% if instagram_username %}
+                    <a class="ask-btn modal-ask-btn"
+                        href="https://ig.me/m/{{ instagram_username }}"
+                        target="_blank" rel="noopener noreferrer">
+                        Ask about this item
+                    </a>
+                    {% endif %}
                     <div id="modalDescription" class="modal-description rich-text-content">
                         <span class="modal-loading">Loading product details...</span>
                     </div>
@@ -198,6 +218,19 @@
     </div>
 
     <footer class="catalog-footer">
+        {% if instagram_username %}
+        <div class="catalog-contact">
+            <p class="catalog-contact-copy">Questions about any item? Send us a direct message and we will reply.</p>
+            <a class="catalog-contact-btn"
+                href="https://ig.me/m/{{ instagram_username }}"
+                target="_blank" rel="noopener noreferrer">
+                Message us on Instagram
+            </a>
+        </div>
+        {% endif %}
+        {% if shipping_note %}
+        <p class="catalog-footer-shipping">{{ shipping_note }}</p>
+        {% endif %}
         <p>Prices are subject to change. Contact us for ordering details.</p>
     </footer>
 
@@ -210,6 +243,9 @@
         const DETAIL_CACHE = {};
         let RATES_FROM_JPY = {};
         let ratesReady = false;
+        // The viewer's own choice always wins over the locale guess.
+        let viewerCurrencyApplied = false;
+        let viewerPickedCurrency = false;
         let modalState = {
             images: [],
             imageIndex: 0,
@@ -375,6 +411,7 @@
                     if (rateSource) {
                         rateSource.textContent = 'Exchange rates updated';
                     }
+                    applyViewerCurrency();
                     return;
                 }
             } catch (e) {
@@ -403,6 +440,7 @@
             if (rateSource) {
                 rateSource.textContent = 'Using the saved exchange rate';
             }
+            applyViewerCurrency();
         }
 
         function switchCurrency(currency) {
@@ -673,6 +711,73 @@
             }
         }
 
+        // Region -> currency for the options the switcher offers. Taken from the
+        // browser's own locale rather than the viewer's IP: no geolocation
+        // service is involved, and it is right for the common case of someone
+        // browsing in their own country's locale.
+        const REGION_CURRENCY = {
+            US: 'USD', PR: 'USD', GU: 'USD', EC: 'USD',
+            GB: 'GBP',
+            AU: 'AUD',
+            CA: 'CAD',
+            CN: 'CNY',
+            KR: 'KRW',
+            JP: 'JPY',
+            AT: 'EUR', BE: 'EUR', CY: 'EUR', DE: 'EUR', EE: 'EUR', ES: 'EUR',
+            FI: 'EUR', FR: 'EUR', GR: 'EUR', HR: 'EUR', IE: 'EUR', IT: 'EUR',
+            LT: 'EUR', LU: 'EUR', LV: 'EUR', MT: 'EUR', NL: 'EUR', PT: 'EUR',
+            SI: 'EUR', SK: 'EUR'
+        };
+
+        function detectViewerCurrency() {
+            const offered = new Set(
+                Array.from(document.querySelectorAll('#currencySelect option'))
+                    .map(function (option) { return option.value; })
+            );
+            const locales = navigator.languages && navigator.languages.length
+                ? navigator.languages
+                : [navigator.language];
+
+            for (const locale of locales) {
+                if (!locale) {
+                    continue;
+                }
+                let region = '';
+                try {
+                    region = new Intl.Locale(locale).region || '';
+                } catch (_error) {
+                    // Older browsers: fall back to the tag's own suffix.
+                    const parts = String(locale).split('-');
+                    region = parts.length > 1 ? parts[parts.length - 1] : '';
+                }
+                const currency = REGION_CURRENCY[String(region).toUpperCase()];
+                if (currency && offered.has(currency)) {
+                    return currency;
+                }
+            }
+            return 'JPY';
+        }
+
+        function applyViewerCurrency() {
+            // Runs once, after the rates are usable, and never over a choice
+            // the viewer has already made.
+            if (viewerCurrencyApplied || viewerPickedCurrency) {
+                return;
+            }
+            viewerCurrencyApplied = true;
+
+            const select = document.getElementById('currencySelect');
+            if (!select) {
+                return;
+            }
+            const currency = detectViewerCurrency();
+            if (currency === select.value) {
+                return;
+            }
+            select.value = currency;
+            switchCurrency(currency);
+        }
+
         document.addEventListener('DOMContentLoaded', function () {
             applyPersistedTheme();
             fetchLiveRates();
@@ -681,6 +786,7 @@
 
             document.getElementById('themeToggleBtn').addEventListener('click', toggleTheme);
             document.getElementById('currencySelect').addEventListener('change', function (event) {
+                viewerPickedCurrency = true;
                 switchCurrency(event.target.value);
             });
             document.getElementById('sortSelect').addEventListener('change', applySort);

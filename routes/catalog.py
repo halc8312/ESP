@@ -3,6 +3,7 @@ Public catalog routes: token-based access for overseas customers.
 No login required.
 """
 import hashlib
+import re
 from collections import Counter
 from datetime import timedelta
 from urllib.parse import unquote, urlparse
@@ -184,6 +185,82 @@ def _pricelist_by_token(session_db, token):
         )
         .first()
     )
+
+
+#: Instagram path segments that are part of the site rather than a person.
+_INSTAGRAM_RESERVED_PATHS = frozenset(
+    {
+        "p", "reel", "reels", "tv", "stories", "s", "explore", "direct",
+        "accounts", "about", "developer", "legal", "privacy", "terms",
+    }
+)
+
+
+def _instagram_username_from_url(value):
+    """Pull the profile name out of an Instagram URL, or "" if it is not one."""
+    parsed = urlparse(value if "//" in value else "//" + value)
+    host = (parsed.hostname or "").lower()
+    if host != "instagram.com" and not host.endswith(".instagram.com"):
+        return ""
+
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    if not segments:
+        return ""
+    # Only a profile URL names a person; /p/<id> and friends do not.
+    if len(segments) > 1 or segments[0].lower() in _INSTAGRAM_RESERVED_PATHS:
+        return ""
+    return segments[0]
+
+
+def _normalize_instagram_username(raw_value):
+    """
+    Return a bare Instagram username, or "" if it does not look like one.
+
+    Operators paste all sorts of things into this field — "@name", a profile
+    URL, a name with spaces — and the value ends up as a direct message link
+    on a public page. A wrong guess sends customers to a stranger's inbox, so
+    anything that is not plainly a profile is dropped rather than rendered.
+    """
+    value = str(raw_value or "").strip()
+    if not value:
+        return ""
+
+    if "/" in value or ":" in value:
+        value = _instagram_username_from_url(value)
+    else:
+        value = value.split("?", 1)[0]
+    value = value.lstrip("@").strip()
+
+    if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", value):
+        return ""
+    return value
+
+
+def _resolve_catalog_contact(pricelist, items):
+    """Find the Instagram handle to offer customers, the same way the logo is found."""
+    owner_id = getattr(pricelist, "user_id", None)
+    related_shop = getattr(pricelist, "shop", None)
+    if (
+        related_shop is not None
+        and related_shop.user_id == owner_id
+    ):
+        username = _normalize_instagram_username(related_shop.instagram_username)
+        if username:
+            return username
+
+    for item in items:
+        product = getattr(item, "product", None)
+        shop = getattr(product, "shop", None)
+        if (
+            product is not None
+            and product.user_id == owner_id
+            and shop is not None
+            and shop.user_id == owner_id
+        ):
+            username = _normalize_instagram_username(shop.instagram_username)
+            if username:
+                return username
+    return ""
 
 
 def _resolve_catalog_shop_branding(pricelist, items):
@@ -385,6 +462,8 @@ def catalog_view(token):
             server_rates=_build_server_rates(session_db, pl.user_id),
             shop_logo=shop_logo,
             shop_name=shop_name,
+            instagram_username=_resolve_catalog_contact(pl, items),
+            shipping_note=(pl.shipping_note or "").strip(),
         )
     except Exception:
         session_db.rollback()
