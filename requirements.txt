@@ -19,5 +19,5 @@ msgspec==0.20.0
 nh3==0.3.5
 argostranslate==1.11.0
 openai==2.32.0
-Pillow==12.2.0
+Pillow==12.3.0
 rembg==2.0.75
