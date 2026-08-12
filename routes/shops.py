@@ -98,6 +98,10 @@ def _remove_managed_logo_file(logo_url):
             pass
 
 
+#: Largest value the shops.id column can hold (a 32-bit signed integer).
+_MAX_SHOP_ID = 2147483647
+
+
 def _normalize_instagram_input(raw_value):
     """
     Store a bare Instagram username.
@@ -284,6 +288,12 @@ def set_current_shop():
         shop_id = int(raw_shop_id)
     except ValueError:
         # Nothing that could name a shop; leave the current choice alone.
+        return redirect(request.referrer or url_for('main.index'))
+
+    # Python parses digit strings of any length, but the column is a 32-bit
+    # integer and PostgreSQL answers anything larger with "integer out of
+    # range" — another 500 from the same form field.
+    if not 0 < shop_id <= _MAX_SHOP_ID:
         return redirect(request.referrer or url_for('main.index'))
 
     session_db = SessionLocal()

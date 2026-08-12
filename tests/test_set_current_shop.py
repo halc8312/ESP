@@ -77,7 +77,22 @@ class TestChoosingAShop:
 
 
 class TestValuesThatAreNotAnId:
-    @pytest.mark.parametrize("raw", ["abc", "1; DROP TABLE shops", "1.5", "12abc", "None"])
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "abc",
+            "1; DROP TABLE shops",
+            "1.5",
+            "12abc",
+            "None",
+            # Python parses these; the 32-bit column cannot hold them, and
+            # PostgreSQL answers with "integer out of range" — a 500 again.
+            "999999999999999999999",
+            "2147483648",
+            "0",
+            "-1",
+        ],
+    )
     def test_the_database_is_never_asked(self, client, db_session, monkeypatch, raw):
         user = _login(client, db_session, f"shop_bad_input_{abs(hash(raw))}")
         shop = _create_shop(db_session, user, "My Shop")
