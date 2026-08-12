@@ -12,6 +12,7 @@ from services.translator.base import (
     TranslatorUnavailableError,
 )
 from services.translator.registry import (
+    get_fallback_translator_backend,
     get_translator_backend,
     resolve_backend_name,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "TranslationError",
     "TranslatorBackend",
     "TranslatorUnavailableError",
+    "get_fallback_translator_backend",
     "get_translator_backend",
     "resolve_backend_name",
     "compute_source_hash",

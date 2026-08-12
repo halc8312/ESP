@@ -64,6 +64,31 @@ _SYSTEM_PROMPT_TEMPLATE = (
 )
 
 
+#: Conditions that mean the account itself cannot translate anything —
+#: no amount of retrying or different input will help.
+_ACCOUNT_ERROR_MARKERS = (
+    "insufficient_quota",
+    "credit_balance_exhausted",
+    "billing_hard_limit_reached",
+    "invalid_api_key",
+    "account_deactivated",
+)
+
+
+def _is_account_unusable(exc: Exception) -> bool:
+    """Is this failure about the account rather than the request?"""
+    parts = [str(exc), str(getattr(exc, "code", "") or "")]
+
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            parts.extend(str(error.get(key) or "") for key in ("code", "type"))
+
+    haystack = " ".join(parts).lower()
+    return any(marker in haystack for marker in _ACCOUNT_ERROR_MARKERS)
+
+
 class OpenAITranslatorBackend:
     """OpenAI-backed implementation of :class:`TranslatorBackend`."""
 
@@ -175,6 +200,14 @@ class OpenAITranslatorBackend:
                 self.model,
                 exc,
             )
+            if _is_account_unusable(exc):
+                # Not this text's fault: the account cannot serve any
+                # translation until someone tops it up or fixes the key.
+                # Raised as unavailable so the caller can try another
+                # backend rather than failing every request.
+                raise TranslatorUnavailableError(
+                    f"OpenAI account cannot serve translations: {exc}"
+                ) from exc
             raise TranslationError(
                 f"OpenAI translation failed: {exc}"
             ) from exc

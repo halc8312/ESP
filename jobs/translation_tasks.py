@@ -22,8 +22,8 @@ import uuid
 from typing import Any
 
 from services.rich_text import normalize_rich_text
-from services.translator import get_translator_backend
-from services.translator.base import TranslationError
+from services.translator import get_fallback_translator_backend, get_translator_backend
+from services.translator.base import TranslationError, TranslatorUnavailableError
 from services.translator.suggestion_store import (
     apply_suggestion_to_product,
     get_suggestion_by_job_id,
@@ -34,6 +34,48 @@ from services.translator.suggestion_store import (
 
 
 logger = logging.getLogger("jobs.translation_tasks")
+
+
+def _translate_with(
+    backend: Any,
+    scope: str,
+    source_title: str,
+    source_description: str,
+) -> tuple[str | None, str | None]:
+    """Translate the parts this job asked for, using the given backend."""
+    translated_title: str | None = None
+    translated_description: str | None = None
+
+    if scope in {"title", "full"} and source_title.strip():
+        translated_title = backend.translate_plain(source_title).strip() or None
+
+    if scope in {"description", "full"} and source_description.strip():
+        # Sanitise the source first so the translator never operates on
+        # attacker-controlled HTML (the source can come from a scraped
+        # marketplace snapshot). normalize_rich_text enforces the same
+        # allowlist as the editor via nh3.
+        safe_source = normalize_rich_text(source_description)
+        if safe_source:
+            translated_raw = backend.translate_html(safe_source).strip()
+            # Belt-and-braces: sanitise the output too before it gets
+            # stored and rendered in the review UI.
+            translated_description = normalize_rich_text(translated_raw) or None
+
+    return translated_title, translated_description
+
+
+def _describe_failure(exc: Exception) -> str:
+    """
+    Wording for the operator, who sees this next to the translate button.
+
+    The raw text is an English stack of API codes and billing URLs. It tells
+    a student nothing they can act on, so the two conditions that actually
+    happen get a plain sentence; anything else keeps its original text, which
+    is more useful than a vague apology when something unexpected breaks.
+    """
+    if isinstance(exc, TranslatorUnavailableError):
+        return "翻訳サービスに接続できませんでした。管理者にご連絡ください。"
+    return str(exc)
 
 
 def _auto_apply_suggestion(job_id: str) -> None:
@@ -168,24 +210,24 @@ def execute_translation_job(job_id: str) -> dict[str, Any]:
     source_description = suggestion.source_description or ""
 
     try:
-        backend = get_translator_backend()
-        translated_title: str | None = None
-        translated_description: str | None = None
-
-        if scope in {"title", "full"} and source_title.strip():
-            translated_title = backend.translate_plain(source_title).strip() or None
-
-        if scope in {"description", "full"} and source_description.strip():
-            # Sanitise the source first so the translator never operates on
-            # attacker-controlled HTML (the source can come from a scraped
-            # marketplace snapshot). normalize_rich_text enforces the same
-            # allowlist as the editor via nh3.
-            safe_source = normalize_rich_text(source_description)
-            if safe_source:
-                translated_raw = backend.translate_html(safe_source).strip()
-                # Belt-and-braces: sanitise the output too before it gets
-                # stored and rendered in the review UI.
-                translated_description = normalize_rich_text(translated_raw) or None
+        try:
+            translated_title, translated_description = _translate_with(
+                get_translator_backend(), scope, source_title, source_description
+            )
+        except TranslatorUnavailableError as exc:
+            # The configured backend cannot serve at all — an exhausted
+            # balance, a revoked key. That is not this product's problem and
+            # not something the operator can fix from the edit screen, so
+            # finish the job with the offline translator instead of failing.
+            fallback = get_fallback_translator_backend()
+            if fallback is None:
+                raise
+            logger.warning(
+                "translation job %s falling back to %s: %s", job_id, fallback.name, exc
+            )
+            translated_title, translated_description = _translate_with(
+                fallback, scope, source_title, source_description
+            )
 
         stored = _persist_translation_result(
             job_id=job_id,
@@ -197,7 +239,7 @@ def execute_translation_job(job_id: str) -> dict[str, Any]:
 
     except TranslationError as exc:
         logger.exception("translation job %s failed", job_id)
-        mark_failed(job_id, worker_token=worker_token, error_message=str(exc))
+        mark_failed(job_id, worker_token=worker_token, error_message=_describe_failure(exc))
         raise
     except Exception as exc:  # pragma: no cover - defensive logging path
         logger.exception("translation job %s failed unexpectedly", job_id)
