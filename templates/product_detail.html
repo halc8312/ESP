@@ -1991,8 +1991,12 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.6/Sortable.min.js" referrerpolicy="origin"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/tinymce/6.8.3/tinymce.min.js" referrerpolicy="origin"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.6/Sortable.min.js"
+    integrity="sha512-csIng5zcB+XpulRUa+ev1zKo7zRNGpEaVfNB9On1no9KYTEY/rLGAEEpvgdw6nim1WdTuihZY1eqZ31K7/fZjw=="
+    crossorigin="anonymous" referrerpolicy="origin"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tinymce/6.8.3/tinymce.min.js"
+    integrity="sha512-VCEWnpOl7PIhbYMcb64pqGZYez41C2uws/M/mDdGPy+vtEJHd9BqbShE4/VNnnZdr7YCPOjd+CBmYca/7WWWCw=="
+    crossorigin="anonymous" referrerpolicy="origin"></script>
 <script src="{{ url_for('static', filename='js/product_translation.js') }}"></script>
 <script src="{{ url_for('static', filename='js/product_bg_removal.js') }}"></script>
 <script>
@@ -2090,6 +2094,14 @@
             });
             productForm.addEventListener('input', handleFormMutation);
             productForm.addEventListener('change', handleFormMutation);
+        }
+
+        if (imageGrid && typeof Sortable === 'undefined') {
+            // 並べ替えライブラリが届かなかった場合。ドラッグしても動かない理由を出す。
+            window.ESPUI.toast('画像のドラッグ並べ替えを読み込めませんでした。その他の編集は通常どおり使えます。', {
+                type: 'warning',
+                duration: 8000
+            });
         }
 
         if (imageGrid && typeof Sortable !== 'undefined') {

@@ -3,6 +3,7 @@
 {% block title %}ゴミ箱{% endblock %}
 {% block header_title %}ゴミ箱{% endblock %}
 {% block body_class %}has-bottom-nav wrap-fluid{% endblock %}
+{% import "_money.html" as money %}
 
 {% block content %}
 <div class="page-header">
@@ -39,7 +40,7 @@
                     <tr>
                         <th style="width: 40px;"><span class="visually-hidden">選択</span></th>
                         <th>タイトル</th>
-                        <th>価格</th>
+                        <th class="num">価格</th>
                         <th>削除日</th>
                         <th>残り日数</th>
                     </tr>
@@ -52,11 +53,7 @@
                                 onchange="updateSelectedCount()">
                         </td>
                         <td>{{ item.custom_title or item.last_title }}</td>
-                        <td>
-                            {% if item.last_price %}
-                            ¥{{ "{:,}".format(item.last_price) }}
-                            {% endif %}
-                        </td>
+                        <td class="num">{{ money.cost(item.last_price) }}</td>
                         <td>{{ item.deleted_at | jst }}</td>
                         <td>
                             {% if item.days_remaining <= 7 %} <span style="color: #c62828; font-weight: bold;">{{

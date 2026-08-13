@@ -350,3 +350,192 @@ class TestDestructiveActionsUseTheAppDialog:
 
         assert "data-confirm-message" in source
         assert "{{ rule.name }}" in source
+
+
+class TestArchiveGivesFeedback:
+    """
+    Archiving with nothing selected redirected in silence while the trash
+    screen flashed a message for the same situation, so the button looked
+    broken. The error path also put the raw exception text on screen.
+    """
+
+    def test_empty_selection_explains_itself(self, client, db_session):
+        _login(client, db_session, "archive_feedback_user")
+
+        response = client.post("/archive/restore", data={}, follow_redirects=True)
+        html = response.get_data(as_text=True)
+
+        assert "商品を選択してください" in html
+
+    def test_archiving_nothing_explains_itself(self, client, db_session):
+        _login(client, db_session, "archive_add_feedback_user")
+
+        response = client.post("/archive/add", data={}, follow_redirects=True)
+        html = response.get_data(as_text=True)
+
+        assert "商品を選択してください" in html
+
+    def test_exceptions_are_not_shown_verbatim(self):
+        source = _read("routes/archive.py")
+
+        assert "f'エラー: {e}'" not in source
+        assert "current_app.logger.exception" in source
+
+
+class TestUnknownPriceReadsTheSame:
+    """archive.html rendered a missing price as ¥0, i.e. free."""
+
+    def test_neither_screen_invents_a_zero(self):
+        for name in ("archive.html", "trash.html"):
+            source = _read(f"templates/{name}")
+            assert "last_price or 0" not in source, name
+            assert 'import "_money.html"' in source, name
+
+
+class TestRegisterMatchesLogin:
+    """
+    Registration signs the account in immediately and there is no password
+    reset flow, so a mistyped password locks the account at the next login.
+    """
+
+    def test_confirmation_field_is_offered(self, client):
+        html = client.get("/register").get_data(as_text=True)
+
+        assert 'name="password_confirm"' in html
+
+    def test_password_can_be_revealed(self, client):
+        html = client.get("/register").get_data(as_text=True)
+
+        assert "data-toggle-password" in html
+        assert "js/app_ui.js" in html
+
+    def test_errors_are_announced(self, client):
+        html = client.get("/register").get_data(as_text=True)
+        # login.html already had this; register.html did not.
+        assert 'role="alert"' in _read("templates/register.html")
+        assert "autofocus" in html
+
+    def test_mismatched_confirmation_is_rejected(self, client, db_session):
+        from models import User
+
+        response = client.post("/register", data={
+            "username": "mismatchuser",
+            "password": "correcthorse12",
+            "password_confirm": "correcthorse13",
+        })
+
+        assert response.status_code == 400
+        assert "パスワードが一致しません" in response.get_data(as_text=True)
+        assert db_session.query(User).filter_by(username="mismatchuser").first() is None
+
+    def test_username_survives_a_rejected_attempt(self, client, db_session):
+        response = client.post("/register", data={
+            "username": "keptname",
+            "password": "short",
+            "password_confirm": "short",
+        })
+
+        assert 'value="keptname"' in response.get_data(as_text=True)
+
+    def test_matching_confirmation_still_registers(self, client, db_session):
+        from models import User
+
+        client.post("/register", data={
+            "username": "confirmeduser",
+            "password": "correcthorse12",
+            "password_confirm": "correcthorse12",
+        }, follow_redirects=True)
+
+        assert db_session.query(User).filter_by(username="confirmeduser").first() is not None
+
+
+class TestCdnScriptsAreVerifiedAndAnnounced:
+    """
+    None of the CDN tags carried an integrity hash, and two of the three
+    libraries failed silently — the page just did less than it should.
+    """
+
+    CDN_TEMPLATES = (
+        "templates/product_detail.html",
+        "templates/pricelist_edit.html",
+        "templates/manage_templates.html",
+        "templates/pricelist_analytics.html",
+    )
+
+    def test_every_cdn_script_carries_an_integrity_hash(self):
+        pattern = re.compile(r"<script[^>]*src=\"https://[^\"]+\"[^>]*>", re.S)
+        for relative_path in self.CDN_TEMPLATES:
+            source = _read(relative_path)
+            for tag in pattern.findall(source):
+                assert "integrity=" in tag, f"{relative_path}: {tag[:90]}"
+                assert "crossorigin=" in tag, f"{relative_path}: {tag[:90]}"
+
+    def test_chart_failure_is_reported(self):
+        source = _read("templates/pricelist_analytics.html")
+
+        assert "typeof Chart === 'undefined'" in source
+        assert "グラフを読み込めませんでした" in source
+
+    def test_drag_sort_failure_is_reported(self):
+        source = _read("templates/product_detail.html")
+
+        assert "typeof Sortable === 'undefined'" in source
+        assert "ドラッグ並べ替えを読み込めませんでした" in source
+
+
+class TestBusyButtonsRecover:
+    """
+    Disabling the submitter inside the submit handler drops its name/value
+    from the payload, and a bfcache restore left the button stuck reading
+    "処理中..." forever.
+    """
+
+    def test_submit_disables_the_button_after_the_payload_is_built(self):
+        source = _read("static/js/app_ui.js")
+
+        assert "deferDisable" in source
+        assert source.count("{ deferDisable: true }") == 2
+
+    def test_returning_to_a_cached_page_clears_the_busy_state(self):
+        source = _read("static/js/app_ui.js")
+
+        assert 'window.addEventListener("pageshow"' in source
+        assert "restoreBusyButtons()" in source
+        assert "hideLoading()" in source
+
+
+class TestErrorPageOffersAWayOut:
+    """The only link was a hardcoded href="/"."""
+
+    def test_error_page_links_are_generated(self):
+        source = _read("templates/error.html")
+
+        assert 'href="/"' not in source
+        assert "url_for('index')" in source
+
+    def test_error_page_offers_more_than_one_destination(self, client):
+        html = client.get("/no-such-page-here").get_data(as_text=True)
+
+        assert "前のページへ戻る" in html
+        assert "商品一覧へ" in html
+        assert "はじめての方へ" in html
+
+
+class TestCatalogAnnouncesItself:
+    """
+    The public catalog's filter count changed silently, and its theme button
+    kept a generic aria-label that overrode the title the script updated.
+    """
+
+    def test_result_count_is_announced(self):
+        source = _read("templates/catalog.html")
+        start = source.index('id="resultsSummary"')
+
+        assert 'aria-live="polite"' in source[start - 120:start + 120]
+
+    def test_theme_button_label_tracks_its_state(self):
+        source = _read("templates/catalog.html")
+
+        # aria-label wins over title, so the script must update both.
+        assert "toggleBtn.setAttribute('aria-label', nextLabel)" in source
+        assert "aria-pressed" in source

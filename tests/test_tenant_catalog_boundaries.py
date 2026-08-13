@@ -109,6 +109,7 @@ def test_registration_auto_login_clears_stale_shop_session(client, db_session):
         data={
             "username": "registration_clean_session_user",
             "password": "safe-registration-password-42",
+            "password_confirm": "safe-registration-password-42",
         },
     )
 

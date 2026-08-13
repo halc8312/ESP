@@ -5484,6 +5484,60 @@ body.product-edit-page .sticky-save-container {
     cursor: pointer;
 }
 
+/* 登録時のパスワード要件。入力中に満たしたものから印が変わる。
+   色だけで伝えると色覚特性によっては区別できないので、記号も一緒に変える。 */
+.password-rules {
+    margin: 8px 0 0;
+    padding-left: 0;
+    list-style: none;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.password-rules li {
+    padding-left: 20px;
+    position: relative;
+    line-height: 1.7;
+}
+
+.password-rules li::before {
+    content: '・';
+    position: absolute;
+    left: 2px;
+}
+
+.password-rules li.is-met {
+    color: #166534;
+}
+
+.password-rules li.is-met::before {
+    content: '✓';
+}
+
+.password-rules li.is-unmet {
+    color: var(--warning-color);
+}
+
+.password-rules li.is-unmet::before {
+    content: '!';
+    font-weight: 700;
+}
+
+.password-match {
+    margin: 8px 0 0;
+    font-size: 13px;
+    min-height: 1.4em;
+    color: var(--text-muted);
+}
+
+.password-match.is-met {
+    color: #166534;
+}
+
+.password-match.is-unmet {
+    color: var(--danger-color);
+}
+
 /* ── P0: Responsive adjustments ── */
 @media (max-width: 1023px) {
     .esp-toast-viewport {
@@ -6123,4 +6177,50 @@ input.pricelist-item-price-input {
         transition-duration: 0.01ms !important;
         scroll-behavior: auto !important;
     }
+}
+
+
+/* ===========================
+   ERROR PAGE
+   =========================== */
+.error-page {
+    text-align: center;
+}
+
+.error-page-code {
+    margin: 0;
+    font-size: 3rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--secondary-color);
+}
+
+.error-page-message {
+    margin: 12px 0 24px;
+    font-size: 1.15rem;
+    font-weight: 600;
+    line-height: 1.6;
+}
+
+.error-page-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: center;
+}
+
+.error-page-actions .btn {
+    flex: 1 1 auto;
+    min-width: 160px;
+}
+
+.error-page-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    justify-content: center;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.9rem;
 }

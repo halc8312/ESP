@@ -12,25 +12,115 @@
     <div class="login-container">
         <h1>新規登録</h1>
         {% if error %}
-        <div class="error">{{ error }}</div>
+        <div class="error login-error-box" role="alert">{{ error }}</div>
         {% endif %}
-        <form method="POST">
+        <form method="POST" id="registerForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="form-group">
                 <label for="username">ユーザー名</label>
-                <input type="text" id="username" name="username" required autocomplete="username">
+                <input type="text" id="username" name="username" value="{{ username or '' }}" required
+                    autocomplete="username" autofocus>
             </div>
             <div class="form-group">
                 <label for="password">パスワード</label>
-                <input type="password" id="password" name="password" required autocomplete="new-password" minlength="12">
+                <div class="password-field">
+                    <input type="password" id="password" name="password" required autocomplete="new-password"
+                        minlength="12" aria-describedby="passwordRules">
+                    <button type="button" class="password-toggle" data-toggle-password="#password"
+                        data-show-label="表示" data-hide-label="非表示" aria-pressed="false">表示</button>
+                </div>
+                {# 登録すると自動でログインするので、打ち間違えても気付かないまま
+                   次回ログインできなくなる。要件は入力中に見えるようにしておく。 #}
+                <ul class="password-rules" id="passwordRules">
+                    <li data-rule="length">12文字以上</li>
+                    <li data-rule="mix">英字と数字の両方を含む</li>
+                    <li data-rule="username">ユーザー名を含まない</li>
+                </ul>
             </div>
-            <p class="help-text">12文字以上で、英字と数字を含めてください。</p>
+            <div class="form-group">
+                <label for="password_confirm">パスワード（確認）</label>
+                <div class="password-field">
+                    <input type="password" id="password_confirm" name="password_confirm" required
+                        autocomplete="new-password" aria-describedby="passwordMatch">
+                    <button type="button" class="password-toggle" data-toggle-password="#password_confirm"
+                        data-show-label="表示" data-hide-label="非表示" aria-pressed="false">表示</button>
+                </div>
+                <p class="password-match" id="passwordMatch" role="status" aria-live="polite"></p>
+            </div>
             <button type="submit">登録する</button>
         </form>
         <div class="link">
             すでに登録済みの方は <a href="{{ url_for('login') }}">ログイン</a>
         </div>
     </div>
+    <script src="{{ url_for('static', filename='js/app_ui.js') }}"></script>
+    <script>
+        (function () {
+            "use strict";
+
+            var form = document.getElementById("registerForm");
+            var username = document.getElementById("username");
+            var password = document.getElementById("password");
+            var confirmField = document.getElementById("password_confirm");
+            var matchNote = document.getElementById("passwordMatch");
+            var rules = document.getElementById("passwordRules");
+
+            // サーバー側 (services/password_policy.py) と同じ条件のうち、
+            // ブラウザだけで判定できるものを入力中に見せる。
+            // よくある弱いパスワードの一覧はサーバーが持っているのでここでは見ない。
+            function checkRules() {
+                var value = password.value;
+                var name = username.value.trim().toLowerCase();
+                var results = {
+                    length: value.length >= 12,
+                    mix: /[a-zA-Z]/.test(value) && /[0-9]/.test(value),
+                    username: !name || value.toLowerCase().indexOf(name) === -1
+                };
+
+                Array.prototype.forEach.call(rules.querySelectorAll("[data-rule]"), function (item) {
+                    var passed = results[item.dataset.rule];
+                    item.classList.toggle("is-met", Boolean(value) && passed);
+                    item.classList.toggle("is-unmet", Boolean(value) && !passed);
+                });
+            }
+
+            function checkMatch() {
+                if (!confirmField.value) {
+                    matchNote.textContent = "";
+                    matchNote.className = "password-match";
+                    confirmField.setCustomValidity("");
+                    return;
+                }
+
+                if (confirmField.value === password.value) {
+                    matchNote.textContent = "一致しています";
+                    matchNote.className = "password-match is-met";
+                    confirmField.setCustomValidity("");
+                } else {
+                    matchNote.textContent = "パスワードが一致しません";
+                    matchNote.className = "password-match is-unmet";
+                    confirmField.setCustomValidity("パスワードが一致しません");
+                }
+            }
+
+            password.addEventListener("input", function () {
+                checkRules();
+                checkMatch();
+            });
+            confirmField.addEventListener("input", checkMatch);
+            username.addEventListener("input", checkRules);
+
+            form.addEventListener("submit", function (event) {
+                if (confirmField.value !== password.value) {
+                    event.preventDefault();
+                    checkMatch();
+                    confirmField.focus();
+                }
+            });
+
+            checkRules();
+        })();
+    </script>
 </body>
 
 </html>

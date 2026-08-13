@@ -170,7 +170,7 @@
         }, 180);
     }
 
-    function setButtonBusy(button, busy, busyLabel) {
+    function setButtonBusy(button, busy, busyLabel, options) {
         if (!button) {
             return;
         }
@@ -179,10 +179,24 @@
             if (!button.dataset.originalLabel) {
                 button.dataset.originalLabel = button.textContent;
             }
-            button.disabled = true;
             button.setAttribute("aria-busy", "true");
             button.classList.add("is-busy");
             button.textContent = busyLabel || button.dataset.loadingLabel || "処理中...";
+
+            if (options && options.deferDisable) {
+                // フォームデータは submit ハンドラが終わってから組み立てられる。
+                // ここで即 disabled にすると、この送信ボタンの name/value が
+                // 送信内容から落ちる（複数の送信先を name で分けるフォームが壊れる）。
+                window.setTimeout(function () {
+                    // 「戻る」で復帰した場合、止まっていたこのタイマーが
+                    // 解除処理の後に動きうる。busy が解けていたら何もしない。
+                    if (button.getAttribute("aria-busy") === "true") {
+                        button.disabled = true;
+                    }
+                }, 0);
+            } else {
+                button.disabled = true;
+            }
             return;
         }
 
@@ -193,6 +207,17 @@
         button.disabled = false;
         button.removeAttribute("aria-busy");
         button.classList.remove("is-busy");
+    }
+
+    // ブラウザの「戻る」で bfcache から復帰したページは DOM がそのまま残るので、
+    // 送信時に押せなくしたボタンが「処理中...」のまま固まって二度と押せなくなる。
+    function restoreBusyButtons() {
+        Array.prototype.forEach.call(
+            document.querySelectorAll("[aria-busy='true']"),
+            function (button) {
+                setButtonBusy(button, false);
+            }
+        );
     }
 
     function showLoading(options) {
@@ -577,14 +602,14 @@
             if (form.dataset.espConfirmed === "true") {
                 delete form.dataset.espConfirmed;
                 if (submitter && feedbackLabel) {
-                    setButtonBusy(submitter, true, feedbackLabel);
+                    setButtonBusy(submitter, true, feedbackLabel, { deferDisable: true });
                 }
                 return;
             }
 
             if (!confirmMessage) {
                 if (submitter && feedbackLabel) {
-                    setButtonBusy(submitter, true, feedbackLabel);
+                    setButtonBusy(submitter, true, feedbackLabel, { deferDisable: true });
                 }
                 return;
             }
@@ -616,6 +641,16 @@
         bindCopyButtons();
         bindPasswordToggles();
         bindConfirmForms();
+    });
+
+    window.addEventListener("pageshow", function (event) {
+        if (!event.persisted) {
+            return;
+        }
+        // 「処理中」の見た目は、押した瞬間に画面が切り替わる前提で出している。
+        // 戻ってきた画面ではその前提が崩れるので、まとめて元に戻す。
+        restoreBusyButtons();
+        hideLoading();
     });
 
     window.ESPUI = {

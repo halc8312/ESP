@@ -1,7 +1,7 @@
 """
 Archive routes - SOLD Stacking / Product archiving.
 """
-from flask import Blueprint, render_template, request, redirect, url_for, flash, session
+from flask import Blueprint, current_app, render_template, request, redirect, url_for, flash, session
 from flask_login import login_required, current_user
 from database import SessionLocal
 from models import Product, Shop
@@ -44,6 +44,7 @@ def archive_products():
     try:
         product_ids = request.form.getlist('ids')
         if not product_ids:
+            flash('商品を選択してください', 'warning')
             return redirect(url_for('main.index'))
         
         products = session_db.query(Product).filter(
@@ -57,9 +58,10 @@ def archive_products():
         session_db.commit()
         flash(f'{len(products)}件をアーカイブしました', 'success')
         return redirect(url_for('main.index'))
-    except Exception as e:
+    except Exception:
         session_db.rollback()
-        flash(f'エラー: {e}', 'error')
+        current_app.logger.exception('アーカイブへの移動に失敗しました')
+        flash('アーカイブへ移動できませんでした。時間をおいて試してください。', 'error')
         return redirect(url_for('main.index'))
     finally:
         session_db.close()
@@ -73,6 +75,7 @@ def restore_products():
     try:
         product_ids = request.form.getlist('ids')
         if not product_ids:
+            flash('商品を選択してください', 'warning')
             return redirect(url_for('archive.archive_list'))
         
         products = session_db.query(Product).filter(
@@ -86,9 +89,10 @@ def restore_products():
         session_db.commit()
         flash(f'{len(products)}件を復元しました', 'success')
         return redirect(url_for('archive.archive_list'))
-    except Exception as e:
+    except Exception:
         session_db.rollback()
-        flash(f'エラー: {e}', 'error')
+        current_app.logger.exception('アーカイブからの復元に失敗しました')
+        flash('復元できませんでした。時間をおいて試してください。', 'error')
         return redirect(url_for('archive.archive_list'))
     finally:
         session_db.close()

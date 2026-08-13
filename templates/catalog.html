@@ -28,8 +28,8 @@
             </div>
 
             <div class="catalog-header-actions">
-                <button type="button" id="themeToggleBtn" class="theme-toggle" title="Toggle light or dark mode"
-                    aria-label="Toggle light or dark mode">☀️</button>
+                <button type="button" id="themeToggleBtn" class="theme-toggle" title="Switch to Light Mode"
+                    aria-label="Switch to Light Mode" aria-pressed="false">☀️</button>
                 <div class="currency-switcher">
                     <label for="currencySelect">💱 Currency:</label>
                     <select id="currencySelect">
@@ -84,7 +84,7 @@
             </div>
 
             <div class="catalog-toolbar-side">
-                <div class="results-summary" id="resultsSummary">{{ items|length }} items</div>
+                <div class="results-summary" id="resultsSummary" role="status" aria-live="polite">{{ items|length }} items</div>
             </div>
         </div>
     </div>
@@ -263,8 +263,13 @@
             }
 
             const isLight = document.body.classList.contains('light-mode');
+            const nextLabel = isLight ? 'Switch to Dark Mode' : 'Switch to Light Mode';
             toggleBtn.textContent = isLight ? '🌙' : '☀️';
-            toggleBtn.title = isLight ? 'Switch to Dark Mode' : 'Switch to Light Mode';
+            // aria-label は title より優先されるので、両方を同じ文言で更新する。
+            // そうしないと読み上げ側だけ汎用文言のまま取り残される。
+            toggleBtn.title = nextLabel;
+            toggleBtn.setAttribute('aria-label', nextLabel);
+            toggleBtn.setAttribute('aria-pressed', isLight ? 'true' : 'false');
         }
 
         function toggleTheme() {
