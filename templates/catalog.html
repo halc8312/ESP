@@ -28,8 +28,8 @@
             </div>
 
             <div class="catalog-header-actions">
-                <button type="button" id="themeToggleBtn" class="theme-toggle" title="Toggle light or dark mode"
-                    aria-label="Toggle light or dark mode">☀️</button>
+                <button type="button" id="themeToggleBtn" class="theme-toggle" title="Switch to Light Mode"
+                    aria-label="Switch to Light Mode" aria-pressed="false">☀️</button>
                 <div class="currency-switcher">
                     <label for="currencySelect">💱 Currency:</label>
                     <select id="currencySelect">
@@ -64,11 +64,13 @@
                     </select>
                 </div>
                 <div class="filter-control">
-                    <label>Price</label>
-                    <div class="price-range-inputs">
-                        <input type="number" id="priceMin" placeholder="Min">
+                    <span class="filter-control-heading" id="priceRangeHeading">Price (JPY)</span>
+                    <div class="price-range-inputs" role="group" aria-labelledby="priceRangeHeading">
+                        <input type="number" id="priceMin" min="0" placeholder="Min"
+                            aria-label="Minimum price in JPY">
                         <span class="price-range-separator">-</span>
-                        <input type="number" id="priceMax" placeholder="Max">
+                        <input type="number" id="priceMax" min="0" placeholder="Max"
+                            aria-label="Maximum price in JPY">
                     </div>
                 </div>
                 <div class="filter-control">
@@ -82,7 +84,7 @@
             </div>
 
             <div class="catalog-toolbar-side">
-                <div class="results-summary" id="resultsSummary">{{ items|length }} items</div>
+                <div class="results-summary" id="resultsSummary" role="status" aria-live="polite">{{ items|length }} items</div>
             </div>
         </div>
     </div>
@@ -134,7 +136,7 @@
                     {% endfor %}
                 </div>
                 {% endif %}
-                <div class="product-card-title">{{ item.title_en or item.title }}</div>
+                <div class="product-card-title"{% if not item.title_en %} lang="ja"{% endif %}>{{ item.title_en or item.title }}</div>
                 {% if pricelist.layout == 'list' %}
                 <div class="product-card-desc-snippet">{{ item.description_snippet }}</div>
                 {% endif %}
@@ -194,7 +196,7 @@
                 </div>
                 <div class="modal-info">
                     <div class="modal-info-header">
-                        <h2 id="modalTitle" class="modal-product-title">Loading...</h2>
+                        <h2 id="modalTitle" class="modal-product-title" lang="ja">Loading...</h2>
                         <div id="modalTitleEn" class="modal-product-title-en" hidden></div>
                     </div>
                     <div id="modalPrice" class="modal-product-price">Price on request</div>
@@ -253,6 +255,7 @@
         };
         let filterDebounceTimer = null;
         const THEME_STORAGE_KEY = 'esp.catalog.theme.' + CATALOG_TOKEN;
+        const CURRENCY_STORAGE_KEY = 'esp.catalog.currency.' + CATALOG_TOKEN;
 
         function syncThemeToggle() {
             const toggleBtn = document.getElementById('themeToggleBtn');
@@ -261,8 +264,13 @@
             }
 
             const isLight = document.body.classList.contains('light-mode');
+            const nextLabel = isLight ? 'Switch to Dark Mode' : 'Switch to Light Mode';
             toggleBtn.textContent = isLight ? '🌙' : '☀️';
-            toggleBtn.title = isLight ? 'Switch to Dark Mode' : 'Switch to Light Mode';
+            // aria-label は title より優先されるので、両方を同じ文言で更新する。
+            // そうしないと読み上げ側だけ汎用文言のまま取り残される。
+            toggleBtn.title = nextLabel;
+            toggleBtn.setAttribute('aria-label', nextLabel);
+            toggleBtn.setAttribute('aria-pressed', isLight ? 'true' : 'false');
         }
 
         function toggleTheme() {
@@ -303,13 +311,56 @@
             }
         }
 
+        // 入力された金額（表示通貨）を円に直す。レートが未取得のうちは
+        // 換算できないので、そのまま円として扱う。
+        function toJpyFilterValue(raw) {
+            if (raw === '') {
+                return null;
+            }
+            const amount = parseFloat(raw);
+            if (Number.isNaN(amount)) {
+                return null;
+            }
+            const currency = getSelectedCurrency();
+            if (currency === 'JPY' || !ratesReady) {
+                return amount;
+            }
+            const rate = RATES_FROM_JPY[currency];
+            return rate ? amount / rate : amount;
+        }
+
+        function getSelectedCurrency() {
+            const select = document.getElementById('currencySelect');
+            return (select && select.value) || 'JPY';
+        }
+
+        // 見出しに単位を出しておかないと、数字が何の通貨なのか分からない。
+        function syncPriceFilterHeading() {
+            const currency = getSelectedCurrency();
+            const heading = document.getElementById('priceRangeHeading');
+            if (heading) {
+                heading.textContent = 'Price (' + currency + ')';
+            }
+
+            const bounds = [['priceMin', 'Minimum'], ['priceMax', 'Maximum']];
+            bounds.forEach(function (entry) {
+                const input = document.getElementById(entry[0]);
+                if (input) {
+                    input.setAttribute('aria-label', entry[1] + ' price in ' + currency);
+                }
+            });
+        }
+
         function filterProducts() {
             const query = document.getElementById('searchInput').value.toLowerCase();
             const selectedTag = (document.getElementById('tagSelect').value || '').toLowerCase();
             const minPriceRaw = document.getElementById('priceMin').value.trim();
             const maxPriceRaw = document.getElementById('priceMax').value.trim();
-            const minPrice = minPriceRaw === '' ? null : parseFloat(minPriceRaw);
-            const maxPrice = maxPriceRaw === '' ? null : parseFloat(maxPriceRaw);
+            // 入力欄の数字は「いま表示している通貨」として読む。商品の値は円で
+            // 持っているので、比較する前に入力側を円へ寄せる。表示が $ なのに
+            // 円で絞り込まれると、50 と入れただけで商品がほぼ全部消える。
+            const minPrice = toJpyFilterValue(minPriceRaw);
+            const maxPrice = toJpyFilterValue(maxPriceRaw);
             const cards = document.querySelectorAll('.product-card');
 
             cards.forEach(card => {
@@ -394,19 +445,43 @@
 
         const DECIMALS = { 'JPY': 0, 'KRW': 0 };
 
+        const RATE_FETCH_TIMEOUT_MS = 5000;
+
+        // レートが揃うまで通貨セレクタは操作できない（switchCurrency が先頭で return する）。
+        // 見た目だけ操作できるより、待っていることが分かるほうが親切。
+        function setCurrencySelectorReady(ready) {
+            const select = document.getElementById('currencySelect');
+            if (!select) {
+                return;
+            }
+            select.disabled = !ready;
+            select.title = ready ? '' : 'Loading exchange rates...';
+        }
+
         async function fetchLiveRates() {
             const rateDisplay = document.getElementById('rateDisplay');
             rateDisplay.textContent = '⏳ Updating exchange rates...';
 
+            // タイムアウトが無いと、API が「エラーも返さず黙る」場合に catch も
+            // fallback も走らない。バッジは ⏳ のまま固定され、ratesReady が false の
+            // ままなので通貨セレクタが永久に無反応になる。
+            const controller = new AbortController();
+            const timeoutId = window.setTimeout(function () {
+                controller.abort();
+            }, RATE_FETCH_TIMEOUT_MS);
+
             try {
-                const resp = await fetch('https://open.er-api.com/v6/latest/JPY');
+                const resp = await fetch('https://open.er-api.com/v6/latest/JPY', {
+                    signal: controller.signal
+                });
                 const data = await resp.json();
 
                 if (data.result === 'success' && data.rates) {
                     RATES_FROM_JPY = data.rates;
                     ratesReady = true;
+                    setCurrencySelectorReady(true);
                     const jpyPerUsd = 1 / data.rates['USD'];
-                    rateDisplay.textContent = `1 USD = ¥${Math.round(jpyPerUsd)}`;
+                    rateDisplay.textContent = `1 USD = ¥${Math.round(jpyPerUsd).toLocaleString()}`;
                     const rateSource = document.getElementById('rateSource');
                     if (rateSource) {
                         rateSource.textContent = 'Exchange rates updated';
@@ -416,6 +491,8 @@
                 }
             } catch (e) {
                 console.warn('API rate fetch failed, using fallback:', e);
+            } finally {
+                window.clearTimeout(timeoutId);
             }
 
             useFallbackRates();
@@ -434,8 +511,9 @@
                 'KRW': 1350 / jpyRate
             };
             ratesReady = true;
+            setCurrencySelectorReady(true);
             const rateDisplay = document.getElementById('rateDisplay');
-            rateDisplay.textContent = `1 USD = ¥${Math.round(jpyRate)}`;
+            rateDisplay.textContent = `1 USD = ¥${Math.round(jpyRate).toLocaleString()}`;
             const rateSource = document.getElementById('rateSource');
             if (rateSource) {
                 rateSource.textContent = 'Using the saved exchange rate';
@@ -475,16 +553,23 @@
                 }
             });
 
+            // 書式は fetchLiveRates / useFallbackRates と揃える。同じバッジが
+            // 経路によって "Rate: " の有無で変わって見えていた。
             if (currency === 'JPY') {
                 const jpyPerUsd = RATES_FROM_JPY['USD'] ? Math.round(1 / RATES_FROM_JPY['USD']) : FALLBACK_JPY_RATE;
-                rateDisplay.textContent = `Rate: 1 USD = ¥${jpyPerUsd}`;
+                rateDisplay.textContent = `1 USD = ¥${jpyPerUsd.toLocaleString()}`;
             } else {
                 const rate = RATES_FROM_JPY[currency];
                 if (rate) {
                     const jpyPer = Math.round(1 / rate);
-                    rateDisplay.textContent = `Rate: 1 ${currency} = ¥${jpyPer.toLocaleString()}`;
+                    rateDisplay.textContent = `1 ${currency} = ¥${jpyPer.toLocaleString()}`;
                 }
             }
+
+            // 入力済みの数字はそのまま置き、単位だけ読み替える。50 USD を
+            // 46.3 EUR に書き換えられるより、単位が変わるほうが納得しやすい。
+            syncPriceFilterHeading();
+            filterProducts();
         }
 
         function formatPriceFromJpy(jpyPrice, currency) {
@@ -758,6 +843,22 @@
             return 'JPY';
         }
 
+        function loadStoredCurrency() {
+            try {
+                return window.localStorage.getItem(CURRENCY_STORAGE_KEY) || '';
+            } catch (_error) {
+                return '';
+            }
+        }
+
+        function storeCurrency(currency) {
+            try {
+                window.localStorage.setItem(CURRENCY_STORAGE_KEY, currency);
+            } catch (_error) {
+                // Ignore storage failures and keep the in-memory choice.
+            }
+        }
+
         function applyViewerCurrency() {
             // Runs once, after the rates are usable, and never over a choice
             // the viewer has already made.
@@ -770,7 +871,14 @@
             if (!select) {
                 return;
             }
-            const currency = detectViewerCurrency();
+
+            // 前回みずから選んだ通貨があれば、地域からの推測より優先する。
+            const stored = loadStoredCurrency();
+            const offered = Array.prototype.map.call(select.options, function (option) {
+                return option.value;
+            });
+            const currency = offered.indexOf(stored) !== -1 ? stored : detectViewerCurrency();
+
             if (currency === select.value) {
                 return;
             }
@@ -780,6 +888,7 @@
 
         document.addEventListener('DOMContentLoaded', function () {
             applyPersistedTheme();
+            setCurrencySelectorReady(false);
             fetchLiveRates();
             applySort();
             updateResultsSummary();
@@ -787,6 +896,7 @@
             document.getElementById('themeToggleBtn').addEventListener('click', toggleTheme);
             document.getElementById('currencySelect').addEventListener('change', function (event) {
                 viewerPickedCurrency = true;
+                storeCurrency(event.target.value);
                 switchCurrency(event.target.value);
             });
             document.getElementById('sortSelect').addEventListener('change', applySort);

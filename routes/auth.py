@@ -103,12 +103,15 @@ def register():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
+        password_confirm = request.form.get('password_confirm', '')
         client_ip = get_client_ip(request)
         limit = current_app.config["REGISTER_RATE_LIMIT"]
         window = current_app.config["REGISTER_RATE_WINDOW_SECONDS"]
         decision = is_limited("register-ip", client_ip, limit, window)
         if not decision.allowed:
-            return render_template('register.html', error=decision.message), decision.status_code
+            return render_template(
+                'register.html', error=decision.message, username=username
+            ), decision.status_code
 
         session_db = SessionLocal()
         try:
@@ -118,12 +121,27 @@ def register():
 
             if session_db.query(User).filter_by(username=username).first():
                 record_attempt("register-ip", client_ip, window)
-                return render_template('register.html', error="このユーザー名はすでに使われています。")
+                return render_template(
+                    'register.html',
+                    error="このユーザー名はすでに使われています。",
+                    username=username,
+                )
 
             password_errors = validate_password_strength(password, username=username)
+
+            # Registration signs the account in straight away, so a mistyped
+            # password is invisible until the next login attempt. Check the
+            # confirmation here too, in case the browser never ran the script.
+            # Reported alongside the strength errors so one submission surfaces
+            # everything that needs fixing.
+            if password_confirm != password:
+                password_errors.append("パスワードが一致しません。同じものを2回入力してください。")
+
             if password_errors:
                 record_attempt("register-ip", client_ip, window)
-                return render_template('register.html', error=" ".join(password_errors)), 400
+                return render_template(
+                    'register.html', error=" ".join(password_errors), username=username
+                ), 400
 
             new_user = User(username=username)
             new_user.set_password(password)
@@ -137,7 +155,11 @@ def register():
         except Exception:
             logger.exception("Registration failed for user %s", username)
             session_db.rollback()
-            return render_template('register.html', error="登録中にエラーが発生しました。再度お試しください。")
+            return render_template(
+                'register.html',
+                error="登録中にエラーが発生しました。再度お試しください。",
+                username=username,
+            )
         finally:
             session_db.close()
 

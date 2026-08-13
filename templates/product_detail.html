@@ -93,15 +93,15 @@
     }
 
     .product-edit-status-chip.is-active {
-        background: #ecfdf3;
-        border-color: #bbf7d0;
-        color: #166534;
+        background: var(--success-surface);
+        border-color: var(--success-border);
+        color: var(--success-text);
     }
 
     .product-edit-status-chip.is-draft {
-        background: #fff8e8;
-        border-color: #f7d58b;
-        color: #9a6700;
+        background: var(--warning-surface);
+        border-color: var(--warning-border);
+        color: var(--warning-text);
     }
 
     .product-edit-dirty-chip.is-dirty {
@@ -217,7 +217,7 @@
     }
 
     .translation-panel-status[data-kind="error"] {
-        color: #b91c1c;
+        color: var(--danger-text);
     }
 
     .translation-panel-status[data-kind="success"] {
@@ -266,12 +266,12 @@
 
     .translation-status-badge.translation-status-succeeded {
         background: #dcfce7;
-        color: #166534;
+        color: var(--success-text);
     }
 
     .translation-status-badge.translation-status-failed {
-        background: #fee2e2;
-        color: #991b1b;
+        background: var(--danger-surface);
+        color: var(--danger-text);
     }
 
     .translation-status-badge.translation-status-applied {
@@ -325,10 +325,10 @@
 
     .translation-error {
         background: #fef2f2;
-        border: 1px solid #fecaca;
+        border: 1px solid var(--danger-border);
         border-radius: 8px;
         padding: 8px 10px;
-        color: #991b1b;
+        color: var(--danger-text);
         font-size: 0.82rem;
     }
 
@@ -453,7 +453,7 @@
     }
 
     .product-image-action-btn.delete {
-        background: #ef4444;
+        background: var(--danger-color);
         color: white;
     }
 
@@ -586,8 +586,8 @@
         margin-bottom: 16px;
         padding: 14px 16px;
         border-radius: 12px;
-        border: 1px solid #f7d58b;
-        background: #fff8e8;
+        border: 1px solid var(--warning-border);
+        background: var(--warning-surface);
         display: grid;
         gap: 8px;
     }
@@ -607,9 +607,9 @@
         margin-bottom: 16px;
         padding: 12px;
         border-radius: 6px;
-        border: 1px solid #ef9a9a;
-        background: #fce4ec;
-        color: #c62828;
+        border: 1px solid var(--danger-border);
+        background: var(--danger-surface);
+        color: var(--danger-text);
     }
 
     .field-helper-text {
@@ -714,13 +714,13 @@
         align-items: start;
         padding: 12px;
         border-radius: 12px;
-        background: #fff8e8;
-        border: 1px solid #f7d58b;
+        background: var(--warning-surface);
+        border: 1px solid var(--warning-border);
     }
 
     .product-edit-checklist-item.is-complete {
-        background: #ecfdf3;
-        border-color: #bbf7d0;
+        background: var(--success-surface);
+        border-color: var(--success-border);
     }
 
     .product-edit-check-icon {
@@ -802,15 +802,15 @@
     }
 
     .variant-generation-summary.is-success {
-        border-color: #bbf7d0;
-        background: #ecfdf3;
-        color: #166534;
+        border-color: var(--success-border);
+        background: var(--success-surface);
+        color: var(--success-text);
     }
 
     .variant-generation-summary.is-error {
-        border-color: #fecaca;
+        border-color: var(--danger-border);
         background: #fff1f2;
-        color: #b91c1c;
+        color: var(--danger-text);
     }
 
     .product-edit-readonly {
@@ -1100,15 +1100,15 @@
     }
 
     .product-edit-header-readiness[data-ready="ok"] {
-        background: #ecfdf3;
-        border-color: #bbf7d0;
-        color: #166534;
+        background: var(--success-surface);
+        border-color: var(--success-border);
+        color: var(--success-text);
     }
 
     .product-edit-header-readiness[data-ready="todo"] {
-        background: #fff8e8;
-        border-color: #f7d58b;
-        color: #9a6700;
+        background: var(--warning-surface);
+        border-color: var(--warning-border);
+        color: var(--warning-text);
     }
 
     @media (min-width: 1024px) {
@@ -1162,7 +1162,7 @@
     }
 
     .product-edit-checklist-popover li.is-complete {
-        color: #166534;
+        color: var(--success-text);
     }
 
     .product-edit-checklist-popover .product-edit-check-icon {
@@ -1173,17 +1173,17 @@
         min-width: 22px;
         height: 22px;
         border-radius: 999px;
-        background: #fff8e8;
-        color: #9a6700;
-        border: 1px solid #f7d58b;
+        background: var(--warning-surface);
+        color: var(--warning-text);
+        border: 1px solid var(--warning-border);
         font-size: 0.7rem;
         font-weight: 700;
     }
 
     .product-edit-checklist-popover li.is-complete .product-edit-check-icon {
-        background: #ecfdf3;
-        color: #166534;
-        border-color: #bbf7d0;
+        background: var(--success-surface);
+        color: var(--success-text);
+        border-color: var(--success-border);
     }
 
     .product-edit-checklist-popover .product-edit-check-content {
@@ -1742,19 +1742,19 @@
                             <p class="text-small text-muted mb-1">カンマ区切りで入力してください（例: S, M, L）。「生成」を押すと既存行を残したまま候補を追加します。</p>
                             <div class="bulk-generator">
                                 <div class="filter-group">
-                                    <label>オプション1の値（例: 赤, 青, 白）</label>
+                                    <label for="bulk_opt1">オプション1の値（例: 赤, 青, 白）</label>
                                     <input type="text" id="bulk_opt1" placeholder="例: Red, Blue">
                                 </div>
                                 <div class="filter-group">
-                                    <label>オプション2の値（例: S, M, L）</label>
+                                    <label for="bulk_opt2">オプション2の値（例: S, M, L）</label>
                                     <input type="text" id="bulk_opt2" placeholder="例: S, M, L">
                                 </div>
                                 <div class="filter-group">
-                                    <label>共通の販売価格（円）</label>
+                                    <label for="bulk_price">共通の販売価格（円）</label>
                                     <input type="number" id="bulk_price" placeholder="">
                                 </div>
                                 <div class="filter-group">
-                                    <label>SKU接頭辞（例: MY-ITEM-）</label>
+                                    <label for="bulk_sku">SKU接頭辞（例: MY-ITEM-）</label>
                                     <input type="text" id="bulk_sku" placeholder="MER-ITEM-">
                                 </div>
                             </div>
@@ -1765,17 +1765,17 @@
 
                     <div class="option-names-section">
                         <div class="filter-group">
-                            <label>オプション1の名前（例: 色）</label>
-                            <input type="text" name="option1_name" value="{{ product.option1_name or 'Title' }}">
+                            <label for="option1_name">オプション1の名前（例: 色）</label>
+                            <input type="text" id="option1_name" name="option1_name" value="{{ product.option1_name or 'Title' }}">
                         </div>
                         <div class="filter-group">
-                            <label>オプション2の名前（例: サイズ）</label>
-                            <input type="text" name="option2_name" value="{{ product.option2_name or '' }}"
+                            <label for="option2_name">オプション2の名前（例: サイズ）</label>
+                            <input type="text" id="option2_name" name="option2_name" value="{{ product.option2_name or '' }}"
                                 placeholder="(例: Size)">
                         </div>
                         <div class="filter-group">
-                            <label>オプション3の名前</label>
-                            <input type="text" name="option3_name" value="{{ product.option3_name or '' }}">
+                            <label for="option3_name">オプション3の名前</label>
+                            <input type="text" id="option3_name" name="option3_name" value="{{ product.option3_name or '' }}">
                         </div>
                     </div>
                     <p class="field-helper-text">例: 色 / サイズ / 状態。1つしか使わない場合は項目名1だけでも大丈夫です。</p>
@@ -1991,8 +1991,12 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.6/Sortable.min.js" referrerpolicy="origin"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/tinymce/6.8.3/tinymce.min.js" referrerpolicy="origin"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.6/Sortable.min.js"
+    integrity="sha512-csIng5zcB+XpulRUa+ev1zKo7zRNGpEaVfNB9On1no9KYTEY/rLGAEEpvgdw6nim1WdTuihZY1eqZ31K7/fZjw=="
+    crossorigin="anonymous" referrerpolicy="origin"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tinymce/6.8.3/tinymce.min.js"
+    integrity="sha512-VCEWnpOl7PIhbYMcb64pqGZYez41C2uws/M/mDdGPy+vtEJHd9BqbShE4/VNnnZdr7YCPOjd+CBmYca/7WWWCw=="
+    crossorigin="anonymous" referrerpolicy="origin"></script>
 <script src="{{ url_for('static', filename='js/product_translation.js') }}"></script>
 <script src="{{ url_for('static', filename='js/product_bg_removal.js') }}"></script>
 <script>
@@ -2023,7 +2027,7 @@
     var formDirty = false;
 
     document.addEventListener('DOMContentLoaded', function () {
-        tinymce.init({
+        window.ESPUI.initRichText({
             selector: '#description, #description_en',
             menubar: false,
             plugins: 'lists link',
@@ -2090,6 +2094,14 @@
             });
             productForm.addEventListener('input', handleFormMutation);
             productForm.addEventListener('change', handleFormMutation);
+        }
+
+        if (imageGrid && typeof Sortable === 'undefined') {
+            // 並べ替えライブラリが届かなかった場合。ドラッグしても動かない理由を出す。
+            window.ESPUI.toast('画像のドラッグ並べ替えを読み込めませんでした。その他の編集は通常どおり使えます。', {
+                type: 'warning',
+                duration: 8000
+            });
         }
 
         if (imageGrid && typeof Sortable !== 'undefined') {
@@ -3107,7 +3119,8 @@
         var select = document.getElementById('template');
         var content = select.value;
         if (content) {
-            var editor = tinymce.get('description');
+            // tinymce 自体が無い場合も、下の textarea 直書きに落ちられるようにする。
+            var editor = typeof tinymce !== 'undefined' ? tinymce.get('description') : null;
             if (editor) {
                 editor.setContent(content);
             } else {

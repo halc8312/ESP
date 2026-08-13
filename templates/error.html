@@ -9,11 +9,37 @@
 </head>
 
 <body class="login-page">
-    <div class="login-container" style="text-align: center;">
-        <h1 style="font-size: 3rem; margin-bottom: 0.5rem;">{{ code }}</h1>
-        <p style="color: #666; margin-bottom: 1.5rem;">{{ message }}</p>
-        <a href="/" style="color: #007bff; text-decoration: none;">トップページへ戻る</a>
-    </div>
+    <main class="login-container error-page">
+        <p class="error-page-code">{{ code }}</p>
+        <h1 class="error-page-message">{{ message }}</h1>
+
+        {# 深い階層で 404 や CSRF エラーに落ちると、ここにはナビゲーションが無い。
+           戻る手段と主要な行き先を置いて、行き止まりにしない。 #}
+        <div class="error-page-actions">
+            <button type="button" class="btn btn-secondary" id="errorPageBack">前のページへ戻る</button>
+            <a class="btn btn-primary" href="{{ url_for('index') }}">商品一覧へ</a>
+        </div>
+
+        <nav class="error-page-links" aria-label="主要ページ">
+            <a href="{{ url_for('scrape_form') }}">商品抽出</a>
+            <a href="{{ url_for('pricelist.pricelist_list') }}">価格表</a>
+            <a href="{{ url_for('main.guide') }}">はじめての方へ</a>
+        </nav>
+    </main>
+
+    <script>
+        (function () {
+            var backButton = document.getElementById('errorPageBack');
+            // 履歴が無い（直リンクや新しいタブ）ときに押しても何も起きないボタンは出さない。
+            if (window.history.length > 1) {
+                backButton.addEventListener('click', function () {
+                    window.history.back();
+                });
+            } else {
+                backButton.hidden = true;
+            }
+        })();
+    </script>
 </body>
 
 </html>

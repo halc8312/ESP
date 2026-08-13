@@ -3,6 +3,7 @@
 {% block title %}ゴミ箱{% endblock %}
 {% block header_title %}ゴミ箱{% endblock %}
 {% block body_class %}has-bottom-nav wrap-fluid{% endblock %}
+{% import "_money.html" as money %}
 
 {% block content %}
 <div class="page-header">
@@ -20,54 +21,52 @@
             全選択 (<span id="selectedCount">0</span>件)
         </label>
 
-        <button type="submit" formaction="{{ url_for('trash.trash_restore') }}"
-            style="background: #2e7d32; color: white; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer;">
+        <button type="submit" formaction="{{ url_for('trash.trash_restore') }}" class="btn btn-success">
             ♻️ 復元
         </button>
 
-        <button type="submit" formaction="{{ url_for('trash.trash_purge') }}"
-            onclick="return confirm('選択した商品を完全に削除しますか？この操作は取り消せません。')"
-            style="background: #c62828; color: white; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer;">
+        <button type="submit" formaction="{{ url_for('trash.trash_purge') }}" class="btn btn-danger"
+            data-confirm-title="商品の完全削除"
+            data-confirm-message="選択した商品をゴミ箱から完全に削除します。この操作は取り消せません。"
+            data-confirm-label="完全に削除する">
             ⚠️ 完全削除
         </button>
     </div>
 
     <div class="content-card">
-        <table class="product-table">
-            <thead>
-                <tr>
-                    <th style="width: 40px;"></th>
-                    <th>タイトル</th>
-                    <th>価格</th>
-                    <th>削除日</th>
-                    <th>残り日数</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in items %}
-                <tr>
-                    <td>
-                        <input type="checkbox" name="id" value="{{ item.id }}" class="item-checkbox"
-                            onchange="updateSelectedCount()">
-                    </td>
-                    <td>{{ item.custom_title or item.last_title }}</td>
-                    <td>
-                        {% if item.last_price %}
-                        ¥{{ "{:,}".format(item.last_price) }}
-                        {% endif %}
-                    </td>
-                    <td>{{ item.deleted_at | jst }}</td>
-                    <td>
-                        {% if item.days_remaining <= 7 %} <span style="color: #c62828; font-weight: bold;">{{
-                            item.days_remaining }}日</span>
-                            {% else %}
-                            <span style="color: #666;">{{ item.days_remaining }}日</span>
-                            {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="product-table">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;"><span class="visually-hidden">選択</span></th>
+                        <th>タイトル</th>
+                        <th class="num">価格</th>
+                        <th>削除日</th>
+                        <th>残り日数</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                    <tr>
+                        <td>
+                            <input type="checkbox" name="id" value="{{ item.id }}" class="item-checkbox"
+                                onchange="updateSelectedCount()">
+                        </td>
+                        <td>{{ item.custom_title or item.last_title }}</td>
+                        <td class="num">{{ money.cost(item.last_price) }}</td>
+                        <td>{{ item.deleted_at | jst }}</td>
+                        <td>
+                            {% if item.days_remaining <= 7 %} <span style="color: var(--danger-text); font-weight: bold;">{{
+                                item.days_remaining }}日</span>
+                                {% else %}
+                                <span style="color: #666;">{{ item.days_remaining }}日</span>
+                                {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
 </form>
 
