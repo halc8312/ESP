@@ -4635,6 +4635,19 @@ body.sidebar-open .scrape-progress-panel {
     --warning-color: #b45309;
     --info-color: #1d4ed8;
     --focus-ring: 0 0 0 3px rgba(0, 102, 204, 0.18);
+
+    /* 状態を伝える色。淡い面・枠・文字の3点で1組にして使う。
+       同じ「危険」が画面ごとに違う赤で出ていたのを、ここに集約している。
+       塗りつぶしのボタンやアイコンには --danger-color / --success-color を使う。 */
+    --success-surface: #ecfdf3;
+    --success-border: #bbf7d0;
+    --success-text: #166534;
+    --warning-surface: #fff8e8;
+    --warning-border: #f7d58b;
+    --warning-text: #9a6700;
+    --danger-surface: #fee2e2;
+    --danger-border: #fecaca;
+    --danger-text: #b91c1c;
 }
 
 :is(a, button, input, select, textarea, summary, [tabindex]):focus-visible {

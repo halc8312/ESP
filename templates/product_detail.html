@@ -93,15 +93,15 @@
     }
 
     .product-edit-status-chip.is-active {
-        background: #ecfdf3;
-        border-color: #bbf7d0;
-        color: #166534;
+        background: var(--success-surface);
+        border-color: var(--success-border);
+        color: var(--success-text);
     }
 
     .product-edit-status-chip.is-draft {
-        background: #fff8e8;
-        border-color: #f7d58b;
-        color: #9a6700;
+        background: var(--warning-surface);
+        border-color: var(--warning-border);
+        color: var(--warning-text);
     }
 
     .product-edit-dirty-chip.is-dirty {
@@ -217,7 +217,7 @@
     }
 
     .translation-panel-status[data-kind="error"] {
-        color: #b91c1c;
+        color: var(--danger-text);
     }
 
     .translation-panel-status[data-kind="success"] {
@@ -266,12 +266,12 @@
 
     .translation-status-badge.translation-status-succeeded {
         background: #dcfce7;
-        color: #166534;
+        color: var(--success-text);
     }
 
     .translation-status-badge.translation-status-failed {
-        background: #fee2e2;
-        color: #991b1b;
+        background: var(--danger-surface);
+        color: var(--danger-text);
     }
 
     .translation-status-badge.translation-status-applied {
@@ -325,10 +325,10 @@
 
     .translation-error {
         background: #fef2f2;
-        border: 1px solid #fecaca;
+        border: 1px solid var(--danger-border);
         border-radius: 8px;
         padding: 8px 10px;
-        color: #991b1b;
+        color: var(--danger-text);
         font-size: 0.82rem;
     }
 
@@ -453,7 +453,7 @@
     }
 
     .product-image-action-btn.delete {
-        background: #ef4444;
+        background: var(--danger-color);
         color: white;
     }
 
@@ -586,8 +586,8 @@
         margin-bottom: 16px;
         padding: 14px 16px;
         border-radius: 12px;
-        border: 1px solid #f7d58b;
-        background: #fff8e8;
+        border: 1px solid var(--warning-border);
+        background: var(--warning-surface);
         display: grid;
         gap: 8px;
     }
@@ -607,9 +607,9 @@
         margin-bottom: 16px;
         padding: 12px;
         border-radius: 6px;
-        border: 1px solid #ef9a9a;
-        background: #fce4ec;
-        color: #c62828;
+        border: 1px solid var(--danger-border);
+        background: var(--danger-surface);
+        color: var(--danger-text);
     }
 
     .field-helper-text {
@@ -714,13 +714,13 @@
         align-items: start;
         padding: 12px;
         border-radius: 12px;
-        background: #fff8e8;
-        border: 1px solid #f7d58b;
+        background: var(--warning-surface);
+        border: 1px solid var(--warning-border);
     }
 
     .product-edit-checklist-item.is-complete {
-        background: #ecfdf3;
-        border-color: #bbf7d0;
+        background: var(--success-surface);
+        border-color: var(--success-border);
     }
 
     .product-edit-check-icon {
@@ -802,15 +802,15 @@
     }
 
     .variant-generation-summary.is-success {
-        border-color: #bbf7d0;
-        background: #ecfdf3;
-        color: #166534;
+        border-color: var(--success-border);
+        background: var(--success-surface);
+        color: var(--success-text);
     }
 
     .variant-generation-summary.is-error {
-        border-color: #fecaca;
+        border-color: var(--danger-border);
         background: #fff1f2;
-        color: #b91c1c;
+        color: var(--danger-text);
     }
 
     .product-edit-readonly {
@@ -1100,15 +1100,15 @@
     }
 
     .product-edit-header-readiness[data-ready="ok"] {
-        background: #ecfdf3;
-        border-color: #bbf7d0;
-        color: #166534;
+        background: var(--success-surface);
+        border-color: var(--success-border);
+        color: var(--success-text);
     }
 
     .product-edit-header-readiness[data-ready="todo"] {
-        background: #fff8e8;
-        border-color: #f7d58b;
-        color: #9a6700;
+        background: var(--warning-surface);
+        border-color: var(--warning-border);
+        color: var(--warning-text);
     }
 
     @media (min-width: 1024px) {
@@ -1162,7 +1162,7 @@
     }
 
     .product-edit-checklist-popover li.is-complete {
-        color: #166534;
+        color: var(--success-text);
     }
 
     .product-edit-checklist-popover .product-edit-check-icon {
@@ -1173,17 +1173,17 @@
         min-width: 22px;
         height: 22px;
         border-radius: 999px;
-        background: #fff8e8;
-        color: #9a6700;
-        border: 1px solid #f7d58b;
+        background: var(--warning-surface);
+        color: var(--warning-text);
+        border: 1px solid var(--warning-border);
         font-size: 0.7rem;
         font-weight: 700;
     }
 
     .product-edit-checklist-popover li.is-complete .product-edit-check-icon {
-        background: #ecfdf3;
-        color: #166534;
-        border-color: #bbf7d0;
+        background: var(--success-surface);
+        color: var(--success-text);
+        border-color: var(--success-border);
     }
 
     .product-edit-checklist-popover .product-edit-check-content {

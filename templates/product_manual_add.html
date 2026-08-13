@@ -13,9 +13,9 @@
 </div>
 
 {% if errors %}
-<div class="content-card" style="border-color: var(--danger-color, #c62828); margin-bottom: 20px;">
+<div class="content-card" style="border-color: var(--danger-color); margin-bottom: 20px;">
     <div class="content-card-body">
-        <strong style="display: block; margin-bottom: 8px; color: #c62828;">入力内容を確認してください</strong>
+        <strong style="display: block; margin-bottom: 8px; color: var(--danger-text);">入力内容を確認してください</strong>
         <ul style="margin: 0; padding-left: 18px;">
             {% for error in errors %}
             <li>{{ error }}</li>

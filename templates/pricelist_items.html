@@ -101,9 +101,9 @@
                             <td class="num">{{ money.profit(item.product.last_price, item.display_price) }}</td>
                             <td>
                                 {% if item.total_stock > 0 %}
-                                <span style="color: #22c55e; font-weight: 600;">{{ item.total_stock }}</span>
+                                <span style="color: var(--success-color); font-weight: 600;">{{ item.total_stock }}</span>
                                 {% else %}
-                                <span style="color: #ef4444;">0</span>
+                                <span style="color: var(--danger-color);">0</span>
                                 {% endif %}
                             </td>
                             <td>

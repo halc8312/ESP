@@ -539,3 +539,139 @@ class TestCatalogAnnouncesItself:
         # aria-label wins over title, so the script must update both.
         assert "toggleBtn.setAttribute('aria-label', nextLabel)" in source
         assert "aria-pressed" in source
+
+
+class TestCatalogPriceFilterFollowsCurrency:
+    """
+    Min/Max always compared against the raw yen price. A viewer looking at
+    $45 who typed 50 got everything under ¥50 — an empty catalog — with no
+    hint that the box wanted yen.
+    """
+
+    def test_filter_converts_the_typed_amount(self):
+        source = _read("templates/catalog.html")
+
+        assert "function toJpyFilterValue(" in source
+        assert "toJpyFilterValue(minPriceRaw)" in source
+        assert "toJpyFilterValue(maxPriceRaw)" in source
+
+    def test_heading_shows_the_active_currency(self):
+        source = _read("templates/catalog.html")
+
+        assert "function syncPriceFilterHeading(" in source
+        assert "'Price (' + getSelectedCurrency() + ')'" in source
+
+    def test_switching_currency_refilters(self):
+        source = _read("templates/catalog.html")
+        start = source.index("function switchCurrency(")
+        body = source[start:source.index("function formatPriceFromJpy(", start)]
+
+        assert "syncPriceFilterHeading();" in body
+        assert "filterProducts();" in body
+
+    def test_currency_choice_is_remembered(self):
+        source = _read("templates/catalog.html")
+
+        assert "CURRENCY_STORAGE_KEY" in source
+        assert "storeCurrency(event.target.value)" in source
+        # A stored pick must beat the geo guess.
+        assert "offered.indexOf(stored) !== -1 ? stored : detectViewerCurrency()" in source
+
+    def test_rate_badge_uses_one_format(self):
+        source = _read("templates/catalog.html")
+
+        # "Rate: 1 USD = ..." vs "1 USD = ..." depending on which path ran.
+        assert "Rate: 1 " not in source
+        assert source.count("1 USD = ¥$") == 3
+
+    def test_japanese_fallback_titles_are_marked(self):
+        source = _read("templates/catalog.html")
+
+        assert '{% if not item.title_en %} lang="ja"{% endif %}' in source
+        assert 'id="modalTitle" class="modal-product-title" lang="ja"' in source
+
+
+class TestSemanticColoursComeFromTokens:
+    """
+    The same "this is dangerous" red was written four different ways across
+    the templates, so a destructive action looked different per screen.
+    """
+
+    SEMANTIC_TOKENS = (
+        "--success-surface", "--success-border", "--success-text",
+        "--warning-surface", "--warning-border", "--warning-text",
+        "--danger-surface", "--danger-border", "--danger-text",
+    )
+
+    # Retired literals, mapped onto the tokens above.
+    RETIRED = (
+        "#c62828", "#b91c1c", "#991b1b", "#ef4444", "#fce4ec", "#ef9a9a",
+        "#fecaca", "#ffebee", "#fee2e2", "#2e7d32", "#166534", "#bbf7d0",
+        "#ecfdf3", "#e8f5e9", "#a5d6a7", "#81c784", "#9a6700", "#e65100",
+        "#fff8e1", "#ffe08a", "#fff8e8", "#f7d58b", "#22c55e",
+    )
+
+    def test_tokens_are_defined(self):
+        css = _read("static/css/style.css")
+
+        for token in self.SEMANTIC_TOKENS:
+            assert f"{token}:" in css, token
+
+    def test_no_template_still_spells_a_status_colour_by_hand(self):
+        offenders = {}
+        for path in sorted(TEMPLATES.glob("*.html")):
+            text = path.read_text(encoding="utf-8").lower()
+            found = [literal for literal in self.RETIRED if literal in text]
+            if found:
+                offenders[path.name] = found
+
+        assert offenders == {}, f"semantic colours written as literals: {offenders}"
+
+
+class TestHardcodedColourRatchet:
+    """
+    164 decorative literals remain and replacing them wholesale would be an
+    unreviewable diff. This does not require fixing them — it stops new ones
+    arriving, so the number can only go down.
+    """
+
+    # Per-file ceilings. Lower a number when you tokenise; never raise one.
+    CEILINGS = {
+        "archive.html": 2,
+        "import.html": 9,
+        "pricelist_add_products.html": 4,
+        "pricelist_analytics.html": 16,
+        "pricelist_edit.html": 26,
+        "pricelist_items.html": 9,
+        "pricing.html": 2,
+        "product_detail.html": 90,
+        "scrape_result.html": 2,
+        "trash.html": 4,
+    }
+
+    @staticmethod
+    def _count(path):
+        return len(re.findall(r"#[0-9a-fA-F]{3,8}\b", path.read_text(encoding="utf-8")))
+
+    def test_no_file_gains_hardcoded_colours(self):
+        regressions = {}
+        for path in sorted(TEMPLATES.glob("*.html")):
+            count = self._count(path)
+            ceiling = self.CEILINGS.get(path.name, 0)
+            if count > ceiling:
+                regressions[path.name] = f"{count} > {ceiling}"
+
+        assert regressions == {}, (
+            "hardcoded colours increased — use a token from :root instead: "
+            f"{regressions}"
+        )
+
+    def test_ceilings_do_not_drift_above_reality(self):
+        """A ceiling left too high after cleanup stops catching regressions."""
+        stale = {}
+        for name, ceiling in self.CEILINGS.items():
+            actual = self._count(TEMPLATES / name)
+            if actual < ceiling:
+                stale[name] = f"ceiling {ceiling}, actually {actual}"
+
+        assert stale == {}, f"lower these ceilings to lock in the cleanup: {stale}"
