@@ -67,10 +67,10 @@
                     <span class="filter-control-heading" id="priceRangeHeading">Price (JPY)</span>
                     <div class="price-range-inputs" role="group" aria-labelledby="priceRangeHeading">
                         <input type="number" id="priceMin" min="0" placeholder="Min"
-                            aria-label="Minimum price in Japanese yen">
+                            aria-label="Minimum price in JPY">
                         <span class="price-range-separator">-</span>
                         <input type="number" id="priceMax" min="0" placeholder="Max"
-                            aria-label="Maximum price in Japanese yen">
+                            aria-label="Maximum price in JPY">
                     </div>
                 </div>
                 <div class="filter-control">
@@ -336,10 +336,19 @@
 
         // 見出しに単位を出しておかないと、数字が何の通貨なのか分からない。
         function syncPriceFilterHeading() {
+            const currency = getSelectedCurrency();
             const heading = document.getElementById('priceRangeHeading');
             if (heading) {
-                heading.textContent = 'Price (' + getSelectedCurrency() + ')';
+                heading.textContent = 'Price (' + currency + ')';
             }
+
+            const bounds = [['priceMin', 'Minimum'], ['priceMax', 'Maximum']];
+            bounds.forEach(function (entry) {
+                const input = document.getElementById(entry[0]);
+                if (input) {
+                    input.setAttribute('aria-label', entry[1] + ' price in ' + currency);
+                }
+            });
         }
 
         function filterProducts() {

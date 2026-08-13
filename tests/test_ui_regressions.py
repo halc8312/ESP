@@ -559,7 +559,18 @@ class TestCatalogPriceFilterFollowsCurrency:
         source = _read("templates/catalog.html")
 
         assert "function syncPriceFilterHeading(" in source
-        assert "'Price (' + getSelectedCurrency() + ')'" in source
+        assert "'Price (' + currency + ')'" in source
+
+    def test_input_labels_follow_the_currency_too(self):
+        """
+        The heading switched to Price (USD) while the inputs' aria-labels
+        still said "in Japanese yen", so the screen reader disagreed with
+        the screen.
+        """
+        source = _read("templates/catalog.html")
+
+        assert "in Japanese yen" not in source
+        assert "' price in ' + currency" in source
 
     def test_switching_currency_refilters(self):
         source = _read("templates/catalog.html")
