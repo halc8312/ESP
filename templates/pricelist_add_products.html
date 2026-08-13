@@ -16,8 +16,8 @@
     <div class="content-card-body">
         <form method="GET" style="display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap;">
             <div class="filter-group" style="flex: 1; min-width: 200px;">
-                <label>🔍 キーワード検索</label>
-                <input type="text" name="search" value="{{ search }}" placeholder="商品名で検索...">
+                <label for="pricelist_search">🔍 キーワード検索</label>
+                <input type="text" id="pricelist_search" name="search" value="{{ search }}" placeholder="商品名で検索...">
             </div>
             <button type="submit" style="height: 38px;">検索</button>
         </form>

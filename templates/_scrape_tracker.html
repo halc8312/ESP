@@ -6,8 +6,11 @@
     data-dismiss-batch-url="{{ url_for('api.dismiss_scrape_jobs') }}"
     data-user-id="{{ current_user.id }}"
     hidden
-    aria-live="polite"
 >
+    <!-- 読み上げはここだけが担当する。カードは2秒ごとに経過秒数が変わるので、
+         カード自体を live region にすると延々と読み上げ続けることになる。 -->
+    <p id="globalScrapeTrackerStatus" class="visually-hidden" role="status" aria-live="polite"></p>
+
     <button
         type="button"
         id="globalScrapeTrackerPill"
@@ -44,12 +47,11 @@
         aria-modal="false"
         aria-hidden="true"
     >
+        <!-- ここに role="button" を付けると、中の2つの <button> がボタンの入れ子になり
+             支援技術から届かなくなる。閉じる操作は「閉じる」ボタンとバックドロップが担当する。 -->
         <div
             id="globalScrapeTrackerSheetHeader"
             class="global-scrape-tracker-sheet-header"
-            role="button"
-            tabindex="0"
-            aria-label="商品抽出状況を閉じる"
         >
             <div class="global-scrape-tracker-sheet-handle"></div>
             <div class="global-scrape-tracker-sheet-title-row">

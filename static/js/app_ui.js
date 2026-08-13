@@ -497,6 +497,22 @@
         });
     }
 
+    // TinyMCE は CDN 配信なので、読み込みに失敗することがある。素の tinymce.init を
+    // 直接呼ぶと ReferenceError で以降の初期化がまとめて止まるため、ここで受け止めて
+    // 「エディタは出ないが textarea としては使える」ことを伝える。
+    function initRichText(options) {
+        if (typeof window.tinymce === "undefined") {
+            toast("リッチテキスト編集を読み込めませんでした。書式なしの入力欄として使えます。", {
+                type: "warning",
+                duration: 8000
+            });
+            return false;
+        }
+
+        window.tinymce.init(options);
+        return true;
+    }
+
     function handleFlashToasts() {
         ensureToastViewport().querySelectorAll(".esp-toast").forEach(function (toastNode) {
             var closeButton = toastNode.querySelector(".esp-toast-close");
@@ -607,6 +623,7 @@
         confirm: confirmDialog,
         copyText: copyText,
         hideLoading: hideLoading,
+        initRichText: initRichText,
         prompt: promptDialog,
         setButtonBusy: setButtonBusy,
         showDialog: showDialog,

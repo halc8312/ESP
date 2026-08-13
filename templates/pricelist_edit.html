@@ -54,8 +54,8 @@
 
             {% set list_type_value = selected_list_type or 'permanent' %}
             <div class="form-group">
-                <label>このリストの使い方</label>
-                <div class="list-type-choices choice-grid">
+                <span class="field-group-heading" id="list-type-heading">このリストの使い方</span>
+                <div class="list-type-choices choice-grid" role="group" aria-labelledby="list-type-heading">
                     <label class="list-type-choice{% if list_type_value == 'permanent' %} is-selected{% endif %}">
                         <input type="radio" name="list_type" value="permanent"
                             {% if list_type_value == 'permanent' %}checked{% endif %}>
@@ -89,8 +89,8 @@
             <input type="hidden" name="currency_rate" value="{{ currency_rate_value }}">
 
             <div class="form-group">
-                <label>画面の色</label>
-                <div class="choice-grid">
+                <span class="field-group-heading" id="theme-heading">画面の色</span>
+                <div class="choice-grid" role="group" aria-labelledby="theme-heading">
                     <label
                         style="display: block; border: 1px solid {% if theme_value == 'dark' %}#f4b183{% else %}#d9dde3{% endif %}; background: {% if theme_value == 'dark' %}#1f2430{% else %}#fff{% endif %}; color: {% if theme_value == 'dark' %}#fff{% else %}inherit{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
                         <input type="radio" name="theme" value="dark" {% if theme_value == 'dark' %}checked{% endif %}>
@@ -107,8 +107,8 @@
             </div>
 
             <div class="form-group">
-                <label>商品の見せ方</label>
-                <div class="choice-grid">
+                <span class="field-group-heading" id="layout-heading">商品の見せ方</span>
+                <div class="choice-grid" role="group" aria-labelledby="layout-heading">
                     <label
                         style="display: block; border: 1px solid {% if layout_value == 'grid' %}#90caf9{% else %}#d9dde3{% endif %}; background: {% if layout_value == 'grid' %}#e3f2fd{% else %}#fff{% endif %}; border-radius: 10px; padding: 14px; cursor: pointer;">
                         <input type="radio" name="layout" value="grid" {% if layout_value == 'grid' %}checked{% endif %}>
@@ -132,7 +132,7 @@
 
             <div class="form-group"
                 style="background: #e8f5e9; padding: 14px; border-radius: 6px; border: 1px solid #a5d6a7;">
-                <label style="margin-bottom: 4px; font-weight: 600;">💱 為替レート</label>
+                <span class="field-group-heading" style="margin-bottom: 4px; font-weight: 600;">💱 為替レート</span>
                 <p style="font-size: 13px; color: #2e7d32; margin: 0;">
                     顧客がカタログを開くと、その時点の為替レートを自動で反映します。<br>
                     最新レートを確認できない場合も、保存済みのレートで表示を続けます。
@@ -177,7 +177,7 @@
             </div>
 
             <div class="form-group" style="background: #f5f5f5; padding: 12px; border-radius: 6px;">
-                <label>公開URL:</label>
+                <span class="field-group-heading">公開URL:</span>
                 <code
                     style="word-break: break-all; font-size: 13px;">{{ request.host_url }}catalog/{{ pricelist.token }}</code>
             </div>
@@ -247,7 +247,7 @@
         });
         syncDeadlineEmphasis();
 
-        tinymce.init({
+        window.ESPUI.initRichText({
             selector: '#notes',
             menubar: false,
             plugins: 'lists link',

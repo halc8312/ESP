@@ -64,11 +64,13 @@
                     </select>
                 </div>
                 <div class="filter-control">
-                    <label>Price</label>
-                    <div class="price-range-inputs">
-                        <input type="number" id="priceMin" placeholder="Min">
+                    <span class="filter-control-heading" id="priceRangeHeading">Price (JPY)</span>
+                    <div class="price-range-inputs" role="group" aria-labelledby="priceRangeHeading">
+                        <input type="number" id="priceMin" min="0" placeholder="Min"
+                            aria-label="Minimum price in Japanese yen">
                         <span class="price-range-separator">-</span>
-                        <input type="number" id="priceMax" placeholder="Max">
+                        <input type="number" id="priceMax" min="0" placeholder="Max"
+                            aria-label="Maximum price in Japanese yen">
                     </div>
                 </div>
                 <div class="filter-control">
@@ -394,17 +396,41 @@
 
         const DECIMALS = { 'JPY': 0, 'KRW': 0 };
 
+        const RATE_FETCH_TIMEOUT_MS = 5000;
+
+        // レートが揃うまで通貨セレクタは操作できない（switchCurrency が先頭で return する）。
+        // 見た目だけ操作できるより、待っていることが分かるほうが親切。
+        function setCurrencySelectorReady(ready) {
+            const select = document.getElementById('currencySelect');
+            if (!select) {
+                return;
+            }
+            select.disabled = !ready;
+            select.title = ready ? '' : 'Loading exchange rates...';
+        }
+
         async function fetchLiveRates() {
             const rateDisplay = document.getElementById('rateDisplay');
             rateDisplay.textContent = '⏳ Updating exchange rates...';
 
+            // タイムアウトが無いと、API が「エラーも返さず黙る」場合に catch も
+            // fallback も走らない。バッジは ⏳ のまま固定され、ratesReady が false の
+            // ままなので通貨セレクタが永久に無反応になる。
+            const controller = new AbortController();
+            const timeoutId = window.setTimeout(function () {
+                controller.abort();
+            }, RATE_FETCH_TIMEOUT_MS);
+
             try {
-                const resp = await fetch('https://open.er-api.com/v6/latest/JPY');
+                const resp = await fetch('https://open.er-api.com/v6/latest/JPY', {
+                    signal: controller.signal
+                });
                 const data = await resp.json();
 
                 if (data.result === 'success' && data.rates) {
                     RATES_FROM_JPY = data.rates;
                     ratesReady = true;
+                    setCurrencySelectorReady(true);
                     const jpyPerUsd = 1 / data.rates['USD'];
                     rateDisplay.textContent = `1 USD = ¥${Math.round(jpyPerUsd)}`;
                     const rateSource = document.getElementById('rateSource');
@@ -416,6 +442,8 @@
                 }
             } catch (e) {
                 console.warn('API rate fetch failed, using fallback:', e);
+            } finally {
+                window.clearTimeout(timeoutId);
             }
 
             useFallbackRates();
@@ -434,6 +462,7 @@
                 'KRW': 1350 / jpyRate
             };
             ratesReady = true;
+            setCurrencySelectorReady(true);
             const rateDisplay = document.getElementById('rateDisplay');
             rateDisplay.textContent = `1 USD = ¥${Math.round(jpyRate)}`;
             const rateSource = document.getElementById('rateSource');
@@ -780,6 +809,7 @@
 
         document.addEventListener('DOMContentLoaded', function () {
             applyPersistedTheme();
+            setCurrencySelectorReady(false);
             fetchLiveRates();
             applySort();
             updateResultsSummary();

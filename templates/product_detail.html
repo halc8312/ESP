@@ -1742,19 +1742,19 @@
                             <p class="text-small text-muted mb-1">カンマ区切りで入力してください（例: S, M, L）。「生成」を押すと既存行を残したまま候補を追加します。</p>
                             <div class="bulk-generator">
                                 <div class="filter-group">
-                                    <label>オプション1の値（例: 赤, 青, 白）</label>
+                                    <label for="bulk_opt1">オプション1の値（例: 赤, 青, 白）</label>
                                     <input type="text" id="bulk_opt1" placeholder="例: Red, Blue">
                                 </div>
                                 <div class="filter-group">
-                                    <label>オプション2の値（例: S, M, L）</label>
+                                    <label for="bulk_opt2">オプション2の値（例: S, M, L）</label>
                                     <input type="text" id="bulk_opt2" placeholder="例: S, M, L">
                                 </div>
                                 <div class="filter-group">
-                                    <label>共通の販売価格（円）</label>
+                                    <label for="bulk_price">共通の販売価格（円）</label>
                                     <input type="number" id="bulk_price" placeholder="">
                                 </div>
                                 <div class="filter-group">
-                                    <label>SKU接頭辞（例: MY-ITEM-）</label>
+                                    <label for="bulk_sku">SKU接頭辞（例: MY-ITEM-）</label>
                                     <input type="text" id="bulk_sku" placeholder="MER-ITEM-">
                                 </div>
                             </div>
@@ -1765,17 +1765,17 @@
 
                     <div class="option-names-section">
                         <div class="filter-group">
-                            <label>オプション1の名前（例: 色）</label>
-                            <input type="text" name="option1_name" value="{{ product.option1_name or 'Title' }}">
+                            <label for="option1_name">オプション1の名前（例: 色）</label>
+                            <input type="text" id="option1_name" name="option1_name" value="{{ product.option1_name or 'Title' }}">
                         </div>
                         <div class="filter-group">
-                            <label>オプション2の名前（例: サイズ）</label>
-                            <input type="text" name="option2_name" value="{{ product.option2_name or '' }}"
+                            <label for="option2_name">オプション2の名前（例: サイズ）</label>
+                            <input type="text" id="option2_name" name="option2_name" value="{{ product.option2_name or '' }}"
                                 placeholder="(例: Size)">
                         </div>
                         <div class="filter-group">
-                            <label>オプション3の名前</label>
-                            <input type="text" name="option3_name" value="{{ product.option3_name or '' }}">
+                            <label for="option3_name">オプション3の名前</label>
+                            <input type="text" id="option3_name" name="option3_name" value="{{ product.option3_name or '' }}">
                         </div>
                     </div>
                     <p class="field-helper-text">例: 色 / サイズ / 状態。1つしか使わない場合は項目名1だけでも大丈夫です。</p>
@@ -2023,7 +2023,7 @@
     var formDirty = false;
 
     document.addEventListener('DOMContentLoaded', function () {
-        tinymce.init({
+        window.ESPUI.initRichText({
             selector: '#description, #description_en',
             menubar: false,
             plugins: 'lists link',
@@ -3107,7 +3107,8 @@
         var select = document.getElementById('template');
         var content = select.value;
         if (content) {
-            var editor = tinymce.get('description');
+            // tinymce 自体が無い場合も、下の textarea 直書きに落ちられるようにする。
+            var editor = typeof tinymce !== 'undefined' ? tinymce.get('description') : null;
             if (editor) {
                 editor.setContent(content);
             } else {

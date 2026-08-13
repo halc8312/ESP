@@ -41,7 +41,10 @@
                         <form method="POST" action="{{ url_for('delete_template', template_id=t.id) }}"
                             style="display:inline;">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                            <button type="submit" onclick="return confirm('本当に削除しますか？');" class="btn-danger">削除</button>
+                            <button type="submit" class="btn btn-danger"
+                                data-confirm-title="テンプレートの削除"
+                                data-confirm-message="「{{ t.name }}」を削除します。この操作は取り消せません。"
+                                data-confirm-label="削除する">削除</button>
                         </form>
                         {% endif %}
                     </td>
@@ -61,11 +64,11 @@
         <form method="POST" action="{{ url_for('manage_templates') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="form-group">
-                <label>テンプレート名</label>
-                <input type="text" name="name" required>
+                <label for="template_name">テンプレート名</label>
+                <input type="text" id="template_name" name="name" required>
             </div>
             <div class="form-group">
-                <label>テンプレート内容</label>
+                <label for="template_content">テンプレート内容</label>
                 <textarea id="template_content" name="content" rows="8" required style="width: 100%;"></textarea>
             </div>
             <div class="form-group">
@@ -81,7 +84,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tinymce/6.8.3/tinymce.min.js" referrerpolicy="origin"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
-        tinymce.init({
+        window.ESPUI.initRichText({
             selector: '#template_content',
             menubar: false,
             plugins: 'lists link',
