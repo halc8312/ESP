@@ -5283,11 +5283,30 @@ body.product-edit-page .sticky-save-container {
     margin: 0;
 }
 
+/*
+ * Six children: name, logo URL, Instagram, logo file, preview, submit.
+ * The Instagram field was added without widening this, so the file input
+ * landed in the 96px preview column and its button was clipped. The columns
+ * are named here so a seventh field cannot quietly do the same again.
+ */
 .shop-form-grid {
     display: grid;
-    grid-template-columns: minmax(200px, 1fr) minmax(240px, 1.4fr) minmax(220px, 1fr) 96px auto;
+    grid-template-columns:
+        [name] minmax(180px, 1fr)
+        [logo-url] minmax(200px, 1.2fr)
+        [instagram] minmax(190px, 1fr)
+        [logo-file] minmax(190px, 1fr)
+        [preview] 96px
+        [submit] auto;
     gap: 10px;
     align-items: start;
+}
+
+/* Between tablet and desktop the six columns no longer fit side by side. */
+@media (min-width: 768px) and (max-width: 1279px) {
+    .shop-form-grid {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 96px auto;
+    }
 }
 
 .shop-logo-preview {

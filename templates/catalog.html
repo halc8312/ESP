@@ -398,8 +398,17 @@
             const rateDisplay = document.getElementById('rateDisplay');
             rateDisplay.textContent = '⏳ Updating exchange rates...';
 
+            // The shop's own rates are already on the page, so the switcher
+            // works from the first moment. Without this the currency menu does
+            // nothing at all until the outside lookup answers — and on a
+            // network where it never answers, it stays dead and the page keeps
+            // saying it is updating.
+            useFallbackRates();
+
             try {
-                const resp = await fetch('https://open.er-api.com/v6/latest/JPY');
+                const resp = await fetch('https://open.er-api.com/v6/latest/JPY', {
+                    signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined
+                });
                 const data = await resp.json();
 
                 if (data.result === 'success' && data.rates) {
@@ -412,6 +421,10 @@
                         rateSource.textContent = 'Exchange rates updated';
                     }
                     applyViewerCurrency();
+                    // Prices are already on screen, converted with the shop's
+                    // rates; redraw them so the fresher numbers are the ones
+                    // the customer reads.
+                    switchCurrency(currentCurrency());
                     return;
                 }
             } catch (e) {
