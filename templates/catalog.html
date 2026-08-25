@@ -742,11 +742,36 @@
             SI: 'EUR', SK: 'EUR'
         };
 
+        // Languages spoken in one place, so the tag alone names the currency.
+        // English, Spanish, Chinese and the rest are deliberately absent: they
+        // span several currencies and guessing would be worse than asking.
+        const LANGUAGE_CURRENCY = { ja: 'JPY', ko: 'KRW' };
+
+        // Last resort, for a browser whose languages say nothing about where
+        // the reader is.
+        const ZONE_CURRENCY = {
+            'Asia/Tokyo': 'JPY', 'Asia/Seoul': 'KRW', 'Asia/Shanghai': 'CNY'
+        };
+
+        function regionOf(locale) {
+            try {
+                return new Intl.Locale(locale).region || '';
+            } catch (_error) {
+                // Older browsers: fall back to the tag's own suffix.
+                const parts = String(locale).split('-');
+                return parts.length > 1 ? parts[parts.length - 1] : '';
+            }
+        }
+
         function detectViewerCurrency() {
             const offered = new Set(
                 Array.from(document.querySelectorAll('#currencySelect option'))
                     .map(function (option) { return option.value; })
             );
+            const usable = function (currency) {
+                return currency && offered.has(currency) ? currency : '';
+            };
+
             const locales = navigator.languages && navigator.languages.length
                 ? navigator.languages
                 : [navigator.language];
@@ -755,19 +780,31 @@
                 if (!locale) {
                     continue;
                 }
-                let region = '';
-                try {
-                    region = new Intl.Locale(locale).region || '';
-                } catch (_error) {
-                    // Older browsers: fall back to the tag's own suffix.
-                    const parts = String(locale).split('-');
-                    region = parts.length > 1 ? parts[parts.length - 1] : '';
+                // Each tag is settled on its own before moving down the list.
+                // Reading only the region used to skip "ja" — which carries no
+                // country — and land on a later "en-US", showing dollars to a
+                // Japanese browser whose first choice was Japanese.
+                const byRegion = usable(REGION_CURRENCY[regionOf(locale).toUpperCase()]);
+                if (byRegion) {
+                    return byRegion;
                 }
-                const currency = REGION_CURRENCY[String(region).toUpperCase()];
-                if (currency && offered.has(currency)) {
-                    return currency;
+                const language = String(locale).split('-')[0].toLowerCase();
+                const byLanguage = usable(LANGUAGE_CURRENCY[language]);
+                if (byLanguage) {
+                    return byLanguage;
                 }
             }
+
+            try {
+                const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                const byZone = usable(ZONE_CURRENCY[zone]);
+                if (byZone) {
+                    return byZone;
+                }
+            } catch (_error) {
+                // No timezone to read; the default below still applies.
+            }
+
             return 'JPY';
         }
 
