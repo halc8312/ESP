@@ -73,6 +73,10 @@ _SITE_HOSTS = {
         "search": ("snkrdunk.com", "www.snkrdunk.com"),
         "detail": ("snkrdunk.com", "www.snkrdunk.com"),
     },
+    "recordcity": {
+        "search": ("recordcity.jp", "www.recordcity.jp"),
+        "detail": ("recordcity.jp", "www.recordcity.jp"),
+    },
 }
 
 
@@ -159,6 +163,9 @@ def _is_detail_path(site: str, host: str, path: str) -> bool:
         return "/auction/" in normalized_path
     if site == "snkrdunk":
         return normalized_path.startswith("/products/")
+    if site == "recordcity":
+        # /catalog/4936480, and the /ja/... form the site redirects to.
+        return bool(re.fullmatch(r"/(?:[a-z]{2}/)?catalog/\d+/?", normalized_path))
     return False
 
 
@@ -527,6 +534,13 @@ _NO_RESULTS_MARKERS = {
         "該当の商品がありません",
         "商品が見つかりませんでした",
         "no products found",
+    ),
+    "recordcity": (
+        "該当する商品がありません",
+        "該当の商品がありません",
+        "検索結果がありません",
+        "商品が見つかりませんでした",
+        "0件",
     ),
 }
 

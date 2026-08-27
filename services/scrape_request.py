@@ -24,6 +24,7 @@ SITE_LABELS = {
     "offmall": "オフモール",
     "yahuoku": "ヤフオク",
     "snkrdunk": "SNKRDUNK",
+    "recordcity": "レコードシティ",
     # Products read from a site outside the supported marketplaces.
     "other": "その他のサイト",
 }
@@ -36,6 +37,9 @@ SEARCH_DEPTH_RULES = {
     "offmall": {"window": 24, "base": 2, "min": 3, "max": 8},
     "yahuoku": {"window": 24, "base": 2, "min": 3, "max": 8},
     "snkrdunk": {"window": 20, "base": 2, "min": 3, "max": 8},
+    # The catalog pages carry about 100 links, so one page usually covers a
+    # request and depth only matters for the larger counts.
+    "recordcity": {"window": 100, "base": 1, "min": 2, "max": 6},
 }
 
 

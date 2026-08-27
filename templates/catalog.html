@@ -462,9 +462,15 @@
             const rateDisplay = document.getElementById('rateDisplay');
             rateDisplay.textContent = '⏳ Updating exchange rates...';
 
-            // タイムアウトが無いと、API が「エラーも返さず黙る」場合に catch も
-            // fallback も走らない。バッジは ⏳ のまま固定され、ratesReady が false の
-            // ままなので通貨セレクタが永久に無反応になる。
+            // The shop's own rates are already on the page, so the switcher
+            // works from the first moment rather than being disabled while the
+            // outside lookup runs — and on a network where that lookup never
+            // answers at all, the menu still works instead of staying dead.
+            useFallbackRates();
+
+            // The timeout stays even so: without it, an API that goes quiet
+            // without erroring never reaches the catch, and the badge would sit
+            // on ⏳ for as long as the customer looked at the page.
             const controller = new AbortController();
             const timeoutId = window.setTimeout(function () {
                 controller.abort();
@@ -487,6 +493,10 @@
                         rateSource.textContent = 'Exchange rates updated';
                     }
                     applyViewerCurrency();
+                    // Prices are already on screen, converted with the shop's
+                    // rates; redraw them so the fresher numbers are the ones
+                    // the customer reads.
+                    switchCurrency(currentCurrency());
                     return;
                 }
             } catch (e) {
@@ -814,11 +824,36 @@
             SI: 'EUR', SK: 'EUR'
         };
 
+        // Languages spoken in one place, so the tag alone names the currency.
+        // English, Spanish, Chinese and the rest are deliberately absent: they
+        // span several currencies and guessing would be worse than asking.
+        const LANGUAGE_CURRENCY = { ja: 'JPY', ko: 'KRW' };
+
+        // Last resort, for a browser whose languages say nothing about where
+        // the reader is.
+        const ZONE_CURRENCY = {
+            'Asia/Tokyo': 'JPY', 'Asia/Seoul': 'KRW', 'Asia/Shanghai': 'CNY'
+        };
+
+        function regionOf(locale) {
+            try {
+                return new Intl.Locale(locale).region || '';
+            } catch (_error) {
+                // Older browsers: fall back to the tag's own suffix.
+                const parts = String(locale).split('-');
+                return parts.length > 1 ? parts[parts.length - 1] : '';
+            }
+        }
+
         function detectViewerCurrency() {
             const offered = new Set(
                 Array.from(document.querySelectorAll('#currencySelect option'))
                     .map(function (option) { return option.value; })
             );
+            const usable = function (currency) {
+                return currency && offered.has(currency) ? currency : '';
+            };
+
             const locales = navigator.languages && navigator.languages.length
                 ? navigator.languages
                 : [navigator.language];
@@ -827,19 +862,31 @@
                 if (!locale) {
                     continue;
                 }
-                let region = '';
-                try {
-                    region = new Intl.Locale(locale).region || '';
-                } catch (_error) {
-                    // Older browsers: fall back to the tag's own suffix.
-                    const parts = String(locale).split('-');
-                    region = parts.length > 1 ? parts[parts.length - 1] : '';
+                // Each tag is settled on its own before moving down the list.
+                // Reading only the region used to skip "ja" — which carries no
+                // country — and land on a later "en-US", showing dollars to a
+                // Japanese browser whose first choice was Japanese.
+                const byRegion = usable(REGION_CURRENCY[regionOf(locale).toUpperCase()]);
+                if (byRegion) {
+                    return byRegion;
                 }
-                const currency = REGION_CURRENCY[String(region).toUpperCase()];
-                if (currency && offered.has(currency)) {
-                    return currency;
+                const language = String(locale).split('-')[0].toLowerCase();
+                const byLanguage = usable(LANGUAGE_CURRENCY[language]);
+                if (byLanguage) {
+                    return byLanguage;
                 }
             }
+
+            try {
+                const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                const byZone = usable(ZONE_CURRENCY[zone]);
+                if (byZone) {
+                    return byZone;
+                }
+            } catch (_error) {
+                // No timezone to read; the default below still applies.
+            }
+
             return 'JPY';
         }
 
