@@ -16,7 +16,11 @@ import pytest
 
 import recordcity_db
 from services.scrape_request import InvalidTargetUrl, classify_target_url
-from services.scrape_safety import UnsafeScrapeUrlError, validate_marketplace_url
+from services.scrape_safety import (
+    ScrapeFailure,
+    UnsafeScrapeUrlError,
+    validate_marketplace_url,
+)
 
 
 LIVE_SAMPLE = {
@@ -210,28 +214,59 @@ class TestReadingOneRecord:
 
         assert result["price"] == 2420
 
-    def test_a_page_without_product_data_yields_nothing_usable(self, monkeypatch):
+    def test_a_page_without_product_data_says_so(self, monkeypatch):
         # What the WAF challenge page looks like: no structured data at all.
         _stub_fetch(monkeypatch, _FakePage(json_ld=[], text="challenge"))
 
-        result = recordcity_db.scrape_item_detail(
-            "https://www.recordcity.jp/catalog/4936480"
-        )
+        with pytest.raises(ScrapeFailure) as failure:
+            recordcity_db.scrape_item_detail(
+                "https://www.recordcity.jp/catalog/4936480"
+            )
 
-        assert result["title"] == ""
-        assert result["price"] is None
-        assert result["status"] == "error"
+        # "Could not be read" alone leaves the operator nothing to act on.
+        assert "ボット判定" in str(failure.value)
 
-    def test_unparsable_structured_data_does_not_raise(self, monkeypatch):
+    def test_unparsable_structured_data_names_the_parse_error(self, monkeypatch):
         broken = _FakePage()
         broken._scripts = [_FakeElement(text="{not json")]
         _stub_fetch(monkeypatch, broken)
 
+        with pytest.raises(ScrapeFailure) as failure:
+            recordcity_db.scrape_item_detail(
+                "https://www.recordcity.jp/catalog/4936480"
+            )
+
+        message = str(failure.value)
+        # Data present but unreadable is a different problem from data absent,
+        # and blaming the bot challenge here would send everyone looking in
+        # the wrong place.
+        assert "構造化データ" in message
+        assert "ボット判定" not in message
+
+    def test_a_second_readable_block_still_wins(self, monkeypatch):
+        # One malformed block should not hide a good one beside it.
+        page = _FakePage(json_ld=[LIVE_SAMPLE])
+        page._scripts = [_FakeElement(text="{not json")] + page._scripts
+        _stub_fetch(monkeypatch, page)
+
         result = recordcity_db.scrape_item_detail(
             "https://www.recordcity.jp/catalog/4936480"
         )
 
-        assert result["status"] == "error"
+        assert result["price"] == 2420
+
+    def test_the_reason_a_fetch_failed_travels_with_the_failure(self, monkeypatch):
+        def _explode(url, kind):
+            raise RuntimeError("browser pool exhausted")
+
+        monkeypatch.setattr(recordcity_db, "_fetch_page", _explode)
+
+        with pytest.raises(ScrapeFailure) as failure:
+            recordcity_db.scrape_item_detail(
+                "https://www.recordcity.jp/catalog/4936480"
+            )
+
+        assert "browser pool exhausted" in str(failure.value)
 
 
 def _listing_page(count, *, start=1):
@@ -282,6 +317,33 @@ class TestReadingAListing:
         assert len(results) == 1
         detail_calls = [url for url, kind in calls if kind == "detail"]
         assert detail_calls == ["https://www.recordcity.jp/catalog/4936480"]
+
+    def test_one_unreadable_record_does_not_lose_the_rest(self, monkeypatch):
+        # Detail failures now raise rather than return an empty result, so the
+        # listing has to keep going past one of them.
+        listing = _FakePage(
+            anchors=[
+                _FakeElement(attrib={"href": "/catalog/1"}),
+                _FakeElement(attrib={"href": "/catalog/2"}),
+            ],
+            text="2件",
+        )
+
+        def _pages(url):
+            if "?" in url:
+                return listing
+            if url.endswith("/catalog/1"):
+                return _FakePage(json_ld=[], text="challenge")
+            return _product_page()
+
+        _stub_fetch(monkeypatch, _pages)
+
+        results = recordcity_db.scrape_search_result(
+            "https://www.recordcity.jp/catalog?narrow_down_3=3", max_items=10
+        )
+
+        assert len(results) == 1
+        assert results[0]["price"] == 2420
 
     def test_the_same_record_listed_twice_is_read_once(self, monkeypatch):
         listing = _FakePage(

@@ -528,6 +528,10 @@ def fetch_dynamic(url: str, headless: bool = True, network_idle: bool = True, **
     normalized_url = validate_marketplace_url(url, site, kind=kind)
     timeout = max(1, int(kwargs.pop("timeout", 30000) or 30000))
     wait_selector = str(kwargs.pop("wait_selector", "") or "")
+    # Five seconds suits a page that is merely slow. A site that answers with a
+    # bot challenge first has to run it and reload before the real markup
+    # exists, so those callers ask for longer.
+    wait_selector_timeout = max(1, int(kwargs.pop("wait_selector_timeout", 5000) or 5000))
     wait_ms = max(0, int(kwargs.pop("wait", 0) or 0))
     if kwargs:
         unsupported = ", ".join(sorted(kwargs))
@@ -555,7 +559,9 @@ def fetch_dynamic(url: str, headless: bool = True, network_idle: bool = True, **
                     pass
             if wait_selector:
                 try:
-                    await page.wait_for_selector(wait_selector, timeout=min(timeout, 5000))
+                    await page.wait_for_selector(
+                        wait_selector, timeout=min(timeout, wait_selector_timeout)
+                    )
                 except Exception:
                     pass
             if wait_ms:

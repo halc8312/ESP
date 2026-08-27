@@ -77,15 +77,24 @@ def _page_text(page) -> str:
     return ""
 
 
-def _iter_json_ld(page):
-    """Yield every JSON-LD object on the page, unwrapping lists and @graph."""
+def _iter_json_ld(page, broken=None):
+    """
+    Yield every JSON-LD object on the page, unwrapping lists and @graph.
+
+    ``broken`` collects the parse errors. Structured data that is present but
+    malformed looks identical to none at all from the caller's side, and the
+    two want different answers — one is the site's markup, the other is
+    usually the bot challenge still on screen.
+    """
     for script_el in page.css("script[type='application/ld+json']"):
         raw = str(getattr(script_el, "text", "") or "").strip()
         if not raw:
             continue
         try:
             data = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError) as exc:
+            if broken is not None:
+                broken.append(str(exc))
             continue
         pending = data if isinstance(data, list) else [data]
         while pending:
@@ -98,8 +107,8 @@ def _iter_json_ld(page):
             yield entry
 
 
-def _extract_json_ld_product(page) -> dict:
-    for entry in _iter_json_ld(page):
+def _extract_json_ld_product(page, broken=None) -> dict:
+    for entry in _iter_json_ld(page, broken):
         entry_type = entry.get("@type")
         types = entry_type if isinstance(entry_type, list) else [entry_type]
         if any(str(value).lower() == "product" for value in types if value):
@@ -175,11 +184,29 @@ def _brand_name(product: dict) -> str:
     return str(brand or "").strip()
 
 
+#: What the real page has and the challenge page does not. Waiting on it is how
+#: we tell "the puzzle is still running" from "the markup is here".
+_READY_SELECTOR = {
+    "detail": "script[type='application/ld+json']",
+    "search": "a[href*='/catalog/']",
+}
+
+#: The challenge runs, then reloads. Five seconds — the shared default — is not
+#: enough for both, and the page that comes back too early carries no product.
+_READY_TIMEOUT_MS = 20000
+
+
 def _fetch_page(url: str, kind: str):
     """Fetch through the browser; the WAF answers anything else with a puzzle."""
     from services.scraping_client import fetch_dynamic
 
-    page = fetch_dynamic(url, network_idle=True)
+    page = fetch_dynamic(
+        url,
+        network_idle=True,
+        timeout=45000,
+        wait_selector=_READY_SELECTOR[kind],
+        wait_selector_timeout=_READY_TIMEOUT_MS,
+    )
     validate_fetch_response(page, SITE, kind=kind)
     return page
 
@@ -201,15 +228,36 @@ def scrape_item_detail(url_or_driver=None, maybe_url=None, **_kwargs) -> dict:
     except ScrapeFailure:
         raise
     except Exception as exc:
+        # Saying only "could not be read" leaves nobody able to act. The cause
+        # travels with the failure so the operator, and the log, name it.
         logger.warning("Record City detail fetch failed for %s: %s", url, exc)
-        return _empty_result(url)
+        raise ScrapeFailure(
+            f"レコードシティの商品ページを読み取れませんでした: {exc}"
+        ) from exc
 
-    product = _extract_json_ld_product(page)
+    broken_blocks = []
+    product = _extract_json_ld_product(page, broken_blocks)
     if not product:
-        # No structured data means the page is a challenge, an error, or a
-        # redesign — either way there is nothing trustworthy to save.
+        if broken_blocks:
+            # The data is there and unreadable, which is a different problem
+            # from it not being there — and saying "bot challenge" here would
+            # send everyone looking in the wrong place.
+            logger.warning(
+                "Record City structured data could not be parsed (%d block(s)): %s | %s",
+                len(broken_blocks),
+                url,
+                broken_blocks[0],
+            )
+            raise ScrapeFailure(
+                f"レコードシティのページの構造化データを読み取れませんでした"
+                f"（{len(broken_blocks)}件が解析エラー）: {broken_blocks[0]}"
+            )
+        # Nothing there at all: usually the bot challenge still on screen.
         logger.warning("Record City page carried no product data: %s", url)
-        return _empty_result(url)
+        raise ScrapeFailure(
+            "レコードシティのページから商品データが見つかりませんでした。"
+            "サイト側のボット判定が解けていないか、ページ構成が変わった可能性があります。"
+        )
 
     result = _empty_result(url, status="unknown")
     offer = _first_offer(product)
