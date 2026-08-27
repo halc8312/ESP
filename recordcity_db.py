@@ -77,15 +77,24 @@ def _page_text(page) -> str:
     return ""
 
 
-def _iter_json_ld(page):
-    """Yield every JSON-LD object on the page, unwrapping lists and @graph."""
+def _iter_json_ld(page, broken=None):
+    """
+    Yield every JSON-LD object on the page, unwrapping lists and @graph.
+
+    ``broken`` collects the parse errors. Structured data that is present but
+    malformed looks identical to none at all from the caller's side, and the
+    two want different answers — one is the site's markup, the other is
+    usually the bot challenge still on screen.
+    """
     for script_el in page.css("script[type='application/ld+json']"):
         raw = str(getattr(script_el, "text", "") or "").strip()
         if not raw:
             continue
         try:
             data = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError) as exc:
+            if broken is not None:
+                broken.append(str(exc))
             continue
         pending = data if isinstance(data, list) else [data]
         while pending:
@@ -98,8 +107,8 @@ def _iter_json_ld(page):
             yield entry
 
 
-def _extract_json_ld_product(page) -> dict:
-    for entry in _iter_json_ld(page):
+def _extract_json_ld_product(page, broken=None) -> dict:
+    for entry in _iter_json_ld(page, broken):
         entry_type = entry.get("@type")
         types = entry_type if isinstance(entry_type, list) else [entry_type]
         if any(str(value).lower() == "product" for value in types if value):
@@ -226,10 +235,24 @@ def scrape_item_detail(url_or_driver=None, maybe_url=None, **_kwargs) -> dict:
             f"レコードシティの商品ページを読み取れませんでした: {exc}"
         ) from exc
 
-    product = _extract_json_ld_product(page)
+    broken_blocks = []
+    product = _extract_json_ld_product(page, broken_blocks)
     if not product:
-        # No structured data means the bot challenge is still on screen, or the
-        # page is an error or a redesign — nothing trustworthy to save.
+        if broken_blocks:
+            # The data is there and unreadable, which is a different problem
+            # from it not being there — and saying "bot challenge" here would
+            # send everyone looking in the wrong place.
+            logger.warning(
+                "Record City structured data could not be parsed (%d block(s)): %s | %s",
+                len(broken_blocks),
+                url,
+                broken_blocks[0],
+            )
+            raise ScrapeFailure(
+                f"レコードシティのページの構造化データを読み取れませんでした"
+                f"（{len(broken_blocks)}件が解析エラー）: {broken_blocks[0]}"
+            )
+        # Nothing there at all: usually the bot challenge still on screen.
         logger.warning("Record City page carried no product data: %s", url)
         raise ScrapeFailure(
             "レコードシティのページから商品データが見つかりませんでした。"

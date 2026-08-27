@@ -226,15 +226,34 @@ class TestReadingOneRecord:
         # "Could not be read" alone leaves the operator nothing to act on.
         assert "ボット判定" in str(failure.value)
 
-    def test_unparsable_structured_data_is_reported_too(self, monkeypatch):
+    def test_unparsable_structured_data_names_the_parse_error(self, monkeypatch):
         broken = _FakePage()
         broken._scripts = [_FakeElement(text="{not json")]
         _stub_fetch(monkeypatch, broken)
 
-        with pytest.raises(ScrapeFailure):
+        with pytest.raises(ScrapeFailure) as failure:
             recordcity_db.scrape_item_detail(
                 "https://www.recordcity.jp/catalog/4936480"
             )
+
+        message = str(failure.value)
+        # Data present but unreadable is a different problem from data absent,
+        # and blaming the bot challenge here would send everyone looking in
+        # the wrong place.
+        assert "構造化データ" in message
+        assert "ボット判定" not in message
+
+    def test_a_second_readable_block_still_wins(self, monkeypatch):
+        # One malformed block should not hide a good one beside it.
+        page = _FakePage(json_ld=[LIVE_SAMPLE])
+        page._scripts = [_FakeElement(text="{not json")] + page._scripts
+        _stub_fetch(monkeypatch, page)
+
+        result = recordcity_db.scrape_item_detail(
+            "https://www.recordcity.jp/catalog/4936480"
+        )
+
+        assert result["price"] == 2420
 
     def test_the_reason_a_fetch_failed_travels_with_the_failure(self, monkeypatch):
         def _explode(url, kind):
