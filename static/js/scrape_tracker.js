@@ -16,11 +16,15 @@
     var pillCountEl = document.getElementById("globalScrapeTrackerPillCount");
     var backdropEl = document.getElementById("globalScrapeTrackerBackdrop");
     var sheetEl = document.getElementById("globalScrapeTrackerSheet");
-    var sheetHeaderEl = document.getElementById("globalScrapeTrackerSheetHeader");
     var sheetDismissAllEl = document.getElementById("globalScrapeTrackerSheetDismissAll");
     var sheetCloseEl = document.getElementById("globalScrapeTrackerSheetClose");
     var sheetCountEl = document.getElementById("globalScrapeTrackerSheetCount");
     var mobileListEl = document.getElementById("globalScrapeTrackerMobileList");
+    var statusEl = document.getElementById("globalScrapeTrackerStatus");
+    // job_id -> カードノード。作り直さず使い回すための控え。
+    var desktopCards = {};
+    var mobileCards = {};
+    var lastStatusMessage = "";
     var jobsUrl = root.dataset.jobsUrl;
     var dismissUrlTemplate = root.dataset.dismissUrlTemplate || "";
     var dismissBatchUrl = root.dataset.dismissBatchUrl || "";
@@ -348,32 +352,34 @@
         updateMobileSheetState(false);
     }
 
+    // カードは job_id ごとに1度だけ組み立て、以降は中身を差し替える。毎回 innerHTML を
+    // 捨てて作り直すと、2秒ごとのポーリングで「閉じる」ボタンのフォーカスが飛んでしまう。
     function buildCard(job, variant) {
-        var trackState = getTrackState(job.status);
         var articleClass = "scrape-progress-card scrape-tracker-card";
         if (variant === "mobile") {
             articleClass += " is-mobile-sheet";
         }
         var article = createElement("article", articleClass);
+        article.dataset.jobId = job.job_id;
+
         var shell = createElement("div", "scrape-progress-shell");
         var head = createElement("div", "scrape-progress-head");
-        var badge = createElement("span", "scrape-progress-badge is-" + trackState, getBadgeText(job.status));
+        var badge = createElement("span", "scrape-progress-badge");
         var headActions = createElement("div", "scrape-tracker-head-actions");
 
-        if (job.result_url) {
-            var resultLink = createElement("a", "scrape-tracker-link", "結果を見る");
-            resultLink.href = job.result_url;
-            headActions.appendChild(resultLink);
-        }
+        // 出したり消したりする要素も最初から作っておき、hidden で切り替える。
+        // 作り直さないぶん、状態が変わってもフォーカスが保たれる。
+        var resultLink = createElement("a", "scrape-tracker-link", "結果を見る");
+        resultLink.hidden = true;
+        headActions.appendChild(resultLink);
 
-        if (isTerminal(job)) {
-            var dismissButton = createElement("button", "scrape-tracker-dismiss", "閉じる");
-            dismissButton.type = "button";
-            dismissButton.addEventListener("click", function () {
-                dismissJob(job.job_id);
-            });
-            headActions.appendChild(dismissButton);
-        }
+        var dismissButton = createElement("button", "scrape-tracker-dismiss", "閉じる");
+        dismissButton.type = "button";
+        dismissButton.hidden = true;
+        dismissButton.addEventListener("click", function () {
+            dismissJob(article.dataset.jobId);
+        });
+        headActions.appendChild(dismissButton);
 
         head.appendChild(badge);
         head.appendChild(headActions);
@@ -381,30 +387,29 @@
         var main = createElement("div", "scrape-progress-main");
         var spinner = createElement("div", "loading-spinner scrape-progress-spinner");
         spinner.setAttribute("aria-hidden", "true");
-        if (isTerminal(job)) {
-            spinner.hidden = true;
-        }
 
         var copy = createElement("div", "scrape-progress-copy");
-        var title = createElement("p", "scrape-progress-title", getTitle(job));
-        var subtitle = createElement("p", "scrape-progress-subtitle", getSubtitle(job));
+        var title = createElement("p", "scrape-progress-title");
+        var subtitle = createElement("p", "scrape-progress-subtitle");
         copy.appendChild(title);
         copy.appendChild(subtitle);
         main.appendChild(spinner);
         main.appendChild(copy);
 
         var track = createElement("div", "scrape-progress-track");
-        var trackFill = createElement("div", "scrape-progress-track-fill is-" + trackState);
+        var trackFill = createElement("div", "scrape-progress-track-fill");
         track.appendChild(trackFill);
 
         var details = createElement("div", "scrape-progress-details");
         var meta = createElement("div", "scrape-progress-meta");
-        meta.appendChild(createElement("span", "", job.context.site_label || "商品抽出"));
-        meta.appendChild(createElement("span", "", job.context.limit_label || "件数未設定"));
-        meta.appendChild(createElement("span", "", "経過 " + job.elapsed_seconds + "秒"));
+        var metaSite = createElement("span", "");
+        var metaLimit = createElement("span", "");
+        var metaElapsed = createElement("span", "");
+        meta.appendChild(metaSite);
+        meta.appendChild(metaLimit);
+        meta.appendChild(metaElapsed);
 
-        var phaseText = variant === "mobile" ? getMobilePhase(job) : getPhase(job);
-        var phase = createElement("p", "scrape-progress-phase", phaseText);
+        var phase = createElement("p", "scrape-progress-phase");
 
         details.appendChild(meta);
         details.appendChild(phase);
@@ -414,7 +419,81 @@
         shell.appendChild(track);
         shell.appendChild(details);
         article.appendChild(shell);
+
+        article.trackerParts = {
+            badge: badge,
+            resultLink: resultLink,
+            dismissButton: dismissButton,
+            spinner: spinner,
+            title: title,
+            subtitle: subtitle,
+            trackFill: trackFill,
+            metaSite: metaSite,
+            metaLimit: metaLimit,
+            metaElapsed: metaElapsed,
+            phase: phase
+        };
+
+        updateCard(article, job, variant);
         return article;
+    }
+
+    function updateCard(article, job, variant) {
+        var parts = article.trackerParts;
+        var trackState = getTrackState(job.status);
+        var terminal = isTerminal(job);
+
+        article.dataset.jobId = job.job_id;
+        parts.badge.className = "scrape-progress-badge is-" + trackState;
+        parts.badge.textContent = getBadgeText(job.status);
+
+        if (job.result_url) {
+            parts.resultLink.href = job.result_url;
+            parts.resultLink.hidden = false;
+        } else {
+            parts.resultLink.removeAttribute("href");
+            parts.resultLink.hidden = true;
+        }
+
+        parts.dismissButton.hidden = !terminal;
+        parts.spinner.hidden = terminal;
+        parts.title.textContent = getTitle(job);
+        parts.subtitle.textContent = getSubtitle(job);
+        parts.trackFill.className = "scrape-progress-track-fill is-" + trackState;
+        parts.metaSite.textContent = job.context.site_label || "商品抽出";
+        parts.metaLimit.textContent = job.context.limit_label || "件数未設定";
+        parts.metaElapsed.textContent = "経過 " + job.elapsed_seconds + "秒";
+        parts.phase.textContent = variant === "mobile" ? getMobilePhase(job) : getPhase(job);
+    }
+
+    // 既存ノードを使い回しつつ、並び順と増減だけを反映する。
+    function syncCards(container, jobs, variant, cache) {
+        var keep = {};
+
+        jobs.forEach(function (job) {
+            keep[job.job_id] = true;
+            var node = cache[job.job_id];
+            if (node) {
+                updateCard(node, job, variant);
+            } else {
+                node = buildCard(job, variant);
+                cache[job.job_id] = node;
+            }
+        });
+
+        Object.keys(cache).forEach(function (jobId) {
+            if (!keep[jobId]) {
+                removeNode(cache[jobId]);
+                delete cache[jobId];
+            }
+        });
+
+        jobs.forEach(function (job, index) {
+            var node = cache[job.job_id];
+            if (container.children[index] !== node) {
+                container.insertBefore(node, container.children[index] || null);
+            }
+        });
     }
 
     function renderDesktop(visibleJobs) {
@@ -423,11 +502,8 @@
         if (toolbarEl) {
             toolbarEl.hidden = dismissibleCount <= 1;
         }
-        listEl.innerHTML = "";
 
-        visibleJobs.slice(0, maxVisibleJobs).forEach(function (job) {
-            listEl.appendChild(buildCard(job, "desktop"));
-        });
+        syncCards(listEl, visibleJobs.slice(0, maxVisibleJobs), "desktop", desktopCards);
 
         var overflowCount = visibleJobs.length - maxVisibleJobs;
         if (overflowCount > 0) {
@@ -450,13 +526,42 @@
 
     function renderMobileSheet(visibleJobs) {
         var dismissibleCount = visibleJobs.filter(isTerminal).length;
-        mobileListEl.innerHTML = "";
-        visibleJobs.forEach(function (job) {
-            mobileListEl.appendChild(buildCard(job, "mobile"));
-        });
+        syncCards(mobileListEl, visibleJobs, "mobile", mobileCards);
         sheetCountEl.textContent = visibleJobs.length === 1 ? "1件" : visibleJobs.length + "件";
         if (sheetDismissAllEl) {
             sheetDismissAllEl.hidden = dismissibleCount <= 1;
+        }
+    }
+
+    // 読み上げ用の一文。経過秒数は入れない — 2秒ごとに変わるので読み上げが止まらなくなる。
+    function renderStatusMessage(visibleJobs) {
+        if (!statusEl) {
+            return;
+        }
+
+        var running = visibleJobs.filter(isActive).length;
+        var completed = visibleJobs.filter(function (job) {
+            return job.status === "completed";
+        }).length;
+        var failed = visibleJobs.filter(function (job) {
+            return job.status === "failed";
+        }).length;
+
+        var parts = [];
+        if (running) {
+            parts.push("実行中 " + running + "件");
+        }
+        if (completed) {
+            parts.push("完了 " + completed + "件");
+        }
+        if (failed) {
+            parts.push("失敗 " + failed + "件");
+        }
+
+        var message = parts.length ? "商品抽出: " + parts.join(" / ") : "";
+        if (message !== lastStatusMessage) {
+            lastStatusMessage = message;
+            statusEl.textContent = message;
         }
     }
 
@@ -478,8 +583,9 @@
             if (sheetDismissAllEl) {
                 sheetDismissAllEl.hidden = true;
             }
-            listEl.innerHTML = "";
-            mobileListEl.innerHTML = "";
+            syncCards(listEl, [], "desktop", desktopCards);
+            syncCards(mobileListEl, [], "mobile", mobileCards);
+            renderStatusMessage([]);
             overflowEl.hidden = true;
             overflowEl.textContent = "";
             closeMobileSheet();
@@ -493,6 +599,7 @@
         renderDesktop(visibleJobs);
         renderMobilePill(visibleJobs);
         renderMobileSheet(visibleJobs);
+        renderStatusMessage(visibleJobs);
 
         desktopContainer.hidden = state.isMobileViewport;
         pillEl.hidden = !state.isMobileViewport;
@@ -575,20 +682,9 @@
     });
 
     backdropEl.addEventListener("click", closeMobileSheet);
-    sheetCloseEl.addEventListener("click", function (event) {
-        event.stopPropagation();
-        closeMobileSheet();
-    });
-    if (toolbarEl) {
-        toolbarEl.addEventListener("click", function (event) {
-            event.stopPropagation();
-        });
-    }
+    sheetCloseEl.addEventListener("click", closeMobileSheet);
     if (sheetDismissAllEl) {
-        sheetDismissAllEl.addEventListener("click", function (event) {
-            event.stopPropagation();
-            dismissVisibleJobs();
-        });
+        sheetDismissAllEl.addEventListener("click", dismissVisibleJobs);
     }
     var dismissAllButton = document.getElementById("globalScrapeTrackerDismissAll");
     if (dismissAllButton) {
@@ -596,13 +692,6 @@
             dismissVisibleJobs();
         });
     }
-    sheetHeaderEl.addEventListener("click", closeMobileSheet);
-    sheetHeaderEl.addEventListener("keydown", function (event) {
-        if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            closeMobileSheet();
-        }
-    });
     document.addEventListener("keydown", function (event) {
         if (event.key === "Escape" && state.mobileSheetOpen) {
             closeMobileSheet();

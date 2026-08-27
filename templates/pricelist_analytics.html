@@ -141,11 +141,22 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" referrerpolicy="origin"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
+    integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4"
+    crossorigin="anonymous" referrerpolicy="origin"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
         const chartData = {{ chart_data|tojson }};
-        if (!chartData || !chartData.daily_labels || !chartData.daily_labels.length || typeof Chart === 'undefined') {
+        if (!chartData || !chartData.daily_labels || !chartData.daily_labels.length) {
+            return;
+        }
+        if (typeof Chart === 'undefined') {
+            // グラフ描画ライブラリは CDN 配信。届かなかったことを黙って飲み込むと、
+            // 空のグラフ枠だけが残って原因が分からない。
+            window.ESPUI.toast('グラフを読み込めませんでした。下の表の数値はそのままご覧いただけます。', {
+                type: 'warning',
+                duration: 8000
+            });
             return;
         }
 

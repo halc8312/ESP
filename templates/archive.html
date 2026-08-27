@@ -3,6 +3,7 @@
 {% block title %}アーカイブ{% endblock %}
 {% block header_title %}アーカイブ{% endblock %}
 {% block body_class %}has-bottom-nav wrap-fluid{% endblock %}
+{% import "_money.html" as money %}
 
 {% block content %}
 <div class="page-header">
@@ -19,7 +20,7 @@
             <label for="selectAllArchive" style="font-weight: 500;">すべて選択</label>
         </div>
         <div style="flex: 1;"></div>
-        <button type="submit" class="btn" style="background: #2e7d32; color: white;">選択した商品を復元</button>
+        <button type="submit" class="btn btn-success">選択した商品を復元</button>
     </div>
 
     <div class="content-card">
@@ -31,7 +32,7 @@
                         <tr>
                             <th>選択</th>
                             <th>タイトル</th>
-                            <th>価格</th>
+                            <th class="num">価格</th>
                             <th>サイト</th>
                             <th>最終更新</th>
                         </tr>
@@ -41,7 +42,7 @@
                         <tr>
                             <td><input type="checkbox" name="ids" value="{{ p.id }}"></td>
                             <td>{{ p.custom_title or p.last_title }}</td>
-                            <td>¥{{ "{:,}".format(p.last_price or 0) }}</td>
+                            <td class="num">{{ money.cost(p.last_price) }}</td>
                             <td>{{ p.site }}</td>
                             <td>{{ p.updated_at | jst_date }}</td>
                         </tr>

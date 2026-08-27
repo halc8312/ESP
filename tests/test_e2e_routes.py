@@ -33,7 +33,8 @@ class TestAuthenticationRoutes:
         """Test user registration creates user and logs in"""
         response = client.post('/register', data={
             'username': 'newuser',
-            'password': 'newpassword123'
+            'password': 'newpassword123',
+            'password_confirm': 'newpassword123'
         }, follow_redirects=True)
         
         assert response.status_code == 200

@@ -17,14 +17,14 @@
     </div>
     <div class="content-card-body">
         <div style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
-            <div style="padding: 12px 20px; background: #e8f5e9; border-radius: 8px;">
-                <strong style="color: #2e7d32;">✓ インポート可能:</strong> {{ preview_data.ok_count }}件
+            <div style="padding: 12px 20px; background: var(--success-surface); border-radius: 8px;">
+                <strong style="color: var(--success-text);">✓ インポート可能:</strong> {{ preview_data.ok_count }}件
             </div>
             <div style="padding: 12px 20px; background: #fff3e0; border-radius: 8px;">
-                <strong style="color: #e65100;">⚠ スキップ:</strong> {{ preview_data.skip_count }}件
+                <strong style="color: var(--warning-text);">⚠ スキップ:</strong> {{ preview_data.skip_count }}件
             </div>
-            <div style="padding: 12px 20px; background: #ffebee; border-radius: 8px;">
-                <strong style="color: #c62828;">✗ エラー:</strong> {{ preview_data.error_count }}件
+            <div style="padding: 12px 20px; background: var(--danger-surface); border-radius: 8px;">
+                <strong style="color: var(--danger-text);">✗ エラー:</strong> {{ preview_data.error_count }}件
             </div>
         </div>
 
@@ -48,15 +48,15 @@
                 <tbody>
                     {% for row in preview_data.rows %}
                     <tr
-                        style="{% if row.status == 'error' %}background: #ffebee;{% elif row.status == 'skip' %}background: #fff3e0;{% endif %}">
+                        style="{% if row.status == 'error' %}background: var(--danger-surface);{% elif row.status == 'skip' %}background: #fff3e0;{% endif %}">
                         <td>{{ row.row_num }}</td>
                         <td>
                             {% if row.status == 'ok' %}
-                            <span style="color: #2e7d32;">✓</span>
+                            <span style="color: var(--success-text);">✓</span>
                             {% elif row.status == 'skip' %}
-                            <span style="color: #e65100;" title="{{ row.warning }}">⚠</span>
+                            <span style="color: var(--warning-text);" title="{{ row.warning }}">⚠</span>
                             {% else %}
-                            <span style="color: #c62828;" title="{{ row.warning }}">✗</span>
+                            <span style="color: var(--danger-text);" title="{{ row.warning }}">✗</span>
                             {% endif %}
                         </td>
                         <td>{{ row.title }}</td>
@@ -71,7 +71,7 @@
         <div style="margin-top: 20px; display: flex; gap: 12px;">
             <form action="{{ url_for('import.import_execute') }}" method="POST" style="display: inline;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                <button type="submit" class="btn" style="background: #2e7d32; color: white; padding: 12px 24px;">
+                <button type="submit" class="btn btn-success" style="padding: 12px 24px;">
                     ✓ {{ preview_data.ok_count }}件をインポート
                 </button>
             </form>

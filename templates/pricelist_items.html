@@ -101,9 +101,9 @@
                             <td class="num">{{ money.profit(item.product.last_price, item.display_price) }}</td>
                             <td>
                                 {% if item.total_stock > 0 %}
-                                <span style="color: #22c55e; font-weight: 600;">{{ item.total_stock }}</span>
+                                <span style="color: var(--success-color); font-weight: 600;">{{ item.total_stock }}</span>
                                 {% else %}
-                                <span style="color: #ef4444;">0</span>
+                                <span style="color: var(--danger-color);">0</span>
                                 {% endif %}
                             </td>
                             <td>
@@ -119,8 +119,10 @@
             <div style="margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
                 <button type="submit" style="flex: 1; min-width: 120px;">💾 設定を保存</button>
                 <button type="submit" formaction="{{ url_for('pricelist.pricelist_items', pricelist_id=pricelist.id) }}"
-                    name="action" value="remove_items" onclick="return confirm('選択した商品を価格表から削除しますか？')"
-                    style="background: #fce4ec; color: #c62828; border: 1px solid #ef9a9a; padding: 10px 16px; border-radius: 4px; cursor: pointer;">
+                    name="action" value="remove_items" class="btn btn-danger"
+                    data-confirm-title="価格表からの削除"
+                    data-confirm-message="選択した商品をこの価格表から外します。商品自体は削除されません。"
+                    data-confirm-label="価格表から外す">
                     🗑️ 選択削除
                 </button>
             </div>

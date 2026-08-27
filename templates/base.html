@@ -163,10 +163,10 @@
 
 
         <div class="sidebar-shop-section">
-            <label class="sidebar-shop-label">ショップ選択</label>
+            <label class="sidebar-shop-label" for="sidebar-shop-select">ショップ選択</label>
             <form action="{{ url_for('set_current_shop') }}" method="post" class="shop-select-form">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                <select name="shop_id" class="sidebar-shop-select">
+                <select name="shop_id" id="sidebar-shop-select" class="sidebar-shop-select">
                     <option value="">(ショップ未選択)</option>
                     {% for s in all_shops %}
                     <option value="{{ s.id }}" {% if current_shop_id==s.id %}selected{% endif %}>
@@ -226,7 +226,9 @@
     </nav>
 
     <!-- Back to Top Button -->
-    <button class="back-to-top" id="backToTop" type="button">↑</button>
+    <button class="back-to-top" id="backToTop" type="button" aria-label="ページ先頭へ戻る">
+        <span aria-hidden="true">↑</span>
+    </button>
 
     <div id="espToastViewport" class="esp-toast-viewport" aria-live="polite" aria-atomic="true">
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -327,7 +329,9 @@
         const backToTop = document.getElementById('backToTop');
         if (backToTop) {
             backToTop.addEventListener('click', function () {
-                window.scrollTo({ top: 0, behavior: 'smooth' });
+                // CSS の scroll-behavior はここには効かないので、自分で見に行く。
+                const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                window.scrollTo({ top: 0, behavior: prefersReducedMotion ? 'auto' : 'smooth' });
             });
         }
 

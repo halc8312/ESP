@@ -20,8 +20,14 @@
     --z-sticky-save: 1040;
     --z-scrape-tracker: 1200;
     --z-scrape-tracker-sheet: 1201;
+    --z-image-lightbox: 1250;
     --z-sidebar-overlay: 1300;
     --z-sidebar: 1301;
+    --z-action-sheet-overlay: 2000;
+    --z-action-sheet: 2001;
+    --z-toast: 2100;
+    --z-dialog: 2200;
+    --z-loading-overlay: 9999;
     --mobile-fixed-bottom-offset: env(safe-area-inset-bottom);
     --mobile-sticky-save-offset: 0px;
     --mobile-scrape-tracker-offset: calc(var(--mobile-fixed-bottom-offset) + 8px);
@@ -283,6 +289,16 @@ label {
     color: #555;
 }
 
+/* 入力欄1つに対応しない見出し（ラジオ群の名前など）。<label> を for 無しで使うと
+   支援技術からは何も指していない要素になるため、見た目だけ label に揃える。 */
+.field-group-heading {
+    display: inline-block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    font-size: 14px;
+    color: #555;
+}
+
 /* Actions Area (Filters/Exports) */
 .actions {
     display: grid;
@@ -481,7 +497,7 @@ tr.changed {
 }
 
 /* Mobile Optimizations */
-@media (max-width: 768px) {
+@media (max-width: 767px) {
 
     /* Navigation: improved tap targets */
     .nav {
@@ -1017,7 +1033,7 @@ tr.changed {
     margin-top: 16px;
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 1023px) {
     .option-names-section {
         flex-direction: column;
     }
@@ -1082,21 +1098,46 @@ tr.changed {
 }
 
 .tag-pill-chip-remove {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     background: none;
     border: none;
     color: #3b82f6;
     margin-left: 6px;
     margin-right: -4px;
     padding: 0;
+    min-width: 24px;
+    min-height: 24px;
+    border-radius: 999px;
     font-size: 1.1rem;
     line-height: 1;
     cursor: pointer;
 }
 
-.tag-pill-chip-remove:hover,
+/* 見た目は小さいままでいいが、指で押せる範囲は他のボタンと同じ 44px を確保する。 */
+.tag-pill-chip-remove::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+}
+
+.tag-pill-chip-remove:hover {
+    color: #1d4ed8;
+    background-color: #bae6fd;
+}
+
+/* outline: none だけを置くと、共通のフォーカスリング（:is(...):focus-visible）に
+   詳細度で勝ってしまい、削除ボタンだけフォーカス位置が見えなくなる。 */
 .tag-pill-chip-remove:focus-visible {
     color: #1d4ed8;
-    outline: none;
+    background-color: #bae6fd;
+    box-shadow: var(--focus-ring);
 }
 
 .tag-pill-input {
@@ -1121,7 +1162,7 @@ tr.changed {
 .image-lightbox {
     position: fixed;
     inset: 0;
-    z-index: 1100;
+    z-index: var(--z-image-lightbox);
     display: none;
     align-items: center;
     justify-content: center;
@@ -1301,7 +1342,7 @@ body.image-lightbox-open {
     word-break: break-word;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
     .product-title-cell {
         /* モバイルでは幅制限を解除し、テーブルセル内で自然に折り返す */
         max-width: none;
@@ -1411,7 +1452,7 @@ body.image-lightbox-open {
     color: #333;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
     .dashboard-grid {
         grid-template-columns: repeat(2, 1fr);
         gap: 10px;
@@ -1724,7 +1765,7 @@ body.image-lightbox-open {
     min-width: 150px;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
     .export-buttons {
         flex-direction: column;
     }
@@ -2298,6 +2339,35 @@ details.mobile-collapsible[open]>summary::after {
     padding: 16px;
 }
 
+/* エクスポート設定は入力欄を1組だけ持ち、見せ方だけを画面幅で変える。
+   既定は open にしておき、モバイルでのみ JS で畳む。JS が動かない環境でも
+   展開されたまま操作できる。 */
+.export-collapsible>summary {
+    list-style: none;
+    cursor: pointer;
+}
+
+.export-collapsible>summary::-webkit-details-marker {
+    display: none;
+}
+
+.export-collapsible>summary::after {
+    content: '▶';
+    font-size: 10px;
+    color: var(--secondary-color);
+    transition: transform 0.2s;
+}
+
+.export-collapsible[open]>summary::after {
+    transform: rotate(90deg);
+}
+
+@media (min-width: 1024px) {
+    .export-collapsible>summary {
+        display: none;
+    }
+}
+
 .export-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
@@ -2640,7 +2710,7 @@ details.mobile-collapsible[open]>summary::after {
     right: 0;
     bottom: 0;
     background: rgba(0, 0, 0, 0.5);
-    z-index: 2000;
+    z-index: var(--z-action-sheet-overlay);
     opacity: 0;
     transition: opacity 0.3s ease;
 }
@@ -2657,7 +2727,7 @@ details.mobile-collapsible[open]>summary::after {
     right: 0;
     background: var(--card-bg);
     border-radius: 16px 16px 0 0;
-    z-index: 2001;
+    z-index: var(--z-action-sheet);
     transform: translateY(100%);
     transition: transform 0.3s ease;
     max-height: 80vh;
@@ -3499,7 +3569,7 @@ button:active {
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 9999;
+    z-index: var(--z-loading-overlay);
 }
 .loading-overlay[hidden] {
     display: none;
@@ -4565,6 +4635,19 @@ body.sidebar-open .scrape-progress-panel {
     --warning-color: #b45309;
     --info-color: #1d4ed8;
     --focus-ring: 0 0 0 3px rgba(0, 102, 204, 0.18);
+
+    /* 状態を伝える色。淡い面・枠・文字の3点で1組にして使う。
+       同じ「危険」が画面ごとに違う赤で出ていたのを、ここに集約している。
+       塗りつぶしのボタンやアイコンには --danger-color / --success-color を使う。 */
+    --success-surface: #ecfdf3;
+    --success-border: #bbf7d0;
+    --success-text: #166534;
+    --warning-surface: #fff8e8;
+    --warning-border: #f7d58b;
+    --warning-text: #9a6700;
+    --danger-surface: #fee2e2;
+    --danger-border: #fecaca;
+    --danger-text: #b91c1c;
 }
 
 :is(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
@@ -4620,7 +4703,7 @@ button.is-busy {
     position: fixed;
     top: 16px;
     right: 16px;
-    z-index: 2100;
+    z-index: var(--z-toast);
     display: grid;
     gap: 10px;
     width: min(360px, calc(100vw - 32px));
@@ -4694,7 +4777,7 @@ button.is-busy {
 .esp-dialog-overlay {
     position: fixed;
     inset: 0;
-    z-index: 2200;
+    z-index: var(--z-dialog);
     display: grid;
     place-items: center;
     padding: 20px;
@@ -5433,6 +5516,60 @@ body.product-edit-page .sticky-save-container {
     cursor: pointer;
 }
 
+/* 登録時のパスワード要件。入力中に満たしたものから印が変わる。
+   色だけで伝えると色覚特性によっては区別できないので、記号も一緒に変える。 */
+.password-rules {
+    margin: 8px 0 0;
+    padding-left: 0;
+    list-style: none;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.password-rules li {
+    padding-left: 20px;
+    position: relative;
+    line-height: 1.7;
+}
+
+.password-rules li::before {
+    content: '・';
+    position: absolute;
+    left: 2px;
+}
+
+.password-rules li.is-met {
+    color: #166534;
+}
+
+.password-rules li.is-met::before {
+    content: '✓';
+}
+
+.password-rules li.is-unmet {
+    color: var(--warning-color);
+}
+
+.password-rules li.is-unmet::before {
+    content: '!';
+    font-weight: 700;
+}
+
+.password-match {
+    margin: 8px 0 0;
+    font-size: 13px;
+    min-height: 1.4em;
+    color: var(--text-muted);
+}
+
+.password-match.is-met {
+    color: #166534;
+}
+
+.password-match.is-unmet {
+    color: var(--danger-color);
+}
+
 /* ── P0: Responsive adjustments ── */
 @media (max-width: 1023px) {
     .esp-toast-viewport {
@@ -6055,4 +6192,67 @@ input.pricelist-item-price-input {
 .extraction-note {
     margin: 12px 0 0;
     color: var(--warning-color);
+}
+
+
+/* ===========================
+   REDUCED MOTION
+   最後に置いて、上のアニメーション定義すべてに勝たせる。
+   =========================== */
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+
+/* ===========================
+   ERROR PAGE
+   =========================== */
+.error-page {
+    text-align: center;
+}
+
+.error-page-code {
+    margin: 0;
+    font-size: 3rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--secondary-color);
+}
+
+.error-page-message {
+    margin: 12px 0 24px;
+    font-size: 1.15rem;
+    font-weight: 600;
+    line-height: 1.6;
+}
+
+.error-page-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: center;
+}
+
+.error-page-actions .btn {
+    flex: 1 1 auto;
+    min-width: 160px;
+}
+
+.error-page-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    justify-content: center;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.9rem;
 }

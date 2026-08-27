@@ -62,8 +62,8 @@
             <summary>さらに絞り込む ▼</summary>
             <div class="filter-advanced-body">
                 <div class="filter-group">
-                    <label>サイト</label>
-                    <select name="site">
+                    <label for="filter_site">サイト</label>
+                    <select name="site" id="filter_site">
                         <option value="">(すべて)</option>
                         {% for s in sites %}
                         <option value="{{ s }}" {% if s==selected_site %}selected{% endif %}>{{ s }}</option>
@@ -71,20 +71,20 @@
                     </select>
                 </div>
                 <div class="filter-group">
-                    <label>変更</label>
-                    <select name="change_filter">
+                    <label for="filter_change">変更</label>
+                    <select name="change_filter" id="filter_change">
                         <option value="">(すべて)</option>
                         <option value="changed" {% if selected_change_filter=='changed' %}selected{% endif %}>変更ありのみ
                         </option>
                     </select>
                 </div>
                 <div class="filter-group">
-                    <label>最低価格</label>
-                    <input type="number" name="price_min" value="{{ price_min }}" placeholder="¥0" inputmode="numeric">
+                    <label for="filter_price_min">最低価格</label>
+                    <input type="number" name="price_min" id="filter_price_min" value="{{ price_min }}" placeholder="¥0" inputmode="numeric">
                 </div>
                 <div class="filter-group">
-                    <label>最高価格</label>
-                    <input type="number" name="price_max" value="{{ price_max }}" placeholder="¥999,999"
+                    <label for="filter_price_max">最高価格</label>
+                    <input type="number" name="price_max" id="filter_price_max" value="{{ price_max }}" placeholder="¥999,999"
                         inputmode="numeric">
                 </div>
             </div>
@@ -153,59 +153,31 @@
 
 <!-- エクスポート用フォーム -->
 <form method="GET">
-    <!-- エクスポート設定（モバイルでは折りたたみ） -->
-    <details class="mobile-collapsible mobile-only">
-        <summary class="mobile-collapsible-header">
-            <span class="mobile-collapsible-title">⚙️ エクスポート設定</span>
-            <span class="mobile-collapsible-icon">▶</span>
+    <!-- エクスポート設定（モバイルでは折りたたみ、PCでは常時展開）
+         入力欄は1組だけ置く。画面幅ごとに2組置くと、非表示側も送信されて
+         markup / qty が二重に送られ、先頭＝隠れている側の値が採用される。 -->
+    <details class="export-section export-collapsible" id="exportSettings" open>
+        <summary class="export-section-header">
+            <h3>⚙️ エクスポート設定</h3>
         </summary>
-        <div class="mobile-collapsible-content">
-            <div class="export-grid">
-                <div class="filter-group">
-                    <label>価格倍率（原価に掛ける数）</label>
-                    <input type="number" id="markup_mobile" name="markup" value="{{ default_markup }}" step="0.01"
-                        oninput="updateProfitMarginMobile()" inputmode="decimal">
-                    <span class="text-small text-muted">1.0=そのまま / 1.2=20%上乗せ</span>
-                    <span class="text-small text-muted">販売価格が未設定の商品にだけ使います。</span>
-                </div>
-                <div class="filter-group">
-                    <label>利益上乗せ率 (%)</label>
-                    <input type="number" id="profit_margin_mobile" step="1" oninput="updateMarkupMobile()"
-                        inputmode="numeric">
-                </div>
-                <div class="filter-group">
-                    <label>在庫数</label>
-                    <input type="number" name="qty" value="{{ default_qty }}" step="1" min="0" inputmode="numeric">
-                </div>
-            </div>
-
-            <div class="export-btn-grid mt-2">
-                <button type="submit" formaction="{{ url_for('export_shopify') }}">Shopify CSV</button>
-                <button type="submit" formaction="{{ url_for('export_stock_update') }}">在庫更新CSV</button>
-                <button type="submit" formaction="{{ url_for('export_price_update') }}">価格更新CSV</button>
-            </div>
-        </div>
-    </details>
-
-    <!-- PC用エクスポート設定 -->
-    <div class="export-section desktop-only">
         <div class="export-section-body">
             <div class="export-grid">
                 <div class="filter-group">
-                    <label>価格倍率（原価に掛ける数）</label>
-                    <input type="number" id="markup" name="markup" value="{{ default_markup }}" step="0.01"
-                        oninput="updateProfitMargin()" inputmode="decimal">
+                    <label for="markup">価格倍率（原価に掛ける数）</label>
+                    <input type="number" id="markup" name="markup" value="{{ default_markup }}" step="0.01" min="0"
+                        inputmode="decimal">
                     <span class="text-small text-muted">1.0=そのまま / 1.2=20%上乗せ</span>
                     <span class="text-small text-muted">販売価格が未設定の商品にだけ使います。</span>
                 </div>
                 <div class="filter-group">
-                    <label>利益上乗せ率 (%)</label>
-                    <input type="number" id="profit_margin" step="1" oninput="updateMarkup()" inputmode="numeric">
+                    <label for="profit_margin">利益上乗せ率 (%)</label>
+                    <input type="number" id="profit_margin" step="1" min="0" inputmode="numeric">
                     <span class="text-small text-muted">価格倍率と連動します</span>
                 </div>
                 <div class="filter-group">
-                    <label>一括設定する在庫数</label>
-                    <input type="number" name="qty" value="{{ default_qty }}" step="1" min="0" inputmode="numeric">
+                    <label for="qty">一括設定する在庫数</label>
+                    <input type="number" id="qty" name="qty" value="{{ default_qty }}" step="1" min="0"
+                        inputmode="numeric">
                 </div>
             </div>
 
@@ -216,7 +188,7 @@
                 <button type="submit" formaction="{{ url_for('export.export_images') }}">📷 画像ZIP</button>
             </div>
         </div>
-    </div>
+    </details>
 
 
     <!-- Batch Edit Action Bar -->
@@ -438,9 +410,8 @@
     const TRASH_URL = '{{ url_for("trash.trash_delete") }}';
 
     document.addEventListener('DOMContentLoaded', function () {
-        [['markup', 'profit_margin'], ['markup_mobile', 'profit_margin_mobile']].forEach(function (pair) {
-            bindMarkupPair(pair[0], pair[1]);
-        });
+        bindMarkupPair('markup', 'profit_margin');
+        collapseExportSettingsOnMobile();
 
         document.querySelectorAll('input[name="id"]').forEach(function (checkbox) {
             checkbox.addEventListener('change', updateSelectedCount);
@@ -497,6 +468,14 @@
         markupInput.addEventListener('input', syncFromMarkup);
         marginInput.addEventListener('input', syncFromMargin);
         syncFromMarkup();
+    }
+
+    // エクスポート設定は open 済みで届く。狭い画面でだけ畳んで、一覧を先に見せる。
+    function collapseExportSettingsOnMobile() {
+        const settings = document.getElementById('exportSettings');
+        if (settings && window.innerWidth < 1024) {
+            settings.open = false;
+        }
     }
 
     function setListMode(mode) {
@@ -754,6 +733,19 @@
     function buildBatchDialogContent(action, selectedCount) {
         const wrapper = document.createElement('form');
         wrapper.className = 'batch-modal-form';
+        // 入力欄が1つだけの操作（先頭/末尾に追加）では Enter が暗黙的送信を起こし、
+        // ダイアログごとページが再読み込みされてしまう。ESPUI.prompt と同じく、
+        // Enter は確定ボタンを押したのと同じ扱いにする。
+        wrapper.addEventListener('submit', function (event) {
+            event.preventDefault();
+            const shell = wrapper.closest('.esp-dialog-shell');
+            const confirmButton = shell && shell.querySelector(
+                '.esp-dialog-footer .btn-primary, .esp-dialog-footer .btn-danger'
+            );
+            if (confirmButton) {
+                confirmButton.click();
+            }
+        });
         wrapper.innerHTML = '<p class="batch-modal-summary"><strong>' + selectedCount + '件</strong> を対象に操作します。</p>';
 
         if (action === 'prefix' || action === 'suffix') {
