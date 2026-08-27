@@ -175,11 +175,29 @@ def _brand_name(product: dict) -> str:
     return str(brand or "").strip()
 
 
+#: What the real page has and the challenge page does not. Waiting on it is how
+#: we tell "the puzzle is still running" from "the markup is here".
+_READY_SELECTOR = {
+    "detail": "script[type='application/ld+json']",
+    "search": "a[href*='/catalog/']",
+}
+
+#: The challenge runs, then reloads. Five seconds — the shared default — is not
+#: enough for both, and the page that comes back too early carries no product.
+_READY_TIMEOUT_MS = 20000
+
+
 def _fetch_page(url: str, kind: str):
     """Fetch through the browser; the WAF answers anything else with a puzzle."""
     from services.scraping_client import fetch_dynamic
 
-    page = fetch_dynamic(url, network_idle=True)
+    page = fetch_dynamic(
+        url,
+        network_idle=True,
+        timeout=45000,
+        wait_selector=_READY_SELECTOR[kind],
+        wait_selector_timeout=_READY_TIMEOUT_MS,
+    )
     validate_fetch_response(page, SITE, kind=kind)
     return page
 
@@ -201,15 +219,22 @@ def scrape_item_detail(url_or_driver=None, maybe_url=None, **_kwargs) -> dict:
     except ScrapeFailure:
         raise
     except Exception as exc:
+        # Saying only "could not be read" leaves nobody able to act. The cause
+        # travels with the failure so the operator, and the log, name it.
         logger.warning("Record City detail fetch failed for %s: %s", url, exc)
-        return _empty_result(url)
+        raise ScrapeFailure(
+            f"レコードシティの商品ページを読み取れませんでした: {exc}"
+        ) from exc
 
     product = _extract_json_ld_product(page)
     if not product:
-        # No structured data means the page is a challenge, an error, or a
-        # redesign — either way there is nothing trustworthy to save.
+        # No structured data means the bot challenge is still on screen, or the
+        # page is an error or a redesign — nothing trustworthy to save.
         logger.warning("Record City page carried no product data: %s", url)
-        return _empty_result(url)
+        raise ScrapeFailure(
+            "レコードシティのページから商品データが見つかりませんでした。"
+            "サイト側のボット判定が解けていないか、ページ構成が変わった可能性があります。"
+        )
 
     result = _empty_result(url, status="unknown")
     offer = _first_offer(product)
