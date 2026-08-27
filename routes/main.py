@@ -48,6 +48,7 @@ SITE_LABELS = {
     "mercari": "メルカリ",
     "offmall": "オフモール",
     "rakuma": "ラクマ",
+    "recordcity": "レコードシティ",
     "snkrdunk": "スニダン",
     "surugaya": "駿河屋",
     "yahoo": "ヤフショ",

@@ -46,6 +46,8 @@ _DETAIL_URL_PATTERNS: dict[str, re.Pattern] = {
     ),
     # snkrdunk: https://snkrdunk.com/products/<slug>
     "snkrdunk": re.compile(r"snkrdunk\.com/products/", re.I),
+    # recordcity: https://www.recordcity.jp/catalog/<id> (also /ja/catalog/<id>)
+    "recordcity": re.compile(r"recordcity\.jp/(?:[a-z]{2}/)?catalog/\d+", re.I),
 }
 
 # Generic patterns that indicate a *search / listing* page regardless of site

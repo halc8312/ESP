@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 import offmall_db
+import recordcity_db
 import rakuma_db
 import snkrdunk_db
 import surugaya_db
@@ -156,6 +157,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                     "offmall": offmall_db.scrape_search_result,
                     "yahuoku": yahuoku_db.scrape_search_result,
                     "snkrdunk": snkrdunk_db.scrape_search_result,
+                    "recordcity": recordcity_db.scrape_search_result,
                     "mercari": scrape_search_result,
                 }
                 search_fn = search_scraper_map[target_site]
@@ -177,6 +179,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                     "offmall": offmall_db.scrape_single_item,
                     "yahuoku": yahuoku_db.scrape_single_item,
                     "snkrdunk": snkrdunk_db.scrape_single_item,
+                    "recordcity": recordcity_db.scrape_single_item,
                     "mercari": scrape_single_item,
                 }
                 scraper_fn = scraper_map[target_site]
