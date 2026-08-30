@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import re
 import secrets
-import string
+import threading
+import time
 
 from models import User
 from time_utils import utc_now
@@ -37,6 +38,47 @@ def generate_temporary_password() -> str:
         secrets.choice(_TEMPORARY_PASSWORD_ALPHABET)
         for _ in range(_TEMPORARY_PASSWORD_LENGTH)
     )
+
+
+#: A freshly issued password waits here for the one page that shows it.
+#:
+#: Not the session cookie: Flask signs it but does not encrypt it, so the
+#: password would be readable by anyone holding the cookie and would ride along
+#: on every request until it was cleared. Not a file either — a password on
+#: disk outlives the moment it was needed. In memory, once, briefly.
+_ISSUED_PASSWORD_TTL_SECONDS = 600
+_issued_passwords: dict[str, tuple[float, dict]] = {}
+_issued_passwords_lock = threading.Lock()
+
+
+def _drop_expired_passwords(now: float) -> None:
+    for token, (expires_at, _payload) in list(_issued_passwords.items()):
+        if expires_at <= now:
+            _issued_passwords.pop(token, None)
+
+
+def remember_issued_password(username: str, password: str, reason: str) -> str:
+    """Hold a password for one page load and return the token that fetches it."""
+    token = secrets.token_urlsafe(32)
+    now = time.monotonic()
+    with _issued_passwords_lock:
+        _drop_expired_passwords(now)
+        _issued_passwords[token] = (
+            now + _ISSUED_PASSWORD_TTL_SECONDS,
+            {"username": username, "password": password, "reason": reason},
+        )
+    return token
+
+
+def take_issued_password(token) -> dict | None:
+    """Fetch and forget. A second look finds nothing."""
+    if not token:
+        return None
+    now = time.monotonic()
+    with _issued_passwords_lock:
+        _drop_expired_passwords(now)
+        entry = _issued_passwords.pop(str(token), None)
+    return entry[1] if entry else None
 
 
 def normalize_username(raw_value) -> str:
@@ -85,9 +127,18 @@ def create_student(session_db, *, username, email=None) -> tuple[User, str]:
 
 
 def _student_for_office(session_db, user_id) -> User:
+    """
+    Resolve one student, refusing anything that is not one.
+
+    These are student operations, and the id arrives in the URL. An admin
+    account reached this way would have its password reset or its address
+    changed by a request that only looks like a student's.
+    """
     student = session_db.get(User, user_id)
     if student is None:
         raise StudentAccountError("その生徒が見つかりませんでした。")
+    if student.is_admin:
+        raise StudentAccountError("管理者アカウントはこの画面からは変更できません。")
     return student
 
 
@@ -114,12 +165,11 @@ def suspend_student(session_db, user_id, *, acting_user_id=None) -> User:
     Their sessions stop working, their published lists stop answering, and
     every product, price list and setting stays exactly where it was.
     """
-    student = _student_for_office(session_db, user_id)
-    if acting_user_id is not None and student.id == acting_user_id:
+    if acting_user_id is not None and user_id == acting_user_id:
         # Locking yourself out of the screen that unlocks accounts.
         raise StudentAccountError("自分自身のアカウントは停止できません。")
-    if student.is_admin:
-        raise StudentAccountError("管理者アカウントは停止できません。")
+    # _student_for_office already refuses an admin target.
+    student = _student_for_office(session_db, user_id)
     if not student.is_suspended:
         student.suspended_at = utc_now()
         session_db.commit()

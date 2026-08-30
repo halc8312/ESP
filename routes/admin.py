@@ -28,18 +28,21 @@ from services.admin_dashboard_service import (
 from services.student_account_service import (
     StudentAccountError,
     create_student,
+    remember_issued_password,
     reset_student_password,
     resume_student,
     set_student_email,
     suspend_student,
+    take_issued_password,
 )
 
 admin_bp = Blueprint("admin", __name__)
 
-#: Where a freshly issued password waits for the one page load that shows it.
-#: Not flashed: the flash area is a toast that dismisses itself, and the office
-#: needs long enough to write the password down or read it out.
-_ISSUED_PASSWORD_KEY = "office_issued_password"
+#: Names the freshly issued password held server-side for the next page load.
+#: The cookie carries this token and never the password: Flask signs the session
+#: but does not encrypt it. Not flashed either — the flash area is a toast that
+#: dismisses itself, and the office needs long enough to write a password down.
+_ISSUED_PASSWORD_KEY = "office_issued_password_token"
 
 
 def admin_required(view):
@@ -62,7 +65,7 @@ def admin_dashboard():
         rows = build_student_activity(session_db)
         return render_template(
             "admin_dashboard.html",
-            issued_password=session.pop(_ISSUED_PASSWORD_KEY, None),
+            issued_password=take_issued_password(session.pop(_ISSUED_PASSWORD_KEY, None)),
             students=rows,
             follow_ups=[row for row in rows if row["needs_follow_up"]],
             summary=summarize_student_activity(rows),
@@ -113,11 +116,9 @@ def admin_create_student():
             username=request.form.get("username"),
             email=request.form.get("email"),
         )
-        session[_ISSUED_PASSWORD_KEY] = {
-            "username": student.username,
-            "password": password,
-            "reason": "created",
-        }
+        session[_ISSUED_PASSWORD_KEY] = remember_issued_password(
+            student.username, password, "created"
+        )
         return f"生徒「{student.username}」を登録しました。", "success"
 
     return _office_action(_handler)
@@ -140,11 +141,9 @@ def admin_set_student_email(user_id):
 def admin_reset_student_password(user_id):
     def _handler(session_db):
         student, password = reset_student_password(session_db, user_id)
-        session[_ISSUED_PASSWORD_KEY] = {
-            "username": student.username,
-            "password": password,
-            "reason": "reset",
-        }
+        session[_ISSUED_PASSWORD_KEY] = remember_issued_password(
+            student.username, password, "reset"
+        )
         return f"{student.username} の仮パスワードを再発行しました。", "success"
 
     return _office_action(_handler)

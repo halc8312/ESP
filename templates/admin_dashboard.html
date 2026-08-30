@@ -11,7 +11,10 @@
 </div>
 
 {% if issued_password %}
-<section class="content-card office-password-card" role="alert">
+{# No live region: role="alert" makes a screen reader read the contents out
+   the moment they appear, and a password is not something to announce in a
+   room. The office is looking at this page because they just asked for it. #}
+<section class="content-card office-password-card">
     <div class="content-card-body">
         <h2 class="office-password-heading">
             {% if issued_password.reason == 'created' %}

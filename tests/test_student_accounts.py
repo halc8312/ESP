@@ -17,9 +17,11 @@ from services.student_account_service import (
     generate_temporary_password,
     normalize_email,
     normalize_username,
+    remember_issued_password,
     reset_student_password,
     resume_student,
     suspend_student,
+    take_issued_password,
 )
 from time_utils import utc_now
 
@@ -177,6 +179,33 @@ class TestSuspending:
         with pytest.raises(StudentAccountError):
             suspend_student(db_session, office.id, acting_user_id=office.id)
 
+    def test_no_office_action_can_target_an_admin(self, db_session):
+        from services.student_account_service import (
+            reset_student_password as _reset,
+            resume_student as _resume,
+            set_student_email as _set_email,
+        )
+
+        other_admin = _make_user(db_session, "another_admin", role="admin")
+        original_hash = other_admin.password_hash
+
+        # The id comes from the URL, so an admin must not be reachable through
+        # routes that only claim to act on students.
+        for action in (
+            lambda: suspend_student(db_session, other_admin.id),
+            lambda: _resume(db_session, other_admin.id),
+            lambda: _reset(db_session, other_admin.id),
+            lambda: _set_email(db_session, other_admin.id, "attacker@example.com"),
+        ):
+            with pytest.raises(StudentAccountError):
+                action()
+
+        db_session.expire_all()
+        refreshed = db_session.get(User, other_admin.id)
+        assert refreshed.password_hash == original_hash
+        assert refreshed.email is None
+        assert not refreshed.is_suspended
+
     def test_suspending_twice_keeps_the_first_time(self, db_session):
         student = _make_user(db_session, "twice_student")
         first = suspend_student(db_session, student.id).suspended_at
@@ -216,6 +245,51 @@ class TestResettingAPassword:
 
         assert _login(client, "forgetful_student", "oldpassword").status_code != 302
         assert _login(client, "forgetful_student", issued).status_code == 302
+
+
+class TestHoldingAnIssuedPassword:
+    def test_it_is_returned_once_and_then_gone(self):
+        token = remember_issued_password("someone", "hunter2xyz", "reset")
+
+        assert take_issued_password(token) == {
+            "username": "someone",
+            "password": "hunter2xyz",
+            "reason": "reset",
+        }
+        # A second look, a shared screen, a back button: nothing there.
+        assert take_issued_password(token) is None
+
+    @pytest.mark.parametrize("token", [None, "", "not-a-real-token"])
+    def test_an_unknown_token_yields_nothing(self, token):
+        assert take_issued_password(token) is None
+
+    def test_it_does_not_survive_its_lifetime(self, monkeypatch):
+        import services.student_account_service as service
+
+        token = remember_issued_password("someone", "hunter2xyz", "created")
+        clock = [service.time.monotonic() + service._ISSUED_PASSWORD_TTL_SECONDS + 1]
+        monkeypatch.setattr(service.time, "monotonic", lambda: clock[0])
+
+        assert take_issued_password(token) is None
+
+    def test_the_password_never_reaches_the_cookie(self, client, db_session):
+        _make_user(db_session, "cookie_admin", role="admin")
+        _login(client, "cookie_admin")
+
+        # Before the dashboard loads and consumes it, so the cookie is caught
+        # while it is actually carrying something.
+        client.post(
+            "/admin/students/create",
+            data={"username": "cookie_student", "email": ""},
+        )
+        student = db_session.query(User).filter_by(username="cookie_student").one()
+
+        with client.session_transaction() as flask_session:
+            stored = str(flask_session.get("office_issued_password_token", ""))
+        # Flask signs the session cookie but does not encrypt it, so whatever
+        # is in there is readable by whoever holds it.
+        assert stored
+        assert not student.check_password(stored)
 
 
 class TestOnlyTheOfficeCanDoThis:
