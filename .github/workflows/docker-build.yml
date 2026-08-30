@@ -77,5 +77,6 @@ jobs:
           import flask; print('flask OK')
           import scrapling; print('scrapling OK')
           import playwright; print('playwright OK')
+          import patchright; print('patchright OK')
           print('All critical imports OK')
           "

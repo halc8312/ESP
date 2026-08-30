@@ -17,6 +17,8 @@ def test_shared_browser_runtime_snapshot_reports_idle_then_closed():
 
     initial = runtime.snapshot()
     assert initial["site"] == "mercari"
+    assert initial["automation_backend"] == "playwright"
+    assert initial["channel"] is None
     assert initial["state"] == "idle"
     assert initial["restart_count"] == 0
     assert initial["submit_count"] == 0
@@ -34,6 +36,78 @@ def test_shared_browser_runtime_snapshot_reports_idle_then_closed():
     assert closed["state"] == "closed"
     assert closed["thread_alive"] is False
     assert closed["browser_ready"] is False
+
+
+@pytest.mark.parametrize(
+    ("config", "expected_backend", "expected_launch_options"),
+    [
+        (
+            BrowserRuntimeConfig(site="mercari"),
+            "playwright",
+            {"headless": True, "args": []},
+        ),
+        (
+            BrowserRuntimeConfig(
+                site="recordcity",
+                automation_backend="patchright",
+                channel="chromium",
+                launch_args=(),
+            ),
+            "patchright",
+            {"headless": True, "args": [], "channel": "chromium"},
+        ),
+    ],
+)
+def test_shared_browser_runtime_launch_uses_selected_factory_and_options(
+    monkeypatch,
+    config,
+    expected_backend,
+    expected_launch_options,
+):
+    captured = {}
+
+    class FakeBrowser:
+        async def close(self):
+            captured["browser_closed"] = True
+
+    class FakeBrowserType:
+        async def launch(self, **launch_options):
+            captured["launch_options"] = launch_options
+            return FakeBrowser()
+
+    class FakePlaywright:
+        chromium = FakeBrowserType()
+
+        async def stop(self):
+            captured["playwright_stopped"] = True
+
+    class FakePlaywrightManager:
+        async def start(self):
+            captured["factory_started"] = True
+            return FakePlaywright()
+
+    def fake_get_async_playwright_factory(backend):
+        captured["backend"] = backend
+        return FakePlaywrightManager
+
+    monkeypatch.setattr(
+        "services.browser_runtime.get_async_playwright_factory",
+        fake_get_async_playwright_factory,
+    )
+
+    runtime = SharedBrowserRuntime(config)
+    asyncio.run(runtime._launch_async())
+
+    assert captured["backend"] == expected_backend
+    assert captured["factory_started"] is True
+    assert captured["launch_options"] == expected_launch_options
+    assert runtime.snapshot()["automation_backend"] == expected_backend
+    assert runtime.snapshot()["channel"] == config.channel
+
+    asyncio.run(runtime._shutdown_async())
+
+    assert captured["browser_closed"] is True
+    assert captured["playwright_stopped"] is True
 
 
 def test_shared_browser_runtime_recycles_after_task_threshold(monkeypatch):
