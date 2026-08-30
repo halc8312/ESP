@@ -124,6 +124,8 @@ ADDITIVE_STARTUP_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("users", "exchange_rate_margin", "ALTER TABLE users ADD COLUMN exchange_rate_margin INTEGER DEFAULT 0 NOT NULL"),
     ("users", "role", "ALTER TABLE users ADD COLUMN role VARCHAR(16) DEFAULT 'student' NOT NULL"),
     ("users", "last_login_at", "ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP"),
+    ("users", "email", "ALTER TABLE users ADD COLUMN email VARCHAR(255)"),
+    ("users", "suspended_at", "ALTER TABLE users ADD COLUMN suspended_at TIMESTAMP"),
 )
 
 

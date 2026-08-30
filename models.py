@@ -16,6 +16,11 @@ class User(UserMixin, Base):
     role = Column(String(16), default="student", server_default="student", nullable=False)
     # フォロー判断に使う最終ログイン日時（naive UTC）
     last_login_at = Column(DateTime, nullable=True)
+    # 注文依頼の通知先。スクール事務局が申込時の住所を登録する運用のため任意。
+    email = Column(String(255), nullable=True)
+    # 休会・月謝の未納などで利用を止めた日時（naive UTC）。
+    # 削除ではないので、再開すればデータも公開リストもそのまま戻ります。
+    suspended_at = Column(DateTime, nullable=True)
     # 外貨表示にだけ差し引く安全マージン（円）。円の販売価格には影響しません。
     # server_default keeps rows copied by the existing-web migration (which
     # inserts only the columns the source database has) from failing NOT NULL.
@@ -32,6 +37,21 @@ class User(UserMixin, Base):
     @property
     def is_admin(self):
         return self.role == "admin"
+
+    @property
+    def is_suspended(self):
+        return self.suspended_at is not None
+
+    @property
+    def is_active(self):
+        """
+        Flask-Login asks this before letting a session through.
+
+        A suspended account cannot sign in, and any session it already had
+        stops working — otherwise someone stopped mid-month would keep going
+        until they happened to log out.
+        """
+        return not self.is_suspended
 
 class Shop(Base):
     __tablename__ = "shops"

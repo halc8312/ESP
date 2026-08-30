@@ -58,6 +58,14 @@ def login():
         session_db = SessionLocal()
         try:
             user = session_db.query(User).filter_by(username=username).first()
+            if user and user.is_suspended and user.check_password(password):
+                # Said plainly, and only to someone who proved the password, so
+                # this never tells a stranger which accounts exist. A student
+                # on a break should call the school, not retry their password.
+                return render_template(
+                    "login.html",
+                    error="このアカウントは現在ご利用を停止しています。スクールへお問い合わせください。",
+                ), 403
             if user and user.check_password(password):
                 # Shop selection is user-scoped.  A browser session can survive
                 # logout/login cycles, so never carry a previous account's

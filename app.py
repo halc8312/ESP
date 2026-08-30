@@ -289,7 +289,14 @@ def load_user(user_id):
 
     session_db = SessionLocal()
     try:
-        return session_db.get(User, uid)
+        user = session_db.get(User, uid)
+        if user is not None and user.is_suspended:
+            # Flask-Login checks is_active when signing in, not on the requests
+            # that follow, so a student suspended mid-session would keep working
+            # until they happened to log out. Refusing to load them here ends
+            # the session on the next request.
+            return None
+        return user
     except Exception:
         session_db.rollback()
         logger.warning("Failed to load user from session", exc_info=True)

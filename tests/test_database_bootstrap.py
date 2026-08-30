@@ -13,7 +13,7 @@ from time_utils import utc_now
 
 # Every "upgrade runs all the way to head" assertion below shares this, so a new
 # migration only needs the revision updated in one place.
-ALEMBIC_HEAD_REVISION = "20260812_0019"
+ALEMBIC_HEAD_REVISION = "20260827_0020"
 
 
 def _coerce_datetime(value):

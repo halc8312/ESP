@@ -6,7 +6,16 @@ the screen's existence is not advertised to them.
 """
 from functools import wraps
 
-from flask import Blueprint, abort, render_template
+from flask import (
+    Blueprint,
+    abort,
+    flash,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 from flask_login import current_user, login_required
 
 from database import SessionLocal
@@ -16,8 +25,21 @@ from services.admin_dashboard_service import (
     build_student_activity,
     summarize_student_activity,
 )
+from services.student_account_service import (
+    StudentAccountError,
+    create_student,
+    reset_student_password,
+    resume_student,
+    set_student_email,
+    suspend_student,
+)
 
 admin_bp = Blueprint("admin", __name__)
+
+#: Where a freshly issued password waits for the one page load that shows it.
+#: Not flashed: the flash area is a toast that dismisses itself, and the office
+#: needs long enough to write the password down or read it out.
+_ISSUED_PASSWORD_KEY = "office_issued_password"
 
 
 def admin_required(view):
@@ -40,6 +62,7 @@ def admin_dashboard():
         rows = build_student_activity(session_db)
         return render_template(
             "admin_dashboard.html",
+            issued_password=session.pop(_ISSUED_PASSWORD_KEY, None),
             students=rows,
             follow_ups=[row for row in rows if row["needs_follow_up"]],
             summary=summarize_student_activity(rows),
@@ -53,3 +76,104 @@ def admin_dashboard():
         raise
     finally:
         session_db.close()
+
+
+def _back_to_dashboard():
+    return redirect(url_for("admin.admin_dashboard"))
+
+
+def _office_action(handler):
+    """
+    Run one office action, and put its outcome in front of the operator.
+
+    A failure the office can correct is shown as its own sentence; anything
+    unexpected is left to the error handler rather than dressed up as advice.
+    """
+    session_db = SessionLocal()
+    try:
+        message, category = handler(session_db)
+        flash(message, category)
+    except StudentAccountError as exc:
+        session_db.rollback()
+        flash(str(exc), "error")
+    except Exception:
+        session_db.rollback()
+        raise
+    finally:
+        session_db.close()
+    return _back_to_dashboard()
+
+
+@admin_bp.route("/admin/students/create", methods=["POST"])
+@admin_required
+def admin_create_student():
+    def _handler(session_db):
+        student, password = create_student(
+            session_db,
+            username=request.form.get("username"),
+            email=request.form.get("email"),
+        )
+        session[_ISSUED_PASSWORD_KEY] = {
+            "username": student.username,
+            "password": password,
+            "reason": "created",
+        }
+        return f"生徒「{student.username}」を登録しました。", "success"
+
+    return _office_action(_handler)
+
+
+@admin_bp.route("/admin/students/<int:user_id>/email", methods=["POST"])
+@admin_required
+def admin_set_student_email(user_id):
+    def _handler(session_db):
+        student = set_student_email(session_db, user_id, request.form.get("email"))
+        if student.email:
+            return f"{student.username} のメールアドレスを {student.email} にしました。", "success"
+        return f"{student.username} のメールアドレスを削除しました。", "success"
+
+    return _office_action(_handler)
+
+
+@admin_bp.route("/admin/students/<int:user_id>/reset-password", methods=["POST"])
+@admin_required
+def admin_reset_student_password(user_id):
+    def _handler(session_db):
+        student, password = reset_student_password(session_db, user_id)
+        session[_ISSUED_PASSWORD_KEY] = {
+            "username": student.username,
+            "password": password,
+            "reason": "reset",
+        }
+        return f"{student.username} の仮パスワードを再発行しました。", "success"
+
+    return _office_action(_handler)
+
+
+@admin_bp.route("/admin/students/<int:user_id>/suspend", methods=["POST"])
+@admin_required
+def admin_suspend_student(user_id):
+    def _handler(session_db):
+        student = suspend_student(
+            session_db, user_id, acting_user_id=current_user.id
+        )
+        return (
+            f"{student.username} の利用を停止しました。"
+            "ログインと公開リストが止まります。商品や設定はそのまま残ります。",
+            "success",
+        )
+
+    return _office_action(_handler)
+
+
+@admin_bp.route("/admin/students/<int:user_id>/resume", methods=["POST"])
+@admin_required
+def admin_resume_student(user_id):
+    def _handler(session_db):
+        student = resume_student(session_db, user_id)
+        return (
+            f"{student.username} の利用を再開しました。公開リストも元どおり見られます。",
+            "success",
+        )
+
+    return _office_action(_handler)
