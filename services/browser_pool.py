@@ -9,9 +9,12 @@ import os
 import threading
 from typing import Any, Awaitable, Callable
 
-from playwright.async_api import async_playwright
-
-from services.browser_runtime import BrowserRuntimeConfig, SharedBrowserRuntime
+from services.browser_runtime import (
+    BrowserRuntimeConfig,
+    SharedBrowserRuntime,
+    get_async_playwright_factory,
+    normalize_automation_backend,
+)
 from utils.env_helpers import env_flag as _env_flag
 
 
@@ -26,6 +29,18 @@ _DEFAULT_LAUNCH_ARGS = (
     "--disable-extensions",
     "--disable-background-networking",
 )
+
+_WARM_RUNTIME_PROFILES: dict[str, dict[str, Any]] = {
+    # Keep prewarming consistent with the site-specific fetch adapter. Without
+    # this, adding Record City to BROWSER_POOL_WARM_SITES would start vanilla
+    # Playwright first and the later Patchright request would fail fast.
+    "recordcity": {
+        "launch_args": (),
+        "headless": True,
+        "automation_backend": "patchright",
+        "channel": "chromium",
+    },
+}
 
 
 def _site_env_name(site: str, suffix: str) -> str:
@@ -96,7 +111,9 @@ def _get_max_runtime_seconds(site: str) -> float:
 
 
 def _resolve_launch_args(site: str, launch_args: list[str] | tuple[str, ...] | None = None) -> tuple[str, ...]:
-    if launch_args:
+    # ``[]`` is meaningful for patched drivers: it asks them to use only their
+    # own carefully selected defaults. ``None`` keeps ESP's regular defaults.
+    if launch_args is not None:
         return tuple(launch_args)
 
     env_raw = os.environ.get(_site_env_name(site, "BROWSER_POOL_ARGS")) or os.environ.get("BROWSER_POOL_ARGS")
@@ -111,19 +128,32 @@ def get_browser_runtime(
     *,
     launch_args: list[str] | tuple[str, ...] | None = None,
     headless: bool | None = None,
+    automation_backend: str = "playwright",
+    channel: str | None = None,
 ) -> SharedBrowserRuntime | None:
     if not _shared_runtime_enabled(site):
         return None
 
     normalized_site = str(site or "default").strip().lower()
+    normalized_backend = normalize_automation_backend(automation_backend)
     with _POOL_LOCK:
         runtime = _RUNTIMES.get(normalized_site)
         if runtime is not None:
+            if (
+                runtime.config.automation_backend != normalized_backend
+                or runtime.config.channel != channel
+            ):
+                raise RuntimeError(
+                    f"Browser runtime profile for {normalized_site} is already active "
+                    f"({runtime.config.automation_backend}/{runtime.config.channel or 'default'})"
+                )
             return runtime
 
         runtime = SharedBrowserRuntime(
             BrowserRuntimeConfig(
                 site=normalized_site,
+                automation_backend=normalized_backend,
+                channel=channel,
                 headless=_shared_runtime_headless(normalized_site) if headless is None else bool(headless),
                 launch_args=_resolve_launch_args(normalized_site, launch_args),
                 startup_timeout_seconds=_get_runtime_startup_timeout_seconds(),
@@ -141,7 +171,11 @@ def warm_browser_pool(sites: list[str] | tuple[str, ...] | None = None) -> list[
     warmed_sites: list[str] = []
     target_sites = list(sites or _get_warm_sites())
     for site in target_sites:
-        runtime = get_browser_runtime(site)
+        normalized_site = str(site or "").strip().lower()
+        runtime = get_browser_runtime(
+            normalized_site,
+            **_WARM_RUNTIME_PROFILES.get(normalized_site, {}),
+        )
         if runtime is None:
             continue
         runtime.start()
@@ -202,12 +236,18 @@ async def _run_with_temporary_browser(
     headless: bool = True,
     context_options: dict[str, Any] | None = None,
     init_scripts: list[str] | tuple[str, ...] | None = None,
+    automation_backend: str = "playwright",
+    channel: str | None = None,
 ):
+    async_playwright = get_async_playwright_factory(automation_backend)
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(
-            headless=headless,
-            args=list(launch_args or _DEFAULT_LAUNCH_ARGS),
-        )
+        launch_options: dict[str, Any] = {
+            "headless": headless,
+            "args": list(_DEFAULT_LAUNCH_ARGS if launch_args is None else launch_args),
+        }
+        if channel:
+            launch_options["channel"] = channel
+        browser = await playwright.chromium.launch(**launch_options)
         try:
             return await _execute_page_task(
                 browser,
@@ -227,8 +267,16 @@ async def run_browser_page_task(
     headless: bool = True,
     context_options: dict[str, Any] | None = None,
     init_scripts: list[str] | tuple[str, ...] | None = None,
+    automation_backend: str = "playwright",
+    channel: str | None = None,
 ):
-    runtime = get_browser_runtime(site, launch_args=launch_args, headless=headless)
+    runtime = get_browser_runtime(
+        site,
+        launch_args=launch_args,
+        headless=headless,
+        automation_backend=automation_backend,
+        channel=channel,
+    )
     if runtime is None:
         return await _run_with_temporary_browser(
             task_coro_factory,
@@ -236,6 +284,8 @@ async def run_browser_page_task(
             headless=headless,
             context_options=context_options,
             init_scripts=init_scripts,
+            automation_backend=automation_backend,
+            channel=channel,
         )
 
     future = runtime.submit(

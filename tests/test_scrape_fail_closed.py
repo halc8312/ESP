@@ -319,6 +319,98 @@ def test_same_marketplace_subframe_is_allowed_to_load():
     assert blocked_urls == []
 
 
+@pytest.mark.parametrize(
+    "frame_url",
+    [
+        "https://abc123.token.awswaf.com/challenge",
+        "https://regional.edge.token.awswaf.com/v1/token",
+    ],
+)
+def test_recordcity_aws_waf_token_subframe_is_allowed(frame_url):
+    blocked_urls, handler = _install_guard("recordcity", "detail")
+    route = GuardRoute()
+
+    run_coro_sync(
+        handler(
+            route,
+            GuardRequest(
+                frame_url,
+                frame=GuardFrame(parent=GuardFrame()),
+            ),
+        )
+    )
+
+    assert route.continued is True
+    assert route.aborted is False
+    assert blocked_urls == []
+
+
+@pytest.mark.parametrize(
+    "frame_url",
+    [
+        "https://abc123.token.awswaf.com.evil.example/challenge",
+        "https://token.awswaf.com.attacker.example/challenge",
+        "http://abc123.token.awswaf.com/challenge",
+        "https://abc123.token.awswaf.com:8443/challenge",
+    ],
+)
+def test_recordcity_aws_waf_token_subframe_rejects_unsafe_url_shapes(frame_url):
+    blocked_urls, handler = _install_guard("recordcity", "detail")
+    route = GuardRoute()
+
+    run_coro_sync(
+        handler(
+            route,
+            GuardRequest(
+                frame_url,
+                frame=GuardFrame(parent=GuardFrame()),
+            ),
+        )
+    )
+
+    assert route.aborted is True
+    assert route.continued is False
+    assert blocked_urls == []
+    raise_for_blocked_navigation(blocked_urls, "recordcity")
+
+
+@pytest.mark.parametrize("site", ["mercari", "snkrdunk"])
+def test_aws_waf_token_subframe_exception_is_recordcity_only(site):
+    blocked_urls, handler = _install_guard(site, "detail")
+    route = GuardRoute()
+
+    run_coro_sync(
+        handler(
+            route,
+            GuardRequest(
+                "https://abc123.token.awswaf.com/challenge",
+                frame=GuardFrame(parent=GuardFrame()),
+            ),
+        )
+    )
+
+    assert route.aborted is True
+    assert route.continued is False
+    assert blocked_urls == []
+    raise_for_blocked_navigation(blocked_urls, site)
+
+
+def test_recordcity_aws_waf_token_top_level_navigation_still_fails_closed():
+    token_url = "https://abc123.token.awswaf.com/challenge"
+    blocked_urls, handler = _install_guard("recordcity", "detail")
+    route = GuardRoute()
+
+    run_coro_sync(
+        handler(route, GuardRequest(token_url, frame=GuardFrame()))
+    )
+
+    assert route.aborted is True
+    assert route.continued is False
+    assert blocked_urls == [token_url]
+    with pytest.raises(UnsafeScrapeUrlError, match="許可ドメイン外"):
+        raise_for_blocked_navigation(blocked_urls, "recordcity")
+
+
 def test_top_level_navigation_off_domain_still_fails_closed():
     blocked_urls, handler = _install_guard("mercari", "search")
     route = GuardRoute()

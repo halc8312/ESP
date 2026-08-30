@@ -11,16 +11,37 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from playwright.async_api import async_playwright
-
 
 logger = logging.getLogger("browser_runtime")
+
+_SUPPORTED_AUTOMATION_BACKENDS = frozenset({"playwright", "patchright"})
+
+
+def normalize_automation_backend(value: str | None) -> str:
+    """Return a supported browser driver name without importing it eagerly."""
+    backend = str(value or "playwright").strip().lower()
+    if backend not in _SUPPORTED_AUTOMATION_BACKENDS:
+        supported = ", ".join(sorted(_SUPPORTED_AUTOMATION_BACKENDS))
+        raise ValueError(f"Unsupported browser automation backend: {backend} (expected {supported})")
+    return backend
+
+
+def get_async_playwright_factory(backend: str):
+    """Load Playwright or Patchright only when that site's browser starts."""
+    backend = normalize_automation_backend(backend)
+    if backend == "patchright":
+        from patchright.async_api import async_playwright
+    else:
+        from playwright.async_api import async_playwright
+    return async_playwright
 
 
 @dataclass(frozen=True)
 class BrowserRuntimeConfig:
     site: str
     browser_name: str = "chromium"
+    automation_backend: str = "playwright"
+    channel: str | None = None
     headless: bool = True
     launch_args: tuple[str, ...] = ()
     startup_timeout_seconds: float = 60.0
@@ -152,11 +173,17 @@ class SharedBrowserRuntime:
             self._state = "closed"
 
     async def _launch_async(self) -> None:
+        async_playwright = get_async_playwright_factory(self.config.automation_backend)
         self._playwright = await async_playwright().start()
         browser_type = getattr(self._playwright, self.config.browser_name)
+        launch_options: dict[str, Any] = {
+            "headless": self.config.headless,
+            "args": list(self.config.launch_args),
+        }
+        if self.config.channel:
+            launch_options["channel"] = self.config.channel
         self._browser = await browser_type.launch(
-            headless=self.config.headless,
-            args=list(self.config.launch_args),
+            **launch_options,
         )
         with self._lock:
             self._state = "ready"
@@ -305,6 +332,8 @@ class SharedBrowserRuntime:
         with self._lock:
             return {
                 "site": self.config.site,
+                "automation_backend": self.config.automation_backend,
+                "channel": self.config.channel,
                 "state": self._state,
                 "headless": bool(self.config.headless),
                 "restart_count": int(self.restart_count),

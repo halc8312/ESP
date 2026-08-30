@@ -15,6 +15,7 @@ import json
 import pytest
 
 import recordcity_db
+from services import recordcity_browser_fetch
 from services.scrape_request import InvalidTargetUrl, classify_target_url
 from services.scrape_safety import (
     ScrapeFailure,
@@ -132,6 +133,35 @@ class TestUrlRules:
                 "recordcity",
                 kind="detail",
             )
+
+
+def test_fetch_page_uses_recordcity_browser_adapter_and_wait_contract(monkeypatch):
+    captured = {}
+    page = _product_page()
+    detail_url = "https://www.recordcity.jp/catalog/4936480"
+
+    def fake_fetch(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return page
+
+    monkeypatch.setattr(
+        recordcity_browser_fetch,
+        "fetch_recordcity_page_via_browser_pool_sync",
+        fake_fetch,
+    )
+
+    result = recordcity_db._fetch_page(detail_url, "detail")
+
+    assert result is page
+    assert captured == {
+        "url": detail_url,
+        "kind": "detail",
+        "network_idle": True,
+        "timeout": 45000,
+        "wait_selector": "script[type='application/ld+json']",
+        "wait_selector_timeout": 20000,
+    }
 
 
 class TestReadingOneRecord:

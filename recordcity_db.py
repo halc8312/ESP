@@ -198,10 +198,13 @@ _READY_TIMEOUT_MS = 20000
 
 def _fetch_page(url: str, kind: str):
     """Fetch through the browser; the WAF answers anything else with a puzzle."""
-    from services.scraping_client import fetch_dynamic
+    from services.recordcity_browser_fetch import (
+        fetch_recordcity_page_via_browser_pool_sync,
+    )
 
-    page = fetch_dynamic(
+    page = fetch_recordcity_page_via_browser_pool_sync(
         url,
+        kind=kind,
         network_idle=True,
         timeout=45000,
         wait_selector=_READY_SELECTOR[kind],

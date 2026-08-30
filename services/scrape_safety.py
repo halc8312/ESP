@@ -413,6 +413,31 @@ def _is_subframe_request(request) -> bool:
         return False
 
 
+def _is_allowed_challenge_subframe_url(url: str, site: str) -> bool:
+    """Allow only the AWS WAF token frame Record City is known to require.
+
+    Subresource scripts were already allowed by the navigation guard, but AWS
+    WAF may also use a document inside ``*.token.awswaf.com`` while acquiring
+    its session token. This exception is deliberately limited to subframes; a
+    top-level redirect to the same host still fails closed.
+    """
+    if site != "recordcity":
+        return False
+    try:
+        parsed = urlparse(str(url or "").strip())
+        host = _normalize_host(parsed.hostname or "")
+        port = parsed.port
+    except (UnsafeScrapeUrlError, ValueError):
+        return False
+    return (
+        parsed.scheme.lower() == "https"
+        and parsed.username is None
+        and parsed.password is None
+        and port in (None, 443)
+        and (host == "token.awswaf.com" or host.endswith(".token.awswaf.com"))
+    )
+
+
 async def install_navigation_guard(context, site: str, *, kind: str) -> list[str]:
     """Abort disallowed browser document navigations before network dispatch.
 
@@ -443,7 +468,10 @@ async def install_navigation_guard(context, site: str, *, kind: str) -> list[str
         if is_navigation or resource_type == "document":
             request_url = str(getattr(request, "url", "") or "")
             if _is_subframe_request(request):
-                if not is_marketplace_host_url(request_url, site):
+                if (
+                    not is_marketplace_host_url(request_url, site)
+                    and not _is_allowed_challenge_subframe_url(request_url, site)
+                ):
                     logger.debug(
                         "Blocked third-party %s sub-frame document: %s",
                         site,
