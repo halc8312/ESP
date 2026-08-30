@@ -178,9 +178,14 @@ def _pricelist_by_token(session_db, token):
     return (
         session_db.query(PriceList)
         .options(joinedload(PriceList.shop))
+        .join(User, User.id == PriceList.user_id)
+        # A suspended student's lists go dark with the account and come back
+        # untouched when it resumes, so a break in attendance does not mean
+        # rebuilding the catalog afterwards.
         .filter(
             PriceList.token == token,
             PriceList.is_active.is_(True),
+            User.suspended_at.is_(None),
             or_(PriceList.unpublish_at.is_(None), PriceList.unpublish_at > now),
         )
         .first()

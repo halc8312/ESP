@@ -10,6 +10,60 @@
     <p class="page-subtitle">つまずいている生徒に先回りで声をかけるための画面です。売上や仕入の金額は表示しません。</p>
 </div>
 
+{% if issued_password %}
+{# No live region: role="alert" makes a screen reader read the contents out
+   the moment they appear, and a password is not something to announce in a
+   room. The office is looking at this page because they just asked for it. #}
+<section class="content-card office-password-card">
+    <div class="content-card-body">
+        <h2 class="office-password-heading">
+            {% if issued_password.reason == 'created' %}
+            生徒を登録しました。最初のパスワードをお伝えください
+            {% else %}
+            仮パスワードを再発行しました
+            {% endif %}
+        </h2>
+        <dl class="office-password-detail">
+            <dt>ログイン名</dt>
+            <dd>{{ issued_password.username }}</dd>
+            <dt>パスワード</dt>
+            <dd><code class="office-password-value">{{ issued_password.password }}</code></dd>
+        </dl>
+        <p class="office-password-note">
+            このパスワードが表示されるのはこの一度きりです。控えてから画面を移動してください。
+            分からなくなった場合は、一覧の「仮パスワード発行」でいつでも再発行できます。
+        </p>
+    </div>
+</section>
+{% endif %}
+
+<section class="content-card">
+    <div class="content-card-header">
+        <h2>生徒を登録する</h2>
+    </div>
+    <div class="content-card-body">
+        <form method="POST" action="{{ url_for('admin.admin_create_student') }}" class="office-create-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="field-grid field-grid--2">
+                <div class="form-field">
+                    <label for="newStudentUsername">ログイン名</label>
+                    <input type="text" id="newStudentUsername" name="username" required
+                        placeholder="生徒がログインに使う名前" autocomplete="off">
+                </div>
+                <div class="form-field">
+                    <label for="newStudentEmail">メールアドレス（任意）</label>
+                    <input type="email" id="newStudentEmail" name="email"
+                        placeholder="申込時のメールアドレス" autocomplete="off">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">登録する</button>
+        </form>
+        <p class="text-small text-muted mb-0">
+            パスワードはこちらで自動生成し、登録後に一度だけ表示します。生徒には最初のログイン後に変更してもらってください。
+        </p>
+    </div>
+</section>
+
 <div class="dashboard-summary-grid">
     <article class="dashboard-summary-card dashboard-summary-card--neutral">
         <span class="dashboard-summary-label">生徒数</span>
@@ -107,11 +161,13 @@
                         <th class="num">直近{{ no_view_window_days }}日</th>
                         <th>最終ログイン</th>
                         <th>状態</th>
+                        <th>メールアドレス</th>
+                        <th>操作</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for student in students %}
-                    <tr>
+                    <tr {% if student.is_suspended %}class="is-suspended-row"{% endif %}>
                         <td class="product-title-cell">{{ student.username }}</td>
                         <td class="num">{{ student.active_product_count }}</td>
                         <td class="num">{{ student.draft_product_count }}</td>
@@ -121,11 +177,52 @@
                         <td class="num">{{ student.recent_view_count }}</td>
                         <td>{{ student.last_login_at | jst(default='ログインなし') }}</td>
                         <td>
-                            {% if student.needs_follow_up %}
+                            {% if student.is_suspended %}
+                            <span class="dashboard-badge is-suspended">利用停止中</span>
+                            {% elif student.needs_follow_up %}
                             <span class="dashboard-badge is-draft">要フォロー</span>
                             {% else %}
                             <span class="dashboard-badge is-clean">順調</span>
                             {% endif %}
+                        </td>
+                        <td>
+                            <form method="POST"
+                                action="{{ url_for('admin.admin_set_student_email', user_id=student.user_id) }}"
+                                class="office-inline-form">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="email" name="email" value="{{ student.email or '' }}"
+                                    placeholder="未登録" class="office-email-input"
+                                    aria-label="{{ student.username }} のメールアドレス">
+                                <button type="submit" class="btn btn-secondary">保存</button>
+                            </form>
+                        </td>
+                        <td>
+                            <div class="office-actions">
+                                <form method="POST"
+                                    action="{{ url_for('admin.admin_reset_student_password', user_id=student.user_id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-secondary"
+                                        data-confirm-title="仮パスワードの再発行"
+                                        data-confirm-message="{{ student.username }} の仮パスワードを再発行します。いま使っているパスワードは使えなくなるので、新しいパスワードを本人に伝えてください。"
+                                        data-confirm-label="再発行する">仮パスワード発行</button>
+                                </form>
+                                {% if student.is_suspended %}
+                                <form method="POST"
+                                    action="{{ url_for('admin.admin_resume_student', user_id=student.user_id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-primary">利用を再開</button>
+                                </form>
+                                {% else %}
+                                <form method="POST"
+                                    action="{{ url_for('admin.admin_suspend_student', user_id=student.user_id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-danger"
+                                        data-confirm-title="利用の停止"
+                                        data-confirm-message="{{ student.username }} の利用を停止します。ログインと公開リストが止まります。商品も設定も消えないので、再開すれば元どおりです。"
+                                        data-confirm-label="停止する">利用を停止</button>
+                                </form>
+                                {% endif %}
+                            </div>
                         </td>
                     </tr>
                     {% endfor %}

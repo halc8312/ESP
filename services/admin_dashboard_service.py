@@ -97,19 +97,25 @@ def build_student_activity(session_db, now=None):
         last_month = last_month_views.get(student.id, 0)
 
         reasons = []
-        if student.last_login_at is None or student.last_login_at < inactive_before:
-            reasons.append("inactive")
-        if product_count > 0 and pricelist_count == 0:
-            reasons.append("no_pricelist")
-        if published_count > 0 and recent_views.get(student.id, 0) == 0:
-            reasons.append("no_views")
-        if last_month > 0 and this_month < last_month * VIEW_DROP_RATIO:
-            reasons.append("view_drop")
+        # A suspended account was stopped on purpose — it is quiet because the
+        # office made it quiet. Chasing it would bury the students who need it.
+        if student.suspended_at is None:
+            if student.last_login_at is None or student.last_login_at < inactive_before:
+                reasons.append("inactive")
+            if product_count > 0 and pricelist_count == 0:
+                reasons.append("no_pricelist")
+            if published_count > 0 and recent_views.get(student.id, 0) == 0:
+                reasons.append("no_views")
+            if last_month > 0 and this_month < last_month * VIEW_DROP_RATIO:
+                reasons.append("view_drop")
 
         rows.append(
             {
                 "user_id": student.id,
                 "username": student.username,
+                "email": student.email,
+                "suspended_at": student.suspended_at,
+                "is_suspended": student.suspended_at is not None,
                 "last_login_at": student.last_login_at,
                 "active_product_count": active_count,
                 "draft_product_count": draft_count,

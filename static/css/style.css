@@ -1610,6 +1610,92 @@ body.image-lightbox-open {
     color: #991b1b;
 }
 
+/* Stopped on purpose, so it reads as a state rather than a problem. */
+.dashboard-badge.is-suspended {
+    background: #e2e8f0;
+    color: #475569;
+}
+
+/* ---- The school office's student management ---- */
+
+.is-suspended-row > td {
+    opacity: 0.62;
+}
+
+.office-create-form {
+    margin-bottom: 12px;
+}
+
+.office-inline-form {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.office-email-input {
+    width: min(240px, 100%);
+}
+
+.office-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: stretch;
+}
+
+.office-actions button {
+    white-space: nowrap;
+    width: 100%;
+}
+
+/*
+ * A password shown once. The toast area dismisses itself after a few seconds,
+ * which is not long enough to write one down, so this stays on the page.
+ */
+.office-password-card {
+    border: 2px solid #f59e0b;
+    background: #fffbeb;
+}
+
+.office-password-heading {
+    margin: 0 0 12px;
+    font-size: 18px;
+}
+
+.office-password-detail {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px 16px;
+    align-items: baseline;
+    margin: 0 0 12px;
+}
+
+.office-password-detail dt {
+    font-weight: 600;
+    color: #6b5200;
+}
+
+.office-password-detail dd {
+    margin: 0;
+}
+
+.office-password-value {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    background: #fff;
+    border: 1px solid #fcd34d;
+    border-radius: 6px;
+    padding: 4px 12px;
+    user-select: all;
+}
+
+.office-password-note {
+    margin: 0;
+    font-size: 13px;
+    color: #6b5200;
+}
+
 .dashboard-issue-badges {
     display: flex;
     gap: 6px;
