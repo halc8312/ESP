@@ -17,6 +17,14 @@ CHALLENGE_HTML = """<html><script>
 window.gokuProps = {};
 AwsWafIntegration.fetch('https://example.token.awswaf.com/challenge.js');
 </script></html>"""
+NORMAL_CHROME_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+)
+PRODUCTION_CONTEXT_OPTIONS = {
+    "locale": "ja-JP",
+    "user_agent": NORMAL_CHROME_UA,
+}
 
 
 class FakeRequest:
@@ -203,7 +211,7 @@ def test_recordcity_uses_site_scoped_patchright_profile(monkeypatch):
             "site": "recordcity",
             "headless": True,
             "launch_args": [],
-            "context_options": {"locale": "ja-JP"},
+            "context_options": PRODUCTION_CONTEXT_OPTIONS,
             "automation_backend": "patchright",
             "channel": "chromium",
         }
@@ -380,7 +388,7 @@ def test_new_token_is_resubmitted_once_before_challenge_continued_reason(monkeyp
         _fetch()
 
     assert "REJECTED" not in str(exc_info.value)
-    assert captured[0]["context_options"] == {"locale": "ja-JP"}
+    assert captured[0]["context_options"] == PRODUCTION_CONTEXT_OPTIONS
     assert (
         captured[1]["context_options"]["storage_state"]["cookies"][0]["value"]
         == "new-token"
@@ -413,7 +421,7 @@ def test_stale_cached_token_gets_one_fresh_retry_in_same_fetch(monkeypatch):
     assert result.status == 200
     assert len(captured) == 2
     assert captured[0]["context_options"]["storage_state"]["cookies"][0]["value"] == "stale-token"
-    assert captured[1]["context_options"] == {"locale": "ja-JP"}
+    assert captured[1]["context_options"] == PRODUCTION_CONTEXT_OPTIONS
     assert recordcity_fetch._cached_waf_cookies()[0]["value"] == "fresh-token"
 
 
@@ -482,7 +490,7 @@ def test_existing_unaccepted_token_is_discarded_without_logging_value(monkeypatc
     assert secret not in str(exc_info.value)
     assert secret not in caplog.text
     assert captured[0]["context_options"]["storage_state"]["cookies"][0]["value"] == secret
-    assert captured[1]["context_options"] == {"locale": "ja-JP"}
+    assert captured[1]["context_options"] == PRODUCTION_CONTEXT_OPTIONS
 
 
 def test_successful_token_is_reused_only_in_next_recordcity_context(monkeypatch):
@@ -495,8 +503,9 @@ def test_successful_token_is_reused_only_in_next_recordcity_context(monkeypatch)
     _fetch()
     _fetch()
 
-    assert captured[0]["context_options"] == {"locale": "ja-JP"}
+    assert captured[0]["context_options"] == PRODUCTION_CONTEXT_OPTIONS
     storage = captured[1]["context_options"]["storage_state"]
+    assert captured[1]["context_options"]["user_agent"] == NORMAL_CHROME_UA
     assert storage["origins"] == []
     assert storage["cookies"][0]["name"] == "aws-waf-token"
     assert storage["cookies"][0]["value"] == "reused-secret"
@@ -559,16 +568,13 @@ def test_recordcity_fetches_are_serialized_around_token_cache(monkeypatch):
 @pytest.mark.parametrize(
     "profile, expected_headless, expected_options",
     [
-        ("patchright-current", True, {"locale": "ja-JP"}),
+        ("patchright-current", True, PRODUCTION_CONTEXT_OPTIONS),
         (
             "patchright-headless-ua",
             True,
             {
                 "locale": "ja-JP",
-                "user_agent": (
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
-                ),
+                "user_agent": NORMAL_CHROME_UA,
             },
         ),
         (
@@ -689,6 +695,7 @@ def test_proxy_browser_probe_passes_credentials_only_to_context(monkeypatch):
 
     assert result["product_json_ld"] is True
     assert captured[0]["headless"] is True
+    assert captured[0]["context_options"]["user_agent"] == NORMAL_CHROME_UA
     assert captured[0]["context_options"]["proxy"] == {
         "server": "http://proxy.example:8080",
         "username": "proxy-user",

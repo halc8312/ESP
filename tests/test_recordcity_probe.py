@@ -14,6 +14,8 @@ CHALLENGE_HTML = """<html><script>
 window.gokuProps = {};
 AwsWafIntegration.fetch('https://example.token.awswaf.com/challenge.js');
 </script></html>"""
+NORMAL_UA = "Mozilla/5.0 Chrome/145.0.0.0 Safari/537.36"
+HEADLESS_UA = "Mozilla/5.0 HeadlessChrome/145.0.0.0 Safari/537.36"
 
 
 def _attempted(strategy, *, outcome="success"):
@@ -36,6 +38,12 @@ def _waf_failure(strategy):
     result["target_status"] = 403
     result["blocked_marker"] = True
     return result
+
+
+def _with_browser_signal(row, *, user_agent=NORMAL_UA, headless=False):
+    row["user_agent"] = user_agent
+    row["headless_user_agent"] = headless
+    return row
 
 
 def test_html_result_distinguishes_challenge_from_product():
@@ -219,32 +227,58 @@ def test_external_provider_redirect_cannot_be_reported_as_product_success(monkey
 def test_assessment_supports_browser_mode_factor_only_with_waf_control():
     assessment = recordcity_probe._assess_results(
         [
-            _waf_failure("patchright-current"),
-            _attempted("patchright-headful"),
+            _with_browser_signal(_waf_failure("patchright-current")),
+            _with_browser_signal(_attempted("patchright-headful")),
         ]
     )
 
     assert assessment["code"] == "browser_mode_factor_supported"
 
 
-def test_assessment_supports_headless_user_agent_factor():
-    rows = [
-        _waf_failure("patchright-current"),
-        _attempted("patchright-headless-ua"),
-    ]
+def test_assessment_does_not_infer_browser_mode_from_mismatched_ua_profiles():
+    assessment = recordcity_probe._assess_results(
+        [
+            _with_browser_signal(
+                _waf_failure("patchright-current"),
+                user_agent=HEADLESS_UA,
+                headless=True,
+            ),
+            _with_browser_signal(_attempted("patchright-headful")),
+        ]
+    )
 
-    assessment = recordcity_probe._assess_results(rows)
+    assert assessment["code"] == "inconclusive"
+
+
+def test_assessment_supports_headless_user_agent_factor():
+    current = _with_browser_signal(
+        _waf_failure("patchright-current"),
+        user_agent=HEADLESS_UA,
+        headless=True,
+    )
+    headless_ua = _with_browser_signal(_attempted("patchright-headless-ua"))
+
+    assessment = recordcity_probe._assess_results([current, headless_ua])
 
     assert assessment["code"] == "headless_user_agent_factor_supported"
+
+
+def test_assessment_does_not_infer_ua_factor_from_identical_ua_profiles():
+    current = _with_browser_signal(_waf_failure("patchright-current"))
+    headless_ua = _with_browser_signal(_attempted("patchright-headless-ua"))
+
+    assessment = recordcity_probe._assess_results([current, headless_ua])
+
+    assert assessment["code"] == "inconclusive"
 
 
 def test_assessment_supports_render_egress_factor_with_complete_matrix():
     assessment = recordcity_probe._assess_results(
         [
-            _waf_failure("patchright-current"),
-            _waf_failure("patchright-headful"),
-            _attempted("patchright-headless-proxy"),
-            _attempted("patchright-headful-proxy"),
+            _with_browser_signal(_waf_failure("patchright-current")),
+            _with_browser_signal(_waf_failure("patchright-headful")),
+            _with_browser_signal(_attempted("patchright-headless-proxy")),
+            _with_browser_signal(_attempted("patchright-headful-proxy")),
         ]
     )
 
@@ -254,14 +288,31 @@ def test_assessment_supports_render_egress_factor_with_complete_matrix():
 def test_assessment_supports_browser_and_egress_interaction():
     assessment = recordcity_probe._assess_results(
         [
-            _waf_failure("patchright-current"),
-            _waf_failure("patchright-headful"),
-            _waf_failure("patchright-headless-proxy"),
-            _attempted("patchright-headful-proxy"),
+            _with_browser_signal(_waf_failure("patchright-current")),
+            _with_browser_signal(_waf_failure("patchright-headful")),
+            _with_browser_signal(_waf_failure("patchright-headless-proxy")),
+            _with_browser_signal(_attempted("patchright-headful-proxy")),
         ]
     )
 
     assert assessment["code"] == "browser_and_egress_interaction_supported"
+
+
+def test_assessment_does_not_infer_egress_factor_from_mismatched_ua_profiles():
+    assessment = recordcity_probe._assess_results(
+        [
+            _with_browser_signal(_waf_failure("patchright-current")),
+            _with_browser_signal(_waf_failure("patchright-headful")),
+            _with_browser_signal(
+                _attempted("patchright-headless-proxy"),
+                user_agent=HEADLESS_UA,
+                headless=True,
+            ),
+            _with_browser_signal(_attempted("patchright-headful-proxy")),
+        ]
+    )
+
+    assert assessment["code"] == "inconclusive"
 
 
 def test_assessment_does_not_treat_launch_error_as_waf_evidence():
