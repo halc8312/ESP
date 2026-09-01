@@ -131,6 +131,36 @@ def test_scrape_run_preview_returns_json_without_saving(client, db_session, monk
     assert db_session.query(Product).filter_by(user_id=user.id).count() == 0
 
 
+def test_scrape_run_preview_preserves_recordcity_site(client, db_session, monkeypatch):
+    login_user(client, db_session, 'preview_recordcity_user')
+    fake_queue = FakeQueue()
+    build_calls = {}
+
+    def fake_build_scrape_task(**kwargs):
+        build_calls.update(kwargs)
+        return lambda: {
+            'items': [],
+            'site': kwargs['site'],
+            'persist_to_db': False,
+        }
+
+    monkeypatch.setattr('routes.scrape.get_queue', lambda: fake_queue)
+    monkeypatch.setattr('routes.scrape._build_scrape_task', fake_build_scrape_task)
+
+    response = client.post('/scrape/run', data={
+        'site': 'recordcity',
+        'keyword': 'Mad Caddies',
+        'response_mode': 'preview',
+    })
+
+    assert response.status_code == 202
+    assert build_calls['site'] == 'recordcity'
+    assert fake_queue.last_enqueue['site'] == 'recordcity'
+    assert fake_queue.last_enqueue['request_payload']['site'] == 'recordcity'
+    assert fake_queue.last_enqueue['request_payload']['keyword'] == 'Mad Caddies'
+    assert fake_queue.last_enqueue['context']['site_label'] == 'レコードシティ'
+
+
 @pytest.mark.parametrize(
     "target_url",
     [
@@ -751,3 +781,13 @@ def test_scrape_form_renders_tracker_config(client, db_session):
     assert b'globalScrapeTrackerDismissAll' in response.data
     assert b'globalScrapeTrackerSheetDismissAll' in response.data
     assert b'data-dismiss-batch-url=' in response.data
+
+
+def test_scrape_form_offers_recordcity_keyword_search(client, db_session):
+    login_user(client, db_session, 'scrape_form_recordcity_user')
+
+    response = client.get('/scrape')
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert '<option value="recordcity">レコードシティ</option>' in html

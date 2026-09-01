@@ -107,7 +107,7 @@ def _parse_supported_target_url(url: str):
     if site:
         return parsed, host, site
 
-    raise InvalidTargetUrl("対応している7サイトの商品ページまたは検索結果URLを入力してください。")
+    raise InvalidTargetUrl("対応サイトの商品ページまたは検索結果URLを入力してください。")
 
 
 def detect_site_from_url(url: str) -> str:
@@ -290,6 +290,12 @@ def build_search_url(
         if max_str:
             params["maxPrice"] = max_str
         return "https://snkrdunk.com/search?" + urlencode(params)
+
+    if site == "recordcity":
+        params = {}
+        if keyword:
+            params["keyword"] = keyword
+        return "https://www.recordcity.jp/ja/catalog?" + urlencode(params)
 
     params = {}
     if keyword:
