@@ -49,6 +49,12 @@
         return Date.now();
     }
 
+    function removeNode(node) {
+        if (node && node.parentNode) {
+            node.parentNode.removeChild(node);
+        }
+    }
+
     function getCsrfToken() {
         var csrfMeta = document.querySelector('meta[name="csrf-token"]');
         return csrfMeta ? String(csrfMeta.content || "").trim() : "";
