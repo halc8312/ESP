@@ -80,3 +80,23 @@ jobs:
           import patchright; print('patchright OK')
           print('All critical imports OK')
           "
+
+      - name: Smoke test - Patchright headful under Xvfb
+        timeout-minutes: 3
+        run: |
+          docker run --rm esp-test:ci timeout 90s xvfb-run -a python -c "
+          import asyncio
+          from patchright.async_api import async_playwright
+          async def smoke():
+              print('Starting Patchright headful/Xvfb', flush=True)
+              async with async_playwright() as driver:
+                  browser = await driver.chromium.launch(channel='chromium', headless=False, args=[])
+                  try:
+                      page = await browser.new_page()
+                      await page.goto('about:blank')
+                      assert 'HeadlessChrome' not in await page.evaluate('navigator.userAgent')
+                  finally:
+                      await browser.close()
+              print('Patchright headful/Xvfb OK', flush=True)
+          asyncio.run(smoke())
+          "
