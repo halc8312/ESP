@@ -331,6 +331,26 @@ class TestAccessibility:
         assert 'listEl.innerHTML = ""' not in script
         assert 'mobileListEl.innerHTML = ""' not in script
 
+    def test_tracker_defines_its_card_removal_helper_in_the_same_script(self):
+        """A helper private to app_ui.js is not visible inside this script."""
+        script = _read("static/js/scrape_tracker.js")
+
+        definition = script.index("function removeNode(")
+        use = script.index("removeNode(cache[jobId])")
+
+        assert definition < use
+
+    def test_tracker_rendering_cannot_abort_an_accepted_scrape(self):
+        """The progress widget is supplementary to the scrape request."""
+        script = _read("static/js/scrape_form.js")
+        start = script.index("function registerTrackerJob(")
+        end = script.index("function refreshTracker(", start)
+        helper = script[start:end]
+
+        assert "try {" in helper
+        assert "window.ESPScrapeTracker.registerJob(jobData);" in helper
+        assert "catch (error)" in helper
+
 
 class TestDestructiveActionsUseTheAppDialog:
     """
