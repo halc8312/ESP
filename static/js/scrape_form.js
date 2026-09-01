@@ -134,7 +134,16 @@
         if (!window.ESPScrapeTracker || !window.ESPScrapeTracker.registerJob) {
             return;
         }
-        window.ESPScrapeTracker.registerJob(jobData);
+        try {
+            window.ESPScrapeTracker.registerJob(jobData);
+        } catch (error) {
+            // The global tracker is supplementary UI.  A tracker rendering
+            // failure must not turn an already accepted scrape job into a
+            // false "could not start" error or stop preview polling.
+            if (window.console && typeof window.console.error === "function") {
+                window.console.error("Failed to update scrape tracker", error);
+            }
+        }
     }
 
     function refreshTracker() {
