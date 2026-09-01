@@ -507,18 +507,46 @@ def _assess_results(rows: list[dict]) -> dict:
             and waf_evidence
         )
 
+    def _headless_ua_signal(name: str) -> bool | None:
+        value = by_strategy.get(name, {}).get("headless_user_agent")
+        return value if isinstance(value, bool) else None
+
+    def _browser_user_agent(name: str) -> str:
+        return str(by_strategy.get(name, {}).get("user_agent") or "").strip()
+
+    def _same_normal_user_agent(*names: str) -> bool:
+        user_agents = [_browser_user_agent(name) for name in names]
+        return bool(
+            user_agents
+            and all(user_agents)
+            and len(set(user_agents)) == 1
+            and all(_headless_ua_signal(name) is False for name in names)
+        )
+
     current = "patchright-current"
     headless_ua = "patchright-headless-ua"
     headful = "patchright-headful"
     headless_proxy = "patchright-headless-proxy"
     headful_proxy = "patchright-headful-proxy"
 
-    if _waf_failure(current) and _success(headless_ua):
+    if (
+        _waf_failure(current)
+        and _success(headless_ua)
+        and _headless_ua_signal(current) is True
+        and _headless_ua_signal(headless_ua) is False
+        and bool(_browser_user_agent(current))
+        and bool(_browser_user_agent(headless_ua))
+        and _browser_user_agent(current) != _browser_user_agent(headless_ua)
+    ):
         return {
             "code": "headless_user_agent_factor_supported",
             "summary": "同じheadlessで通常Chrome UAだけ成功したため、HeadlessChrome UA要因が強い。",
         }
-    if _waf_failure(current) and _success(headful):
+    if (
+        _waf_failure(current)
+        and _success(headful)
+        and _same_normal_user_agent(current, headful)
+    ):
         return {
             "code": "browser_mode_factor_supported",
             "summary": "Render直通でheadfulだけ成功したため、headless/automation要因が強い。",
@@ -526,7 +554,11 @@ def _assess_results(rows: list[dict]) -> dict:
     if all(_attempted(name) for name in (current, headful, headless_proxy, headful_proxy)):
         direct_failed = _waf_failure(current) and _waf_failure(headful)
         proxy_succeeded = _success(headless_proxy) and _success(headful_proxy)
-        if direct_failed and proxy_succeeded:
+        egress_controls_match = _same_normal_user_agent(
+            current,
+            headless_proxy,
+        ) and _same_normal_user_agent(headful, headful_proxy)
+        if direct_failed and proxy_succeeded and egress_controls_match:
             return {
                 "code": "render_egress_factor_supported",
                 "summary": "両browser modeがproxy経由だけ成功したため、Render egress/IP要因が強い。",
@@ -536,6 +568,7 @@ def _assess_results(rows: list[dict]) -> dict:
             and _waf_failure(headful)
             and _waf_failure(headless_proxy)
             and _success(headful_proxy)
+            and egress_controls_match
         ):
             return {
                 "code": "browser_and_egress_interaction_supported",

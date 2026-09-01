@@ -48,6 +48,13 @@ _CHROMIUM_145_LINUX_UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
 )
+# A same-runtime A/B probe on Render changed only this value and moved the
+# Record City response from token-then-403 to validated Product/listing HTML.
+# Keep it site-scoped; the generic browser pool and other marketplaces must
+# retain their browser-generated user agents.
+_PRODUCTION_CONTEXT_OVERRIDES = {
+    "user_agent": _CHROMIUM_145_LINUX_UA,
+}
 
 _WAF_COOKIE_LOCK = threading.RLock()
 _WAF_COOKIES: list[dict] = []
@@ -756,6 +763,7 @@ async def _fetch_recordcity_page_unlocked(
             input_cookies=input_cookies,
             attempt=attempt,
             probe_id=probe_id,
+            context_options=_PRODUCTION_CONTEXT_OVERRIDES,
         )
         failure = _classify_waf_failure(result.probe, result.html)
         if failure is not None:
@@ -811,13 +819,11 @@ _BROWSER_PROBE_PROFILES: dict[str, dict] = {
     # control available without invoking the production retry/token cache.
     "patchright-current": {
         "headless": True,
-        "context_options": {},
+        "context_options": _PRODUCTION_CONTEXT_OVERRIDES,
     },
-    # A narrow diagnostic for the HeadlessChrome token observed in Render.
-    # This is intentionally not the production default: a custom UA can
-    # disagree with browser-generated client hints.  It remains useful as a
-    # controlled cell because AWS WAF deployments have differed on this exact
-    # signal, while Patchright leaves it visible in headless mode.
+    # Compatibility alias for the profile that the Render A/B probe proved and
+    # production now uses. Keeping the explicit name makes old probe commands
+    # and stored diagnostic results comparable.
     "patchright-headless-ua": {
         "headless": True,
         "context_options": {"user_agent": _CHROMIUM_145_LINUX_UA},
@@ -841,7 +847,7 @@ _BROWSER_PROBE_PROFILES: dict[str, dict] = {
     # are read from RECORDCITY_PROXY_URL and passed only to BrowserContext.
     "patchright-headless-proxy": {
         "headless": True,
-        "context_options": {},
+        "context_options": _PRODUCTION_CONTEXT_OVERRIDES,
         "proxy": True,
     },
     "patchright-headful-proxy": {
