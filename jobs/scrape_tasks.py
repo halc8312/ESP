@@ -248,6 +248,14 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                     headless=True,
                 )
                 finalize(items, "snkrdunk")
+            elif site == "recordcity":
+                items = recordcity_db.scrape_search_result(
+                    search_url=search_url,
+                    max_items=search_limit,
+                    max_scroll=search_depth,
+                    headless=True,
+                )
+                finalize(items, "recordcity")
             else:
                 items = scrape_search_result(
                     search_url=search_url,

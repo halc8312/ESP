@@ -135,6 +135,52 @@ def test_build_scrape_task_includes_native_price_params_for_supported_sites(
         assert fragment in captured["search_url"]
 
 
+def test_build_scrape_task_routes_recordcity_keyword_search(monkeypatch):
+    captured = {}
+
+    def fake_search_result(search_url, max_items, max_scroll, headless):
+        captured["search_url"] = search_url
+        captured["max_items"] = max_items
+        captured["max_scroll"] = max_scroll
+        captured["headless"] = headless
+        return []
+
+    monkeypatch.setattr(
+        scrape_tasks.recordcity_db,
+        "scrape_search_result",
+        fake_search_result,
+    )
+    monkeypatch.setattr(
+        scrape_tasks,
+        "filter_excluded_items",
+        lambda items, user_id: (list(items), 0),
+    )
+
+    task = scrape_routes._build_scrape_task(
+        site="recordcity",
+        target_url="",
+        keyword="Mad Caddies",
+        price_min="1000",
+        price_max="5000",
+        sort="created_desc",
+        category=None,
+        limit=10,
+        user_id=1,
+        persist_to_db=False,
+    )
+
+    result = task()
+
+    assert captured["search_url"] == (
+        "https://www.recordcity.jp/ja/catalog?keyword=Mad+Caddies"
+    )
+    assert captured["max_items"] == 10
+    assert captured["max_scroll"] == 2
+    assert captured["headless"] is True
+    assert result["site"] == "recordcity"
+    assert result["search_url"] == captured["search_url"]
+
+
 def test_build_scrape_task_applies_post_scrape_price_filter_even_with_native_price_url_support(monkeypatch):
     captured = {}
     scraped_items = [
