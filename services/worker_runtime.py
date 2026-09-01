@@ -557,6 +557,45 @@ def recover_translation_suggestions_on_startup() -> dict[str, Any]:
     return recover_expired_translation_suggestions()
 
 
+def stop_worker_scheduler(app: Flask) -> bool:
+    """
+    Stop the scheduler when the job loop ends, and say whether it was running.
+
+    Without this the process turns into a zombie that nothing restarts. The RQ
+    loop returns on shutdown, the heartbeat stops — so health reports the worker
+    as unavailable — and queued scrape jobs are never picked up again. But the
+    scheduler is still alive, so the process does not exit, so the platform sees
+    a running service and leaves it alone. Observed in production: the loop had
+    ended while the scheduler went on firing every five minutes into an executor
+    that was already shut down.
+
+        RuntimeError: cannot schedule new futures after shutdown
+
+    Stopping it here lets the process exit, which is what gets it replaced.
+    """
+    scheduler = app.extensions.get("esp_scheduler") if hasattr(app, "extensions") else None
+    if scheduler is None or not app.extensions.get("esp_scheduler_started"):
+        return False
+
+    try:
+        # wait=False: a job that has hung is exactly the situation this exists
+        # for, and waiting on it would hold the process open all over again.
+        scheduler.shutdown(wait=False)
+        logger.info("Worker scheduler stopped so the process can exit and be replaced")
+    except Exception:
+        logger.exception("Worker scheduler did not stop cleanly")
+        return False
+    finally:
+        app.extensions["esp_scheduler_started"] = False
+        lock_handle = app.extensions.pop("esp_scheduler_lock_handle", None)
+        if lock_handle is not None:
+            try:
+                lock_handle.close()
+            except Exception:
+                logger.exception("Worker scheduler lock did not release cleanly")
+    return True
+
+
 def run_worker(app: Flask) -> int:
     with app.app_context():
         ensure_additive_schema_ready()
@@ -628,6 +667,7 @@ def run_worker(app: Flask) -> int:
         )
     finally:
         stop_worker_heartbeat(heartbeat_handle)
+        stop_worker_scheduler(app)
         pool_health = get_browser_pool_health()
         if pool_health["runtimes"]:
             logger.info("Worker browser pool closing: health=%s", pool_health)
