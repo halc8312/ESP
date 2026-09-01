@@ -3075,6 +3075,62 @@ def run_stack_smoke(
 def register_cli_commands(app):
     """Register CLI commands with the Flask app."""
 
+    from services.recordcity_probe import RECORDCITY_PROBE_STRATEGIES
+
+    @app.cli.command("recordcity-probe")
+    @click.argument("url", type=str)
+    @click.option(
+        "--strategy",
+        "strategies",
+        multiple=True,
+        type=click.Choice(RECORDCITY_PROBE_STRATEGIES),
+        help="Strategy to run once; repeat the option to select multiple cells.",
+    )
+    @click.option(
+        "--timeout-seconds",
+        type=click.FloatRange(min=5.0, max=120.0),
+        default=60.0,
+        show_default=True,
+    )
+    @click.option(
+        "--delay-seconds",
+        type=click.FloatRange(min=3.0, max=60.0),
+        default=5.0,
+        show_default=True,
+        help="Minimum pause between attempted strategies.",
+    )
+    @click.option(
+        "--allow-external",
+        is_flag=True,
+        default=False,
+        help="Permit configured external providers, which can incur charges.",
+    )
+    @click.option("--json-only", is_flag=True, default=False)
+    def recordcity_probe(
+        url,
+        strategies,
+        timeout_seconds,
+        delay_seconds,
+        allow_external,
+        json_only,
+    ):
+        """Compare bounded Record City fetch strategies for one URL."""
+        from services.recordcity_probe import (
+            format_recordcity_probe_table,
+            run_recordcity_probe,
+        )
+
+        snapshot = run_recordcity_probe(
+            url,
+            strategies=strategies,
+            timeout_seconds=timeout_seconds,
+            delay_seconds=delay_seconds,
+            allow_external=allow_external,
+        )
+        if not json_only:
+            click.echo(format_recordcity_probe_table(snapshot))
+        _emit_json(snapshot)
+
     @app.cli.command("update-products")
     @click.option("--site", "site_filter", type=click.Choice(sorted(_get_single_item_scrapers().keys())), default=None)
     @click.option("--user-id", type=int, default=None)

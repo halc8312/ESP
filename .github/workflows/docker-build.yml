@@ -80,3 +80,16 @@ jobs:
           import patchright; print('patchright OK')
           print('All critical imports OK')
           "
+
+      - name: Smoke test - Patchright headful under Xvfb
+        run: |
+          docker run --rm esp-test:ci xvfb-run -a python -c "
+          from patchright.sync_api import sync_playwright
+          with sync_playwright() as driver:
+              browser = driver.chromium.launch(channel='chromium', headless=False, args=[])
+              page = browser.new_page()
+              page.goto('about:blank')
+              assert 'HeadlessChrome' not in page.evaluate('navigator.userAgent')
+              browser.close()
+          print('Patchright headful/Xvfb OK')
+          "

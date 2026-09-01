@@ -9,18 +9,22 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
+import json
 import logging
+import os
 import secrets
 import threading
 import time
 from dataclasses import dataclass, field
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from services.browser_pool import run_browser_page_task
 from services.html_page_adapter import HtmlPageAdapter
 from services.scrape_request import classify_target_url
 from services.scrape_safety import (
     ScrapeBlockedError,
+    has_no_results_evidence,
     install_navigation_guard,
     raise_for_blocked_navigation,
     validate_fetch_response,
@@ -40,6 +44,10 @@ _MAX_EVENTS = 12
 # back, so an explicit empty list is intentional.
 _LAUNCH_ARGS: list[str] = []
 _CONTEXT_OPTIONS = {"locale": "ja-JP"}
+_CHROMIUM_145_LINUX_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+)
 
 _WAF_COOKIE_LOCK = threading.RLock()
 _WAF_COOKIES: list[dict] = []
@@ -115,8 +123,10 @@ def _discard_cached_waf_cookies() -> None:
         _WAF_COOKIES = []
 
 
-def _context_options(cookies: list[dict]) -> dict:
+def _context_options(cookies: list[dict], overrides: dict | None = None) -> dict:
     options = copy.deepcopy(_CONTEXT_OPTIONS)
+    if overrides:
+        options.update(copy.deepcopy(overrides))
     if cookies:
         options["storage_state"] = {"cookies": copy.deepcopy(cookies), "origins": []}
     return options
@@ -149,6 +159,10 @@ class _WafProbe:
     user_agent: str = ""
     language: str = ""
     timezone: str = ""
+    platform: str = ""
+    screen: str = ""
+    webgl_vendor: str = ""
+    webgl_renderer: str = ""
 
     @property
     def final_status(self) -> int | None:
@@ -167,7 +181,7 @@ class _AttemptResult:
     url: str
     status: int
     probe: _WafProbe
-    waf_cookies: list[dict]
+    waf_cookies: list[dict] = field(repr=False)
     navigation_error: Exception | None = None
 
 
@@ -273,13 +287,29 @@ def _record_request_failure(probe: _WafProbe, request) -> None:
 async def _capture_browser_signals(probe: _WafProbe, page) -> None:
     try:
         signals = await page.evaluate(
-            """() => ({
-                webdriverTrue: navigator.webdriver === true,
-                headlessUserAgent: /HeadlessChrome/i.test(navigator.userAgent || ''),
-                userAgent: navigator.userAgent || '',
-                language: navigator.language || '',
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || ''
-            })"""
+            """() => {
+                let webglVendor = '';
+                let webglRenderer = '';
+                try {
+                    const gl = document.createElement('canvas').getContext('webgl');
+                    const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+                    if (gl && ext) {
+                        webglVendor = gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) || '';
+                        webglRenderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '';
+                    }
+                } catch (_error) {}
+                return {
+                    webdriverTrue: navigator.webdriver === true,
+                    headlessUserAgent: /HeadlessChrome/i.test(navigator.userAgent || ''),
+                    userAgent: navigator.userAgent || '',
+                    language: navigator.language || '',
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+                    platform: navigator.platform || '',
+                    screen: `${screen.width || 0}x${screen.height || 0}@${devicePixelRatio || 1}`,
+                    webglVendor,
+                    webglRenderer
+                };
+            }"""
         )
     except Exception:
         return
@@ -289,6 +319,10 @@ async def _capture_browser_signals(probe: _WafProbe, page) -> None:
         probe.user_agent = str(signals.get("userAgent") or "")[:240]
         probe.language = str(signals.get("language") or "")[:40]
         probe.timezone = str(signals.get("timezone") or "")[:80]
+        probe.platform = str(signals.get("platform") or "")[:80]
+        probe.screen = str(signals.get("screen") or "")[:80]
+        probe.webgl_vendor = str(signals.get("webglVendor") or "")[:160]
+        probe.webgl_renderer = str(signals.get("webglRenderer") or "")[:240]
 
 
 def _looks_like_waf_challenge(html: str) -> bool:
@@ -309,8 +343,57 @@ def _looks_like_waf_captcha(html: str) -> bool:
     )
 
 
-def _has_ready_evidence(html: str, wait_selector: str) -> bool:
-    return bool(HtmlPageAdapter(str(html or "")).css(wait_selector))
+def _has_ready_evidence(html: str, wait_selector: str, *, kind: str) -> bool:
+    page = HtmlPageAdapter(str(html or ""))
+    if page.css(wait_selector):
+        return True
+    return kind == "search" and has_no_results_evidence(
+        page.get_text(),
+        _SITE,
+    )
+
+
+def _contains_product_json_ld(html: str, expected_sku: str | None = None) -> bool:
+    """Return whether rendered HTML contains a parseable Product JSON-LD node."""
+
+    def _contains_product(value) -> bool:
+        pending = value if isinstance(value, list) else [value]
+        processed_nodes = 0
+        while pending and processed_nodes < 256:
+            entry = pending.pop(0)
+            processed_nodes += 1
+            if not isinstance(entry, dict):
+                continue
+            entry_type = entry.get("@type")
+            types = entry_type if isinstance(entry_type, list) else [entry_type]
+            if any(str(item).lower() == "product" for item in types if item):
+                if expected_sku is None:
+                    return True
+                if str(entry.get("sku") or "").strip() == str(expected_sku):
+                    return True
+            graph = entry.get("@graph")
+            if isinstance(graph, list):
+                pending.extend(graph)
+        return False
+
+    page = HtmlPageAdapter(str(html or ""))
+    for script in page.css("script[type='application/ld+json']")[:32]:
+        raw = str(
+            getattr(script, "raw_text", "")
+            or getattr(script, "text", "")
+            or ""
+        ).strip()
+        if not raw:
+            continue
+        if len(raw.encode("utf-8", errors="ignore")) > 1024 * 1024:
+            continue
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if _contains_product(value):
+            return True
+    return False
 
 
 def _classify_waf_failure(probe: _WafProbe, html: str) -> tuple[str, str] | None:
@@ -323,15 +406,28 @@ def _classify_waf_failure(probe: _WafProbe, html: str) -> tuple[str, str] | None
     status = probe.final_status
     final_action = probe.final_action
     challenge_html = _looks_like_waf_challenge(html)
+    captcha_html = _looks_like_waf_captcha(html)
+    blocked_html = "request blocked" in str(html or "").lower()
     challenge_unresolved = (
         final_action == "challenge"
-        or status == 202
         or challenge_html
     )
     captcha_seen = (
         final_action == "captcha"
-        or status == 405
-        or _looks_like_waf_captcha(html)
+        or captcha_html
+    )
+    actions_seen = {
+        str(entry.get("action") or "").strip().lower()
+        for entry in probe.main_responses
+    }
+    waf_evidence = bool(
+        challenge_unresolved
+        or captcha_seen
+        or blocked_html
+        or actions_seen.intersection({"challenge", "captcha"})
+        or probe.waf_responses
+        or probe.waf_request_failures
+        or probe.token_after
     )
 
     if captcha_seen:
@@ -339,7 +435,7 @@ def _classify_waf_failure(probe: _WafProbe, html: str) -> tuple[str, str] | None
             "RC_WAF_CAPTCHA_REQUIRED",
             "AWS WAFがCAPTCHAを要求したため、自動取得を続行できませんでした",
         )
-    if status == 403:
+    if status == 403 and waf_evidence:
         return (
             "RC_WAF_BLOCK_403",
             "AWS WAFにアクセスを拒否されました。Challenge後の別ルール、ブラウザ判定、または送信元IP判定の可能性があります",
@@ -436,6 +532,12 @@ async def _run_recordcity_attempt(
     input_cookies: list[dict],
     attempt: int,
     probe_id: str,
+    headless: bool = True,
+    launch_args: list[str] | None = None,
+    context_options: dict | None = None,
+    automation_backend: str = "patchright",
+    channel: str | None = "chromium",
+    runtime_site: str = _SITE,
 ) -> _AttemptResult:
     probe = _WafProbe(
         probe_id=probe_id,
@@ -549,10 +651,10 @@ async def _run_recordcity_attempt(
 
         final_url = str(getattr(page, "url", "") or normalized_url)
         validate_marketplace_url(final_url, _SITE, kind=kind)
-        probe.ready = (
-            navigation_error is None
-            and _has_ready_evidence(html, wait_selector)
-        )
+        # A timed-out navigation can still leave the requested, usable DOM in
+        # the page. Inspect the current document before deciding whether the
+        # transport exception is fatal.
+        probe.ready = _has_ready_evidence(html, wait_selector, kind=kind)
         observed_status = probe.final_status or getattr(response, "status", None) or 200
         if probe.ready and observed_status in {202, 403, 405}:
             # A current Product/listing DOM is decisive even if a bounded event
@@ -568,13 +670,13 @@ async def _run_recordcity_attempt(
         )
 
     await run_browser_page_task(
-        _SITE,
+        runtime_site,
         _task,
-        headless=True,
-        launch_args=_LAUNCH_ARGS,
-        context_options=_context_options(input_cookies),
-        automation_backend="patchright",
-        channel="chromium",
+        headless=headless,
+        launch_args=_LAUNCH_ARGS if launch_args is None else launch_args,
+        context_options=_context_options(input_cookies, context_options),
+        automation_backend=automation_backend,
+        channel=channel,
     )
     result = page_state.get("result")
     if not isinstance(result, _AttemptResult):
@@ -685,7 +787,7 @@ async def _fetch_recordcity_page_unlocked(
                 _discard_cached_waf_cookies()
             _raise_waf_failure(result.probe, reason_code, explanation)
 
-        if result.navigation_error is not None:
+        if result.navigation_error is not None and not result.probe.ready:
             if cached_cookies:
                 _discard_cached_waf_cookies()
             raise result.navigation_error
@@ -702,6 +804,215 @@ async def _fetch_recordcity_page_unlocked(
         return page
 
     raise RuntimeError("Record Cityの制御された再試行が完了しませんでした。")
+
+
+_BROWSER_PROBE_PROFILES: dict[str, dict] = {
+    # Exact production baseline. Keeping this profile here makes a same-deploy
+    # control available without invoking the production retry/token cache.
+    "patchright-current": {
+        "headless": True,
+        "context_options": {},
+    },
+    # A narrow diagnostic for the HeadlessChrome token observed in Render.
+    # This is intentionally not the production default: a custom UA can
+    # disagree with browser-generated client hints.  It remains useful as a
+    # controlled cell because AWS WAF deployments have differed on this exact
+    # signal, while Patchright leaves it visible in headless mode.
+    "patchright-headless-ua": {
+        "headless": True,
+        "context_options": {"user_agent": _CHROMIUM_145_LINUX_UA},
+    },
+    # Patchright documents headful Chrome/Chromium as its supported stealth
+    # path on Linux. Run the CLI under Xvfb; native UA/client hints are kept.
+    "patchright-headful": {
+        "headless": False,
+        "context_options": {"no_viewport": True},
+    },
+    # A second headful cell changes only browser locale/timezone presentation.
+    # It is opt-in because every cell causes another target navigation.
+    "patchright-headful-tokyo": {
+        "headless": False,
+        "context_options": {
+            "no_viewport": True,
+            "timezone_id": "Asia/Tokyo",
+        },
+    },
+    # The proxy cells complete the IP x browser-mode comparison. Credentials
+    # are read from RECORDCITY_PROXY_URL and passed only to BrowserContext.
+    "patchright-headless-proxy": {
+        "headless": True,
+        "context_options": {},
+        "proxy": True,
+    },
+    "patchright-headful-proxy": {
+        "headless": False,
+        "context_options": {"no_viewport": True},
+        "proxy": True,
+    },
+}
+
+
+def recordcity_browser_probe_profiles() -> tuple[str, ...]:
+    return tuple(_BROWSER_PROBE_PROFILES)
+
+
+def _browser_proxy_options(proxy_url: str) -> dict:
+    """Build Playwright proxy options without returning a credential URL."""
+    try:
+        parsed = urlparse(str(proxy_url or "").strip())
+        host = str(parsed.hostname or "").strip()
+        port = parsed.port
+    except (TypeError, ValueError):
+        host = ""
+        parsed = None
+        port = None
+    if (
+        parsed is None
+        or parsed.scheme.lower() not in {"http", "https", "socks5"}
+        or not host
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise ValueError("RECORDCITY_PROXY_URLの形式が不正です。")
+    display_host = f"[{host}]" if ":" in host else host
+    server = f"{parsed.scheme.lower()}://{display_host}"
+    if port is not None:
+        server += f":{port}"
+    options = {"server": server}
+    if parsed.username is not None:
+        options["username"] = unquote(parsed.username)
+    if parsed.password is not None:
+        options["password"] = unquote(parsed.password)
+    return options
+
+
+async def probe_recordcity_browser_once_async(
+    url: str,
+    *,
+    profile: str,
+    timeout: int = 45000,
+    wait_selector_timeout: int = 20000,
+) -> dict:
+    """Run one isolated browser cell and return only secret-free evidence.
+
+    This deliberately bypasses the production token cache and controlled
+    retry. The AWS interstitial may reload the page itself, but this helper
+    never starts a second browser attempt, which keeps comparison cells
+    bounded and independently attributable.
+    """
+    settings = _BROWSER_PROBE_PROFILES.get(str(profile or ""))
+    if settings is None:
+        supported = ", ".join(recordcity_browser_probe_profiles())
+        raise ValueError(f"Unsupported Record City browser probe profile: {profile} ({supported})")
+
+    request_kind, site = classify_target_url(url)
+    if site != _SITE or request_kind not in {"item", "search"}:
+        raise ValueError("Record CityのURLを指定してください。")
+    kind = "detail" if request_kind == "item" else "search"
+    normalized_url = validate_marketplace_url(url, _SITE, kind=kind)
+    wait_selector = (
+        "script[type='application/ld+json']"
+        if kind == "detail"
+        else "a[href*='/catalog/']"
+    )
+
+    profile_context_options = dict(settings.get("context_options") or {})
+    if settings.get("proxy"):
+        proxy_url = str(os.environ.get("RECORDCITY_PROXY_URL") or "").strip()
+        if not proxy_url:
+            raise ValueError("RECORDCITY_PROXY_URLが設定されていません。")
+        profile_context_options["proxy"] = _browser_proxy_options(proxy_url)
+
+    started = time.monotonic()
+    result = await _run_recordcity_attempt(
+        normalized_url,
+        kind=kind,
+        wait_selector=wait_selector,
+        timeout=timeout,
+        wait_selector_timeout=wait_selector_timeout,
+        network_idle=True,
+        input_cookies=[],
+        attempt=1,
+        probe_id=secrets.token_hex(4),
+        headless=bool(settings["headless"]),
+        launch_args=[],
+        context_options=profile_context_options,
+        automation_backend="patchright",
+        channel="chromium",
+        runtime_site=f"recordcity_probe_{profile.replace('-', '_')}",
+    )
+    failure = _classify_waf_failure(result.probe, result.html)
+    actions = [
+        str(entry.get("action") or "")
+        for entry in result.probe.main_responses
+        if str(entry.get("action") or "")
+    ]
+    challenge = _looks_like_waf_challenge(result.html) or "challenge" in actions
+    captcha = _looks_like_waf_captcha(result.html) or "captcha" in actions
+    body_bytes = str(result.html or "").encode("utf-8", errors="ignore")
+    return {
+        "strategy": profile,
+        "attempted": True,
+        "transport_status": None,
+        "target_status": result.status,
+        "header_source": "browser",
+        "waf_action": result.probe.final_action,
+        "waf_actions_seen": list(dict.fromkeys(actions)),
+        "server": str((result.probe.last_main_response or {}).get("server") or ""),
+        "x_cache": str((result.probe.last_main_response or {}).get("x_cache") or ""),
+        "cloudfront_request_ids": list(result.probe.cloudfront_request_ids),
+        "main_responses": copy.deepcopy(result.probe.main_responses),
+        "waf_responses": copy.deepcopy(result.probe.waf_responses),
+        "challenge": bool(challenge),
+        "captcha": bool(captcha),
+        "blocked_marker": "request blocked" in str(result.html or "").lower(),
+        "aws_waf_token": bool(result.probe.token_after),
+        "ready_dom": bool(result.probe.ready),
+        "product_json_ld": _contains_product_json_ld(
+            result.html,
+            str(urlparse(normalized_url).path or "")
+            .rstrip("/")
+            .rsplit("/", 1)[-1]
+            if kind == "detail"
+            else None,
+        ),
+        "body_bytes": len(body_bytes),
+        "body_sha256": hashlib.sha256(body_bytes).hexdigest(),
+        "webdriver_true": result.probe.webdriver_true,
+        "headless_user_agent": result.probe.headless_user_agent,
+        "user_agent": result.probe.user_agent,
+        "language": result.probe.language,
+        "timezone": result.probe.timezone,
+        "platform": result.probe.platform,
+        "screen": result.probe.screen,
+        "webgl_vendor": result.probe.webgl_vendor,
+        "webgl_renderer": result.probe.webgl_renderer,
+        "failure_reason": failure[0] if failure else "",
+        "navigation_error": (
+            type(result.navigation_error).__name__
+            if result.navigation_error is not None
+            else ""
+        ),
+        "elapsed_ms": int((time.monotonic() - started) * 1000),
+    }
+
+
+def probe_recordcity_browser_once_sync(
+    url: str,
+    *,
+    profile: str,
+    timeout: int = 45000,
+    wait_selector_timeout: int = 20000,
+) -> dict:
+    return run_coro_sync(
+        probe_recordcity_browser_once_async(
+            url,
+            profile=profile,
+            timeout=timeout,
+            wait_selector_timeout=wait_selector_timeout,
+        )
+    )
 
 
 async def fetch_recordcity_page_via_browser_pool_async(

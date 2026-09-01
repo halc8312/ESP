@@ -46,6 +46,9 @@ _AVAILABILITY_STATUS = {
     "soldout": "sold_out",
     "discontinued": "sold_out",
 }
+_MAX_JSON_LD_SCRIPTS = 32
+_MAX_JSON_LD_SCRIPT_BYTES = 1024 * 1024
+_MAX_JSON_LD_NODES = 256
 
 
 def _empty_result(url: str, status: str = "error") -> dict:
@@ -86,9 +89,23 @@ def _iter_json_ld(page, broken=None):
     two want different answers — one is the site's markup, the other is
     usually the bot challenge still on screen.
     """
-    for script_el in page.css("script[type='application/ld+json']"):
-        raw = str(getattr(script_el, "text", "") or "").strip()
+    for script_index, script_el in enumerate(
+        page.css("script[type='application/ld+json']")
+    ):
+        if script_index >= _MAX_JSON_LD_SCRIPTS:
+            if broken is not None:
+                broken.append("JSON-LD script count exceeded safety limit")
+            break
+        raw = str(
+            getattr(script_el, "raw_text", "")
+            or getattr(script_el, "text", "")
+            or ""
+        ).strip()
         if not raw:
+            continue
+        if len(raw.encode("utf-8", errors="ignore")) > _MAX_JSON_LD_SCRIPT_BYTES:
+            if broken is not None:
+                broken.append("JSON-LD script exceeded safety limit")
             continue
         try:
             data = json.loads(raw)
@@ -97,8 +114,10 @@ def _iter_json_ld(page, broken=None):
                 broken.append(str(exc))
             continue
         pending = data if isinstance(data, list) else [data]
-        while pending:
+        processed_nodes = 0
+        while pending and processed_nodes < _MAX_JSON_LD_NODES:
             entry = pending.pop(0)
+            processed_nodes += 1
             if not isinstance(entry, dict):
                 continue
             graph = entry.get("@graph")
@@ -197,12 +216,10 @@ _READY_TIMEOUT_MS = 20000
 
 
 def _fetch_page(url: str, kind: str):
-    """Fetch through the browser; the WAF answers anything else with a puzzle."""
-    from services.recordcity_browser_fetch import (
-        fetch_recordcity_page_via_browser_pool_sync,
-    )
+    """Fetch through the RecordCity-only guarded provider orchestration."""
+    from services.recordcity_external_fetch import fetch_recordcity_page_sync
 
-    page = fetch_recordcity_page_via_browser_pool_sync(
+    page = fetch_recordcity_page_sync(
         url,
         kind=kind,
         network_idle=True,

@@ -11,7 +11,7 @@ from services.scrape_safety import ScrapeBlockedError
 DETAIL_URL = "https://www.recordcity.jp/catalog/4936480"
 READY_SELECTOR = "script[type='application/ld+json']"
 PRODUCT_HTML = """<html><body>
-<script type="application/ld+json">{"@type":"Product","name":"Sunrise"}</script>
+<script type="application/ld+json">{"@type":"Product","name":"Sunrise","sku":"4936480"}</script>
 </body></html>"""
 CHALLENGE_HTML = """<html><script>
 window.gokuProps = {};
@@ -180,6 +180,14 @@ def _fetch():
     )
 
 
+def test_search_no_results_text_is_ready_evidence():
+    assert recordcity_fetch._has_ready_evidence(
+        "<html><body>検索結果がありません</body></html>",
+        "a[href*='/catalog/']",
+        kind="search",
+    )
+
+
 def test_recordcity_uses_site_scoped_patchright_profile(monkeypatch):
     captured = []
     page = FakePage(FakeResponse(200, headers={"server": "CloudFront"}))
@@ -307,6 +315,43 @@ def test_goto_timeout_preserves_observed_waf_reason_and_does_not_cache_token(
         _fetch()
 
     assert recordcity_fetch._cached_waf_cookies() == []
+
+
+def test_goto_timeout_accepts_product_dom_left_in_page(monkeypatch):
+    captured = []
+    page = FakePage(
+        FakeResponse(200, headers={"server": "CloudFront"}),
+        html=PRODUCT_HTML,
+        goto_error=TimeoutError("navigation timed out"),
+    )
+    _install_browser_fake(monkeypatch, [(page, FakeContext())], captured)
+
+    result = _fetch()
+
+    assert result.status == 200
+    assert "Product" in result.body
+
+
+def test_generic_403_is_not_given_an_aws_waf_reason(monkeypatch):
+    captured = []
+    page = FakePage(
+        FakeResponse(403, headers={"server": "nginx"}),
+        html="<html><body>Forbidden</body></html>",
+        selector_ready=False,
+    )
+    _install_browser_fake(monkeypatch, [(page, FakeContext())], captured)
+
+    result = asyncio.run(
+        recordcity_fetch.probe_recordcity_browser_once_async(
+            DETAIL_URL,
+            profile="patchright-current",
+        )
+    )
+
+    assert result["target_status"] == 403
+    assert result["failure_reason"] == ""
+    assert result["challenge"] is False
+    assert result["blocked_marker"] is False
 
 
 def test_new_token_is_resubmitted_once_before_challenge_continued_reason(monkeypatch):
@@ -509,3 +554,158 @@ def test_recordcity_fetches_are_serialized_around_token_cache(monkeypatch):
 
     assert len(results) == 2
     assert max_active == 1
+
+
+@pytest.mark.parametrize(
+    "profile, expected_headless, expected_options",
+    [
+        ("patchright-current", True, {"locale": "ja-JP"}),
+        (
+            "patchright-headless-ua",
+            True,
+            {
+                "locale": "ja-JP",
+                "user_agent": (
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+                ),
+            },
+        ),
+        (
+            "patchright-headful",
+            False,
+            {"locale": "ja-JP", "no_viewport": True},
+        ),
+        (
+            "patchright-headful-tokyo",
+            False,
+            {
+                "locale": "ja-JP",
+                "no_viewport": True,
+                "timezone_id": "Asia/Tokyo",
+            },
+        ),
+    ],
+)
+def test_single_browser_probe_uses_isolated_profile(
+    monkeypatch,
+    profile,
+    expected_headless,
+    expected_options,
+):
+    captured = []
+    page = FakePage(FakeResponse(200, headers={"server": "CloudFront"}))
+    _install_browser_fake(monkeypatch, [(page, FakeContext())], captured)
+
+    result = asyncio.run(
+        recordcity_fetch.probe_recordcity_browser_once_async(
+            DETAIL_URL,
+            profile=profile,
+        )
+    )
+
+    assert result["strategy"] == profile
+    assert result["target_status"] == 200
+    assert result["ready_dom"] is True
+    assert result["product_json_ld"] is True
+    assert result["aws_waf_token"] is False
+    assert result["body_bytes"] > 0
+    assert len(result["body_sha256"]) == 64
+    assert captured[0]["site"] == f"recordcity_probe_{profile.replace('-', '_')}"
+    assert captured[0]["headless"] is expected_headless
+    assert captured[0]["launch_args"] == []
+    assert captured[0]["context_options"] == expected_options
+    assert captured[0]["automation_backend"] == "patchright"
+    assert captured[0]["channel"] == "chromium"
+    assert page.selector_calls[0]["state"] == "attached"
+
+
+def test_single_browser_probe_records_token_then_403_without_exposing_value(
+    monkeypatch,
+):
+    captured = []
+    challenge = FakeResponse(
+        202,
+        headers={
+            "x-amzn-waf-action": "challenge",
+            "server": "CloudFront",
+            "x-amz-cf-id": "challenge-request",
+        },
+    )
+    blocked = FakeResponse(
+        403,
+        headers={"server": "CloudFront", "x-amz-cf-id": "blocked-request"},
+    )
+    secret = "never-include-this-token"
+    page = FakePage(
+        challenge,
+        html=CHALLENGE_HTML,
+        selector_ready=False,
+        wait_responses=[blocked],
+        final_html="Request blocked.",
+    )
+    _install_browser_fake(
+        monkeypatch,
+        [(page, FakeContext([_waf_cookie(secret)]))],
+        captured,
+    )
+
+    result = asyncio.run(
+        recordcity_fetch.probe_recordcity_browser_once_async(
+            DETAIL_URL,
+            profile="patchright-current",
+        )
+    )
+
+    assert result["target_status"] == 403
+    assert result["challenge"] is True
+    assert result["aws_waf_token"] is True
+    assert result["ready_dom"] is False
+    assert result["product_json_ld"] is False
+    assert result["failure_reason"] == "RC_WAF_BLOCK_403"
+    assert result["cloudfront_request_ids"] == [
+        "challenge-request",
+        "blocked-request",
+    ]
+    assert secret not in repr(result)
+
+
+def test_proxy_browser_probe_passes_credentials_only_to_context(monkeypatch):
+    captured = []
+    secret = "proxy-password-not-for-logs"
+    monkeypatch.setenv(
+        "RECORDCITY_PROXY_URL",
+        f"http://proxy-user:{secret}@proxy.example:8080",
+    )
+    page = FakePage(FakeResponse(200, headers={"server": "CloudFront"}))
+    _install_browser_fake(monkeypatch, [(page, FakeContext())], captured)
+
+    result = asyncio.run(
+        recordcity_fetch.probe_recordcity_browser_once_async(
+            DETAIL_URL,
+            profile="patchright-headless-proxy",
+        )
+    )
+
+    assert result["product_json_ld"] is True
+    assert captured[0]["headless"] is True
+    assert captured[0]["context_options"]["proxy"] == {
+        "server": "http://proxy.example:8080",
+        "username": "proxy-user",
+        "password": secret,
+    }
+    assert secret not in repr(result)
+
+
+@pytest.mark.parametrize(
+    "proxy_url",
+    [
+        "",
+        "ftp://proxy.example:21",
+        "http://proxy.example/path",
+        "http://proxy.example?token=secret",
+    ],
+)
+def test_browser_proxy_options_reject_unsafe_or_unsupported_shapes(proxy_url):
+    with pytest.raises(ValueError, match="RECORDCITY_PROXY_URL"):
+        recordcity_fetch._browser_proxy_options(proxy_url)

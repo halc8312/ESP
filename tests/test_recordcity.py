@@ -15,7 +15,8 @@ import json
 import pytest
 
 import recordcity_db
-from services import recordcity_browser_fetch
+from services import recordcity_external_fetch
+from services.html_page_adapter import HtmlPageAdapter
 from services.scrape_request import InvalidTargetUrl, classify_target_url
 from services.scrape_safety import (
     ScrapeFailure,
@@ -135,7 +136,7 @@ class TestUrlRules:
             )
 
 
-def test_fetch_page_uses_recordcity_browser_adapter_and_wait_contract(monkeypatch):
+def test_fetch_page_uses_recordcity_orchestrator_and_wait_contract(monkeypatch):
     captured = {}
     page = _product_page()
     detail_url = "https://www.recordcity.jp/catalog/4936480"
@@ -146,8 +147,8 @@ def test_fetch_page_uses_recordcity_browser_adapter_and_wait_contract(monkeypatc
         return page
 
     monkeypatch.setattr(
-        recordcity_browser_fetch,
-        "fetch_recordcity_page_via_browser_pool_sync",
+        recordcity_external_fetch,
+        "fetch_recordcity_page_sync",
         fake_fetch,
     )
 
@@ -162,6 +163,19 @@ def test_fetch_page_uses_recordcity_browser_adapter_and_wait_contract(monkeypatc
         "wait_selector": "script[type='application/ld+json']",
         "wait_selector_timeout": 20000,
     }
+
+
+def test_recordcity_json_ld_is_read_from_rendered_html_adapter():
+    page = HtmlPageAdapter(
+        '<script type="application/ld+json">'
+        + json.dumps(LIVE_SAMPLE, ensure_ascii=False)
+        + "</script>"
+    )
+
+    product = recordcity_db._extract_json_ld_product(page)
+
+    assert product["name"] == LIVE_SAMPLE["name"]
+    assert product["offers"]["price"] == 2420
 
 
 class TestReadingOneRecord:
