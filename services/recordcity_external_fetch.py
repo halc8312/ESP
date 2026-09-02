@@ -1011,6 +1011,13 @@ def _validate_external_page(
     html = response.text
     page = HtmlPageAdapter(html, url=final_url, status=status)
 
+    if not authoritative_status and not 200 <= response.transport_status < 300:
+        raise _provider_failure(
+            response.source,
+            "RC_EXTERNAL_PROVIDER_HTTP_ERROR",
+            status_code=response.transport_status,
+        )
+
     captcha_seen = (
         action == "captcha"
         or (authoritative_status and status == 405)
@@ -1021,12 +1028,6 @@ def _validate_external_page(
         # expose authoritative target metadata.  A target header is explicit
         # even when the provider could not report the target status; a body
         # marker alone remains source-ambiguous as before.
-        if not authoritative_status and not 200 <= response.transport_status < 300:
-            raise _provider_failure(
-                response.source,
-                "RC_EXTERNAL_PROVIDER_HTTP_ERROR",
-                status_code=response.transport_status,
-            )
         if not authoritative_status and action != "captcha":
             raise _provider_failure(
                 response.source,
@@ -1049,13 +1050,6 @@ def _validate_external_page(
         wait_selector=wait_selector,
         source=response.source,
     )
-
-    if not authoritative_status and not 200 <= response.transport_status < 300:
-        raise _provider_failure(
-            response.source,
-            "RC_EXTERNAL_PROVIDER_HTTP_ERROR",
-            status_code=response.transport_status,
-        )
 
     # A verified Product/listing DOM is stronger evidence than metadata from
     # an initial WAF response retained by a browser-rendering provider.
