@@ -1010,13 +1010,6 @@ def _validate_external_page(
     }
     html = response.text
     page = HtmlPageAdapter(html, url=final_url, status=status)
-    ready = _external_page_ready(
-        page,
-        final_url=final_url,
-        kind=kind,
-        wait_selector=wait_selector,
-        source=response.source,
-    )
 
     if not authoritative_status and not 200 <= response.transport_status < 300:
         raise _provider_failure(
@@ -1024,6 +1017,39 @@ def _validate_external_page(
             "RC_EXTERNAL_PROVIDER_HTTP_ERROR",
             status_code=response.transport_status,
         )
+
+    captcha_seen = (
+        action == "captcha"
+        or (authoritative_status and status == 405)
+        or _looks_like_waf_captcha(html)
+    )
+    if captcha_seen:
+        # Preserve provider/target attribution when the transport did not
+        # expose authoritative target metadata.  A target header is explicit
+        # even when the provider could not report the target status; a body
+        # marker alone remains source-ambiguous as before.
+        if not authoritative_status and action != "captcha":
+            raise _provider_failure(
+                response.source,
+                "RC_EXTERNAL_BLOCK_SOURCE_AMBIGUOUS",
+                status_code=response.transport_status,
+            )
+        # CAPTCHA is a terminal human-verification requirement.  Check it
+        # before Product/listing readiness so retained JSON-LD underneath a
+        # CAPTCHA page cannot be normalized into a successful HTTP 200 page.
+        raise ScrapeBlockedError(
+            "レコードシティの外部取得でAWS WAF CAPTCHAを検出しました"
+            f"（reason=RC_EXTERNAL_WAF_CAPTCHA, source={response.source}, HTTP {status}）。",
+            status_code=status,
+        )
+
+    ready = _external_page_ready(
+        page,
+        final_url=final_url,
+        kind=kind,
+        wait_selector=wait_selector,
+        source=response.source,
+    )
 
     # A verified Product/listing DOM is stronger evidence than metadata from
     # an initial WAF response retained by a browser-rendering provider.
@@ -1052,16 +1078,6 @@ def _validate_external_page(
             status_code=response.transport_status,
         )
 
-    if (
-        action == "captcha"
-        or (authoritative_status and status == 405)
-        or _looks_like_waf_captcha(html)
-    ):
-        raise ScrapeBlockedError(
-            "レコードシティの外部取得でAWS WAF CAPTCHAを検出しました"
-            f"（reason=RC_EXTERNAL_WAF_CAPTCHA, source={response.source}, HTTP {status}）。",
-            status_code=status,
-        )
     if (
         action == "challenge"
         or (authoritative_status and status == 202)

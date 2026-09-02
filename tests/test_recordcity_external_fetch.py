@@ -21,6 +21,10 @@ CHALLENGE_HTML = """<html><script>
 window.gokuProps = {};
 AwsWafIntegration.fetch('https://example.token.awswaf.com/challenge.js');
 </script></html>"""
+CAPTCHA_WITH_PRODUCT_HTML = PRODUCT_HTML.replace(
+    "</body>",
+    "<script src='https://example.token.awswaf.com/captcha.js'></script></body>",
+)
 
 
 class FakeCookies:
@@ -899,6 +903,26 @@ def test_verified_product_dom_wins_over_initial_challenge_metadata():
     )
 
     assert page.status == 200
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        _response(status=405, html=PRODUCT_HTML),
+        _response(
+            html=PRODUCT_HTML,
+            headers={"x-amzn-waf-action": "captcha"},
+        ),
+        _response(html=CAPTCHA_WITH_PRODUCT_HTML),
+    ],
+)
+def test_explicit_captcha_wins_over_verified_product_dom(response):
+    with pytest.raises(ScrapeBlockedError, match="RC_EXTERNAL_WAF_CAPTCHA"):
+        external_fetch._validate_external_page(
+            response,
+            kind="detail",
+            wait_selector=READY_SELECTOR,
+        )
 
 
 def test_external_response_body_is_bounded(monkeypatch):

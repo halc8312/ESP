@@ -145,7 +145,7 @@ portableな既定値は引き続き`headless`で、Render workerだけをBluepri
 - 任意HTTPS URL template: `{url}`は必ずURL encodeし、credentials/非443/fragment/`{raw_url}`を拒否
 - 独立proxy: 診断専用。各redirectをRecord City allowlistで再検証し、Cookieを同一session内だけ維持
 
-外部応答は最大12 MiBに制限し、detail pageは最終URLの商品IDとJSON-LDの`sku`が要求IDに一致した場合だけ成功とする。provider自身の非2xxは `RC_EXTERNAL_PROVIDER_HTTP_ERROR`、対象metadataがあるChallenge/CAPTCHA/403は別のreason codeで表示する。metadataなしでブロック本文だけが返る場合は、Record Cityとproviderのどちらが発生源か断定せず `RC_EXTERNAL_BLOCK_SOURCE_AMBIGUOUS` とする。
+外部応答は最大12 MiBに制限し、detail pageは最終URLの商品IDとJSON-LDの`sku`が要求IDに一致した場合だけ成功とする。明示的なCAPTCHAはProduct JSON-LDが本文に残っていてもready判定より先に終端化する。provider自身の非2xxは `RC_EXTERNAL_PROVIDER_HTTP_ERROR`、対象metadataがあるChallenge/CAPTCHA/403は別のreason codeで表示する。metadataなしでブロック本文だけが返る場合は、Record Cityとproviderのどちらが発生源か断定せず `RC_EXTERNAL_BLOCK_SOURCE_AMBIGUOUS` とする。
 
 productionは`RECORDCITY_FETCH_PROVIDER`の明示値がない限り、`RECORDCITY_BROWSER_PROFILE`で選んだRecord City専用Patchright経路を使う。Render workerのBlueprintは`RECORDCITY_FETCH_PROVIDER=browser`と`RECORDCITY_BROWSER_PROFILE=headful`を固定し、その他の環境は既定のbrowser/headlessである。API keyを置いただけでは課金経路へ切り替わらない。generic proxyはproduction providerとして選べない。
 
@@ -176,8 +176,8 @@ headful ChromiumをRenderとCIで実行できるよう、`xvfb`、`xauth`、`tin
 ローカルのPython 3.12環境で次を確認した。
 
 ```text
-Record City関連 + HTML adapter: 161 passed
-全体: 1418 passed, 1 skipped, 16 warnings
+Record City関連 + HTML adapter: 164 passed
+全体: 1421 passed, 1 skipped, 16 warnings
 ```
 
 ネットワークへ出るpytestは追加していない。実サイト到達性は、Render probe `7898f96d`（商品）と`a164d49d`（一覧）で別途確認済みである。pytestは引き続きネットワーク非依存とし、live probeを通常CIには含めない。
