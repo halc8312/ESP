@@ -89,7 +89,9 @@ Use the dormant Blueprint in `render.yaml`.
 ### Worker
 
 - Service name: `esp-worker`
-- Start command: `python worker.py`
+- Start command: `tini -- python worker.py`
+- Tini directly supervises Python; Python starts and stops the private Xvfb and keeps it alive through browser-pool cleanup.
+- Record City fetch route: `RECORDCITY_FETCH_PROVIDER=browser`, `RECORDCITY_BROWSER_PROFILE=headful`（TCP listenなし。他サイトはheadlessのまま）
 - Scheduler owner: enabled on exactly one worker（patrol、trash purge、translation lease recovery）
 - Shared browser runtime: enabled
 
@@ -127,6 +129,8 @@ These should stay managed by the Blueprint and should not be copied by hand from
 - `WARM_BROWSER_POOL`
 - `ENABLE_SHARED_BROWSER_RUNTIME`
 - `BROWSER_POOL_WARM_SITES`
+- `RECORDCITY_BROWSER_PROFILE`（worker: `headful`）
+- `RECORDCITY_FETCH_PROVIDER`（worker: `browser`）
 - `MERCARI_USE_BROWSER_POOL_DETAIL`
 - `MERCARI_PATROL_USE_BROWSER_POOL`
 - `SNKRDUNK_USE_BROWSER_POOL_DYNAMIC`

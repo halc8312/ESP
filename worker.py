@@ -8,6 +8,7 @@ import os
 
 from app import create_worker_app, get_scheduler_health_snapshot
 from services.worker_runtime import run_worker
+from services.recordcity_virtual_display import recordcity_virtual_display
 from utils.env_helpers import env_flag
 
 
@@ -27,8 +28,7 @@ def _configure_logging() -> None:
     )
 
 
-def main() -> int:
-    _configure_logging()
+def _run_worker() -> int:
     logger.info(
         "Worker entrypoint starting: queue_backend=%s scheduler_env=%s",
         os.environ.get("SCRAPE_QUEUE_BACKEND", "rq"),
@@ -96,6 +96,12 @@ def main() -> int:
         scheduler_health,
     )
     return run_worker(app)
+
+
+def main() -> int:
+    _configure_logging()
+    with recordcity_virtual_display():
+        return _run_worker()
 
 
 if __name__ == "__main__":

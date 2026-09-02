@@ -87,6 +87,73 @@ def test_run_browser_page_task_uses_shared_runtime(monkeypatch):
     assert captured["runtime_kwargs"]["channel"] is None
 
 
+def test_shared_runtime_reuses_browser_with_fresh_context_per_page_task(monkeypatch):
+    monkeypatch.setenv("ENABLE_SHARED_BROWSER_RUNTIME", "1")
+
+    class FakeContext:
+        def __init__(self, sequence):
+            self.sequence = sequence
+            self.closed = False
+
+        async def new_page(self):
+            return object()
+
+        async def close(self):
+            self.closed = True
+
+    class FakeBrowser:
+        def __init__(self):
+            self.contexts = []
+
+        async def new_context(self, **_context_options):
+            context = FakeContext(len(self.contexts) + 1)
+            self.contexts.append(context)
+            return context
+
+    class FakeRuntime:
+        def __init__(self):
+            self.browser = FakeBrowser()
+            self.submitted_browsers = []
+
+        def submit(self, coro_factory):
+            future = Future()
+            self.submitted_browsers.append(self.browser)
+            future.set_result(run_coro_sync(coro_factory(self.browser)))
+            return future
+
+    runtime = FakeRuntime()
+    runtime_sites = []
+
+    def fake_get_browser_runtime(site, **_kwargs):
+        runtime_sites.append(site)
+        return runtime
+
+    monkeypatch.setattr(
+        "services.browser_pool.get_browser_runtime",
+        fake_get_browser_runtime,
+    )
+
+    first_context = run_coro_sync(
+        run_browser_page_task(
+            "recordcity_headful",
+            lambda _page, context: asyncio.sleep(0, result=context),
+        )
+    )
+    second_context = run_coro_sync(
+        run_browser_page_task(
+            "recordcity_headful",
+            lambda _page, context: asyncio.sleep(0, result=context),
+        )
+    )
+
+    assert runtime_sites == ["recordcity_headful", "recordcity_headful"]
+    assert runtime.submitted_browsers == [runtime.browser, runtime.browser]
+    assert runtime.browser.contexts == [first_context, second_context]
+    assert first_context is not second_context
+    assert first_context.closed is True
+    assert second_context.closed is True
+
+
 def test_run_browser_page_task_propagates_recordcity_profile_to_shared_runtime(monkeypatch):
     captured = {}
 

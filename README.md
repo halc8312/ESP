@@ -434,7 +434,7 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 
 - live では `esp-web` と `esp-worker` が同じ `DATABASE_URL` / `REDIS_URL` / `SECRET_KEY` 契約を共有する
 - `SCRAPE_QUEUE_BACKEND` を含む queue 契約は web / worker / keyvalue の3者で揃える
-- Blueprint の web は web 自身に必須な DB/Redis 到達性だけを確認する `/readyz` を health check に使う。live worker、worker 所有 scheduler、実際のpatrol完了は運用確認用 `/stack-readyz` で判定し、worker は `python worker.py` で起動する
+- Blueprint の web は web 自身に必須な DB/Redis 到達性だけを確認する `/readyz` を health check に使う。live worker、worker 所有 scheduler、実際のpatrol完了は運用確認用 `/stack-readyz` で判定する。worker は`tini -- python worker.py`で起動し、TiniがPythonを直接監督し、PythonがRecord City用private Xvfbを起動・停止する
 - `SECRET_KEY` は `esp-web` / `esp-worker` の両方に同じ値を手動設定する。開発用デフォルト値のまま本番起動しない
 - `SCHEMA_BOOTSTRAP_MODE=auto` を維持する。PostgreSQL の Alembic upgrade は advisory lock で全処理を直列化するため、web / worker が同時起動しても migration DDL を競合させない
 - 画像とショップロゴの永続化がまだ filesystem 前提なので、Blueprint では web に小さい persistent disk を付け、`IMAGE_STORAGE_PATH=/var/data/images` を使う
@@ -494,6 +494,8 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 | `BROWSER_POOL_MAX_TASKS_BEFORE_RESTART` | `0` | 0 より大きい時、同一 browser を使うジョブ回数の上限。超えたら次ジョブ開始前に計画的 recycle |
 | `BROWSER_POOL_MAX_RUNTIME_SECONDS` | `0` | 0 より大きい時、browser 生存時間の上限。超えたら次ジョブ開始前に計画的 recycle |
 | `BROWSER_POOL_STARTUP_TIMEOUT_SECONDS` | `60` | shared browser 起動タイムアウト |
+| `RECORDCITY_BROWSER_PROFILE` | `headless` | Record City専用Patchright profile。Render workerは、同一egressで要求SKUの商品取得に成功実測がある`headful`をXvfb上で使う |
+| `RECORDCITY_FETCH_PROVIDER` | `browser` | Record Cityのproduction取得経路。Render workerは`browser`を明示し、credentialの存在だけで外部providerへ切り替えない |
 | `MERCARI_USE_BROWSER_POOL_DETAIL` | `false` (`worker.py` では `true` 既定) | Mercari detail DOM fetch を browser pool 経由にする。split worker では `true` を維持し、web/CLI/test は必要時のみ有効化する想定 |
 | `MERCARI_PATROL_USE_BROWSER_POOL` | `false` (`worker.py` では `true` 既定) | Mercari patrol DOM fetch を browser pool 経由にする |
 | `SNKRDUNK_USE_BROWSER_POOL_DYNAMIC` | `false` (`worker.py` では `true` 既定) | SNKRDUNK search と dynamic detail fallback を browser pool 経由にする |
@@ -543,7 +545,7 @@ shared browser runtime を有効にした worker は、起動時の durable back
 
 `flask render-cutover-readiness` は、現在の Render split 構成に対するローカル判定 gate です。single-web predeploy は advisory として残しつつ、persistent DB の `schema-drift-check`、split-render predeploy、split worker health、`local-verify --profile full` を一つに束ねます。手順全体は `docs/RENDER_CUTOVER_RUNBOOK.md` にまとめています。
 
-`flask render-blueprint-audit` は `render.yaml` の静的監査です。`esp-web` / `esp-worker` / `esp-keyvalue` / `esp-postgres` の service 名、`autoDeployTrigger: off`、`/readyz`、`python worker.py`、managed `DATABASE_URL` / `REDIS_URL`、manual secret env の棚卸しを確認します。Render Dashboard に入る前の secret/env チェックとして使えます。
+`flask render-blueprint-audit` は `render.yaml` の静的監査です。`esp-web` / `esp-worker` / `esp-keyvalue` / `esp-postgres` の service 名、`autoDeployTrigger: off`、`/readyz`、Tini worker command、Record City専用headful profile、managed `DATABASE_URL` / `REDIS_URL`、manual secret env の棚卸しを確認します。Render Dashboard に入る前の secret/env チェックとして使えます。
 
 `flask render-budget-guardrail-audit --blueprint-path render.yaml` は、repo に記録した budget guardrail 前提と `render.yaml` の plan を照合する監査です。いまの前提では `esp-web=starter`, `esp-worker=standard`, `esp-keyvalue=starter`, `esp-postgres=basic-1gb` を要求し、core recurring cost estimate は `$61/month` として扱います。これは repo に固定した planning assumption で、actual purchase 前には Render 側の価格再確認が別途必要です。
 
@@ -557,7 +559,7 @@ shared browser runtime を有効にした worker は、起動時の durable back
 
 `flask render-postdeploy-smoke --base-url https://...` は、初回 paid activation 後の full-stack 健全性チェックです。Render lifecycle 用 `/readyz` はweb自身に必須なDB・Redis到達性だけを判定し、CLIは運用確認用 `/stack-readyz` でそれらに加えて live worker heartbeat、worker role の scheduler heartbeat、実際のpatrol完了、`queue_backend=rq`、web scheduler無効化を必須確認します。最小情報だけを返す `/healthz` では `runtime_role=web` を確認します。加えて `/login`、`/scrape`、`/api/scrape/jobs` が 500 を返していないことも見ます。`--username` と `--password` を付けるとログイン後の `/scrape` と `/api/scrape/jobs` も確認するので、今回 staging で実際に壊れた「認証後にだけ 500 になる」系も Deploy 後すぐに検知できます。初回 smoke user がまだ存在しない場合は `--ensure-user` を付けると、login が通らなかった時だけ `/register` を試してから authenticated route smoke へ進みます。deploy 直後の一時 502/503 や cold start を見越すなら `--retries` と `--retry-delay-seconds` を増やして判定を安定化できます。
 
-`flask render-worker-postdeploy-checklist --blueprint-path render.yaml` は、paid split の worker post-deploy で見るべき log marker と runtime 契約を JSON で出します。`esp-worker` の fixed / managed / manual env、`python worker.py` 前提、scheduler owner、browser warm、backlog warning 閾値を `render.yaml` から読み取り、worker 起動ログで何を確認すべきかを operator 向けに固定します。
+`flask render-worker-postdeploy-checklist --blueprint-path render.yaml` は、paid split の worker post-deploy で見るべき log marker と runtime 契約を JSON で出します。`esp-worker` の fixed / managed / manual env、`tini -- python worker.py`とPython-owned Xvfb、scheduler owner、browser warm、Record City profile/provider、backlog warning 閾値を `render.yaml` から読み取り、worker 起動ログで何を確認すべきかを operator 向けに固定します。
 
 `flask render-cutover-checklist` は、初回 paid cutover 時の実行順を JSON で出します。pre-cutover command、Dashboard 上の手動 step、manual secret env、post-deploy command、rollback step を一つにまとめるので、operator が runbook と CLI を行き来しなくて済みます。pre-cutover command には `schema-drift-check` と `render-local-split-checklist` も含まれるので、persistent DB の additive drift と local split rehearse 手順を見落としにくくなります。`--base-url` と smoke user を渡しておけば、post-deploy smoke のコマンド列まで具体化され、deploy 直後の false negative を減らすために `--retries 4 --retry-delay-seconds 2` も自動で含まれます。
 

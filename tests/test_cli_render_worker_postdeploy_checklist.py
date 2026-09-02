@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 
 def _load_last_json_line(output: str) -> dict:
     lines = [line for line in str(output or "").splitlines() if line.strip()]
@@ -13,11 +15,13 @@ def test_run_render_worker_postdeploy_checklist_reads_worker_contract_from_bluep
 
     assert snapshot["ready"] is True
     assert snapshot["service_name"] == "esp-worker"
-    assert snapshot["expected_runtime"]["docker_command"] == "python worker.py"
+    assert snapshot["expected_runtime"]["docker_command"] == "tini -- python worker.py"
     assert snapshot["expected_runtime"]["queue_backend"] == "rq"
     assert snapshot["expected_runtime"]["scheduler_enabled"] is True
     assert snapshot["expected_runtime"]["warm_browser_pool"] is True
     assert snapshot["expected_runtime"]["browser_pool_warm_sites"] == ["mercari"]
+    assert snapshot["expected_runtime"]["recordcity_browser_profile"] == "headful"
+    assert snapshot["expected_runtime"]["recordcity_fetch_provider"] == "browser"
     assert snapshot["expected_runtime"]["process_selector_repairs_on_startup"] is False
     assert snapshot["expected_runtime"]["selector_repair_limit"] == 1
     assert snapshot["expected_runtime"]["selector_repair_min_score"] == 90
@@ -36,3 +40,22 @@ def test_render_worker_postdeploy_checklist_cli_prints_json(app):
     payload = _load_last_json_line(result.output)
     assert payload["ready"] is True
     assert payload["service_name"] == "esp-worker"
+
+
+@pytest.mark.parametrize(
+    "blueprint_path",
+    ["render.yaml", "render.existing-web-addons.yaml"],
+)
+def test_worker_postdeploy_checklist_reports_pinned_recordcity_runtime(blueprint_path):
+    from cli import run_render_worker_postdeploy_checklist
+
+    snapshot = run_render_worker_postdeploy_checklist(blueprint_path)
+    runtime = snapshot["expected_runtime"]
+
+    assert runtime["docker_command"] == "tini -- python worker.py"
+    assert runtime["recordcity_browser_profile"] == "headful"
+    assert runtime["recordcity_fetch_provider"] == "browser"
+    assert not any(
+        site.strip().lower().startswith("recordcity")
+        for site in runtime["browser_pool_warm_sites"]
+    )

@@ -24,6 +24,8 @@ from services.html_page_adapter import HtmlPageAdapter
 from services.scrape_request import classify_target_url
 from services.scrape_safety import (
     ScrapeBlockedError,
+    ScrapeHttpError,
+    ScrapeSelectorDriftError,
     has_no_results_evidence,
     install_navigation_guard,
     raise_for_blocked_navigation,
@@ -58,6 +60,26 @@ _CHROMIUM_145_LINUX_UA = (
 # retain their browser-generated user agents.
 _PRODUCTION_CONTEXT_OVERRIDES = {
     "user_agent": _CHROMIUM_145_LINUX_UA,
+}
+_HEADFUL_CONTEXT_OVERRIDES = {
+    "no_viewport": True,
+}
+_PRODUCTION_PROFILE_ENV = "RECORDCITY_BROWSER_PROFILE"
+_PRODUCTION_BROWSER_PROFILES: dict[str, dict] = {
+    "headless": {
+        "headless": True,
+        "context_options": _PRODUCTION_CONTEXT_OVERRIDES,
+        "runtime_site": _SITE,
+        "profile_label": "patchright/chromium/headless",
+    },
+    "headful": {
+        "headless": False,
+        "context_options": _HEADFUL_CONTEXT_OVERRIDES,
+        # A browser runtime is keyed by site.  A separate key prevents a
+        # previously-started headless runtime from being silently reused.
+        "runtime_site": "recordcity_headful",
+        "profile_label": "patchright/chromium/headful",
+    },
 }
 
 _WAF_COOKIE_LOCK = threading.RLock()
@@ -155,6 +177,7 @@ def _append_bounded(values: list, value) -> None:
 class _WafProbe:
     probe_id: str = field(default_factory=lambda: secrets.token_hex(4))
     attempt: int = 1
+    profile: str = "patchright/chromium/headless"
     main_responses: list[dict] = field(default_factory=list)
     last_main_response: dict | None = None
     waf_responses: list[dict] = field(default_factory=list)
@@ -409,23 +432,32 @@ def _contains_product_json_ld(html: str, expected_sku: str | None = None) -> boo
 
 def _classify_waf_failure(probe: _WafProbe, html: str) -> tuple[str, str] | None:
     """Return a stable reason code and operator-facing Japanese explanation."""
+    status = probe.final_status
+    final_action = probe.final_action
+    captcha_html = _looks_like_waf_captcha(html)
+    captcha_seen = final_action == "captcha" or captcha_html
+
+    # CAPTCHA is an explicit human-verification requirement.  Never turn the
+    # current CAPTCHA response into a success just because the document also
+    # contains Product markup (for example, markup retained below an overlay).
+    # This only considers the final action/current DOM; an earlier Challenge
+    # followed by a final 200 Product document remains a valid success.
+    if captcha_seen:
+        return (
+            "RC_WAF_CAPTCHA_REQUIRED",
+            "AWS WAFがCAPTCHAを要求したため、自動取得を続行できませんでした",
+        )
+
     # Current product/listing DOM is stronger evidence than a bounded history
     # containing an earlier 202 Challenge response.
     if probe.ready:
         return None
 
-    status = probe.final_status
-    final_action = probe.final_action
     challenge_html = _looks_like_waf_challenge(html)
-    captcha_html = _looks_like_waf_captcha(html)
     blocked_html = "request blocked" in str(html or "").lower()
     challenge_unresolved = (
         final_action == "challenge"
         or challenge_html
-    )
-    captcha_seen = (
-        final_action == "captcha"
-        or captcha_html
     )
     actions_seen = {
         str(entry.get("action") or "").strip().lower()
@@ -441,11 +473,6 @@ def _classify_waf_failure(probe: _WafProbe, html: str) -> tuple[str, str] | None
         or probe.token_after
     )
 
-    if captcha_seen:
-        return (
-            "RC_WAF_CAPTCHA_REQUIRED",
-            "AWS WAFがCAPTCHAを要求したため、自動取得を続行できませんでした",
-        )
     if status == 403 and waf_evidence:
         return (
             "RC_WAF_BLOCK_403",
@@ -476,13 +503,14 @@ def _raise_waf_failure(probe: _WafProbe, reason_code: str, explanation: str) -> 
     status = probe.final_status
     logger.warning(
         "Record City WAF probe failed: probe=%s attempt=%d "
-        "profile=patchright/chromium/headless reason=%s main=%s waf=%s "
+        "profile=%s reason=%s main=%s waf=%s "
         "token_before=%s token_after=%s webdriver_true=%s headless_ua=%s "
         "user_agent=%s language=%s timezone=%s token_cookie_metadata=%s "
         "waf_request_failures=%s page_errors=%d "
         "cloudfront_request_ids=%s",
         probe.probe_id,
         probe.attempt,
+        probe.profile,
         reason_code,
         probe.main_responses,
         probe.waf_responses,
@@ -510,12 +538,13 @@ def _raise_waf_failure(probe: _WafProbe, reason_code: str, explanation: str) -> 
 def _log_waf_success(probe: _WafProbe) -> None:
     logger.info(
         "Record City WAF fetch passed: probe=%s attempt=%d "
-        "profile=patchright/chromium/headless main=%s waf=%s "
+        "profile=%s main=%s waf=%s "
         "token_before=%s token_after=%s webdriver_true=%s headless_ua=%s "
         "user_agent=%s language=%s timezone=%s token_cookie_metadata=%s "
         "waf_request_failures=%s page_errors=%d cloudfront_request_ids=%s",
         probe.probe_id,
         probe.attempt,
+        probe.profile,
         probe.main_responses,
         probe.waf_responses,
         probe.token_before,
@@ -744,6 +773,14 @@ def _build_unclassified_dom_diagnostic(
         )
 
     user_agent = str(result.probe.user_agent or "")
+    browser_mode = (
+        "headful" if result.probe.profile.endswith("/headful") else "headless"
+    )
+    expected_user_agent = (
+        _chrome_major(user_agent) is not None
+        if browser_mode == "headful"
+        else user_agent == _CHROMIUM_145_LINUX_UA
+    )
     page_errors = max(0, int(result.probe.page_error_count or 0))
     if result.probe.token_before and result.probe.token_after:
         token_transition = (
@@ -802,6 +839,7 @@ def _build_unclassified_dom_diagnostic(
         "dom_sample_chars": len(html_sample),
         "dom_sample_truncated": len(html) > len(html_sample),
         "browser": {
+            "mode": browser_mode,
             "webdriver_true": result.probe.webdriver_true,
             "headless_ua": result.probe.headless_user_agent,
             "chrome_major": _chrome_major(user_agent),
@@ -809,7 +847,7 @@ def _build_unclassified_dom_diagnostic(
             "profile_matches_expected": (
                 result.probe.webdriver_true is False
                 and result.probe.headless_user_agent is False
-                and user_agent == _CHROMIUM_145_LINUX_UA
+                and expected_user_agent
                 and str(result.probe.language or "").lower().startswith("ja")
             ),
         },
@@ -885,10 +923,12 @@ async def _run_recordcity_attempt(
     automation_backend: str = "patchright",
     channel: str | None = "chromium",
     runtime_site: str = _SITE,
+    profile_label: str = "patchright/chromium/headless",
 ) -> _AttemptResult:
     probe = _WafProbe(
         probe_id=probe_id,
         attempt=attempt,
+        profile=profile_label,
         token_before=bool(input_cookies),
     )
     page_state: dict[str, object] = {}
@@ -1002,6 +1042,25 @@ async def _run_recordcity_attempt(
         # the page. Inspect the current document before deciding whether the
         # transport exception is fatal.
         probe.ready = _has_ready_evidence(html, wait_selector, kind=kind)
+        if kind == "detail" and probe.ready:
+            requested_sku = (
+                str(urlparse(normalized_url).path or "")
+                .rstrip("/")
+                .rsplit("/", 1)[-1]
+            )
+            final_sku = (
+                str(urlparse(final_url).path or "")
+                .rstrip("/")
+                .rsplit("/", 1)[-1]
+            )
+            # Selector presence alone is insufficient when a browser page is
+            # reused or a redirect lands on a different catalog item.  The
+            # final URL and Product JSON-LD must both identify the requested
+            # item before a response can become a success.
+            probe.ready = (
+                final_sku == requested_sku
+                and _contains_product_json_ld(html, requested_sku)
+            )
         observed_status = probe.final_status or getattr(response, "status", None) or 200
         if probe.ready and observed_status in {202, 403, 405}:
             # A current Product/listing DOM is decisive even if a bounded event
@@ -1040,6 +1099,29 @@ _RETRYABLE_CHALLENGE_REASONS = frozenset(
 )
 
 
+def _production_browser_settings() -> dict:
+    raw_profile = str(os.environ.get(_PRODUCTION_PROFILE_ENV, "headless") or "headless")
+    normalized = raw_profile.strip().lower()
+    aliases = {
+        "patchright-current": "headless",
+        "patchright-headless": "headless",
+        "patchright-headful": "headful",
+    }
+    normalized = aliases.get(normalized, normalized)
+    settings = _PRODUCTION_BROWSER_PROFILES.get(normalized)
+    if settings is None:
+        raise ScrapeHttpError(
+            "レコードシティのブラウザ設定が不正です"
+            "（reason=RC_BROWSER_PROFILE_CONFIG_INVALID）。"
+        )
+    if normalized == "headful" and not str(os.environ.get("DISPLAY") or "").strip():
+        raise ScrapeHttpError(
+            "レコードシティのheadfulブラウザを起動できません"
+            "（reason=RC_HEADFUL_DISPLAY_UNAVAILABLE）。"
+        )
+    return copy.deepcopy(settings)
+
+
 def _cookie_values_match(left: list[dict], right: list[dict]) -> bool:
     def _signature(cookies):
         return sorted(
@@ -1060,6 +1142,10 @@ def _retry_cookies(
     result: _AttemptResult,
     reason_code: str,
 ) -> list[dict] | None:
+    if result.probe.final_status == 429:
+        # A target-side rate limit is a stop signal even when the response
+        # also includes Challenge metadata or a newly minted token.
+        return None
     if reason_code not in _RETRYABLE_CHALLENGE_REASONS:
         return None
     if result.waf_cookies:
@@ -1088,6 +1174,7 @@ async def _fetch_recordcity_page_unlocked(
     if site != _SITE or kind != classified_kind:
         raise ValueError("Record CityのURL種別が一致しません。")
     normalized_url = validate_marketplace_url(url, _SITE, kind=kind)
+    browser_settings = _production_browser_settings()
 
     cached_cookies = _cached_waf_cookies()
     input_cookies = cached_cookies
@@ -1103,7 +1190,10 @@ async def _fetch_recordcity_page_unlocked(
             input_cookies=input_cookies,
             attempt=attempt,
             probe_id=probe_id,
-            context_options=_PRODUCTION_CONTEXT_OVERRIDES,
+            headless=bool(browser_settings["headless"]),
+            context_options=browser_settings["context_options"],
+            runtime_site=str(browser_settings["runtime_site"]),
+            profile_label=str(browser_settings["profile_label"]),
         )
         failure = _classify_waf_failure(result.probe, result.html)
         if failure is not None:
@@ -1116,11 +1206,12 @@ async def _fetch_recordcity_page_unlocked(
             if retry_cookies is not None:
                 logger.info(
                     "Record City WAF probe retrying once: probe=%s attempt=%d "
-                    "profile=patchright/chromium/headless reason=%s "
+                    "profile=%s reason=%s "
                     "main=%s waf=%s token_before=%s token_after=%s "
                     "retry_with_token=%s cloudfront_request_ids=%s",
                     result.probe.probe_id,
                     attempt,
+                    result.probe.profile,
                     reason_code,
                     result.probe.main_responses,
                     result.probe.waf_responses,
@@ -1164,18 +1255,20 @@ async def _fetch_recordcity_page_unlocked(
                 wait_selector=wait_selector,
                 input_cookies=input_cookies,
             )
+            if kind == "detail" and _contains_product_json_ld(result.html):
+                raise ScrapeSelectorDriftError(
+                    "レコードシティの商品識別情報が要求URLと一致しませんでした"
+                    "（reason=RC_DETAIL_IDENTITY_MISMATCH）。"
+                )
         return page
 
     raise RuntimeError("Record Cityの制御された再試行が完了しませんでした。")
 
 
 _BROWSER_PROBE_PROFILES: dict[str, dict] = {
-    # Exact production baseline. Keeping this profile here makes a same-deploy
-    # control available without invoking the production retry/token cache.
-    "patchright-current": {
-        "headless": True,
-        "context_options": _PRODUCTION_CONTEXT_OVERRIDES,
-    },
+    # Resolved from RECORDCITY_BROWSER_PROFILE at call time so this remains an
+    # exact production control after a deployment-profile change.
+    "patchright-current": {"production": True},
     # Compatibility alias for the profile that the Render A/B probe proved and
     # production now uses. Keeping the explicit name makes old probe commands
     # and stored diagnostic results comparable.
@@ -1278,6 +1371,11 @@ async def probe_recordcity_browser_once_async(
         else "a[href*='/catalog/']"
     )
 
+    if settings.get("production"):
+        settings = _production_browser_settings()
+    else:
+        settings = copy.deepcopy(settings)
+
     profile_context_options = dict(settings.get("context_options") or {})
     if settings.get("proxy"):
         proxy_url = str(os.environ.get("RECORDCITY_PROXY_URL") or "").strip()
@@ -1302,6 +1400,7 @@ async def probe_recordcity_browser_once_async(
         automation_backend="patchright",
         channel="chromium",
         runtime_site=f"recordcity_probe_{profile.replace('-', '_')}",
+        profile_label=f"patchright/chromium/{'headless' if settings['headless'] else 'headful'}",
     )
     failure = _classify_waf_failure(result.probe, result.html)
     actions = [
@@ -1314,6 +1413,7 @@ async def probe_recordcity_browser_once_async(
     body_bytes = str(result.html or "").encode("utf-8", errors="ignore")
     return {
         "strategy": profile,
+        "browser_mode": "headless" if settings["headless"] else "headful",
         "attempted": True,
         "transport_status": None,
         "target_status": result.status,

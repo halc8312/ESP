@@ -1,4 +1,7 @@
 import json
+from pathlib import Path
+
+import pytest
 
 
 def _load_last_json_line(output: str) -> dict:
@@ -54,6 +57,74 @@ def test_run_render_blueprint_audit_current_blueprint_is_ready():
     assert "esp-keyvalue" in snapshot["service_names"]
     assert "esp-postgres" in snapshot["database_names"]
     assert {"service": "esp-worker", "key": "SELECTOR_ALERT_WEBHOOK_URL", "required": False} in snapshot["manual_secret_envs"]
+
+
+@pytest.mark.parametrize(
+    "blueprint_path",
+    ["render.yaml", "render.existing-web-addons.yaml"],
+)
+def test_render_blueprints_pin_recordcity_worker_runtime(blueprint_path):
+    from cli import _parse_render_blueprint
+
+    blueprint = _parse_render_blueprint(blueprint_path)
+    worker = next(
+        service for service in blueprint["services"] if service["name"] == "esp-worker"
+    )
+    worker_env = worker["env_vars"]
+    warm_sites = {
+        site.strip().lower()
+        for site in worker_env["BROWSER_POOL_WARM_SITES"]["value"].split(",")
+        if site.strip()
+    }
+
+    assert worker["dockerCommand"] == "tini -- python worker.py"
+    assert worker_env["RECORDCITY_BROWSER_PROFILE"]["value"] == "headful"
+    assert worker_env["RECORDCITY_FETCH_PROVIDER"]["value"] == "browser"
+    assert not any(site.startswith("recordcity") for site in warm_sites)
+
+
+@pytest.mark.parametrize(
+    ("original", "replacement", "expected_blocker"),
+    [
+        (
+            "dockerCommand: tini -- python worker.py",
+            "dockerCommand: python worker.py",
+            "worker_command_must_use_tini_worker_entrypoint",
+        ),
+        (
+            "- key: RECORDCITY_BROWSER_PROFILE\n        value: headful",
+            "- key: RECORDCITY_BROWSER_PROFILE\n        value: headless",
+            "worker_recordcity_profile_must_be_headful",
+        ),
+        (
+            "- key: RECORDCITY_FETCH_PROVIDER\n        value: browser",
+            "- key: RECORDCITY_FETCH_PROVIDER\n        value: auto",
+            "worker_recordcity_provider_must_be_browser",
+        ),
+        (
+            "- key: BROWSER_POOL_WARM_SITES\n        value: mercari",
+            "- key: BROWSER_POOL_WARM_SITES\n        value: mercari,recordcity_headful",
+            "worker_recordcity_runtime_must_not_be_prewarmed",
+        ),
+    ],
+)
+def test_render_blueprint_audit_blocks_recordcity_runtime_drift(
+    tmp_path,
+    original,
+    replacement,
+    expected_blocker,
+):
+    from cli import run_render_blueprint_audit
+
+    source = Path("render.yaml").read_text(encoding="utf-8")
+    assert original in source
+    drifted_blueprint = tmp_path / "render.yaml"
+    drifted_blueprint.write_text(source.replace(original, replacement, 1), encoding="utf-8")
+
+    snapshot = run_render_blueprint_audit(str(drifted_blueprint))
+
+    assert snapshot["ready"] is False
+    assert expected_blocker in snapshot["blockers"]
 
 
 def test_run_render_dashboard_inputs_current_blueprint_contains_manual_and_managed_envs():

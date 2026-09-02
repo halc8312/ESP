@@ -7,7 +7,11 @@ import time
 import pytest
 
 from services import recordcity_browser_fetch as recordcity_fetch
-from services.scrape_safety import ScrapeBlockedError
+from services.scrape_safety import (
+    ScrapeBlockedError,
+    ScrapeHttpError,
+    ScrapeSelectorDriftError,
+)
 
 
 DETAIL_URL = "https://www.recordcity.jp/catalog/4936480"
@@ -159,7 +163,8 @@ def _waf_cookie(value="secret-token"):
 
 
 @pytest.fixture(autouse=True)
-def clear_waf_cookie_cache():
+def clear_waf_cookie_cache(monkeypatch):
+    monkeypatch.delenv("RECORDCITY_BROWSER_PROFILE", raising=False)
     recordcity_fetch._discard_cached_waf_cookies()
     yield
     recordcity_fetch._discard_cached_waf_cookies()
@@ -282,6 +287,58 @@ def test_recordcity_uses_site_scoped_patchright_profile(monkeypatch):
             "timeout": 20000,
         }
     ]
+
+
+def test_render_headful_profile_uses_native_ua_and_distinct_runtime(
+    monkeypatch,
+    caplog,
+):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "headful")
+    monkeypatch.setenv("DISPLAY", ":99")
+    captured = []
+    page = FakePage(FakeResponse(200, headers={"server": "CloudFront"}))
+    _install_browser_fake(monkeypatch, [(page, FakeContext())], captured)
+
+    with caplog.at_level(logging.INFO):
+        result = _fetch()
+
+    assert result.status == 200
+    assert captured == [
+        {
+            "site": "recordcity_headful",
+            "headless": False,
+            "launch_args": [],
+            "context_options": {"locale": "ja-JP", "no_viewport": True},
+            "automation_backend": "patchright",
+            "channel": "chromium",
+        }
+    ]
+    assert "profile=patchright/chromium/headful" in caplog.text
+
+
+def test_headful_profile_requires_display_before_browser_start(monkeypatch):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "headful")
+    monkeypatch.delenv("DISPLAY", raising=False)
+
+    async def should_not_run(*_args, **_kwargs):
+        raise AssertionError("browser should not start")
+
+    monkeypatch.setattr(recordcity_fetch, "run_browser_page_task", should_not_run)
+
+    with pytest.raises(ScrapeHttpError, match="RC_HEADFUL_DISPLAY_UNAVAILABLE"):
+        _fetch()
+
+
+def test_invalid_production_profile_fails_before_browser_start(monkeypatch):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "unknown-profile")
+
+    async def should_not_run(*_args, **_kwargs):
+        raise AssertionError("browser should not start")
+
+    monkeypatch.setattr(recordcity_fetch, "run_browser_page_task", should_not_run)
+
+    with pytest.raises(ScrapeHttpError, match="RC_BROWSER_PROFILE_CONFIG_INVALID"):
+        _fetch()
 
 
 def test_unready_unclassified_response_logs_one_secret_free_warning(
@@ -513,6 +570,37 @@ def test_challenge_reload_to_product_is_success_and_caches_token(
     assert "secret-token" not in caplog.text
 
 
+@pytest.mark.parametrize(
+    ("headers", "html"),
+    [
+        ({"x-amzn-waf-action": "captcha"}, PRODUCT_HTML),
+        (
+            {},
+            PRODUCT_HTML
+            + "<script src='https://example.token.awswaf.com/captcha.js'></script>",
+        ),
+    ],
+)
+def test_current_captcha_is_terminal_even_when_product_dom_is_ready(
+    monkeypatch,
+    headers,
+    html,
+):
+    captured = []
+    page = FakePage(
+        FakeResponse(405, headers=headers),
+        html=html,
+        selector_ready=True,
+    )
+    _install_browser_fake(monkeypatch, [(page, FakeContext())], captured)
+
+    with pytest.raises(ScrapeBlockedError, match="RC_WAF_CAPTCHA_REQUIRED") as exc_info:
+        _fetch()
+
+    assert exc_info.value.status_code == 405
+    assert len(captured) == 1
+
+
 def test_final_product_response_survives_more_than_trace_limit(monkeypatch):
     captured = []
     challenge = FakeResponse(
@@ -594,6 +682,26 @@ def test_goto_timeout_accepts_product_dom_left_in_page(monkeypatch):
 
     assert result.status == 200
     assert "Product" in result.body
+
+
+def test_detail_product_sku_must_match_requested_catalog_id(monkeypatch):
+    captured = []
+    wrong_product = PRODUCT_HTML.replace('"4936480"', '"9999999"')
+    page = FakePage(FakeResponse(200), html=wrong_product)
+    _install_browser_fake(monkeypatch, [(page, FakeContext())], captured)
+
+    with pytest.raises(ScrapeSelectorDriftError, match="RC_DETAIL_IDENTITY_MISMATCH"):
+        _fetch()
+
+
+def test_detail_final_catalog_id_must_match_requested_id(monkeypatch):
+    captured = []
+    page = FakePage(FakeResponse(200), html=PRODUCT_HTML)
+    page.url = "https://www.recordcity.jp/catalog/9999999"
+    _install_browser_fake(monkeypatch, [(page, FakeContext())], captured)
+
+    with pytest.raises(ScrapeSelectorDriftError, match="RC_DETAIL_IDENTITY_MISMATCH"):
+        _fetch()
 
 
 def test_generic_403_is_not_given_an_aws_waf_reason(monkeypatch):
@@ -711,6 +819,56 @@ def test_waf_failures_keep_specific_operator_reason(
 
     assert exc_info.value.status_code == status
     assert "WAFログ" in str(exc_info.value)
+
+
+def test_headful_captcha_is_terminal_and_not_retried(monkeypatch):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "headful")
+    monkeypatch.setenv("DISPLAY", ":99")
+    captured = []
+    page = FakePage(
+        FakeResponse(
+            405,
+            headers={
+                "server": "CloudFront",
+                "x-amzn-waf-action": "captcha",
+            },
+        ),
+        html="<html><script src='https://example.token.awswaf.com/captcha.js'></script></html>",
+        selector_ready=False,
+    )
+    _install_browser_fake(monkeypatch, [(page, FakeContext())], captured)
+
+    with pytest.raises(ScrapeBlockedError, match="RC_WAF_CAPTCHA_REQUIRED"):
+        _fetch()
+
+    assert len(captured) == 1
+    assert captured[0]["site"] == "recordcity_headful"
+
+
+def test_rate_limit_is_terminal_even_with_challenge_token(monkeypatch):
+    captured = []
+    page = FakePage(
+        FakeResponse(
+            429,
+            headers={
+                "server": "CloudFront",
+                "x-amzn-waf-action": "challenge",
+            },
+        ),
+        html=CHALLENGE_HTML,
+        selector_ready=False,
+    )
+    _install_browser_fake(
+        monkeypatch,
+        [(page, FakeContext([_waf_cookie("rate-limited-token")]))],
+        captured,
+    )
+
+    with pytest.raises(ScrapeBlockedError) as exc_info:
+        _fetch()
+
+    assert exc_info.value.status_code == 429
+    assert len(captured) == 1
 
 
 def test_existing_unaccepted_token_is_discarded_without_logging_value(monkeypatch, caplog):
@@ -867,6 +1025,9 @@ def test_single_browser_probe_uses_isolated_profile(
     )
 
     assert result["strategy"] == profile
+    assert result["browser_mode"] == (
+        "headless" if expected_headless else "headful"
+    )
     assert result["target_status"] == 200
     assert result["ready_dom"] is True
     assert result["product_json_ld"] is True
@@ -880,6 +1041,30 @@ def test_single_browser_probe_uses_isolated_profile(
     assert captured[0]["automation_backend"] == "patchright"
     assert captured[0]["channel"] == "chromium"
     assert page.selector_calls[0]["state"] == "attached"
+
+
+def test_current_probe_tracks_render_headful_production_profile(monkeypatch):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "headful")
+    monkeypatch.setenv("DISPLAY", ":99")
+    captured = []
+    page = FakePage(FakeResponse(200, headers={"server": "CloudFront"}))
+    _install_browser_fake(monkeypatch, [(page, FakeContext())], captured)
+
+    result = asyncio.run(
+        recordcity_fetch.probe_recordcity_browser_once_async(
+            DETAIL_URL,
+            profile="patchright-current",
+        )
+    )
+
+    assert result["ready_dom"] is True
+    assert result["browser_mode"] == "headful"
+    assert captured[0]["site"] == "recordcity_probe_patchright_current"
+    assert captured[0]["headless"] is False
+    assert captured[0]["context_options"] == {
+        "locale": "ja-JP",
+        "no_viewport": True,
+    }
 
 
 def test_single_browser_probe_records_token_then_403_without_exposing_value(
