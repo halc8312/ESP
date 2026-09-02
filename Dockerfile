@@ -16,8 +16,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
 # Playwright / Patchright の実行に必要なシステム依存関係。
-# xvfb/xauth は Record City 専用診断で headful と headless を同一
-# Render egress 上で比較するために使う（通常worker起動時は未使用）。
+# xvfb/xauth は Record City 専用のheadful profileと診断で使用する。
+# 他サイトのブラウザは従来どおりheadlessのまま起動する。
 # --no-install-recommends で推奨パッケージを除外しイメージサイズを削減
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgbm1 \
     xvfb \
     xauth \
+    tini \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

@@ -80,6 +80,33 @@ _MAX_PROBE_BODY_BYTES = 12 * 1024 * 1024
 _REASON_CODE_RE = re.compile(r"\breason=([A-Z][A-Z0-9_]+)\b")
 
 
+def _strategy_requires_display(strategy: str) -> bool:
+    if strategy in _HEADFUL_STRATEGIES:
+        return True
+    if strategy != "patchright-current":
+        return False
+    current = str(
+        os.environ.get("RECORDCITY_BROWSER_PROFILE", "headless") or "headless"
+    ).strip().lower()
+    return current in {"headful", "patchright-headful"}
+
+
+def _dedupe_current_profile_aliases(strategies: list[str]) -> list[str]:
+    """Avoid hitting the target twice with an identical production profile."""
+    if "patchright-current" not in strategies:
+        return strategies
+    current_alias = (
+        "patchright-headful"
+        if _strategy_requires_display("patchright-current")
+        else "patchright-headless-ua"
+    )
+    return [
+        strategy
+        for strategy in strategies
+        if strategy == "patchright-current" or strategy != current_alias
+    ]
+
+
 def _expected_detail_sku(url: str, kind: str) -> str | None:
     if kind != "detail":
         return None
@@ -514,6 +541,10 @@ def _assess_results(rows: list[dict]) -> dict:
     def _browser_user_agent(name: str) -> str:
         return str(by_strategy.get(name, {}).get("user_agent") or "").strip()
 
+    def _browser_mode(name: str) -> str:
+        mode = str(by_strategy.get(name, {}).get("browser_mode") or "").strip().lower()
+        return mode if mode in {"headless", "headful"} else ""
+
     def _same_normal_user_agent(*names: str) -> bool:
         user_agents = [_browser_user_agent(name) for name in names]
         return bool(
@@ -532,6 +563,8 @@ def _assess_results(rows: list[dict]) -> dict:
     if (
         _waf_failure(current)
         and _success(headless_ua)
+        and _browser_mode(current) == "headless"
+        and _browser_mode(headless_ua) == "headless"
         and _headless_ua_signal(current) is True
         and _headless_ua_signal(headless_ua) is False
         and bool(_browser_user_agent(current))
@@ -545,6 +578,8 @@ def _assess_results(rows: list[dict]) -> dict:
     if (
         _waf_failure(current)
         and _success(headful)
+        and _browser_mode(current) == "headless"
+        and _browser_mode(headful) == "headful"
         and _same_normal_user_agent(current, headful)
     ):
         return {
@@ -552,19 +587,26 @@ def _assess_results(rows: list[dict]) -> dict:
             "summary": "Render直通でheadfulだけ成功したため、headless/automation要因が強い。",
         }
     if all(_attempted(name) for name in (current, headful, headless_proxy, headful_proxy)):
+        expected_modes = (
+            _browser_mode(current) == "headless"
+            and _browser_mode(headful) == "headful"
+            and _browser_mode(headless_proxy) == "headless"
+            and _browser_mode(headful_proxy) == "headful"
+        )
         direct_failed = _waf_failure(current) and _waf_failure(headful)
         proxy_succeeded = _success(headless_proxy) and _success(headful_proxy)
         egress_controls_match = _same_normal_user_agent(
             current,
             headless_proxy,
         ) and _same_normal_user_agent(headful, headful_proxy)
-        if direct_failed and proxy_succeeded and egress_controls_match:
+        if expected_modes and direct_failed and proxy_succeeded and egress_controls_match:
             return {
                 "code": "render_egress_factor_supported",
                 "summary": "両browser modeがproxy経由だけ成功したため、Render egress/IP要因が強い。",
             }
         if (
-            _waf_failure(current)
+            expected_modes
+            and _waf_failure(current)
             and _waf_failure(headful)
             and _waf_failure(headless_proxy)
             and _success(headful_proxy)
@@ -605,7 +647,7 @@ def run_recordcity_probe(
         raise ValueError("Record Cityの商品または一覧URLを指定してください。")
     kind = "detail" if request_kind == "item" else "search"
     normalized_url = validate_marketplace_url(url, "recordcity", kind=kind)
-    selected = _dedupe_strategies(strategies)
+    selected = _dedupe_current_profile_aliases(_dedupe_strategies(strategies))
 
     configured_external: set[str] = set()
     try:
@@ -620,7 +662,7 @@ def run_recordcity_probe(
     rows: list[dict] = []
     for index, strategy in enumerate(selected):
         cell_started = time.monotonic()
-        if strategy in _HEADFUL_STRATEGIES and not os.environ.get("DISPLAY"):
+        if _strategy_requires_display(strategy) and not os.environ.get("DISPLAY"):
             row = _skip(strategy, "display_not_configured_use_xvfb_run")
         elif (
             strategy in _PROXY_BROWSER_STRATEGIES

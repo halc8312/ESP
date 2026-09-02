@@ -19,7 +19,9 @@ from services import recordcity_external_fetch
 from services.html_page_adapter import HtmlPageAdapter
 from services.scrape_request import InvalidTargetUrl, classify_target_url
 from services.scrape_safety import (
+    ScrapeBlockedError,
     ScrapeFailure,
+    ScrapeHttpError,
     UnsafeScrapeUrlError,
     validate_marketplace_url,
 )
@@ -71,6 +73,12 @@ class _FakePage:
 
 def _product_page(product=None):
     return _FakePage(json_ld=[product if product is not None else LIVE_SAMPLE])
+
+
+def _product_page_for_url(url):
+    product = json.loads(json.dumps(LIVE_SAMPLE))
+    product["sku"] = int(str(url).rstrip("/").rsplit("/", 1)[-1])
+    return _product_page(product)
 
 
 def _stub_fetch(monkeypatch, pages):
@@ -258,6 +266,55 @@ class TestReadingOneRecord:
 
         assert result["price"] == 2420
 
+    def test_the_requested_product_wins_when_a_wrong_product_appears_first(
+        self,
+        monkeypatch,
+    ):
+        wrong_product = json.loads(json.dumps(LIVE_SAMPLE))
+        wrong_product.update(
+            {
+                "name": "別の商品",
+                "sku": 1111111,
+                "offers": {
+                    **wrong_product["offers"],
+                    "price": 999999,
+                },
+            }
+        )
+        requested_product = json.loads(json.dumps(LIVE_SAMPLE))
+        _stub_fetch(
+            monkeypatch,
+            _FakePage(json_ld=[wrong_product, requested_product]),
+        )
+
+        result = recordcity_db.scrape_item_detail(
+            "https://www.recordcity.jp/catalog/4936480"
+        )
+
+        assert result["sku"] == "4936480"
+        assert result["title"] == LIVE_SAMPLE["name"]
+        assert result["price"] == 2420
+
+    def test_only_wrong_products_fail_with_a_stable_identity_reason(
+        self,
+        monkeypatch,
+    ):
+        wrong_products = []
+        for sku in (1111111, 2222222):
+            product = json.loads(json.dumps(LIVE_SAMPLE))
+            product["sku"] = sku
+            product["name"] = f"別の商品 {sku}"
+            wrong_products.append(product)
+        _stub_fetch(monkeypatch, _FakePage(json_ld=wrong_products))
+
+        with pytest.raises(
+            ScrapeFailure,
+            match="reason=RC_DETAIL_IDENTITY_MISMATCH",
+        ):
+            recordcity_db.scrape_item_detail(
+                "https://www.recordcity.jp/catalog/4936480"
+            )
+
     def test_a_page_without_product_data_says_so(self, monkeypatch):
         # What the WAF challenge page looks like: no structured data at all.
         _stub_fetch(monkeypatch, _FakePage(json_ld=[], text="challenge"))
@@ -325,7 +382,11 @@ class TestReadingAListing:
         listing = _listing_page(100)
 
         def _pages(url):
-            return listing if "?" in url or url.endswith("/catalog") else _product_page()
+            return (
+                listing
+                if "?" in url or url.endswith("/catalog")
+                else _product_page_for_url(url)
+            )
 
         calls = _stub_fetch(monkeypatch, _pages)
 
@@ -378,7 +439,7 @@ class TestReadingAListing:
                 return listing
             if url.endswith("/catalog/1"):
                 return _FakePage(json_ld=[], text="challenge")
-            return _product_page()
+            return _product_page_for_url(url)
 
         _stub_fetch(monkeypatch, _pages)
 
@@ -388,6 +449,65 @@ class TestReadingAListing:
 
         assert len(results) == 1
         assert results[0]["price"] == 2420
+
+    def test_waf_block_stops_the_listing_instead_of_trying_every_candidate(
+        self,
+        monkeypatch,
+    ):
+        listing = _FakePage(
+            anchors=[
+                _FakeElement(attrib={"href": "/catalog/1"}),
+                _FakeElement(attrib={"href": "/catalog/2"}),
+            ],
+            text="2件",
+        )
+        detail_calls = []
+
+        def _fake_fetch(url, kind):
+            if kind == "search":
+                return listing
+            detail_calls.append(url)
+            raise ScrapeBlockedError(
+                "reason=RC_WAF_CAPTCHA_REQUIRED",
+                status_code=405,
+            )
+
+        monkeypatch.setattr(recordcity_db, "_fetch_page", _fake_fetch)
+
+        with pytest.raises(ScrapeBlockedError, match="RC_WAF_CAPTCHA_REQUIRED"):
+            recordcity_db.scrape_search_result(
+                "https://www.recordcity.jp/catalog?narrow_down_3=3",
+                max_items=2,
+            )
+
+        assert detail_calls == ["https://www.recordcity.jp/catalog/1"]
+
+    def test_rate_limit_stops_the_listing_after_one_detail(self, monkeypatch):
+        listing = _FakePage(
+            anchors=[
+                _FakeElement(attrib={"href": "/catalog/1"}),
+                _FakeElement(attrib={"href": "/catalog/2"}),
+            ],
+            text="2件",
+        )
+        detail_calls = []
+
+        def _fake_fetch(url, kind):
+            if kind == "search":
+                return listing
+            detail_calls.append(url)
+            raise ScrapeHttpError("rate limited", status_code=429)
+
+        monkeypatch.setattr(recordcity_db, "_fetch_page", _fake_fetch)
+
+        with pytest.raises(ScrapeHttpError) as exc_info:
+            recordcity_db.scrape_search_result(
+                "https://www.recordcity.jp/catalog?narrow_down_3=3",
+                max_items=2,
+            )
+
+        assert exc_info.value.status_code == 429
+        assert detail_calls == ["https://www.recordcity.jp/catalog/1"]
 
     def test_the_same_record_listed_twice_is_read_once(self, monkeypatch):
         listing = _FakePage(
@@ -400,7 +520,7 @@ class TestReadingAListing:
         )
 
         def _pages(url):
-            return listing if "?" in url else _product_page()
+            return listing if "?" in url else _product_page_for_url(url)
 
         calls = _stub_fetch(monkeypatch, _pages)
 

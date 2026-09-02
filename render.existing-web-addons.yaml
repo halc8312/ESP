@@ -14,7 +14,7 @@ services:
     plan: standard
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    dockerCommand: python worker.py
+    dockerCommand: tini -- python worker.py
     autoDeployTrigger: off
     numInstances: 1
     maxShutdownDelaySeconds: 300
@@ -57,6 +57,10 @@ services:
         value: "1"
       - key: BROWSER_POOL_WARM_SITES
         value: mercari
+      - key: RECORDCITY_BROWSER_PROFILE
+        value: headful
+      - key: RECORDCITY_FETCH_PROVIDER
+        value: browser
       - key: MERCARI_USE_BROWSER_POOL_DETAIL
         value: "1"
       - key: MERCARI_PATROL_USE_BROWSER_POOL

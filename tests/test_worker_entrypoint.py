@@ -1,4 +1,5 @@
 import worker
+from contextlib import contextmanager
 
 
 def test_worker_main_builds_worker_app_and_runs_runtime(monkeypatch):
@@ -70,3 +71,31 @@ def test_worker_main_passes_scheduler_flag(monkeypatch):
     assert captured["config_overrides"]["SCHEMA_BOOTSTRAP_MODE"] == "alembic"
     assert captured["config_overrides"]["WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP"] == "0"
     assert captured["config_overrides"]["WORKER_SELECTOR_REPAIR_LIMIT"] == "3"
+
+
+def test_worker_keeps_virtual_display_around_runtime_cleanup(monkeypatch):
+    events = []
+
+    @contextmanager
+    def fake_display():
+        events.append("display_started")
+        try:
+            yield
+        finally:
+            events.append("display_stopped")
+
+    def fake_run_worker():
+        events.append("worker_started")
+        events.append("browser_pool_closed")
+        return 0
+
+    monkeypatch.setattr(worker, "recordcity_virtual_display", fake_display)
+    monkeypatch.setattr(worker, "_run_worker", fake_run_worker)
+
+    assert worker.main() == 0
+    assert events == [
+        "display_started",
+        "worker_started",
+        "browser_pool_closed",
+        "display_stopped",
+    ]

@@ -40,9 +40,18 @@ def _waf_failure(strategy):
     return result
 
 
-def _with_browser_signal(row, *, user_agent=NORMAL_UA, headless=False):
+def _with_browser_signal(
+    row,
+    *,
+    user_agent=NORMAL_UA,
+    headless=False,
+    browser_mode=None,
+):
     row["user_agent"] = user_agent
     row["headless_user_agent"] = headless
+    row["browser_mode"] = browser_mode or (
+        "headful" if "headful" in str(row.get("strategy") or "") else "headless"
+    )
     return row
 
 
@@ -250,6 +259,20 @@ def test_assessment_does_not_infer_browser_mode_from_mismatched_ua_profiles():
     assert assessment["code"] == "inconclusive"
 
 
+def test_assessment_does_not_compare_two_headful_profiles_as_browser_modes():
+    assessment = recordcity_probe._assess_results(
+        [
+            _with_browser_signal(
+                _waf_failure("patchright-current"),
+                browser_mode="headful",
+            ),
+            _with_browser_signal(_attempted("patchright-headful")),
+        ]
+    )
+
+    assert assessment["code"] == "inconclusive"
+
+
 def test_assessment_supports_headless_user_agent_factor():
     current = _with_browser_signal(
         _waf_failure("patchright-current"),
@@ -355,6 +378,49 @@ def test_headful_cell_is_skipped_without_display(monkeypatch):
     row = snapshot["results"][0]
     assert row["attempted"] is False
     assert row["reason"] == "display_not_configured_use_xvfb_run"
+
+
+def test_current_headful_profile_is_skipped_without_display(monkeypatch):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "headful")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.setattr(
+        recordcity_probe,
+        "_probe_browser",
+        lambda *_args, **_kwargs: pytest.fail("headful browser must not start"),
+    )
+
+    snapshot = recordcity_probe.run_recordcity_probe(
+        DETAIL_URL,
+        strategies=["patchright-current"],
+        delay_seconds=0,
+    )
+
+    row = snapshot["results"][0]
+    assert row["attempted"] is False
+    assert row["reason"] == "display_not_configured_use_xvfb_run"
+
+
+def test_current_profile_dedupes_equivalent_explicit_headful_cell(monkeypatch):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "headful")
+    monkeypatch.setenv("DISPLAY", ":99")
+    calls = []
+    monkeypatch.setattr(
+        recordcity_probe,
+        "_probe_browser",
+        lambda _url, **kwargs: (
+            calls.append(kwargs["strategy"])
+            or _attempted(kwargs["strategy"])
+        ),
+    )
+
+    snapshot = recordcity_probe.run_recordcity_probe(
+        DETAIL_URL,
+        strategies=["patchright-current", "patchright-headful"],
+        delay_seconds=0,
+    )
+
+    assert snapshot["strategies"] == ["patchright-current"]
+    assert calls == ["patchright-current"]
 
 
 @pytest.mark.parametrize(

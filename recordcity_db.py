@@ -19,10 +19,12 @@ links collected and the pages opened.
 import json
 import logging
 import re
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from services.scrape_safety import (
+    ScrapeBlockedError,
     ScrapeFailure,
+    ScrapeHttpError,
     UnsafeScrapeUrlError,
     is_usable_detail_result,
     raise_for_unsafe_detail_result,
@@ -126,13 +128,47 @@ def _iter_json_ld(page, broken=None):
             yield entry
 
 
-def _extract_json_ld_product(page, broken=None) -> dict:
+def _extract_json_ld_product(
+    page,
+    broken=None,
+    *,
+    expected_sku: str | None = None,
+    observed_product_skus: list[str] | None = None,
+) -> dict:
+    """Return the first Product, or the Product matching ``expected_sku``.
+
+    Detail pages can contain more than one Product node (for example, stale
+    structured data left in the DOM during a challenge reload).  Callers that
+    know the requested catalog ID must select by SKU rather than trusting the
+    first Product node on the page.
+
+    ``observed_product_skus`` lets the caller distinguish "no Product data"
+    from "Product data was present, but it belonged to another catalog ID"
+    without parsing the bounded JSON-LD collection a second time.
+    """
+    normalized_expected = (
+        str(expected_sku).strip() if expected_sku is not None else None
+    )
     for entry in _iter_json_ld(page, broken):
         entry_type = entry.get("@type")
         types = entry_type if isinstance(entry_type, list) else [entry_type]
         if any(str(value).lower() == "product" for value in types if value):
-            return entry
+            sku = str(entry.get("sku") or "").strip()
+            if observed_product_skus is not None:
+                observed_product_skus.append(sku)
+            if normalized_expected is None or sku == normalized_expected:
+                return entry
     return {}
+
+
+def _catalog_id(url: str) -> str:
+    """Extract the exact numeric catalog ID from a validated detail URL."""
+    try:
+        path = str(urlparse(str(url or "")).path or "")
+    except ValueError:
+        return ""
+    match = re.fullmatch(r"/(?:[a-z]{2}/)?catalog/(\d+)/?", path)
+    return str(match.group(1) or "") if match else ""
 
 
 def _first_offer(product: dict) -> dict:
@@ -255,9 +291,30 @@ def scrape_item_detail(url_or_driver=None, maybe_url=None, **_kwargs) -> dict:
             f"レコードシティの商品ページを読み取れませんでした: {exc}"
         ) from exc
 
+    expected_sku = _catalog_id(url)
+    observed_product_skus = []
     broken_blocks = []
-    product = _extract_json_ld_product(page, broken_blocks)
+    product = _extract_json_ld_product(
+        page,
+        broken_blocks,
+        expected_sku=expected_sku,
+        observed_product_skus=observed_product_skus,
+    )
     if not product:
+        if observed_product_skus:
+            # Returning a different Product is silent data corruption: title,
+            # price and inventory would all be registered against the wrong
+            # catalog URL. Keep the reason stable for logs and the UI.
+            logger.warning(
+                "Record City product identity mismatch (expected=%s, product_nodes=%d): %s",
+                expected_sku,
+                len(observed_product_skus),
+                url,
+            )
+            raise ScrapeFailure(
+                "レコードシティの商品ページに要求した商品IDと一致するデータが"
+                "見つかりませんでした（reason=RC_DETAIL_IDENTITY_MISMATCH）。"
+            )
         if broken_blocks:
             # The data is there and unreadable, which is a different problem
             # from it not being there — and saying "bot challenge" here would
@@ -402,6 +459,20 @@ def scrape_search_result(
             break
         try:
             result = scrape_item_detail(item_url)
+        except ScrapeBlockedError:
+            # A CAPTCHA/rate block applies to the browser session or egress,
+            # not just one catalog item. Continuing through every candidate
+            # would create a burst of futile requests and hide the actionable
+            # WAF reason from the operator.
+            raise
+        except ScrapeHttpError as exc:
+            if exc.status_code == 429:
+                # Some external providers expose a target-side 429 as an
+                # HTTP failure rather than ScrapeBlockedError. It is still a
+                # job-wide rate signal and must not fan out over candidates.
+                raise
+            logger.warning("Record City detail scrape failed for %s: %s", item_url, exc)
+            continue
         except Exception as exc:
             raise_for_unsafe_detail_result(SITE, exc)
             logger.warning("Record City detail scrape failed for %s: %s", item_url, exc)
