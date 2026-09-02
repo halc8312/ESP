@@ -1,3 +1,4 @@
+import logging
 import os
 import subprocess
 
@@ -182,23 +183,26 @@ def test_start_xvfb_stops_process_when_readiness_fails(monkeypatch):
     assert stopped == [process]
 
 
-def test_cleanup_failure_does_not_mask_worker_error(monkeypatch):
+def test_cleanup_failure_does_not_mask_worker_error(monkeypatch, caplog):
     monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "headful")
     monkeypatch.delenv("DISPLAY", raising=False)
+
+    class _BrokenProcess(_FakeProcess):
+        def poll(self):
+            raise RuntimeError("cleanup failed")
+
     monkeypatch.setattr(
         virtual_display,
         "_start_xvfb",
-        lambda: (_FakeProcess(), ":82"),
-    )
-    monkeypatch.setattr(
-        virtual_display,
-        "_stop_xvfb",
-        lambda _process: (_ for _ in ()).throw(RuntimeError("cleanup failed")),
+        lambda: (_BrokenProcess(), ":82"),
     )
 
-    with pytest.raises(ValueError, match="worker failed"):
-        with virtual_display.recordcity_virtual_display():
-            raise ValueError("worker failed")
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(ValueError, match="worker failed"):
+            with virtual_display.recordcity_virtual_display():
+                raise ValueError("worker failed")
+
+    assert caplog.text.count("Record City virtual display cleanup failed") == 1
 
 
 def test_xvfb_stop_escalates_to_kill_after_timeout():
