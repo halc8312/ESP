@@ -140,11 +140,5 @@ def recordcity_virtual_display() -> Iterator[None]:
             os.environ.pop("DISPLAY", None)
         else:
             os.environ["DISPLAY"] = previous_display
-        try:
-            _stop_xvfb(process)
-        except Exception as exc:
-            logger.warning(
-                "Record City virtual display cleanup failed: error=%s",
-                type(exc).__name__,
-            )
+        _stop_xvfb(process)
         logger.info("Record City private virtual display stopped")
