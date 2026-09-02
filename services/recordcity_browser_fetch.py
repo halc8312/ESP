@@ -17,7 +17,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 
 from services.browser_pool import run_browser_page_task
 from services.html_page_adapter import HtmlPageAdapter
@@ -38,6 +38,10 @@ logger = logging.getLogger(__name__)
 _SITE = "recordcity"
 _WAF_COOKIE_NAME = "aws-waf-token"
 _MAX_EVENTS = 12
+_MAX_DIAGNOSTIC_BODY_BYTES = 50 * 1024 * 1024
+_MAX_DIAGNOSTIC_HTML_CHARS = 256 * 1024
+_MAX_DIAGNOSTIC_TITLE_SIZE = 4096
+_MAX_DIAGNOSTIC_DOM_COUNT = 10000
 
 # Patchright removes Playwright's automation flags itself.  Passing ESP's
 # ordinary ``--disable-extensions`` flag would put one of those fingerprints
@@ -528,6 +532,342 @@ def _log_waf_success(probe: _WafProbe) -> None:
     )
 
 
+def _fixed_class(value: str, classes: tuple[tuple[str, tuple[str, ...]], ...]) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return "empty"
+    for class_name, markers in classes:
+        if any(marker in normalized for marker in markers):
+            return class_name
+    return "other"
+
+
+def _status_value(value) -> int | None:
+    try:
+        status = int(value)
+    except (TypeError, ValueError):
+        return None
+    return status if 100 <= status <= 599 else None
+
+
+def _safe_cloudfront_request_ids(values: list[str]) -> list[str]:
+    allowed = frozenset(
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+/=-"
+    )
+    result = []
+    for raw_value in list(values or ())[-3:]:
+        value = str(raw_value or "")[:128]
+        if value and all(character in allowed for character in value):
+            result.append(value)
+    return result
+
+
+def _url_diagnostic(final_url: str, requested_url: str) -> dict:
+    invalid = {
+        "host": "invalid",
+        "path": "invalid",
+        "query_present": False,
+        "query_parse": "invalid",
+        "keyword_present": None,
+        "fragment_present": False,
+        "exact_url_match": False,
+    }
+    try:
+        parsed = urlparse(str(final_url or ""))
+        host = str(parsed.hostname or "").lower().rstrip(".")
+        parts = [part for part in str(parsed.path or "").split("/") if part]
+    except (TypeError, ValueError):
+        return invalid
+
+    if not parsed.query:
+        query_pairs, query_parse = [], "empty"
+    else:
+        try:
+            query_pairs = parse_qsl(
+                str(parsed.query),
+                keep_blank_values=True,
+                max_num_fields=128,
+            )
+            query_parse = "ok"
+        except ValueError:
+            query_pairs, query_parse = [], "capped"
+
+    has_locale_prefix = bool(
+        parts
+        and len(parts[0]) == 2
+        and parts[0].isascii()
+        and parts[0].isalpha()
+        and parts[0].islower()
+    )
+    catalog_parts = parts[1:] if has_locale_prefix else parts
+    if catalog_parts == ["catalog"]:
+        path_class = "catalog_search"
+    elif (
+        len(catalog_parts) == 2
+        and catalog_parts[0] == "catalog"
+        and catalog_parts[1].isdigit()
+    ):
+        path_class = "catalog_detail"
+    else:
+        path_class = "other"
+
+    return {
+        "host": (
+            "www"
+            if host == "www.recordcity.jp"
+            else "apex" if host == "recordcity.jp" else "other"
+        ),
+        "path": path_class,
+        "query_present": bool(parsed.query),
+        "query_parse": query_parse,
+        "keyword_present": (
+            any(
+                str(key or "").strip().lower() == "keyword"
+                for key, _value in query_pairs
+            )
+            if query_parse in {"empty", "ok"}
+            else None
+        ),
+        "fragment_present": bool(parsed.fragment),
+        "exact_url_match": str(final_url or "") == str(requested_url or ""),
+    }
+
+
+def _chrome_major(user_agent: str) -> int | None:
+    normalized = str(user_agent or "")
+    for marker in ("HeadlessChrome/", "Chrome/"):
+        if marker not in normalized:
+            continue
+        major = normalized.split(marker, 1)[1].split(".", 1)[0]
+        if major.isdigit() and 1 <= int(major) <= 999:
+            return int(major)
+    return None
+
+
+def _body_fingerprint(html: str) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    byte_count = 0
+    for offset in range(0, len(html), 64 * 1024):
+        chunk = html[offset : offset + (64 * 1024)].encode(
+            "utf-8",
+            errors="ignore",
+        )
+        byte_count += len(chunk)
+        digest.update(chunk)
+    return byte_count, digest.hexdigest()
+
+
+def _build_unclassified_dom_diagnostic(
+    result: _AttemptResult,
+    *,
+    requested_url: str,
+    kind: str,
+    wait_selector: str,
+    input_cookies: list[dict],
+) -> dict:
+    html = str(result.html or "")
+    body_bytes, body_sha256 = _body_fingerprint(html)
+    html_sample = html[:_MAX_DIAGNOSTIC_HTML_CHARS]
+    page = HtmlPageAdapter(html_sample)
+
+    anchors = page.css("a[href]")
+    scripts = page.css("script")
+    catalog_links = sum(
+        "/catalog/" in str(anchor.attrib.get("href") or "") for anchor in anchors
+    )
+    json_ld = sum(
+        str(script.attrib.get("type") or "").strip().lower()
+        == "application/ld+json"
+        for script in scripts
+    )
+    ready_count = (
+        catalog_links
+        if wait_selector == "a[href*='/catalog/']"
+        else json_ld
+        if wait_selector == "script[type='application/ld+json']"
+        else len(page.css(wait_selector))
+    )
+    raw_counts = {
+        "ready": ready_count,
+        "anchors": len(anchors),
+        "catalog_links": catalog_links,
+        "json_ld": json_ld,
+        "scripts": len(scripts),
+    }
+
+    titles = page.css("title")
+    title = str(titles[0].text or "") if titles else ""
+    title_bytes = len(title.encode("utf-8", errors="ignore"))
+    title_class = _fixed_class(
+        title,
+        (
+            ("captcha", ("captcha",)),
+            (
+                "challenge",
+                (
+                    "aws waf",
+                    "awswaf",
+                    "human verification",
+                    "checking your browser",
+                ),
+            ),
+            ("access_denied", ("request blocked", "access denied", "forbidden")),
+            ("recordcity", ("record city", "recordcity", "レコードシティ")),
+        ),
+    )
+
+    main = []
+    for entry in result.probe.main_responses:
+        entry = entry if isinstance(entry, dict) else {}
+        action = str(entry.get("action") or "").strip().lower()
+        main.append(
+            {
+                "status": _status_value(entry.get("status")),
+                "action": (
+                    action
+                    if action in {"challenge", "captcha"}
+                    else "empty" if not action else "other"
+                ),
+                "server": _fixed_class(
+                    entry.get("server"),
+                    (("cloudfront", ("cloudfront",)),),
+                ),
+                "x_cache": _fixed_class(
+                    entry.get("x_cache"),
+                    (
+                        ("error", ("error",)),
+                        ("hit", ("hit",)),
+                        ("miss", ("miss",)),
+                    ),
+                ),
+            }
+        )
+
+    user_agent = str(result.probe.user_agent or "")
+    page_errors = max(0, int(result.probe.page_error_count or 0))
+    if result.probe.token_before and result.probe.token_after:
+        token_transition = (
+            "reused"
+            if _cookie_values_match(input_cookies, result.waf_cookies)
+            else "rotated"
+        )
+    elif result.probe.token_after:
+        token_transition = "minted"
+    elif result.probe.token_before:
+        token_transition = "dropped"
+    else:
+        token_transition = "none"
+    return {
+        "reason": "RC_TARGET_DOM_MISSING_UNCLASSIFIED",
+        "probe": result.probe.probe_id,
+        "attempt": result.probe.attempt,
+        "kind": kind if kind in {"search", "detail"} else "other",
+        "ready": bool(result.probe.ready),
+        "target_status": _status_value(result.probe.final_status),
+        "main": main,
+        "waf_statuses": [
+            _status_value(entry.get("status"))
+            for entry in result.probe.waf_responses
+            if isinstance(entry, dict)
+        ],
+        "markers": {
+            "challenge": _looks_like_waf_challenge(html_sample),
+            "captcha": _looks_like_waf_captcha(html_sample),
+            "request_blocked": "request blocked" in html_sample.lower(),
+            "no_results": has_no_results_evidence(page.get_text(), _SITE),
+        },
+        "token": {
+            "before": result.probe.token_before,
+            "after": result.probe.token_after,
+            "count": min(len(result.waf_cookies), 2),
+            "transition": token_transition,
+        },
+        "final_url": _url_diagnostic(result.url, requested_url),
+        "title": {
+            "class": title_class,
+            "present": bool(title.strip()),
+            "bytes": min(title_bytes, _MAX_DIAGNOSTIC_TITLE_SIZE),
+            "capped": title_bytes > _MAX_DIAGNOSTIC_TITLE_SIZE,
+        },
+        "body_bytes": min(body_bytes, _MAX_DIAGNOSTIC_BODY_BYTES),
+        "body_bytes_capped": body_bytes > _MAX_DIAGNOSTIC_BODY_BYTES,
+        "body_sha256": body_sha256,
+        "dom_counts": {
+            name: min(count, _MAX_DIAGNOSTIC_DOM_COUNT)
+            for name, count in raw_counts.items()
+        },
+        "dom_counts_capped": any(
+            count > _MAX_DIAGNOSTIC_DOM_COUNT for count in raw_counts.values()
+        ),
+        "dom_sample_chars": len(html_sample),
+        "dom_sample_truncated": len(html) > len(html_sample),
+        "browser": {
+            "webdriver_true": result.probe.webdriver_true,
+            "headless_ua": result.probe.headless_user_agent,
+            "chrome_major": _chrome_major(user_agent),
+            "language_ja": str(result.probe.language or "").lower().startswith("ja"),
+            "profile_matches_expected": (
+                result.probe.webdriver_true is False
+                and result.probe.headless_user_agent is False
+                and user_agent == _CHROMIUM_145_LINUX_UA
+                and str(result.probe.language or "").lower().startswith("ja")
+            ),
+        },
+        "page_errors": min(page_errors, _MAX_DIAGNOSTIC_DOM_COUNT),
+        "page_errors_capped": page_errors > _MAX_DIAGNOSTIC_DOM_COUNT,
+        "waf_request_failure_events_observed": min(
+            len(result.probe.waf_request_failures), _MAX_EVENTS
+        ),
+        "cloudfront_request_ids": _safe_cloudfront_request_ids(
+            result.probe.cloudfront_request_ids
+        ),
+        "navigation_error": (
+            "none"
+            if result.navigation_error is None
+            else (
+                "timeout"
+                if type(result.navigation_error).__name__ == "TimeoutError"
+                else "other"
+            )
+        ),
+    }
+
+
+def _log_unclassified_dom_missing(
+    result: _AttemptResult,
+    *,
+    requested_url: str,
+    kind: str,
+    wait_selector: str,
+    input_cookies: list[dict],
+) -> None:
+    try:
+        diagnostic = _build_unclassified_dom_diagnostic(
+            result,
+            requested_url=requested_url,
+            kind=kind,
+            wait_selector=wait_selector,
+            input_cookies=input_cookies,
+        )
+    except Exception:
+        diagnostic = {
+            "reason": "RC_TARGET_DOM_MISSING_UNCLASSIFIED",
+            "diagnostic_error": True,
+            "probe": result.probe.probe_id,
+            "attempt": result.probe.attempt,
+            "kind": kind if kind in {"search", "detail"} else "other",
+        }
+    logger.warning(
+        "Record City unclassified target DOM missing: %s",
+        json.dumps(
+            diagnostic,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+    )
+
+
 async def _run_recordcity_attempt(
     normalized_url: str,
     *,
@@ -796,6 +1136,13 @@ async def _fetch_recordcity_page_unlocked(
             _raise_waf_failure(result.probe, reason_code, explanation)
 
         if result.navigation_error is not None and not result.probe.ready:
+            _log_unclassified_dom_missing(
+                result,
+                requested_url=normalized_url,
+                kind=kind,
+                wait_selector=wait_selector,
+                input_cookies=input_cookies,
+            )
             if cached_cookies:
                 _discard_cached_waf_cookies()
             raise result.navigation_error
@@ -809,6 +1156,14 @@ async def _fetch_recordcity_page_unlocked(
             status=result.status,
         )
         validate_fetch_response(page, _SITE, kind=kind)
+        if not result.probe.ready:
+            _log_unclassified_dom_missing(
+                result,
+                requested_url=normalized_url,
+                kind=kind,
+                wait_selector=wait_selector,
+                input_cookies=input_cookies,
+            )
         return page
 
     raise RuntimeError("Record Cityの制御された再試行が完了しませんでした。")

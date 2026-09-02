@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 import logging
 import time
 
@@ -188,12 +190,68 @@ def _fetch():
     )
 
 
+def _fetch_search(url):
+    return asyncio.run(
+        recordcity_fetch.fetch_recordcity_page_via_browser_pool_async(
+            url,
+            kind="search",
+            wait_selector="a[href*='/catalog/']",
+        )
+    )
+
+
 def test_search_no_results_text_is_ready_evidence():
     assert recordcity_fetch._has_ready_evidence(
         "<html><body>検索結果がありません</body></html>",
         "a[href*='/catalog/']",
         kind="search",
     )
+
+
+def test_unclassified_url_diagnostic_keeps_valid_shape_when_query_is_capped():
+    query = "&".join(f"field{index}=secret{index}" for index in range(129))
+    url = f"https://www.recordcity.jp/en/catalog/4936480?{query}"
+
+    diagnostic = recordcity_fetch._url_diagnostic(url, url)
+
+    assert diagnostic == {
+        "exact_url_match": True,
+        "fragment_present": False,
+        "host": "www",
+        "keyword_present": None,
+        "path": "catalog_detail",
+        "query_parse": "capped",
+        "query_present": True,
+    }
+    assert "secret" not in repr(diagnostic)
+
+
+def test_unclassified_body_diagnostic_hashes_full_body_but_bounds_dom_sample():
+    html = "<html><title>Record City</title><body>" + (
+        "x" * (recordcity_fetch._MAX_DIAGNOSTIC_HTML_CHARS + 100)
+    ) + "</body></html>"
+    result = recordcity_fetch._AttemptResult(
+        html=html,
+        url=DETAIL_URL,
+        status=200,
+        probe=recordcity_fetch._WafProbe(probe_id="1234abcd"),
+        waf_cookies=[],
+    )
+
+    diagnostic = recordcity_fetch._build_unclassified_dom_diagnostic(
+        result,
+        requested_url=DETAIL_URL,
+        kind="detail",
+        wait_selector=READY_SELECTOR,
+        input_cookies=[],
+    )
+
+    assert diagnostic["dom_sample_chars"] == recordcity_fetch._MAX_DIAGNOSTIC_HTML_CHARS
+    assert diagnostic["dom_sample_truncated"] is True
+    assert diagnostic["body_bytes"] == len(html.encode("utf-8"))
+    assert diagnostic["body_sha256"] == hashlib.sha256(
+        html.encode("utf-8")
+    ).hexdigest()
 
 
 def test_recordcity_uses_site_scoped_patchright_profile(monkeypatch):
@@ -224,6 +282,204 @@ def test_recordcity_uses_site_scoped_patchright_profile(monkeypatch):
             "timeout": 20000,
         }
     ]
+
+
+def test_unready_unclassified_response_logs_one_secret_free_warning(
+    monkeypatch,
+    caplog,
+):
+    search_secret = "query-secret-not-for-logs"
+    title_secret = "title-secret-not-for-logs"
+    body_secret = "body-secret-not-for-logs"
+    cookie_secret = "cookie-secret-not-for-logs"
+    header_secret = "header-secret-not-for-logs"
+    search_url = (
+        "https://www.recordcity.jp/ja/catalog?keyword="
+        f"{search_secret}"
+    )
+    html = (
+        "<html><head><title>"
+        f"{title_secret}\r\nFORGED\x1b[31m\u202e"
+        "</title></head><body>"
+        f"{body_secret}"
+        "</body></html>"
+    )
+    response = FakeResponse(
+        200,
+        url=search_url,
+        headers={
+            "server": f"CloudFront\r\n{header_secret}",
+            "x-cache": header_secret,
+            "x-amz-cf-id": "diagnostic-request-id",
+        },
+    )
+    page = FakePage(response, html=html, selector_ready=False)
+    page.url = search_url
+    captured = []
+    _install_browser_fake(
+        monkeypatch,
+        [(page, FakeContext([_waf_cookie(cookie_secret)]))],
+        captured,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = _fetch_search(search_url)
+
+    assert result.status == 200
+    records = [
+        record
+        for record in caplog.records
+        if "RC_TARGET_DOM_MISSING_UNCLASSIFIED" in record.getMessage()
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    prefix = "Record City unclassified target DOM missing: "
+    assert records[0].getMessage().startswith(prefix)
+    diagnostic = json.loads(records[0].getMessage()[len(prefix):])
+    assert diagnostic["reason"] == "RC_TARGET_DOM_MISSING_UNCLASSIFIED"
+    assert diagnostic["kind"] == "search"
+    assert diagnostic["ready"] is False
+    assert diagnostic["target_status"] == 200
+    assert diagnostic["main"] == [
+        {
+            "action": "empty",
+            "server": "cloudfront",
+            "status": 200,
+            "x_cache": "other",
+        }
+    ]
+    assert diagnostic["token"] == {
+        "after": True,
+        "before": False,
+        "count": 1,
+        "transition": "minted",
+    }
+    assert diagnostic["final_url"] == {
+        "fragment_present": False,
+        "host": "www",
+        "keyword_present": True,
+        "path": "catalog_search",
+        "query_present": True,
+        "query_parse": "ok",
+        "exact_url_match": True,
+    }
+    assert diagnostic["title"]["present"] is True
+    assert diagnostic["title"]["class"] == "other"
+    assert diagnostic["title"]["bytes"] > 0
+    assert diagnostic["body_bytes"] == len(html.encode("utf-8"))
+    assert diagnostic["body_sha256"] == hashlib.sha256(
+        html.encode("utf-8")
+    ).hexdigest()
+    assert diagnostic["dom_sample_truncated"] is False
+    assert diagnostic["markers"]["no_results"] is False
+    assert diagnostic["dom_counts"] == {
+        "anchors": 0,
+        "catalog_links": 0,
+        "json_ld": 0,
+        "ready": 0,
+        "scripts": 0,
+    }
+    assert diagnostic["browser"]["webdriver_true"] is False
+    assert diagnostic["browser"]["headless_ua"] is False
+    assert diagnostic["browser"]["chrome_major"] == 145
+    assert diagnostic["cloudfront_request_ids"] == ["diagnostic-request-id"]
+
+    for secret in (
+        search_secret,
+        title_secret,
+        body_secret,
+        cookie_secret,
+        header_secret,
+        "keyword=",
+        search_url,
+        "FORGED",
+    ):
+        assert secret not in caplog.text
+    assert "\r" not in records[0].getMessage()
+    assert "\x1b" not in records[0].getMessage()
+    assert "\u202e" not in records[0].getMessage()
+
+
+def test_ready_response_does_not_log_unclassified_diagnostic(monkeypatch, caplog):
+    captured = []
+    page = FakePage(FakeResponse(200), html=PRODUCT_HTML)
+    _install_browser_fake(monkeypatch, [(page, FakeContext())], captured)
+
+    with caplog.at_level(logging.INFO):
+        _fetch()
+
+    assert "RC_TARGET_DOM_MISSING_UNCLASSIFIED" not in caplog.text
+
+
+def test_classified_waf_response_does_not_log_unclassified_diagnostic(
+    monkeypatch,
+    caplog,
+):
+    captured = []
+    page = FakePage(
+        FakeResponse(202, headers={"x-amzn-waf-action": "challenge"}),
+        html=CHALLENGE_HTML,
+        selector_ready=False,
+    )
+    _install_browser_fake(monkeypatch, [(page, FakeContext())], captured)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(ScrapeBlockedError, match="RC_WAF_CHALLENGE_NO_TOKEN"):
+            _fetch()
+
+    assert "Record City WAF probe failed" in caplog.text
+    assert "RC_TARGET_DOM_MISSING_UNCLASSIFIED" not in caplog.text
+
+
+def test_patchright_timeout_name_is_classified_without_logging_message(
+    monkeypatch,
+    caplog,
+):
+    timeout_secret = "timeout-message-secret-not-for-logs"
+    patchright_timeout = type("TimeoutError", (Exception,), {})
+    captured = []
+    page = FakePage(
+        FakeResponse(200),
+        html="<html><body>ordinary response</body></html>",
+        selector_ready=False,
+        goto_error=patchright_timeout(timeout_secret),
+    )
+    _install_browser_fake(monkeypatch, [(page, FakeContext())], captured)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(patchright_timeout):
+            _fetch()
+
+    records = [
+        record
+        for record in caplog.records
+        if "RC_TARGET_DOM_MISSING_UNCLASSIFIED" in record.getMessage()
+    ]
+    assert len(records) == 1
+    diagnostic = json.loads(records[0].getMessage().split(": ", 1)[1])
+    assert diagnostic["navigation_error"] == "timeout"
+    assert timeout_secret not in caplog.text
+
+
+def test_explicit_search_no_results_does_not_log_unclassified_diagnostic(
+    monkeypatch,
+    caplog,
+):
+    search_url = "https://www.recordcity.jp/ja/catalog?keyword=none"
+    page = FakePage(
+        FakeResponse(200, url=search_url),
+        html="<html><body>検索結果がありません</body></html>",
+        selector_ready=False,
+    )
+    page.url = search_url
+    captured = []
+    _install_browser_fake(monkeypatch, [(page, FakeContext())], captured)
+
+    with caplog.at_level(logging.INFO):
+        result = _fetch_search(search_url)
+
+    assert result.status == 200
+    assert "RC_TARGET_DOM_MISSING_UNCLASSIFIED" not in caplog.text
 
 
 def test_challenge_reload_to_product_is_success_and_caches_token(
