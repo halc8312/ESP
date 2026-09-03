@@ -14,6 +14,14 @@ CHALLENGE_HTML = """<html><script>
 window.gokuProps = {};
 AwsWafIntegration.fetch('https://example.token.awswaf.com/challenge.js');
 </script></html>"""
+CAPTCHA_WITH_PRODUCT_HTML = PRODUCT_HTML.replace(
+    "</body>",
+    "<script src='https://example.token.awswaf.com/captcha.js'></script></body>",
+)
+CHALLENGE_WITH_PRODUCT_HTML = PRODUCT_HTML.replace(
+    "</body>",
+    "<script src='https://example.token.awswaf.com/challenge.js'></script></body>",
+)
 NORMAL_UA = "Mozilla/5.0 Chrome/145.0.0.0 Safari/537.36"
 HEADLESS_UA = "Mozilla/5.0 HeadlessChrome/145.0.0.0 Safari/537.36"
 
@@ -97,6 +105,59 @@ def test_html_result_distinguishes_challenge_from_product():
     assert len(product["body_sha256"]) == 64
 
 
+@pytest.mark.parametrize(
+    "html, target_status, headers",
+    [
+        (CAPTCHA_WITH_PRODUCT_HTML, 200, {}),
+        (PRODUCT_HTML, 405, {}),
+        (PRODUCT_HTML, 200, {"x-amzn-waf-action": "captcha"}),
+    ],
+)
+def test_html_result_captcha_wins_over_product_dom(
+    html,
+    target_status,
+    headers,
+):
+    result = recordcity_probe._result_from_html(
+        "zyte",
+        html=html,
+        kind="detail",
+        target_status=target_status,
+        transport_status=200,
+        headers=headers,
+        header_source="target",
+        token_present=True,
+        elapsed_ms=30,
+        expected_sku="4936480",
+    )
+
+    assert result["ready_dom"] is True
+    assert result["product_json_ld"] is True
+    assert result["captcha"] is True
+    assert result["outcome"] == "captcha"
+
+
+def test_html_result_product_dom_still_wins_over_challenge():
+    result = recordcity_probe._result_from_html(
+        "zyte",
+        html=CHALLENGE_WITH_PRODUCT_HTML,
+        kind="detail",
+        target_status=202,
+        transport_status=200,
+        headers={"x-amzn-waf-action": "challenge"},
+        header_source="target",
+        token_present=True,
+        elapsed_ms=30,
+        expected_sku="4936480",
+    )
+
+    assert result["ready_dom"] is True
+    assert result["product_json_ld"] is True
+    assert result["challenge"] is True
+    assert result["captcha"] is False
+    assert result["outcome"] == "success"
+
+
 def test_expected_detail_sku_ignores_query_string():
     assert recordcity_probe._expected_detail_sku(
         DETAIL_URL + "?campaign=probe",
@@ -171,6 +232,91 @@ def test_browser_detail_requires_product_json_ld(monkeypatch):
     )
 
     assert row["outcome"] == "target_dom_missing"
+
+
+def test_browser_probe_captcha_wins_over_product_dom(monkeypatch):
+    browser_result = {
+        **_attempted("patchright-current"),
+        "target_status": 405,
+        "waf_action": "captcha",
+        "captcha": True,
+        "failure_reason": "RC_WAF_CAPTCHA_REQUIRED",
+    }
+    browser_result.pop("reason")
+    monkeypatch.setattr(
+        "services.recordcity_browser_fetch.probe_recordcity_browser_once_sync",
+        lambda *_args, **_kwargs: browser_result,
+    )
+
+    row = recordcity_probe._probe_browser(
+        DETAIL_URL,
+        kind="detail",
+        strategy="patchright-current",
+        timeout_seconds=5,
+    )
+
+    assert row["ready_dom"] is True
+    assert row["product_json_ld"] is True
+    assert row["captcha"] is True
+    assert row["outcome"] == "captcha"
+    assert row["reason"] == "RC_WAF_CAPTCHA_REQUIRED"
+
+
+def test_browser_probe_product_dom_still_wins_over_challenge(monkeypatch):
+    monkeypatch.setattr(
+        "services.recordcity_browser_fetch.probe_recordcity_browser_once_sync",
+        lambda *_args, **_kwargs: {
+            **_attempted("patchright-current"),
+            "target_status": 202,
+            "waf_action": "challenge",
+            "challenge": True,
+            "captcha": False,
+        },
+    )
+
+    row = recordcity_probe._probe_browser(
+        DETAIL_URL,
+        kind="detail",
+        strategy="patchright-current",
+        timeout_seconds=5,
+    )
+
+    assert row["ready_dom"] is True
+    assert row["product_json_ld"] is True
+    assert row["challenge"] is True
+    assert row["captcha"] is False
+    assert row["outcome"] == "success"
+
+
+def test_external_probe_captcha_wins_over_product_dom(monkeypatch):
+    from services.recordcity_external_fetch import RecordCityExternalResponse
+
+    monkeypatch.setattr(
+        "services.recordcity_external_fetch.fetch_recordcity_external",
+        lambda *_args, **_kwargs: RecordCityExternalResponse(
+            url=DETAIL_URL,
+            target_status=405,
+            transport_status=200,
+            text=CAPTCHA_WITH_PRODUCT_HTML,
+            source="zyte",
+            target_headers={"x-amzn-waf-action": "captcha"},
+            header_source="target",
+            status_source="target",
+            waf_token_present=True,
+        ),
+    )
+
+    row = recordcity_probe._probe_external(
+        DETAIL_URL,
+        kind="detail",
+        strategy="zyte",
+        timeout_seconds=5,
+    )
+
+    assert row["ready_dom"] is True
+    assert row["product_json_ld"] is True
+    assert row["captcha"] is True
+    assert row["outcome"] == "captcha"
 
 
 def test_external_provider_waf_body_without_metadata_is_ambiguous(monkeypatch):
