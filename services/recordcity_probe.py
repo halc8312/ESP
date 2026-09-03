@@ -245,10 +245,13 @@ def _result_from_html(
     product_json_ld = _has_product_json_ld(body, expected_sku=expected_sku)
     blocked_marker = _looks_like_block(body)
 
-    if ready_dom and (kind == "search" or product_json_ld):
-        outcome = "success"
-    elif captcha:
+    # CAPTCHA classification is terminal. A WAF interstitial can retain target
+    # markup from an earlier navigation, so Product/listing DOM must not turn
+    # an observed CAPTCHA signal into a diagnostic success.
+    if captcha:
         outcome = "captcha"
+    elif ready_dom and (kind == "search" or product_json_ld):
+        outcome = "success"
     elif target_status == 403 or blocked_marker:
         outcome = "blocked_403"
     elif challenge or target_status == 202:
@@ -389,12 +392,14 @@ def _probe_browser(
         wait_selector_timeout=min(20000, max(1, int(timeout_seconds * 1000))),
     )
     result.setdefault("outcome", "")
-    if result.get("ready_dom") and (
+    # Keep the diagnostic ordering aligned with the production fetcher:
+    # human-verification classification wins over retained target markup.
+    if result.get("captcha"):
+        result["outcome"] = "captcha"
+    elif result.get("ready_dom") and (
         kind == "search" or result.get("product_json_ld")
     ):
         result["outcome"] = "success"
-    elif result.get("captcha"):
-        result["outcome"] = "captcha"
     elif result.get("target_status") == 403:
         result["outcome"] = "blocked_403"
     elif result.get("challenge"):
