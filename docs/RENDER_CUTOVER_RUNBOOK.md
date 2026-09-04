@@ -92,6 +92,7 @@ Use the dormant Blueprint in `render.yaml`.
 - Start command: `tini -- python worker.py`
 - Tini directly supervises Python; Python starts and stops the private Xvfb and keeps it alive through browser-pool cleanup.
 - Record City fetch route: `RECORDCITY_FETCH_PROVIDER=browser`, `RECORDCITY_BROWSER_PROFILE=persistent-chrome`（branded Chrome + persistent context。TCP listenなし。他サイトはheadlessのまま）
+- Record City production evidence: merge commit `10dfebe726c3d6873e10c76dc498f9d8e6392797`で、2026-09-04に通常UIのキーワード検索→詳細抽出が成功。旧`headful` / fresh-context構成へ戻さず、詳細は`docs/recordcity-waf-reachability.md`を参照する。
 - Scheduler owner: enabled on exactly one worker（patrol、trash purge、translation lease recovery）
 - Shared browser runtime: enabled
 

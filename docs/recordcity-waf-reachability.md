@@ -4,15 +4,16 @@
 
 ## 結論
 
-Render上の同一egress・同一runtimeで比較し、その後の本番ジョブまで追跡した結果、次の7点を確認した。
+Render上の同一egress・同一runtimeで比較し、その後の本番ジョブまで追跡した結果、次の8点を確認した。
 
 1. 最初の応答は AWS WAF の **Challenge action** である。`202`、`x-amzn-waf-action: challenge`、`challenge.js` が揃っている。その後、2026-09-02の実運用の検索→詳細遷移では **CAPTCHA action** の`405`と`x-amzn-waf-action: captcha`も確認した。
 2. 旧本番profileのPatchright headlessはChallenge JavaScriptを実行し、`aws-waf-token` Cookieを得た後の自動再送で`403`になった。したがって、旧profileの問題は「JavaScriptを実行できない」「Cookieが存在しない」だけではない。
 3. 同じheadless、Render egress、Patchright/Chromium runtimeのまま、UAだけを`HeadlessChrome/145`から通常の`Chrome/145`へ変えた比較では、商品と一覧を一度ずつ検証できた。しかし後日の実運用では通常UAでも詳細がCAPTCHAになったため、UA修正は有効な信号だったが安定した十分条件ではない。
 4. 同じRender egressで実施した`patchright-headful`の単発probeは、`202 Challenge → 302 → 200`で要求SKUのProduct JSON-LDを取得した。しかし本番へ反映後の2026-09-03には、同じheadful profileが`405 CAPTCHA`で停止した。headful化は有効な比較条件だったが、安定した十分条件ではない。
-5. 最新本番ではXvfb、Patchright/Chromium headful、通常Chrome UA、`navigator.webdriver=false`、Challenge資材の取得、`aws-waf-token` Cookieまで全て確認できた。それでもCAPTCHAとなったため、ブラウザ起動不良、`webdriver=true`、`HeadlessChrome` UA、Challenge JavaScript未実行、Cookie未取得は今回の直接原因ではない。
+5. 2026-09-03のheadful本番ではXvfb、Patchright/Chromium headful、通常Chrome UA、`navigator.webdriver=false`、Challenge資材の取得、`aws-waf-token` Cookieまで全て確認できた。それでもCAPTCHAとなったため、ブラウザ起動不良、`webdriver=true`、`HeadlessChrome` UA、Challenge JavaScript未実行、Cookie未取得はその失敗の直接原因ではない。
 6. `403`や`405 CAPTCHA`を発生させたAWS WAFルールがBot Controlの特定ルール、別のmanaged rule、またはカスタムルールのどれかは、クライアント側の応答だけでは確定できない。正確なルール名には対象Web ACLのログが必要である。
-7. 旧headful実装は、実ブラウザ風のUAとtoken Cookieを使っていても、検索と詳細のたびに新しいincognito BrowserContextを作っていた。これは「同一セッションで一覧を閲覧して商品へ移動する」という通常の遷移と異なる。外部サービスなしで残る根拠ある最終候補として、Patchright公式の推奨形に合わせた **branded Google Chrome + persistent context + native headers/UA + headful** をRecord City専用で実装した。本番到達性はデプロイ後にのみ判定できるため、この文書では実装済み・本番未検証と明記する。
+7. 旧headful実装は、実ブラウザ風のUAとtoken Cookieを使っていても、検索と詳細のたびに新しいincognito BrowserContextを作っていた。これは「同一セッションで一覧を閲覧して商品へ移動する」という通常の遷移と異なる。外部サービスなしで残る根拠ある候補として、Patchright公式の推奨形に合わせた **branded Google Chrome + persistent context + native headers/UA + headful** をRecord City専用で実装した。
+8. この`persistent-chrome`構成を含むmerge commit `10dfebe726c3d6873e10c76dc498f9d8e6392797`をRenderへデプロイ後、2026-09-04の通常UIによるキーワード検索→商品詳細抽出が初回成功した。RQ job `d51419b0-5567-41a4-a295-79770b53153c`は356.670317秒で`Successfully completed` / `Job OK`となり、UIにも抽出結果が表示された。これは組み合わせた構成の本番成立性を示すが、各要因の単独因果や長期安定性までは証明しない。
 
 AWS公式仕様では、有効なChallengeトークンがある場合、そのChallengeルールはCount相当となり、Web ACLの後続ルール評価が続く。よって「202 Challenge → token発行 → 403」は、Challengeを通過した後に別の終端判定へ到達した場合とも整合する。
 
@@ -63,7 +64,32 @@ Render MCPで`esp-worker`のデプロイとアプリログを照合した。PR #
 | 結果 | `RC_WAF_CAPTCHA_REQUIRED` |
 | CloudFront request ID | `cL-vlrWnOY8PjEdGkk-GtUu_RsIErA44AeZKqOUl6Ucy7Mc1uN9Kkw==` |
 
-これにより、採用したheadful実装が本番で使われていない可能性は否定された。Challenge用tokenの存在はCAPTCHA解答済みを意味せず、同じtokenを再利用してもCAPTCHA actionの要求は満たせない。残る候補は、RenderのIP/ASN・geo、残存browser fingerprint、パスやセッション履歴、頻度、またはそれらを組み合わせた判定である。クライアント側だけでは寄与を分離できないため、次の技術比較はbrowser条件を固定してegressだけを変える。
+これにより、採用したheadful実装が本番で使われていない可能性は否定された。Challenge用tokenの存在はCAPTCHA解答済みを意味せず、同じtokenを再利用してもCAPTCHA actionの要求は満たせない。残る候補は、RenderのIP/ASN・geo、残存browser fingerprint、パスやセッション履歴、頻度、またはそれらを組み合わせた判定である。この時点では、クライアント側だけで寄与を分離できないため、browser条件を固定してegressだけを変える比較を次案としていた。
+
+### 2026-09-04のpersistent Chrome本番成功
+
+PR [#164](https://github.com/halc8312/ESP/pull/164) のmerge commit `10dfebe726c3d6873e10c76dc498f9d8e6392797`をBlueprint syncで`esp-worker`へ反映した。deploy `dep-dad2v2qjnfac73e7hg30`は02:45:56 UTCに`live`となり、同じworker instanceで02:45:57 UTCにprivate Xvfbが起動した。
+
+その後、通常の認証済みUIからRecord Cityのキーワード検索抽出を実行した。ユーザーがUI上の抽出結果を確認し、Render Logsでも対応するRQ jobの正常終了を確認した。
+
+| 証拠 | 実測 |
+|---|---|
+| production profile | `RECORDCITY_FETCH_PROVIDER=browser`、`RECORDCITY_BROWSER_PROFILE=persistent-chrome` |
+| browser構成 | Patchright、`channel="chrome"`、headful + private Xvfb、native UA/headers、`no_viewport=True` |
+| state境界 | Record City専用persistent profile。同じ抽出ジョブ内の一覧→詳細だけで同一BrowserContext/tab、Cookie、local storage、service worker、履歴、same-origin Refererを維持 |
+| RQ job | `d51419b0-5567-41a4-a295-79770b53153c` |
+| 実行 | 08:14:32 UTC開始、08:20:28 UTC終了、356.670317秒 |
+| worker結果 | `Successfully completed`、`Job OK` |
+| UI結果 | キーワード検索からの商品抽出成功をユーザーが確認 |
+| 事前状態 | このdeploy後最初のRecord City job。手動CAPTCHA解答、事前のRecord Cityアクセス、永続disk上のprofileなし |
+| 外部経路 | Zyte、ScraperAPI、独立proxyは未設定・未使用 |
+| 失敗証拠 | 該当時間帯に`Record City WAF probe failed`、CAPTCHA例外、job失敗なし |
+
+この観測で確定したのは、**branded Chrome + headful + persistent context + native browser設定 + same-contextの検索→詳細遷移をまとめた現行profileが、同じRender egressの本番ジョブで少なくとも1回成立した**ことである。旧headful/fresh-context構成は同じegressで405 CAPTCHAになっていたため、失われていたブラウザ状態または同時に変更したChrome/runtime条件が寄与したという仮説は強まった。ただし変更点を一括投入しているため、persistent context、branded Chrome、Referer、storageのどれか一つを単独の原因または解決策とは断定しない。
+
+profile directoryは一時領域`/tmp/esp-recordcity-chrome-profile`にあり、deployで初期化される。この成功jobより前に同deploy上のRecord Cityアクセスはないため、長期間蓄積したCookieや人手で解いたCAPTCHAは成功条件ではなかった。ここで支持されるのは、過去profileの長期保存ではなく、少なくとも1回の抽出ジョブ中に一覧と詳細のBrowserContext/tab/storage/遷移履歴を切らさない設計である。
+
+また、1回の成功は将来の恒久通過や成功率を保証しない。WAFルール、token状態、アクセス頻度、egress評価は変動し得る。現行profileを不用意にfresh contextやChromiumへ戻さず、通常利用を低頻度で観測し、CAPTCHA再発時はjob ID・UTC時刻・reason code・HTTP status・WAF action・CloudFront request IDを比較する。
 
 なお、`aws-waf-token` の存在は「許可」を意味しない。AWS公式には、トークンにはChallenge時刻だけでなく、ブラウザ自動化や設定不整合を含むクライアント信号が格納されるとある。また、Bot Controlはトークンを `accepted` / `rejected` / `absent` としてラベル付けする。Cookie名をクライアント側で確認できても、このラベルやトークン内部は確認できない。
 
@@ -72,13 +98,13 @@ Render MCPで`esp-worker`のデプロイとアプリログを照合した。PR #
 | 問い | 判定 | 根拠 |
 |---|---|---|
 | Challengeか | 確定 | 202、`x-amzn-waf-action: challenge`、AWS interstitial、`challenge.js` |
-| CAPTCHAか | 最新の実運用で確定 | 詳細遷移で405と`x-amzn-waf-action: captcha`を観測 |
-| Challengeを実行できたか | 確定 | Challenge資材は200、tokenを取得し、過去probeでは同一profileで検証済みProductにも到達 |
-| tokenがWAFにacceptedされたか | 過去の成功probeではページ到達まで確認、最新失敗では不明 | Cookie存在だけでは暗号化トークンの評価ラベルを読めない。通常UA profileは過去にtoken後の商品・一覧へ到達した |
+| CAPTCHAか | 旧headful実運用で確定、persistent Chrome初回成功では未発生 | 旧構成の詳細遷移で405と`x-amzn-waf-action: captcha`を観測。現行構成の成功jobにはCAPTCHA失敗なし |
+| Challengeを実行できたか | 確定 | 過去probeでChallenge資材200とtoken取得を確認。現行persistent Chromeは本番の検索→詳細結果まで到達 |
+| tokenがWAFにacceptedされたか | 成功時はページ到達まで確認、内部labelは不明 | Cookie存在だけでは暗号化トークンの評価ラベルを読めない。現行profileは検索→詳細抽出に成功したがlabel自体は取得不能 |
 | Bot Controlか | 不明 | 応答にmanaged rule名やlabelは出ない |
-| Render IP/ASNだけが原因か | 静的な全面拒否ではないが寄与は未確定 | 同一egressで過去に成功した一方、最新headful本番はCAPTCHA。egress固定の時系列観測だけでは分離不能 |
-| browser/UA要因か | 単純な2信号だけではない | 最新失敗時も`webdriver=false`かつ通常Chrome UA。残存fingerprintや行動判定までは除外できない |
-| rate/path/session ruleか | 候補、ルール名は未確定 | 一覧成功後の最初の詳細だけでCAPTCHA。確定にはWAFログが必要 |
+| Render IP/ASNだけが原因か | 静的な全面拒否ではないが動的な寄与は未確定 | 同一egressで現行profileの本番成功を確認。egress固定の時系列観測だけでは複合判定への寄与を分離不能 |
+| browser/UA要因か | 組み合わせた現行profileは成功、個別因果は未確定 | 旧headfulの失敗時も`webdriver=false`かつ通常Chrome UA。branded Chrome、persistent state、遷移履歴を一括変更して成功したため単独要因には分解できない |
+| rate/path/session ruleか | セッション整合性の寄与を支持、ルール名は未確定 | fresh contextの詳細遷移はCAPTCHA、same-contextのキーワード検索→詳細は成功。ただし時刻・rate条件との分離には追加証拠が必要 |
 
 AWS Bot Controlの公開ルールには、既定Blockの `SignalAutomatedBrowser` と `SignalKnownBotDataCenter` が別々に存在する。両方が候補になり得ることは分かるが、Record Cityがこのmanaged rule groupや同じactionを採用している証拠にはならない。同一Render egressで通常UAが成功したため無条件のIP単独blockは否定できるが、複数labelを組み合わせるカスタム判定まで否定するものではない。
 
@@ -96,7 +122,7 @@ AWS Bot Controlの公開ルールには、既定Blockの `SignalAutomatedBrowser
 
 結論は、**第三者が現在の`recordcity.jp`で商品HTMLまたはProduct JSON-LDの取得に成功したと、コードと実行結果の両方から再現可能に確認できる公開例は見つからなかった**、である。購入体験やGoogle/Bingの索引結果は存在するが、スクレイピング成功の証拠には数えていない。
 
-GitHubで唯一近いものは [TomWang22/record-platform のRecordCity adapter](https://github.com/TomWang22/record-platform/blob/f5c68dec4680dcbe0b2f0add0c2dbc9bdcf83adf/services/auction-monitor/src/platforms/recordcity/adapter.ts) だった。しかし対象は`recordcity.com`、`.co.uk`、`.eu`で`recordcity.jp`ではなく、AWS WAF処理や成功fixtureがなく、同repoのテスト用説明もscraping platformはworker実行時に試すとしている。従ってRecord City Japanの成功例とは扱わない。ESP自身の過去Render probeは要求SKUのJSON-LDまで検証しており、現時点で確認できた唯一の直接実測である。
+GitHubで唯一近いものは [TomWang22/record-platform のRecordCity adapter](https://github.com/TomWang22/record-platform/blob/f5c68dec4680dcbe0b2f0add0c2dbc9bdcf83adf/services/auction-monitor/src/platforms/recordcity/adapter.ts) だった。しかし対象は`recordcity.com`、`.co.uk`、`.eu`で`recordcity.jp`ではなく、AWS WAF処理や成功fixtureがなく、同repoのテスト用説明もscraping platformはworker実行時に試すとしている。従ってRecord City Japanの成功例とは扱わない。ESP自身では過去Render probeで要求SKUのJSON-LDを検証し、2026-09-04には現行persistent Chromeでキーワード検索→詳細の本番job成功まで確認した。現時点で確認できた`recordcity.jp`の直接実測はこれらだけである。
 
 「すべて調査済み」とは表現しない。招待制・非公開Discord（Scraping Enthusiasts、Extract Data Community、Scraping in Prod、Oxylabs等）、検索未収載の投稿、個人の非公開コード、削除済み投稿は外部から網羅できない。公開範囲については上記の対象と判定基準で横断したが、新しい一次証拠が出れば再評価する。
 
@@ -135,7 +161,7 @@ AWS WAFに対して一つの万能策があるという証拠は見つからな�
 | Patchright headless + 既定`HeadlessChrome` UA | 実測済み | 低 | 低 | PR #155時点の旧controlでtoken後403を再現。現在の公開profileと本番経路には使わない |
 | Patchright headless + 通常Chrome UA | 高 | 低～中 | 低 | 商品・一覧の成功実測後、実運用の詳細でCAPTCHAが再発。診断profileとして維持 |
 | Patchright headful + Xvfb | 実装・本番確認済み | 低～中 | 中 | 単発成功後、本番でCAPTCHAが再発。旧profileは診断controlとして維持 |
-| branded Chrome + persistent same-context search→detail | 高 | **本番未検証** | 中 | **最終の内部候補として採用**。公式推奨形に一致し、旧実装で失われていたCookie、local storage、service worker、tab履歴、同一origin Refererを維持 |
+| branded Chrome + persistent same-context search→detail | 高 | **初回本番成功、継続観測中** | 中 | **現行本番として採用**。公式推奨形に一致し、旧実装で失われていたCookie、local storage、service worker、tab履歴、同一origin Refererを維持 |
 | token Cookie再利用 | 実装済み | 低～中 | 中 | 維持。ただし旧profileはtoken後403なので単独解ではない。token値は保存・出力しない |
 | curl_cffi impersonationのみ | 高 | 低 | 低 | 診断セルとして採用。JavaScript runtimeがなくChallengeを解けないため本番推奨ではない |
 | Scrapling StealthyFetcher | 高 | 未検証 | 中 | 不採用。現在の証拠からPatchrightに対する再現性ある優位を示せず、新規browser stack追加になる |
@@ -147,11 +173,11 @@ AWS WAFに対して一つの万能策があるという証拠は見つからな�
 
 ## 実装内容
 
-### 次回デプロイ対象の直接browser profile
+### 現行本番の直接browser profile
 
 2026-09-03時点の本番は`RECORDCITY_BROWSER_PROFILE=headful`で、Xvfb上のPatchright/Chromiumをnative UA、`no_viewport`で起動していた。このprofileが正しく稼働しても405 CAPTCHAになることは実測済みである。
 
-次回デプロイではRender workerだけを`RECORDCITY_BROWSER_PROFILE=persistent-chrome`へ変更する。Patchright公式の推奨形に合わせ、次の条件を一つのRecord City専用profileとして固定した。
+PR #164でRender workerだけを`RECORDCITY_BROWSER_PROFILE=persistent-chrome`へ変更し、2026-09-04に本番反映とキーワード検索抽出の初回成功を確認した。Patchright公式の推奨形に合わせ、次の条件を一つのRecord City専用profileとして固定している。
 
 - `patchright.chromium.launch_persistent_context()`
 - `channel="chrome"`でbranded Google Chromeを使用
@@ -168,7 +194,7 @@ portableな既定値は引き続き`headless`で、Blueprintに含まれるRende
 
 `services/recordcity_browser_fetch.py` に、production token cache/retryから独立した1回限りのprobe profileを追加した。
 
-- `patchright-current`: `RECORDCITY_BROWSER_PROFILE`を実行時に解決した現在の本番profile（Renderではheadful）
+- `patchright-current`: `RECORDCITY_BROWSER_PROFILE`を実行時に解決した現在の本番profile（Renderではpersistent Chrome）
 - `patchright-headless-ua`: 通常Chrome UA profileの互換名。PR #155時点の制御比較で使用
 - `patchright-headful`: Xvfb上のheadful、native UA、no viewport
 - `patchright-headful-tokyo`: headful + Asia/Tokyo
@@ -337,17 +363,17 @@ flask --app app:app recordcity-probe \
 
 ## 採用判断と運用順序
 
-1. 外部サービスなしの最終候補として、Record City専用`persistent-chrome`をCI後にRender workerへデプロイし、通常の一覧→詳細抽出を1回検証する。他サイトは既存のfresh context経路のままにする。
+1. Record City専用`persistent-chrome`を現行本番profileとして維持する。2026-09-04に通常UIのキーワード検索→詳細抽出が初回成功済みであり、他サイトは既存のfresh context経路のままにする。
 2. 既存のtoken cacheとChallenge時の制御された1回再送は維持するが、明示的なCAPTCHAまたは429は終端とし、一覧の候補巡回も直ちに停止する。
 3. 成功判定は、`200`やCookieの存在ではなく、商品は最終URLの商品IDとProduct JSON-LDのSKU、一覧は一覧DOMまで検証する。1回成功しても恒久安定とは断定せず、本番profileとして観測を続ける。
-4. persistent Chromeでも405 CAPTCHAなら、恒久策は先方へのAPI、商品feed、または許可リストの相談を第一候補とする。照合用にUTC時刻、対象URL、probe ID、HTTP status、WAF action、CloudFront request IDを渡せる。token値は渡さない。
-5. 技術的PoCをさらに行う場合は、credentialと費用上限の承認後、既存のZyte経路で既知の商品1件を1回だけ検証する。成功時だけ一覧1件を追加検証し、両方のDOM・SKU検証に合格したproviderだけをproductionへ明示選択する。
+4. CAPTCHAが再発しても、まず現行profileのjob ID・UTC時刻・reason code・HTTP status・WAF action・CloudFront request IDを保存し、連続再試行やprofile総当たりは行わない。token値は保存・共有しない。
+5. 現行profileで失敗が継続する場合、恒久策は先方へのAPI、商品feed、または許可リストの相談を第一候補とする。技術的PoCをさらに行う場合だけ、credentialと費用上限の承認後、既存のZyte経路で既知の商品1件を1回検証する。
 6. Zyteが対象で失敗した場合に限りScraperAPIを第二候補とする。原因分離が目的なら、browser条件を固定した独立JP egressとの2セルA/Bを選ぶ。
 
 ## 確定範囲と残る限界
 
-Render上では、旧`HeadlessChrome` UAがtoken後403、通常Chrome UAとheadfulが同一egressでProductを取得し、通常UAは一覧も取得するところまで実証した。その後、通常UAの実運用詳細に加え、Patchright headfulの本番ジョブも405 CAPTCHAになった。従ってUAやheadful化を恒久解とは扱わない。persistent Chromeはこの時点ではコードと非ネットワークテストまでであり、通過できるとはまだ報告しない。
+Render上では、旧`HeadlessChrome` UAがtoken後403、通常Chrome UAとheadfulが同一egressでProductを取得し、通常UAは一覧も取得するところまで実証した。その後、通常UAの実運用詳細に加え、Patchright headfulの本番ジョブも405 CAPTCHAになった。従ってUAやheadful化だけを恒久解とは扱わない。現行persistent Chromeでは通常UIのキーワード検索→詳細抽出が本番で1回成功しており、外部サービスなしで成立可能な構成であることまでは確認した。
 
 一方、クライアント側からは最終403の`terminatingRuleId`やlabelsを読めないため、Bot Controlの特定ルールかカスタムルールかは未確定である。また1回ずつの低頻度probeは長期安定性を保証しない。Record City側のWAF設定やChromium fingerprintが変われば再検証が必要になる。
 
-現在のRenderには`RECORDCITY_*`の外部provider key/proxyを設定しておらず、Zyte、ScraperAPI、proxy probeも実行していない。headful本番経路の失敗までは確定したが、別egressは未検証である。外部なしで未検証なのは、今回実装したbranded Chrome + persistent context + same-tab遷移の1案だけである。その本番結果が405 CAPTCHAなら、「同じRender egressの無人browserでは安定通過を設計できない」という結論へ更新する。
+現在のRenderには`RECORDCITY_*`の外部provider key/proxyを設定しておらず、Zyte、ScraperAPI、proxy probeも実行していない。現行のbranded Chrome + persistent context + same-tab遷移が同じRender egressで初回成功したため、外部providerは当面不要である。今後の通常利用でも成功を観測し、失敗が継続した場合にだけ別egressまたは先方との調整を再検討する。
