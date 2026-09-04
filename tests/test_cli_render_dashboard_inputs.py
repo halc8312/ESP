@@ -62,6 +62,6 @@ def test_render_dashboard_inputs_exposes_pinned_recordcity_worker_env(blueprint_
         if site.strip()
     }
 
-    assert fixed_envs["RECORDCITY_BROWSER_PROFILE"] == "headful"
+    assert fixed_envs["RECORDCITY_BROWSER_PROFILE"] == "persistent-chrome"
     assert fixed_envs["RECORDCITY_FETCH_PROVIDER"] == "browser"
     assert not any(site.startswith("recordcity") for site in warm_sites)

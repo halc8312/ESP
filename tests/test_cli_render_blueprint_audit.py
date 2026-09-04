@@ -78,7 +78,7 @@ def test_render_blueprints_pin_recordcity_worker_runtime(blueprint_path):
     }
 
     assert worker["dockerCommand"] == "tini -- python worker.py"
-    assert worker_env["RECORDCITY_BROWSER_PROFILE"]["value"] == "headful"
+    assert worker_env["RECORDCITY_BROWSER_PROFILE"]["value"] == "persistent-chrome"
     assert worker_env["RECORDCITY_FETCH_PROVIDER"]["value"] == "browser"
     assert not any(site.startswith("recordcity") for site in warm_sites)
 
@@ -92,9 +92,9 @@ def test_render_blueprints_pin_recordcity_worker_runtime(blueprint_path):
             "worker_command_must_use_tini_worker_entrypoint",
         ),
         (
-            "- key: RECORDCITY_BROWSER_PROFILE\n        value: headful",
+            "- key: RECORDCITY_BROWSER_PROFILE\n        value: persistent-chrome",
             "- key: RECORDCITY_BROWSER_PROFILE\n        value: headless",
-            "worker_recordcity_profile_must_be_headful",
+            "worker_recordcity_profile_must_be_persistent_chrome",
         ),
         (
             "- key: RECORDCITY_FETCH_PROVIDER\n        value: browser",

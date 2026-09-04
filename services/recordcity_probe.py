@@ -26,6 +26,7 @@ DEFAULT_RECORDCITY_PROBE_STRATEGIES = (
     "patchright-current",
     "patchright-headless-ua",
     "patchright-headful",
+    "patchright-persistent-chrome",
     "patchright-headless-proxy",
     "patchright-headful-proxy",
     "zyte",
@@ -42,6 +43,7 @@ RECORDCITY_PROBE_STRATEGIES = (
     "patchright-headless-ua",
     "patchright-headful",
     "patchright-headful-tokyo",
+    "patchright-persistent-chrome",
     "patchright-headless-proxy",
     "patchright-headful-proxy",
     "zyte",
@@ -56,6 +58,7 @@ _HEADFUL_STRATEGIES = frozenset(
         "patchright-headful",
         "patchright-headful-tokyo",
         "patchright-headful-proxy",
+        "patchright-persistent-chrome",
     }
 )
 _PROXY_BROWSER_STRATEGIES = frozenset(
@@ -88,18 +91,27 @@ def _strategy_requires_display(strategy: str) -> bool:
     current = str(
         os.environ.get("RECORDCITY_BROWSER_PROFILE", "headless") or "headless"
     ).strip().lower()
-    return current in {"headful", "patchright-headful"}
+    return current in {
+        "headful",
+        "patchright-headful",
+        "persistent-chrome",
+        "patchright-persistent-chrome",
+    }
 
 
 def _dedupe_current_profile_aliases(strategies: list[str]) -> list[str]:
     """Avoid hitting the target twice with an identical production profile."""
     if "patchright-current" not in strategies:
         return strategies
-    current_alias = (
-        "patchright-headful"
-        if _strategy_requires_display("patchright-current")
-        else "patchright-headless-ua"
-    )
+    current_profile = str(
+        os.environ.get("RECORDCITY_BROWSER_PROFILE", "headless") or "headless"
+    ).strip().lower()
+    if current_profile in {"persistent-chrome", "patchright-persistent-chrome"}:
+        current_alias = "patchright-persistent-chrome"
+    elif current_profile in {"headful", "patchright-headful"}:
+        current_alias = "patchright-headful"
+    else:
+        current_alias = "patchright-headless-ua"
     return [
         strategy
         for strategy in strategies

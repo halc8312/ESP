@@ -16,10 +16,14 @@ import os
 import secrets
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, unquote, urlparse
 
-from services.browser_pool import run_browser_page_task
+from services.browser_pool import (
+    run_browser_page_task,
+    run_persistent_browser_page_task,
+)
 from services.html_page_adapter import HtmlPageAdapter
 from services.scrape_request import classify_target_url
 from services.scrape_safety import (
@@ -64,6 +68,11 @@ _PRODUCTION_CONTEXT_OVERRIDES = {
 _HEADFUL_CONTEXT_OVERRIDES = {
     "no_viewport": True,
 }
+_PERSISTENT_CHROME_PROFILE_DIR = "/tmp/esp-recordcity-chrome-profile"
+_PERSISTENT_CHROME_PROBE_DIR = "/tmp/esp-recordcity-probe-chrome-profile"
+_PERSISTENT_CHROME_CURRENT_PROBE_DIR = (
+    "/tmp/esp-recordcity-current-probe-chrome-profile"
+)
 _PRODUCTION_PROFILE_ENV = "RECORDCITY_BROWSER_PROFILE"
 _PRODUCTION_BROWSER_PROFILES: dict[str, dict] = {
     "headless": {
@@ -80,11 +89,51 @@ _PRODUCTION_BROWSER_PROFILES: dict[str, dict] = {
         "runtime_site": "recordcity_headful",
         "profile_label": "patchright/chromium/headful",
     },
+    "persistent-chrome": {
+        "headless": False,
+        # This follows Patchright's documented best-practice shape: branded
+        # Chrome, persistent (non-incognito) context, native UA/headers, and no
+        # viewport emulation.  In particular, do not inherit the locale option
+        # used by the older profiles because it changes Accept-Language.
+        "context_options": _HEADFUL_CONTEXT_OVERRIDES,
+        "inherit_context_defaults": False,
+        "persistent_user_data_dir": _PERSISTENT_CHROME_PROFILE_DIR,
+        "channel": "chrome",
+        "runtime_site": "recordcity_persistent_chrome",
+        "profile_label": "patchright/chrome/headful/persistent",
+    },
 }
 
 _WAF_COOKIE_LOCK = threading.RLock()
 _WAF_COOKIES: list[dict] = []
 _FETCH_LOCK = threading.Lock()
+_NAVIGATION_SESSION = threading.local()
+
+
+@contextmanager
+def recordcity_navigation_session():
+    """Scope listing history to one search extraction on the caller thread.
+
+    The persistent browser is shared by successive worker jobs.  A random,
+    process-local marker prevents a listing URL (and its query) from one job
+    becoming the Referer of another user's direct item request.
+    """
+    previous = getattr(_NAVIGATION_SESSION, "session_id", None)
+    _NAVIGATION_SESSION.session_id = secrets.token_hex(16)
+    try:
+        yield
+    finally:
+        if previous is None:
+            try:
+                delattr(_NAVIGATION_SESSION, "session_id")
+            except AttributeError:
+                pass
+        else:
+            _NAVIGATION_SESSION.session_id = previous
+
+
+def _navigation_session_id() -> str:
+    return str(getattr(_NAVIGATION_SESSION, "session_id", "") or "")
 
 
 def _host(url: str) -> str:
@@ -774,8 +823,9 @@ def _build_unclassified_dom_diagnostic(
 
     user_agent = str(result.probe.user_agent or "")
     browser_mode = (
-        "headful" if result.probe.profile.endswith("/headful") else "headless"
+        "headful" if "/headful" in result.probe.profile else "headless"
     )
+    native_language_profile = result.probe.profile.endswith("/persistent")
     expected_user_agent = (
         _chrome_major(user_agent) is not None
         if browser_mode == "headful"
@@ -848,7 +898,10 @@ def _build_unclassified_dom_diagnostic(
                 result.probe.webdriver_true is False
                 and result.probe.headless_user_agent is False
                 and expected_user_agent
-                and str(result.probe.language or "").lower().startswith("ja")
+                and (
+                    native_language_profile
+                    or str(result.probe.language or "").lower().startswith("ja")
+                )
             ),
         },
         "page_errors": min(page_errors, _MAX_DIAGNOSTIC_DOM_COUNT),
@@ -924,6 +977,9 @@ async def _run_recordcity_attempt(
     channel: str | None = "chromium",
     runtime_site: str = _SITE,
     profile_label: str = "patchright/chromium/headless",
+    persistent_user_data_dir: str | None = None,
+    inherit_context_defaults: bool = True,
+    navigation_session_id: str | None = None,
 ) -> _AttemptResult:
     probe = _WafProbe(
         probe_id=probe_id,
@@ -932,9 +988,33 @@ async def _run_recordcity_attempt(
         token_before=bool(input_cookies),
     )
     page_state: dict[str, object] = {}
+    active_navigation_session_id = (
+        _navigation_session_id()
+        if navigation_session_id is None
+        else str(navigation_session_id or "")
+    )
 
     async def _task(page, context):
-        blocked_urls = await install_navigation_guard(context, _SITE, kind=kind)
+        # Persistent tabs are intentionally retained, so page-scoped routing
+        # can be removed after each task instead of leaving a search guard on
+        # the owning context when the next request is a product detail.
+        route_owner = page if persistent_user_data_dir is not None else context
+        blocked_urls = await install_navigation_guard(route_owner, _SITE, kind=kind)
+
+        if persistent_user_data_dir is not None:
+            try:
+                existing_waf_cookies = _current_waf_cookies(await context.cookies())
+            except Exception:
+                existing_waf_cookies = []
+            if not existing_waf_cookies and input_cookies:
+                try:
+                    await context.add_cookies(copy.deepcopy(input_cookies))
+                    existing_waf_cookies = copy.deepcopy(input_cookies)
+                except Exception:
+                    # The challenge can still mint a current token.  Treat the
+                    # cache as an optimization rather than failing navigation.
+                    existing_waf_cookies = []
+            probe.token_before = bool(existing_waf_cookies)
         response_events: list[object] = []
         last_top_response: list[object | None] = [None]
 
@@ -954,22 +1034,55 @@ async def _run_recordcity_attempt(
         def _on_page_error(_error) -> None:
             probe.page_error_count += 1
 
+        def _on_request_failed(request) -> None:
+            _record_request_failure(probe, request)
+
         event_handler = getattr(page, "on", None)
         if callable(event_handler):
             event_handler("response", _on_response)
-            event_handler(
-                "requestfailed",
-                lambda request: _record_request_failure(probe, request),
-            )
+            event_handler("requestfailed", _on_request_failed)
             event_handler("pageerror", _on_page_error)
 
         response = None
         navigation_error = None
         try:
+            goto_options = {
+                "wait_until": "domcontentloaded",
+                "timeout": max(1, int(timeout)),
+            }
+            if (
+                persistent_user_data_dir is not None
+                and kind == "detail"
+                and active_navigation_session_id
+            ):
+                listing_state = getattr(
+                    context,
+                    "_esp_recordcity_listing_state",
+                    {},
+                )
+                listing_referer = ""
+                if (
+                    isinstance(listing_state, dict)
+                    and listing_state.get("session_id")
+                    == active_navigation_session_id
+                ):
+                    listing_referer = str(listing_state.get("url") or "")
+                if listing_referer:
+                    try:
+                        listing_referer = validate_marketplace_url(
+                            listing_referer,
+                            _SITE,
+                            kind="search",
+                        )
+                    except Exception:
+                        listing_referer = ""
+                if listing_referer:
+                    # This is the same-origin transition a real listing click
+                    # would produce, not a global header override.
+                    goto_options["referer"] = listing_referer
             response = await page.goto(
                 normalized_url,
-                wait_until="domcontentloaded",
-                timeout=max(1, int(timeout)),
+                **goto_options,
             )
         except Exception as exc:
             raise_for_blocked_navigation(blocked_urls, _SITE)
@@ -1074,16 +1187,70 @@ async def _run_recordcity_attempt(
             waf_cookies=waf_cookies,
             navigation_error=navigation_error,
         )
+        if (
+            persistent_user_data_dir is not None
+            and probe.ready
+            and kind == "search"
+            and active_navigation_session_id
+        ):
+            setattr(
+                context,
+                "_esp_recordcity_listing_state",
+                {
+                    "session_id": active_navigation_session_id,
+                    "url": final_url,
+                },
+            )
 
-    await run_browser_page_task(
-        runtime_site,
-        _task,
-        headless=headless,
-        launch_args=_LAUNCH_ARGS if launch_args is None else launch_args,
-        context_options=_context_options(input_cookies, context_options),
-        automation_backend=automation_backend,
-        channel=channel,
-    )
+        if persistent_user_data_dir is not None:
+            # The page is intentionally retained. Remove only the Python-side
+            # handlers/routes installed for this fetch so they cannot observe
+            # or block a later search/detail navigation.
+            remove_listener = getattr(page, "remove_listener", None)
+            if callable(remove_listener):
+                for event_name, handler in (
+                    ("response", _on_response),
+                    ("requestfailed", _on_request_failed),
+                    ("pageerror", _on_page_error),
+                ):
+                    try:
+                        remove_listener(event_name, handler)
+                    except Exception:
+                        pass
+            unroute_all = getattr(page, "unroute_all", None)
+            if callable(unroute_all):
+                try:
+                    await unroute_all(behavior="wait")
+                except Exception:
+                    pass
+
+    selected_launch_args = _LAUNCH_ARGS if launch_args is None else launch_args
+    if persistent_user_data_dir is not None:
+        persistent_context_options = (
+            _context_options([], context_options)
+            if inherit_context_defaults
+            else copy.deepcopy(context_options or {})
+        )
+        await run_persistent_browser_page_task(
+            runtime_site,
+            _task,
+            user_data_dir=persistent_user_data_dir,
+            headless=headless,
+            launch_args=selected_launch_args,
+            context_options=persistent_context_options,
+            automation_backend=automation_backend,
+            channel=channel,
+        )
+    else:
+        await run_browser_page_task(
+            runtime_site,
+            _task,
+            headless=headless,
+            launch_args=selected_launch_args,
+            context_options=_context_options(input_cookies, context_options),
+            automation_backend=automation_backend,
+            channel=channel,
+        )
     result = page_state.get("result")
     if not isinstance(result, _AttemptResult):
         raise RuntimeError("Record Cityブラウザ取得結果を受け取れませんでした。")
@@ -1106,6 +1273,7 @@ def _production_browser_settings() -> dict:
         "patchright-current": "headless",
         "patchright-headless": "headless",
         "patchright-headful": "headful",
+        "patchright-persistent-chrome": "persistent-chrome",
     }
     normalized = aliases.get(normalized, normalized)
     settings = _PRODUCTION_BROWSER_PROFILES.get(normalized)
@@ -1114,7 +1282,9 @@ def _production_browser_settings() -> dict:
             "レコードシティのブラウザ設定が不正です"
             "（reason=RC_BROWSER_PROFILE_CONFIG_INVALID）。"
         )
-    if normalized == "headful" and not str(os.environ.get("DISPLAY") or "").strip():
+    if normalized in {"headful", "persistent-chrome"} and not str(
+        os.environ.get("DISPLAY") or ""
+    ).strip():
         raise ScrapeHttpError(
             "レコードシティのheadfulブラウザを起動できません"
             "（reason=RC_HEADFUL_DISPLAY_UNAVAILABLE）。"
@@ -1168,6 +1338,7 @@ async def _fetch_recordcity_page_unlocked(
     timeout: int = 45000,
     wait_selector_timeout: int = 20000,
     network_idle: bool = True,
+    navigation_session_id: str | None = None,
 ) -> HtmlPageAdapter:
     request_kind, site = classify_target_url(url)
     classified_kind = "detail" if request_kind == "item" else "search"
@@ -1194,6 +1365,14 @@ async def _fetch_recordcity_page_unlocked(
             context_options=browser_settings["context_options"],
             runtime_site=str(browser_settings["runtime_site"]),
             profile_label=str(browser_settings["profile_label"]),
+            channel=str(browser_settings.get("channel") or "chromium"),
+            persistent_user_data_dir=browser_settings.get(
+                "persistent_user_data_dir"
+            ),
+            inherit_context_defaults=bool(
+                browser_settings.get("inherit_context_defaults", True)
+            ),
+            navigation_session_id=navigation_session_id,
         )
         failure = _classify_waf_failure(result.probe, result.html)
         if failure is not None:
@@ -1203,6 +1382,17 @@ async def _fetch_recordcity_page_unlocked(
                 if attempt == 1
                 else None
             )
+            if (
+                retry_cookies is not None
+                and browser_settings.get("persistent_user_data_dir")
+                and result.waf_cookies
+            ):
+                # A persistent context already owns the current token.  The
+                # legacy fresh-context path uses [] to request a clean retry
+                # when the token is unchanged; here [] would misdescribe the
+                # retained session and must not imply that Chrome discarded
+                # its profile state.
+                retry_cookies = copy.deepcopy(result.waf_cookies)
             if retry_cookies is not None:
                 logger.info(
                     "Record City WAF probe retrying once: probe=%s attempt=%d "
@@ -1291,6 +1481,14 @@ _BROWSER_PROBE_PROFILES: dict[str, dict] = {
             "timezone_id": "Asia/Tokyo",
         },
     },
+    "patchright-persistent-chrome": {
+        "headless": False,
+        "context_options": {"no_viewport": True},
+        "inherit_context_defaults": False,
+        "persistent_user_data_dir": _PERSISTENT_CHROME_PROBE_DIR,
+        "channel": "chrome",
+        "profile_label": "patchright/chrome/headful/persistent",
+    },
     # The proxy cells complete the IP x browser-mode comparison. Credentials
     # are read from RECORDCITY_PROXY_URL and passed only to BrowserContext.
     "patchright-headless-proxy": {
@@ -1373,6 +1571,14 @@ async def probe_recordcity_browser_once_async(
 
     if settings.get("production"):
         settings = _production_browser_settings()
+        if settings.get("persistent_user_data_dir"):
+            # A probe can run alongside the worker's production runtime.
+            # Chrome forbids two processes from opening one user data dir, so
+            # keep the current-profile control behaviorally equivalent but
+            # filesystem-isolated from production and the explicit probe cell.
+            settings["persistent_user_data_dir"] = (
+                _PERSISTENT_CHROME_CURRENT_PROBE_DIR
+            )
     else:
         settings = copy.deepcopy(settings)
 
@@ -1398,9 +1604,16 @@ async def probe_recordcity_browser_once_async(
         launch_args=[],
         context_options=profile_context_options,
         automation_backend="patchright",
-        channel="chromium",
+        channel=str(settings.get("channel") or "chromium"),
         runtime_site=f"recordcity_probe_{profile.replace('-', '_')}",
-        profile_label=f"patchright/chromium/{'headless' if settings['headless'] else 'headful'}",
+        profile_label=str(
+            settings.get("profile_label")
+            or f"patchright/chromium/{'headless' if settings['headless'] else 'headful'}"
+        ),
+        persistent_user_data_dir=settings.get("persistent_user_data_dir"),
+        inherit_context_defaults=bool(
+            settings.get("inherit_context_defaults", True)
+        ),
     )
     failure = _classify_waf_failure(result.probe, result.html)
     actions = [
@@ -1484,6 +1697,7 @@ async def fetch_recordcity_page_via_browser_pool_async(
     timeout: int = 45000,
     wait_selector_timeout: int = 20000,
     network_idle: bool = True,
+    navigation_session_id: str | None = None,
 ) -> HtmlPageAdapter:
     # BrowserContext creation is serialized for this site so a second request
     # cannot snapshot an old token while the first is refreshing it. A
@@ -1502,6 +1716,7 @@ async def fetch_recordcity_page_via_browser_pool_async(
             timeout=timeout,
             wait_selector_timeout=wait_selector_timeout,
             network_idle=network_idle,
+            navigation_session_id=navigation_session_id,
         )
     finally:
         if acquired:
@@ -1517,6 +1732,7 @@ def fetch_recordcity_page_via_browser_pool_sync(
     wait_selector_timeout: int = 20000,
     network_idle: bool = True,
 ) -> HtmlPageAdapter:
+    navigation_session_id = _navigation_session_id()
     return run_coro_sync(
         fetch_recordcity_page_via_browser_pool_async(
             url,
@@ -1525,5 +1741,6 @@ def fetch_recordcity_page_via_browser_pool_sync(
             timeout=timeout,
             wait_selector_timeout=wait_selector_timeout,
             network_idle=network_idle,
+            navigation_session_id=navigation_session_id,
         )
     )

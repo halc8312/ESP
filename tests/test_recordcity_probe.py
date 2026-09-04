@@ -569,6 +569,29 @@ def test_current_profile_dedupes_equivalent_explicit_headful_cell(monkeypatch):
     assert calls == ["patchright-current"]
 
 
+def test_current_profile_dedupes_equivalent_persistent_chrome_cell(monkeypatch):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "persistent-chrome")
+    monkeypatch.setenv("DISPLAY", ":99")
+    calls = []
+    monkeypatch.setattr(
+        recordcity_probe,
+        "_probe_browser",
+        lambda _url, **kwargs: (
+            calls.append(kwargs["strategy"])
+            or _attempted(kwargs["strategy"])
+        ),
+    )
+
+    snapshot = recordcity_probe.run_recordcity_probe(
+        DETAIL_URL,
+        strategies=["patchright-current", "patchright-persistent-chrome"],
+        delay_seconds=0,
+    )
+
+    assert snapshot["strategies"] == ["patchright-current"]
+    assert calls == ["patchright-current"]
+
+
 @pytest.mark.parametrize(
     "strategy, env_name, env_value, probe_attr",
     [

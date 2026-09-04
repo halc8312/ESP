@@ -130,6 +130,8 @@ def get_browser_runtime(
     headless: bool | None = None,
     automation_backend: str = "playwright",
     channel: str | None = None,
+    persistent_user_data_dir: str | None = None,
+    persistent_context_options: dict[str, Any] | None = None,
 ) -> SharedBrowserRuntime | None:
     if not _shared_runtime_enabled(site):
         return None
@@ -142,6 +144,9 @@ def get_browser_runtime(
             if (
                 runtime.config.automation_backend != normalized_backend
                 or runtime.config.channel != channel
+                or runtime.config.persistent_user_data_dir != persistent_user_data_dir
+                or runtime.config.persistent_context_options
+                != dict(persistent_context_options or {})
             ):
                 raise RuntimeError(
                     f"Browser runtime profile for {normalized_site} is already active "
@@ -161,6 +166,8 @@ def get_browser_runtime(
                 max_in_flight_tasks=_get_max_in_flight_tasks(normalized_site),
                 max_tasks_before_restart=_get_max_tasks_before_restart(normalized_site),
                 max_runtime_seconds=_get_max_runtime_seconds(normalized_site),
+                persistent_user_data_dir=persistent_user_data_dir,
+                persistent_context_options=dict(persistent_context_options or {}),
             )
         )
         _RUNTIMES[normalized_site] = runtime
@@ -259,6 +266,80 @@ async def _run_with_temporary_browser(
             await browser.close()
 
 
+async def _execute_persistent_page_task(
+    context,
+    task_coro_factory: Callable[[Any, Any], Awaitable[Any]],
+    *,
+    init_scripts: list[str] | tuple[str, ...] | None = None,
+):
+    """Run one task in a retained tab and persistent owning context.
+
+    Keeping the tab preserves same-site page history across a listing/detail
+    sequence.  The site adapter owns cleanup of listeners and routes it adds;
+    if a task raises before cleanup, the tab is closed and the next task gets a
+    clean one while cookies, local storage, service workers, and profile state
+    remain in the context.
+    """
+    pages = list(getattr(context, "pages", ()) or ())
+    page = next(
+        (
+            candidate
+            for candidate in reversed(pages)
+            if not callable(getattr(candidate, "is_closed", None))
+            or not candidate.is_closed()
+        ),
+        None,
+    )
+    if page is None:
+        page = await context.new_page()
+    try:
+        for script in init_scripts or ():
+            await page.add_init_script(script)
+        return await task_coro_factory(page, context)
+    except Exception:
+        try:
+            await page.close()
+        except Exception:
+            pass
+        raise
+
+
+async def _run_with_temporary_persistent_context(
+    task_coro_factory: Callable[[Any, Any], Awaitable[Any]],
+    *,
+    user_data_dir: str,
+    launch_args: list[str] | tuple[str, ...] | None = None,
+    headless: bool = False,
+    context_options: dict[str, Any] | None = None,
+    init_scripts: list[str] | tuple[str, ...] | None = None,
+    automation_backend: str = "patchright",
+    channel: str | None = "chrome",
+):
+    async_playwright = get_async_playwright_factory(automation_backend)
+    async with async_playwright() as playwright:
+        launch_options = dict(context_options or {})
+        launch_options.update(
+            {
+                "headless": headless,
+                "args": list(_DEFAULT_LAUNCH_ARGS if launch_args is None else launch_args),
+            }
+        )
+        if channel:
+            launch_options["channel"] = channel
+        context = await playwright.chromium.launch_persistent_context(
+            user_data_dir=user_data_dir,
+            **launch_options,
+        )
+        try:
+            return await _execute_persistent_page_task(
+                context,
+                task_coro_factory,
+                init_scripts=init_scripts,
+            )
+        finally:
+            await context.close()
+
+
 async def run_browser_page_task(
     site: str,
     task_coro_factory: Callable[[Any, Any], Awaitable[Any]],
@@ -293,6 +374,56 @@ async def run_browser_page_task(
             browser,
             task_coro_factory,
             context_options=context_options,
+            init_scripts=init_scripts,
+        )
+    )
+    return await asyncio.wrap_future(future)
+
+
+async def run_persistent_browser_page_task(
+    site: str,
+    task_coro_factory: Callable[[Any, Any], Awaitable[Any]],
+    *,
+    user_data_dir: str,
+    launch_args: list[str] | tuple[str, ...] | None = None,
+    headless: bool = False,
+    context_options: dict[str, Any] | None = None,
+    init_scripts: list[str] | tuple[str, ...] | None = None,
+    automation_backend: str = "patchright",
+    channel: str | None = "chrome",
+):
+    """Run a page task in a site-scoped persistent browser context.
+
+    This is opt-in and uses the same lifecycle registry as ordinary runtimes,
+    so ``close_browser_pool`` also drains it.  Existing marketplace callers
+    continue through ``run_browser_page_task`` and retain fresh contexts.
+    """
+    persistent_options = dict(context_options or {})
+    runtime = get_browser_runtime(
+        site,
+        launch_args=launch_args,
+        headless=headless,
+        automation_backend=automation_backend,
+        channel=channel,
+        persistent_user_data_dir=user_data_dir,
+        persistent_context_options=persistent_options,
+    )
+    if runtime is None:
+        return await _run_with_temporary_persistent_context(
+            task_coro_factory,
+            user_data_dir=user_data_dir,
+            launch_args=launch_args,
+            headless=headless,
+            context_options=persistent_options,
+            init_scripts=init_scripts,
+            automation_backend=automation_backend,
+            channel=channel,
+        )
+
+    future = runtime.submit(
+        lambda context: _execute_persistent_page_task(
+            context,
+            task_coro_factory,
             init_scripts=init_scripts,
         )
     )

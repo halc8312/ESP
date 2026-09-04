@@ -20,7 +20,7 @@ def test_run_render_worker_postdeploy_checklist_reads_worker_contract_from_bluep
     assert snapshot["expected_runtime"]["scheduler_enabled"] is True
     assert snapshot["expected_runtime"]["warm_browser_pool"] is True
     assert snapshot["expected_runtime"]["browser_pool_warm_sites"] == ["mercari"]
-    assert snapshot["expected_runtime"]["recordcity_browser_profile"] == "headful"
+    assert snapshot["expected_runtime"]["recordcity_browser_profile"] == "persistent-chrome"
     assert snapshot["expected_runtime"]["recordcity_fetch_provider"] == "browser"
     assert snapshot["expected_runtime"]["process_selector_repairs_on_startup"] is False
     assert snapshot["expected_runtime"]["selector_repair_limit"] == 1
@@ -53,7 +53,7 @@ def test_worker_postdeploy_checklist_reports_pinned_recordcity_runtime(blueprint
     runtime = snapshot["expected_runtime"]
 
     assert runtime["docker_command"] == "tini -- python worker.py"
-    assert runtime["recordcity_browser_profile"] == "headful"
+    assert runtime["recordcity_browser_profile"] == "persistent-chrome"
     assert runtime["recordcity_fetch_provider"] == "browser"
     assert not any(
         site.strip().lower().startswith("recordcity")

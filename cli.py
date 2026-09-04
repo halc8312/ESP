@@ -551,8 +551,11 @@ def run_render_blueprint_audit(path: str = "render.yaml") -> dict:
         blockers.append("worker_browser_pool_warm_must_be_enabled")
     if worker_env.get("ENABLE_SHARED_BROWSER_RUNTIME", {}).get("value") != "1":
         blockers.append("worker_shared_browser_runtime_must_be_enabled")
-    if worker_env.get("RECORDCITY_BROWSER_PROFILE", {}).get("value") != "headful":
-        blockers.append("worker_recordcity_profile_must_be_headful")
+    if (
+        worker_env.get("RECORDCITY_BROWSER_PROFILE", {}).get("value")
+        != "persistent-chrome"
+    ):
+        blockers.append("worker_recordcity_profile_must_be_persistent_chrome")
     if worker_env.get("RECORDCITY_FETCH_PROVIDER", {}).get("value") != "browser":
         blockers.append("worker_recordcity_provider_must_be_browser")
     warm_sites = {
@@ -562,7 +565,9 @@ def run_render_blueprint_audit(path: str = "render.yaml") -> dict:
         ).split(",")
         if site.strip()
     }
-    if "recordcity" in warm_sites or "recordcity_headful" in warm_sites:
+    if warm_sites.intersection(
+        {"recordcity", "recordcity_headful", "recordcity_persistent_chrome"}
+    ):
         blockers.append("worker_recordcity_runtime_must_not_be_prewarmed")
     if worker_env.get("WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP", {}).get("value") != "0":
         blockers.append("worker_selector_repairs_startup_must_be_disabled_initially")
@@ -1664,7 +1669,7 @@ def run_render_worker_postdeploy_checklist(blueprint_path: str = "render.yaml") 
     )
 
     manual_checks = [
-        "Confirm the worker deploy uses `tini -- python worker.py` and logs private Xvfb startup for Record City.",
+        "Confirm the worker deploy uses `tini -- python worker.py` and logs private Xvfb startup for Record City's persistent Chrome profile.",
         "Confirm startup logs do not show Redis connection failures or browser startup exceptions.",
         "Confirm the worker remains running after startup and does not crash-loop.",
         "Keep `WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP=0` for the first paid split deploy.",

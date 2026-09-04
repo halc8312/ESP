@@ -58,6 +58,25 @@ def test_headless_profile_does_not_start_xvfb(monkeypatch):
         assert "DISPLAY" not in os.environ
 
 
+@pytest.mark.parametrize(
+    "profile",
+    ["persistent-chrome", "patchright-persistent-chrome"],
+)
+def test_persistent_chrome_profile_requests_private_display(monkeypatch, profile):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", profile)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    process = _FakeProcess()
+    stopped = []
+    monkeypatch.setattr(virtual_display, "_start_xvfb", lambda: (process, ":78"))
+    monkeypatch.setattr(virtual_display, "_stop_xvfb", stopped.append)
+
+    with virtual_display.recordcity_virtual_display():
+        assert os.environ["DISPLAY"] == ":78"
+
+    assert "DISPLAY" not in os.environ
+    assert stopped == [process]
+
+
 def test_external_provider_does_not_start_unused_xvfb(monkeypatch):
     monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "headful")
     monkeypatch.setenv("RECORDCITY_FETCH_PROVIDER", "zyte")

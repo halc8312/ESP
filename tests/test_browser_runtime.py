@@ -29,6 +29,7 @@ def test_shared_browser_runtime_snapshot_reports_idle_then_closed():
     assert initial["completed_tasks_since_launch"] == 0
     assert initial["thread_alive"] is False
     assert initial["browser_ready"] is False
+    assert initial["persistent_context"] is False
 
     runtime.close()
 
@@ -107,6 +108,67 @@ def test_shared_browser_runtime_launch_uses_selected_factory_and_options(
     asyncio.run(runtime._shutdown_async())
 
     assert captured["browser_closed"] is True
+    assert captured["playwright_stopped"] is True
+
+
+def test_shared_browser_runtime_launches_persistent_context_with_native_profile(
+    monkeypatch,
+):
+    captured = {}
+
+    class FakeContext:
+        async def close(self):
+            captured["context_closed"] = True
+
+    class FakeBrowserType:
+        async def launch(self, **_launch_options):
+            raise AssertionError("persistent runtime must not call launch")
+
+        async def launch_persistent_context(self, user_data_dir, **launch_options):
+            captured["user_data_dir"] = user_data_dir
+            captured["launch_options"] = launch_options
+            return FakeContext()
+
+    class FakePlaywright:
+        chromium = FakeBrowserType()
+
+        async def stop(self):
+            captured["playwright_stopped"] = True
+
+    class FakePlaywrightManager:
+        async def start(self):
+            return FakePlaywright()
+
+    monkeypatch.setattr(
+        "services.browser_runtime.get_async_playwright_factory",
+        lambda backend: FakePlaywrightManager,
+    )
+
+    runtime = SharedBrowserRuntime(
+        BrowserRuntimeConfig(
+            site="recordcity_persistent_chrome",
+            automation_backend="patchright",
+            channel="chrome",
+            headless=False,
+            launch_args=(),
+            persistent_user_data_dir="/tmp/recordcity-test-profile",
+            persistent_context_options={"no_viewport": True},
+        )
+    )
+    asyncio.run(runtime._launch_async())
+
+    assert captured["user_data_dir"] == "/tmp/recordcity-test-profile"
+    assert captured["launch_options"] == {
+        "no_viewport": True,
+        "headless": False,
+        "args": [],
+        "channel": "chrome",
+    }
+    assert runtime.snapshot()["persistent_context"] is True
+
+    asyncio.run(runtime._shutdown_async())
+
+    assert captured["context_closed"] is True
     assert captured["playwright_stopped"] is True
 
 

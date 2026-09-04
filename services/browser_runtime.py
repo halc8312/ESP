@@ -8,7 +8,7 @@ import logging
 import threading
 import time
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 
@@ -49,6 +49,11 @@ class BrowserRuntimeConfig:
     max_in_flight_tasks: int = 1
     max_tasks_before_restart: int = 0
     max_runtime_seconds: float = 0.0
+    # When set, the runtime owns Chromium's one persistent BrowserContext
+    # instead of an incognito-capable Browser.  Callers that do not opt in keep
+    # the existing Browser/new_context lifecycle unchanged.
+    persistent_user_data_dir: str | None = None
+    persistent_context_options: dict[str, Any] = field(default_factory=dict)
 
 
 def _looks_like_browser_restart_error(exc: BaseException) -> bool:
@@ -182,9 +187,21 @@ class SharedBrowserRuntime:
         }
         if self.config.channel:
             launch_options["channel"] = self.config.channel
-        self._browser = await browser_type.launch(
-            **launch_options,
-        )
+        if self.config.persistent_user_data_dir is not None:
+            # Persistent-context options include both browser launch settings
+            # and default-context settings in Playwright's API.  Keep the
+            # runtime-selected channel/headless/args authoritative so a caller
+            # cannot accidentally create a different profile under one key.
+            persistent_options = dict(self.config.persistent_context_options)
+            persistent_options.update(launch_options)
+            self._browser = await browser_type.launch_persistent_context(
+                user_data_dir=self.config.persistent_user_data_dir,
+                **persistent_options,
+            )
+        else:
+            self._browser = await browser_type.launch(
+                **launch_options,
+            )
         with self._lock:
             self._state = "ready"
             self._last_started_at = time.time()
@@ -346,6 +363,7 @@ class SharedBrowserRuntime:
                 "thread_alive": bool(self._thread is not None and self._thread.is_alive()),
                 "loop_running": bool(self._loop is not None and self._loop.is_running()),
                 "browser_ready": self._browser is not None,
+                "persistent_context": self.config.persistent_user_data_dir is not None,
                 "last_started_at": self._last_started_at,
                 "last_submit_at": self._last_submit_at,
                 "last_completed_at": self._last_completed_at,

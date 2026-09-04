@@ -23,7 +23,12 @@ def _headful_requested() -> bool:
     if provider not in {"", "browser", "patchright"}:
         return False
     profile = str(os.environ.get(_PROFILE_ENV, "headless") or "headless")
-    return profile.strip().lower() in {"headful", "patchright-headful"}
+    return profile.strip().lower() in {
+        "headful",
+        "patchright-headful",
+        "persistent-chrome",
+        "patchright-persistent-chrome",
+    }
 
 
 def _xvfb_command() -> list[str]:

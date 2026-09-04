@@ -494,7 +494,7 @@ py -3 -m pytest tests/test_rq_scrape_e2e.py -q
 | `BROWSER_POOL_MAX_TASKS_BEFORE_RESTART` | `0` | 0 より大きい時、同一 browser を使うジョブ回数の上限。超えたら次ジョブ開始前に計画的 recycle |
 | `BROWSER_POOL_MAX_RUNTIME_SECONDS` | `0` | 0 より大きい時、browser 生存時間の上限。超えたら次ジョブ開始前に計画的 recycle |
 | `BROWSER_POOL_STARTUP_TIMEOUT_SECONDS` | `60` | shared browser 起動タイムアウト |
-| `RECORDCITY_BROWSER_PROFILE` | `headless` | Record City専用Patchright profile。Render workerは、同一egressで要求SKUの商品取得に成功実測がある`headful`をXvfb上で使う |
+| `RECORDCITY_BROWSER_PROFILE` | `headless` | Record City専用Patchright profile。Render workerはbranded Chromeの`persistent-chrome`をXvfb上で使い、Cookie・local storageを同一contextで維持する |
 | `RECORDCITY_FETCH_PROVIDER` | `browser` | Record Cityのproduction取得経路。Render workerは`browser`を明示し、credentialの存在だけで外部providerへ切り替えない |
 | `MERCARI_USE_BROWSER_POOL_DETAIL` | `false` (`worker.py` では `true` 既定) | Mercari detail DOM fetch を browser pool 経由にする。split worker では `true` を維持し、web/CLI/test は必要時のみ有効化する想定 |
 | `MERCARI_PATROL_USE_BROWSER_POOL` | `false` (`worker.py` では `true` 既定) | Mercari patrol DOM fetch を browser pool 経由にする |
@@ -545,7 +545,7 @@ shared browser runtime を有効にした worker は、起動時の durable back
 
 `flask render-cutover-readiness` は、現在の Render split 構成に対するローカル判定 gate です。single-web predeploy は advisory として残しつつ、persistent DB の `schema-drift-check`、split-render predeploy、split worker health、`local-verify --profile full` を一つに束ねます。手順全体は `docs/RENDER_CUTOVER_RUNBOOK.md` にまとめています。
 
-`flask render-blueprint-audit` は `render.yaml` の静的監査です。`esp-web` / `esp-worker` / `esp-keyvalue` / `esp-postgres` の service 名、`autoDeployTrigger: off`、`/readyz`、Tini worker command、Record City専用headful profile、managed `DATABASE_URL` / `REDIS_URL`、manual secret env の棚卸しを確認します。Render Dashboard に入る前の secret/env チェックとして使えます。
+`flask render-blueprint-audit` は `render.yaml` の静的監査です。`esp-web` / `esp-worker` / `esp-keyvalue` / `esp-postgres` の service 名、`autoDeployTrigger: off`、`/readyz`、Tini worker command、Record City専用persistent Chrome profile、managed `DATABASE_URL` / `REDIS_URL`、manual secret env の棚卸しを確認します。Render Dashboard に入る前の secret/env チェックとして使えます。
 
 `flask render-budget-guardrail-audit --blueprint-path render.yaml` は、repo に記録した budget guardrail 前提と `render.yaml` の plan を照合する監査です。いまの前提では `esp-web=starter`, `esp-worker=standard`, `esp-keyvalue=starter`, `esp-postgres=basic-1gb` を要求し、core recurring cost estimate は `$61/month` として扱います。これは repo に固定した planning assumption で、actual purchase 前には Render 側の価格再確認が別途必要です。
 

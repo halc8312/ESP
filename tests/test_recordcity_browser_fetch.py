@@ -82,6 +82,9 @@ class FakeContext:
     async def cookies(self):
         return list(self._cookies)
 
+    async def add_cookies(self, cookies):
+        self._cookies.extend(list(cookies))
+
 
 class FakePage:
     def __init__(
@@ -104,13 +107,28 @@ class FakePage:
         self._final_html = PRODUCT_HTML if reload_response is not None else final_html
         self._goto_error = goto_error
         self._handlers = {}
+        self.routes = []
+        self.unroute_behaviors = []
+        self.goto_calls = []
         self.selector_calls = []
         self.url = DETAIL_URL
 
     def on(self, name, handler):
         self._handlers[name] = handler
 
+    async def route(self, pattern, handler):
+        self.routes.append((pattern, handler))
+
+    def remove_listener(self, name, handler):
+        if self._handlers.get(name) is handler:
+            self._handlers.pop(name)
+
+    async def unroute_all(self, *, behavior):
+        self.unroute_behaviors.append(behavior)
+        self.routes.clear()
+
     async def goto(self, _url, **_kwargs):
+        self.goto_calls.append({"url": _url, **_kwargs})
         handler = self._handlers.get("response")
         if handler:
             handler(self._response)
@@ -182,6 +200,21 @@ def _install_browser_fake(monkeypatch, pages_and_contexts, captured):
         recordcity_fetch,
         "run_browser_page_task",
         fake_run_browser_page_task,
+    )
+
+
+def _install_persistent_browser_fake(monkeypatch, pages_and_contexts, captured):
+    queue = list(pages_and_contexts)
+
+    async def fake_run_persistent_browser_page_task(site, task, **kwargs):
+        page, context = queue.pop(0)
+        captured.append({"site": site, **kwargs})
+        return await task(page, context)
+
+    monkeypatch.setattr(
+        recordcity_fetch,
+        "run_persistent_browser_page_task",
+        fake_run_persistent_browser_page_task,
     )
 
 
@@ -259,6 +292,41 @@ def test_unclassified_body_diagnostic_hashes_full_body_but_bounds_dom_sample():
     ).hexdigest()
 
 
+def test_unclassified_diagnostic_recognizes_native_persistent_chrome_profile():
+    probe = recordcity_fetch._WafProbe(
+        probe_id="1234abcd",
+        profile="patchright/chrome/headful/persistent",
+        webdriver_true=False,
+        headless_user_agent=False,
+        user_agent=NORMAL_CHROME_UA,
+        language="en-US",
+    )
+    result = recordcity_fetch._AttemptResult(
+        html="<html><title>Record City</title></html>",
+        url=DETAIL_URL,
+        status=200,
+        probe=probe,
+        waf_cookies=[],
+    )
+
+    diagnostic = recordcity_fetch._build_unclassified_dom_diagnostic(
+        result,
+        requested_url=DETAIL_URL,
+        kind="detail",
+        wait_selector=READY_SELECTOR,
+        input_cookies=[],
+    )
+
+    assert diagnostic["browser"] == {
+        "mode": "headful",
+        "webdriver_true": False,
+        "headless_ua": False,
+        "chrome_major": 145,
+        "language_ja": False,
+        "profile_matches_expected": True,
+    }
+
+
 def test_recordcity_uses_site_scoped_patchright_profile(monkeypatch):
     captured = []
     page = FakePage(FakeResponse(200, headers={"server": "CloudFront"}))
@@ -314,6 +382,172 @@ def test_render_headful_profile_uses_native_ua_and_distinct_runtime(
         }
     ]
     assert "profile=patchright/chromium/headful" in caplog.text
+
+
+def test_render_persistent_chrome_profile_keeps_native_fingerprint_and_state(
+    monkeypatch,
+    caplog,
+):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "persistent-chrome")
+    monkeypatch.setenv("DISPLAY", ":99")
+    captured = []
+    page = FakePage(FakeResponse(200, headers={"server": "CloudFront"}))
+    context = FakeContext([_waf_cookie("context-token")])
+    _install_persistent_browser_fake(monkeypatch, [(page, context)], captured)
+
+    async def regular_browser_must_not_run(*_args, **_kwargs):
+        raise AssertionError("persistent profile must not use a fresh BrowserContext")
+
+    monkeypatch.setattr(
+        recordcity_fetch,
+        "run_browser_page_task",
+        regular_browser_must_not_run,
+    )
+
+    with caplog.at_level(logging.INFO):
+        result = _fetch()
+
+    assert result.status == 200
+    assert captured == [
+        {
+            "site": "recordcity_persistent_chrome",
+            "user_data_dir": recordcity_fetch._PERSISTENT_CHROME_PROFILE_DIR,
+            "headless": False,
+            "launch_args": [],
+            # No locale, UA, or extra headers: keep branded Chrome native.
+            "context_options": {"no_viewport": True},
+            "automation_backend": "patchright",
+            "channel": "chrome",
+        }
+    ]
+    assert page.routes == []
+    assert page.unroute_behaviors == ["wait"]
+    assert page._handlers == {}
+    assert context.routes == []
+    assert "profile=patchright/chrome/headful/persistent" in caplog.text
+    assert "token_before=True" in caplog.text
+
+
+def test_persistent_chrome_seeds_only_an_empty_context_from_token_cache(
+    monkeypatch,
+):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "persistent-chrome")
+    monkeypatch.setenv("DISPLAY", ":99")
+    recordcity_fetch._remember_waf_cookies([_waf_cookie("cached-token")])
+    captured = []
+    page = FakePage(FakeResponse(200, headers={"server": "CloudFront"}))
+    context = FakeContext()
+    _install_persistent_browser_fake(monkeypatch, [(page, context)], captured)
+
+    result = _fetch()
+
+    assert result.status == 200
+    assert [cookie["value"] for cookie in context._cookies] == ["cached-token"]
+
+
+def test_persistent_chrome_carries_listing_state_into_detail_navigation(monkeypatch):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "persistent-chrome")
+    monkeypatch.setenv("DISPLAY", ":99")
+    search_url = "https://www.recordcity.jp/catalog?narrow_down_3=3"
+    search_page = FakePage(
+        FakeResponse(200, url=search_url, headers={"server": "CloudFront"}),
+        html='<html><a href="/catalog/4936480">item</a></html>',
+    )
+    search_page.url = search_url
+    detail_page = FakePage(FakeResponse(200, headers={"server": "CloudFront"}))
+    context = FakeContext()
+    captured = []
+    _install_persistent_browser_fake(
+        monkeypatch,
+        [(search_page, context), (detail_page, context)],
+        captured,
+    )
+
+    with recordcity_fetch.recordcity_navigation_session():
+        search_result = _fetch_search(search_url)
+        detail_result = _fetch()
+
+    assert search_result.status == 200
+    assert detail_result.status == 200
+    assert getattr(context, "_esp_recordcity_listing_state")["url"] == search_url
+    assert detail_page.goto_calls[0]["referer"] == search_url
+    assert [call["site"] for call in captured] == [
+        "recordcity_persistent_chrome",
+        "recordcity_persistent_chrome",
+    ]
+
+
+def test_persistent_chrome_does_not_reuse_listing_referer_across_jobs(monkeypatch):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "persistent-chrome")
+    monkeypatch.setenv("DISPLAY", ":99")
+    search_url = (
+        "https://www.recordcity.jp/catalog?keyword=first-user-private-query"
+    )
+    search_page = FakePage(
+        FakeResponse(200, url=search_url, headers={"server": "CloudFront"}),
+        html='<html><a href="/catalog/4936480">item</a></html>',
+    )
+    search_page.url = search_url
+    unrelated_detail_page = FakePage(
+        FakeResponse(200, headers={"server": "CloudFront"})
+    )
+    context = FakeContext()
+    captured = []
+    _install_persistent_browser_fake(
+        monkeypatch,
+        [(search_page, context), (unrelated_detail_page, context)],
+        captured,
+    )
+
+    with recordcity_fetch.recordcity_navigation_session():
+        assert _fetch_search(search_url).status == 200
+    assert _fetch().status == 200
+
+    assert "referer" not in unrelated_detail_page.goto_calls[0]
+
+
+def test_sync_fetch_propagates_navigation_scope_across_loop_worker_thread(
+    monkeypatch,
+):
+    captured = {}
+
+    async def fake_fetch_async(*_args, **kwargs):
+        captured.update(kwargs)
+        return "page"
+
+    monkeypatch.setattr(
+        recordcity_fetch,
+        "fetch_recordcity_page_via_browser_pool_async",
+        fake_fetch_async,
+    )
+
+    async def loop_aware_caller():
+        with recordcity_fetch.recordcity_navigation_session():
+            return recordcity_fetch.fetch_recordcity_page_via_browser_pool_sync(
+                DETAIL_URL,
+                kind="detail",
+                wait_selector=READY_SELECTOR,
+            )
+
+    assert asyncio.run(loop_aware_caller()) == "page"
+    assert len(captured["navigation_session_id"]) == 32
+
+
+def test_persistent_chrome_requires_display_before_browser_start(monkeypatch):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "persistent-chrome")
+    monkeypatch.delenv("DISPLAY", raising=False)
+
+    async def should_not_run(*_args, **_kwargs):
+        raise AssertionError("browser should not start")
+
+    monkeypatch.setattr(
+        recordcity_fetch,
+        "run_persistent_browser_page_task",
+        should_not_run,
+    )
+
+    with pytest.raises(ScrapeHttpError, match="RC_HEADFUL_DISPLAY_UNAVAILABLE"):
+        _fetch()
 
 
 def test_headful_profile_requires_display_before_browser_start(monkeypatch):
@@ -789,6 +1023,39 @@ def test_stale_cached_token_gets_one_fresh_retry_in_same_fetch(monkeypatch):
     assert recordcity_fetch._cached_waf_cookies()[0]["value"] == "fresh-token"
 
 
+def test_persistent_chrome_retries_with_token_owned_by_same_context(
+    monkeypatch,
+    caplog,
+):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "persistent-chrome")
+    monkeypatch.setenv("DISPLAY", ":99")
+    stale = _waf_cookie("persistent-token")
+    recordcity_fetch._remember_waf_cookies([stale])
+    context = FakeContext([stale])
+    first_page = FakePage(
+        FakeResponse(202, headers={"x-amzn-waf-action": "challenge"}),
+        html=CHALLENGE_HTML,
+        selector_ready=False,
+    )
+    second_page = FakePage(FakeResponse(200), html=PRODUCT_HTML)
+    captured = []
+    _install_persistent_browser_fake(
+        monkeypatch,
+        [(first_page, context), (second_page, context)],
+        captured,
+    )
+
+    with caplog.at_level(logging.INFO):
+        result = _fetch()
+
+    assert result.status == 200
+    assert len(captured) == 2
+    assert "retry_with_token=True" in caplog.text
+    assert [cookie["value"] for cookie in context._cookies] == [
+        "persistent-token"
+    ]
+
+
 @pytest.mark.parametrize(
     "status, action, expected_reason",
     [
@@ -1041,6 +1308,68 @@ def test_single_browser_probe_uses_isolated_profile(
     assert captured[0]["automation_backend"] == "patchright"
     assert captured[0]["channel"] == "chromium"
     assert page.selector_calls[0]["state"] == "attached"
+
+
+def test_single_persistent_chrome_probe_uses_branded_native_profile(monkeypatch):
+    monkeypatch.setenv("DISPLAY", ":99")
+    captured = []
+    page = FakePage(FakeResponse(200, headers={"server": "CloudFront"}))
+    _install_persistent_browser_fake(
+        monkeypatch,
+        [(page, FakeContext())],
+        captured,
+    )
+
+    result = asyncio.run(
+        recordcity_fetch.probe_recordcity_browser_once_async(
+            DETAIL_URL,
+            profile="patchright-persistent-chrome",
+        )
+    )
+
+    assert result["ready_dom"] is True
+    assert result["browser_mode"] == "headful"
+    assert captured == [
+        {
+            "site": "recordcity_probe_patchright_persistent_chrome",
+            "user_data_dir": recordcity_fetch._PERSISTENT_CHROME_PROBE_DIR,
+            "headless": False,
+            "launch_args": [],
+            "context_options": {"no_viewport": True},
+            "automation_backend": "patchright",
+            "channel": "chrome",
+        }
+    ]
+    assert page.routes == []
+    assert page.unroute_behaviors == ["wait"]
+
+
+def test_current_probe_tracks_render_persistent_chrome_profile(monkeypatch):
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "persistent-chrome")
+    monkeypatch.setenv("DISPLAY", ":99")
+    captured = []
+    page = FakePage(FakeResponse(200, headers={"server": "CloudFront"}))
+    _install_persistent_browser_fake(
+        monkeypatch,
+        [(page, FakeContext())],
+        captured,
+    )
+
+    result = asyncio.run(
+        recordcity_fetch.probe_recordcity_browser_once_async(
+            DETAIL_URL,
+            profile="patchright-current",
+        )
+    )
+
+    assert result["ready_dom"] is True
+    assert result["browser_mode"] == "headful"
+    assert (
+        captured[0]["user_data_dir"]
+        == recordcity_fetch._PERSISTENT_CHROME_CURRENT_PROBE_DIR
+    )
+    assert captured[0]["context_options"] == {"no_viewport": True}
+    assert captured[0]["channel"] == "chrome"
 
 
 def test_current_probe_tracks_render_headful_production_profile(monkeypatch):
