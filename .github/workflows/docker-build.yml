@@ -93,6 +93,7 @@ jobs:
           import asyncio
           import os
           import tempfile
+          from pathlib import Path
           from patchright.async_api import async_playwright
           from services.recordcity_virtual_display import recordcity_virtual_display
           async def smoke():
@@ -112,7 +113,14 @@ jobs:
                           page = await browser.new_page()
                           await page.goto('about:blank')
                           assert 'HeadlessChrome' not in await page.evaluate('navigator.userAgent')
-                          assert 'Google Chrome' in await page.evaluate('navigator.userAgentData.brands.map(b => b.brand).join(\" \")')
+                          assert await page.evaluate('navigator.webdriver') is False
+                          cmdlines = []
+                          for path in Path('/proc').glob('[0-9]*/cmdline'):
+                              try:
+                                  cmdlines.append(path.read_bytes().replace(b'\0', b' ').decode(errors='ignore'))
+                              except (OSError, PermissionError):
+                                  pass
+                          assert any('/opt/google/chrome/' in command for command in cmdlines)
                       finally:
                           await browser.close()
               print('Patchright persistent Chrome/Xvfb OK', flush=True)

@@ -213,7 +213,7 @@ productionは`RECORDCITY_FETCH_PROVIDER`の明示値がない限り、`RECORDCIT
 
 ### コンテナ
 
-既存の`xvfb`、`xauth`、`tini`に加え、`patchright install chrome`でbranded Google Chromeをimageへ導入する。bundled Chromiumは他サイトと旧診断profile用に残す。Render workerは`Tini → Python/RQ`で起動し、PythonがRecord City用private Xvfbを子プロセスとして起動・停止する。XvfbはTCP listenを無効にしたままbrowser-pool cleanupまで生存する。Docker CIではpersistent ChromeをXvfb上で起動し、UAから`HeadlessChrome`が消えてUA Client Hintsに`Google Chrome` brandがあること、およびSIGTERM後のcleanupとexit 0を検証する。
+既存の`xvfb`、`xauth`、`tini`に加え、`patchright install chrome`でbranded Google Chromeをimageへ導入する。bundled Chromiumは他サイトと旧診断profile用に残す。Render workerは`Tini → Python/RQ`で起動し、PythonがRecord City用private Xvfbを子プロセスとして起動・停止する。XvfbはTCP listenを無効にしたままbrowser-pool cleanupまで生存する。Docker CIではpersistent ChromeをXvfb上で起動し、実行中binaryが`/opt/google/chrome/`配下であること、UAに`HeadlessChrome`がないこと、`navigator.webdriver=false`、およびSIGTERM後のcleanupとexit 0を検証する。
 
 ## テスト結果
 
