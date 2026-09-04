@@ -85,28 +85,45 @@ jobs:
           print('All critical imports OK')
           "
 
-      - name: Smoke test - Patchright headful under Xvfb
+      - name: Smoke test - Patchright persistent Chrome under Xvfb
         timeout-minutes: 3
         run: |
-          docker run --rm -e RECORDCITY_BROWSER_PROFILE=headful esp-test:ci \
+          docker run --rm -e RECORDCITY_BROWSER_PROFILE=persistent-chrome esp-test:ci \
           timeout 90s tini -- python -c "
           import asyncio
           import os
+          import tempfile
+          from pathlib import Path
           from patchright.async_api import async_playwright
           from services.recordcity_virtual_display import recordcity_virtual_display
           async def smoke():
-              print('Starting Patchright headful/Xvfb', flush=True)
+              print('Starting Patchright persistent Chrome/Xvfb', flush=True)
               with recordcity_virtual_display():
                   assert os.environ.get('DISPLAY')
                   async with async_playwright() as driver:
-                      browser = await driver.chromium.launch(channel='chromium', headless=False, args=[])
+                      profile_dir = tempfile.mkdtemp(prefix='recordcity-chrome-smoke-')
+                      browser = await driver.chromium.launch_persistent_context(
+                          user_data_dir=profile_dir,
+                          channel='chrome',
+                          headless=False,
+                          no_viewport=True,
+                          args=[],
+                      )
                       try:
                           page = await browser.new_page()
                           await page.goto('about:blank')
                           assert 'HeadlessChrome' not in await page.evaluate('navigator.userAgent')
+                          assert await page.evaluate('navigator.webdriver') is False
+                          cmdlines = []
+                          for path in Path('/proc').glob('[0-9]*/cmdline'):
+                              try:
+                                  cmdlines.append(path.read_bytes().replace(b'\0', b' ').decode(errors='ignore'))
+                              except (OSError, PermissionError):
+                                  pass
+                          assert any('/opt/google/chrome/' in command for command in cmdlines)
                       finally:
                           await browser.close()
-              print('Patchright headful/Xvfb OK', flush=True)
+              print('Patchright persistent Chrome/Xvfb OK', flush=True)
           asyncio.run(smoke())
           "
 
@@ -115,7 +132,7 @@ jobs:
         run: |
           set -euo pipefail
           container_id=$(docker run -d \
-            -e RECORDCITY_BROWSER_PROFILE=headful \
+            -e RECORDCITY_BROWSER_PROFILE=persistent-chrome \
             esp-test:ci tini -- python -c "
           import signal
           import time

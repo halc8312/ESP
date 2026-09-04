@@ -147,7 +147,7 @@ services:
       - key: BROWSER_POOL_WARM_SITES
         value: mercari
       - key: RECORDCITY_BROWSER_PROFILE
-        value: headful
+        value: persistent-chrome
       - key: RECORDCITY_FETCH_PROVIDER
         value: browser
       - key: MERCARI_USE_BROWSER_POOL_DETAIL

@@ -154,7 +154,7 @@ Set these env vars on `esp-worker`:
 - `WARM_BROWSER_POOL=1`
 - `ENABLE_SHARED_BROWSER_RUNTIME=1`
 - `BROWSER_POOL_WARM_SITES=mercari`
-- `RECORDCITY_BROWSER_PROFILE=headful`
+- `RECORDCITY_BROWSER_PROFILE=persistent-chrome`
 - `RECORDCITY_FETCH_PROVIDER=browser`
 - `MERCARI_USE_BROWSER_POOL_DETAIL=1`
 - `MERCARI_PATROL_USE_BROWSER_POOL=1`
@@ -169,7 +169,8 @@ Deploy the worker and confirm it starts with `tini -- python worker.py` from
 `render.existing-web-addons.yaml`. Tini directly supervises and forwards
 termination signals to Python. Python owns the private Xvfb, keeps it alive
 through browser-pool cleanup, and stops it before the worker exits.
-Xvfb listens on no TCP socket, and only Record City selects headful mode.
+Xvfb listens on no TCP socket, and only Record City selects the persistent
+headful Chrome profile.
 Before deploying, confirm `WEB_PUBLIC_URL` is no longer shown as missing in the
 worker's Render Environment page and that it exactly matches the existing web
 origin. Do not use the bare service name or an internal port for this cutover

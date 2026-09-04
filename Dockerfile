@@ -39,12 +39,13 @@ WORKDIR /app
 
 COPY --from=builder /install /usr/local
 
-# Playwright / Patchright ブラウザを root で共有インストールし、非 root ユーザーでも参照可能にする
-# Chromium のみインストールし、不要なブラウザは除外
+# Playwright / Patchright ブラウザを root で共有インストールし、非 root ユーザーでも参照可能にする。
+# Chromium は既存サイト用、branded Chrome はRecord City専用のpersistent profile用。
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 ENV PATCHRIGHT_BROWSERS_PATH=/opt/ms-playwright
 RUN scrapling install \
     && patchright install chromium \
+    && patchright install chrome \
     && chmod -R 755 /opt/ms-playwright \
     && rm -rf /root/.cache /tmp/*
 

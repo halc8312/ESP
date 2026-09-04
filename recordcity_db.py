@@ -409,7 +409,7 @@ def _find_next_page_url(page, current_url: str) -> str:
     return ""
 
 
-def scrape_search_result(
+def _scrape_search_result_in_navigation_session(
     search_url: str,
     max_items: int = 5,
     max_scroll: int = 3,
@@ -485,3 +485,21 @@ def scrape_search_result(
         SITE, candidate_count=len(candidate_urls), item_count=len(results)
     )
     return results
+
+
+def scrape_search_result(
+    search_url: str,
+    max_items: int = 5,
+    max_scroll: int = 3,
+    headless: bool = True,
+) -> list:
+    """Read one listing and its products in a job-scoped browser session."""
+    from services.recordcity_browser_fetch import recordcity_navigation_session
+
+    with recordcity_navigation_session():
+        return _scrape_search_result_in_navigation_session(
+            search_url,
+            max_items=max_items,
+            max_scroll=max_scroll,
+            headless=headless,
+        )

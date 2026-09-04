@@ -9,6 +9,7 @@ from services.browser_pool import (
     get_browser_pool_health,
     get_browser_runtime,
     run_browser_page_task,
+    run_persistent_browser_page_task,
     warm_browser_pool,
 )
 from services.scraping_client import run_coro_sync
@@ -152,6 +153,222 @@ def test_shared_runtime_reuses_browser_with_fresh_context_per_page_task(monkeypa
     assert first_context is not second_context
     assert first_context.closed is True
     assert second_context.closed is True
+
+
+def test_persistent_runtime_reuses_context_and_page_state(monkeypatch):
+    captured = {}
+
+    class FakePage:
+        def __init__(self):
+            self.closed = False
+
+        def is_closed(self):
+            return self.closed
+
+        async def close(self):
+            self.closed = True
+
+    class FakeContext:
+        def __init__(self):
+            self.pages_created = []
+            self.pages = []
+            self.state = {}
+
+        async def new_page(self):
+            page = FakePage()
+            self.pages_created.append(page)
+            self.pages.append(page)
+            return page
+
+    class FakeRuntime:
+        def __init__(self):
+            self.context = FakeContext()
+
+        def submit(self, coro_factory):
+            future = Future()
+            future.set_result(run_coro_sync(coro_factory(self.context)))
+            return future
+
+    runtime = FakeRuntime()
+
+    def fake_get_browser_runtime(site, **kwargs):
+        captured.setdefault("runtime_calls", []).append({"site": site, **kwargs})
+        return runtime
+
+    monkeypatch.setattr(browser_pool, "get_browser_runtime", fake_get_browser_runtime)
+
+    async def first_task(page, context):
+        context.state["local_storage_marker"] = "retained"
+        return id(context), id(page)
+
+    async def second_task(page, context):
+        return id(context), id(page), context.state["local_storage_marker"]
+
+    first_context_id, first_page_id = run_coro_sync(
+        run_persistent_browser_page_task(
+            "recordcity_persistent_chrome",
+            first_task,
+            user_data_dir="/tmp/recordcity-profile",
+            launch_args=[],
+            context_options={"no_viewport": True},
+            automation_backend="patchright",
+            channel="chrome",
+        )
+    )
+    second_context_id, second_page_id, marker = run_coro_sync(
+        run_persistent_browser_page_task(
+            "recordcity_persistent_chrome",
+            second_task,
+            user_data_dir="/tmp/recordcity-profile",
+            launch_args=[],
+            context_options={"no_viewport": True},
+            automation_backend="patchright",
+            channel="chrome",
+        )
+    )
+
+    assert first_context_id == second_context_id == id(runtime.context)
+    assert first_page_id == second_page_id
+    assert marker == "retained"
+    assert len(runtime.context.pages_created) == 1
+    assert runtime.context.pages_created[0].closed is False
+    assert captured["runtime_calls"][0] == {
+        "site": "recordcity_persistent_chrome",
+        "launch_args": [],
+        "headless": False,
+        "automation_backend": "patchright",
+        "channel": "chrome",
+        "persistent_user_data_dir": "/tmp/recordcity-profile",
+        "persistent_context_options": {"no_viewport": True},
+    }
+
+
+def test_persistent_runtime_discards_tab_when_task_cleanup_cannot_complete(monkeypatch):
+    class FakePage:
+        def __init__(self):
+            self.closed = False
+
+        def is_closed(self):
+            return self.closed
+
+        async def close(self):
+            self.closed = True
+
+    class FakeContext:
+        def __init__(self):
+            self.page = FakePage()
+            self.pages = [self.page]
+
+        async def new_page(self):
+            raise AssertionError("the retained tab should be selected")
+
+    context = FakeContext()
+
+    class FakeRuntime:
+        def submit(self, coro_factory):
+            future = Future()
+            try:
+                future.set_result(run_coro_sync(coro_factory(context)))
+            except Exception as exc:
+                future.set_exception(exc)
+            return future
+
+    monkeypatch.setattr(
+        browser_pool,
+        "get_browser_runtime",
+        lambda *_args, **_kwargs: FakeRuntime(),
+    )
+
+    async def failing_task(_page, _context):
+        raise RuntimeError("adapter cleanup interrupted")
+
+    with pytest.raises(RuntimeError, match="cleanup interrupted"):
+        run_coro_sync(
+            run_persistent_browser_page_task(
+                "recordcity_persistent_chrome",
+                failing_task,
+                user_data_dir="/tmp/recordcity-profile",
+            )
+        )
+
+    assert context.page.closed is True
+
+
+def test_persistent_task_uses_temporary_owned_context_when_pool_is_disabled(
+    monkeypatch,
+):
+    captured = {}
+
+    class FakePage:
+        def __init__(self):
+            self.scripts = []
+
+        async def add_init_script(self, script):
+            self.scripts.append(script)
+
+    class FakeContext:
+        def __init__(self):
+            self.pages = []
+            self.page = FakePage()
+
+        async def new_page(self):
+            self.pages.append(self.page)
+            return self.page
+
+        async def close(self):
+            captured["context_closed"] = True
+
+    class FakeBrowserType:
+        async def launch_persistent_context(self, user_data_dir, **options):
+            captured["user_data_dir"] = user_data_dir
+            captured["launch_options"] = options
+            captured["context"] = FakeContext()
+            return captured["context"]
+
+    class FakePlaywright:
+        chromium = FakeBrowserType()
+
+    class FakeManager:
+        async def __aenter__(self):
+            return FakePlaywright()
+
+        async def __aexit__(self, *_args):
+            captured["manager_closed"] = True
+
+    monkeypatch.setattr(browser_pool, "get_browser_runtime", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        browser_pool,
+        "get_async_playwright_factory",
+        lambda backend: FakeManager,
+    )
+
+    async def task(page, context):
+        return page.scripts, context is captured["context"]
+
+    result = run_coro_sync(
+        run_persistent_browser_page_task(
+            "recordcity_persistent_chrome",
+            task,
+            user_data_dir="/tmp/recordcity-profile",
+            launch_args=[],
+            headless=False,
+            context_options={"no_viewport": True},
+            init_scripts=["window.__recordcity = true"],
+            automation_backend="patchright",
+            channel="chrome",
+        )
+    )
+
+    assert result == (["window.__recordcity = true"], True)
+    assert captured["user_data_dir"] == "/tmp/recordcity-profile"
+    assert captured["launch_options"] == {
+        "no_viewport": True,
+        "headless": False,
+        "args": [],
+        "channel": "chrome",
+    }
+    assert captured["context_closed"] is True
+    assert captured["manager_closed"] is True
 
 
 def test_run_browser_page_task_propagates_recordcity_profile_to_shared_runtime(monkeypatch):
