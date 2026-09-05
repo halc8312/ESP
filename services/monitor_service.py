@@ -9,7 +9,8 @@ from sqlalchemy import asc, func, or_
 from database import create_isolated_session
 from models import Product, Variant
 from services.pricing_service import product_has_pricing_config, update_product_selling_price
-from services.scrape_result_policy import normalize_status_for_persistence
+from services.scrape_result_policy import normalize_price_for_persistence, normalize_status_for_persistence
+from services.scrape_observation import classify_scrape_failure, record_observation_safely
 from time_utils import utc_now
 from utils import is_valid_detail_url
 
@@ -93,9 +94,24 @@ class MonitorService:
             "eligible_count": 0,
             "selected_count": 0,
             "updated_count": 0,
+            "successful_count": 0,
             "error_count": 0,
             "site_counts": {},
+            "site_results": {},
         }
+        site_results = summary["site_results"]
+
+        def add_result(site, outcome, reason=None):
+            counts = site_results.setdefault(
+                site, {"successful_count": 0, "error_count": 0, "inconclusive_count": 0, "reason": None}
+            )
+            counts[outcome] += 1
+            if reason and counts["reason"] is None:
+                counts["reason"] = reason
+
+        updated_count = 0
+        error_count = 0
+        successful_count = 0
         
         try:
             # Find due products by patrol cursor, independent from the
@@ -127,11 +143,10 @@ class MonitorService:
                 logger.info("No products to monitor.")
                 return summary
 
-            updated_count = 0
-            error_count = 0
-
             for product in products:
                 product_id = product.id
+                product_site = product.site
+                failure_stage = "fetch_error"
                 try:
                     logger.info(f"Patrol: {product.source_url[:50]}...")
                     
@@ -141,14 +156,18 @@ class MonitorService:
                             f"Invalid detail URL (site={product.site}), "
                             f"skipping: {product.source_url[:80]}"
                         )
+                        failure_stage = "persistence_error"
                         MonitorService._apply_backoff(product, session_db)
                         error_count += 1
+                        add_result(product_site, "error_count", "invalid_url")
                         continue
                     
                     # Choose patrol scraper
                     patrol = MonitorService._patrols.get(product.site)
                     if not patrol:
                         logger.warning(f"No patrol for site: {product.site}")
+                        error_count += 1
+                        add_result(product_site, "error_count", "unsupported_route")
                         continue
                     
                     # All sites now use driver-less scraping or manage drivers internally
@@ -169,14 +188,23 @@ class MonitorService:
                             or ("unknown patrol status" if unknown_status else "low-confidence active result")
                         )
                         logger.warning(f"Patrol failed: {failure_reason}")
+                        failure_stage = "persistence_error"
                         MonitorService._apply_backoff(product, session_db)
                         error_count += 1
+                        add_result(
+                            product_site, "error_count",
+                            classify_scrape_failure(
+                                failure_reason,
+                                default="unknown_status" if unknown_status else "missing_price" if active_missing_price else "invalid_result",
+                            ),
+                        )
                         continue
                     
                     # ---- Success: reset fail counter ----
                     product.patrol_fail_count = 0
                     product.last_patrolled_at = utc_now()
                     product.next_patrol_at = None
+                    failure_stage = "persistence_error"
 
                     # ── Mercari sold-hysteresis ──────────────────────────
                     # Soft-evidence "sold" from Mercari is not persisted
@@ -202,6 +230,7 @@ class MonitorService:
                             # Treat as unknown for this cycle — do not persist
                             product.updated_at = product.last_patrolled_at
                             session_db.commit()
+                            add_result(product_site, "inconclusive_count", "inconclusive")
                             continue
                         else:
                             logger.info(
@@ -220,7 +249,6 @@ class MonitorService:
                     )
                     
                     if changes > 0:
-                        updated_count += 1
                         logger.info(f"Updated {product.id}: {changes} changes")
                         
                         # Recalculate selling price if needed
@@ -230,6 +258,21 @@ class MonitorService:
                     # Always update timestamp even if no changes
                     product.updated_at = product.last_patrolled_at or utc_now()
                     session_db.commit()
+                    if changes > 0:
+                        updated_count += 1
+                    # A committed no-change result can be healthy. An active
+                    # result without a usable price cannot, even when the
+                    # legacy persistence policy preserves its previous price.
+                    try:
+                        observed_price = normalize_price_for_persistence(result.price)
+                    except (TypeError, ValueError, OverflowError):
+                        observed_price = None
+                    if normalized_status == "on_sale" and (observed_price is None or observed_price <= 0):
+                        error_count += 1
+                        add_result(product_site, "error_count", "missing_price")
+                    else:
+                        successful_count += 1
+                        add_result(product_site, "successful_count")
                     
                 except Exception as e:
                     logger.error(f"Error checking product {product_id}: {e}")
@@ -239,10 +282,12 @@ class MonitorService:
                     except Exception:
                         logger.exception(f"Backoff failed for product {product_id}")
                     error_count += 1
+                    add_result(product_site, "error_count", classify_scrape_failure(e, default=failure_stage))
                     continue
             
             summary["status"] = "completed"
             summary["updated_count"] = updated_count
+            summary["successful_count"] = successful_count
             summary["error_count"] = error_count
             logger.info(f"Patrol complete: {updated_count} updated, {error_count} errors")
             return summary
@@ -255,6 +300,21 @@ class MonitorService:
             return summary
         finally:
             session_db.close()
+            # Commit health records only after closing the business session:
+            # monitoring must neither detach Product objects nor block its
+            # SQLite transaction. One observation per site/batch, not per item.
+            for site, counts in site_results.items():
+                outcome = (
+                    "failure" if counts["error_count"]
+                    else "no_observations" if counts["inconclusive_count"]
+                    else "success"
+                )
+                record_observation_safely(
+                    site=site, route="patrol", outcome=outcome,
+                    reason=counts["reason"],
+                    success_count=counts["successful_count"],
+                    error_count=counts["error_count"],
+                )
             logger.info("--- Patrol Finished ---")
     
     @staticmethod
@@ -323,4 +383,3 @@ class MonitorService:
                         break
         
         return changes
-

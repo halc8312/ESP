@@ -3323,6 +3323,22 @@ def register_cli_commands(app):
         finally:
             session_db.close()
 
+    @app.cli.command("scrape-health")
+    @click.option("--fail-on-warning", is_flag=True, default=False)
+    def scrape_health(fail_on_warning):
+        """Read aggregate observation evidence; no scraping or alert delivery."""
+        from services.scrape_health import list_scrape_health
+
+        try:
+            rows = list_scrape_health()
+        except Exception as exc:
+            _emit_json({"status": "unavailable", "error_type": type(exc).__name__})
+            raise SystemExit(1)
+        verified = bool(rows) and all(row.get("status") == "healthy" for row in rows)
+        _emit_json({"status": "healthy" if verified else "not_fully_verified", "routes": rows})
+        if fail_on_warning and not verified:
+            raise SystemExit(1)
+
     @app.cli.command("worker-health")
     @click.option("--fail-on-warning", is_flag=True, default=False)
     def worker_health(fail_on_warning):

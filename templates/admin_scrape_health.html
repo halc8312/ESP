@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}スクレイピングの監視状況{% endblock %}
+{% block header_title %}スクレイピングの監視状況{% endblock %}
+{% block body_class %}has-bottom-nav wrap-fluid{% endblock %}
+
+{% block content %}
+{% set site_labels = {
+    'mercari': 'メルカリ', 'yahoo': 'Yahoo!ショッピング', 'rakuma': 'ラクマ',
+    'surugaya': '駿河屋', 'offmall': 'オフモール', 'yahuoku': 'Yahoo!オークション',
+    'snkrdunk': 'SNKRDUNK', 'recordcity': 'レコードシティ'
+} %}
+{% set route_labels = {'search': '検索から抽出', 'detail': '商品URL直接', 'patrol': '登録商品の巡回'} %}
+{% set status_labels = {
+    'healthy': '直近の観測は成功', 'degraded': '失敗を観測', 'failed': '連続失敗・未復旧',
+    'unobserved': '未観測', 'no_observations': '取得対象なし', 'stale': '観測が古い',
+    'monitoring_unavailable': '監視データを読めません'
+} %}
+{% set delivery_labels = {
+    'pending': '送信待ち', 'in_flight': '送信中', 'delivered': 'Webhook受理',
+    'unconfigured': '通知先未設定', 'cooldown': '送信間隔待ち', 'rate_limited': '送信上限待ち',
+    'failed': '送信失敗', 'exhausted': '再試行上限', 'expired': '期限切れ',
+    'superseded': '後続の状態に置換', 'deferred': '復旧の再確認待ち'
+} %}
+{% set reason_labels = {
+    'invalid_url': '未対応のURL', 'unsupported_route': '未対応の経路',
+    'access_blocked': 'アクセス制限', 'captcha': 'CAPTCHA要求', 'rate_limited': 'アクセス頻度制限',
+    'fetch_error': '取得失敗', 'invalid_result': '抽出内容の不備', 'missing_price': '価格の欠落',
+    'unknown_status': '商品状態が不明', 'persistence_error': '保存失敗',
+    'inconclusive': '判定できる観測なし', 'empty_result': '取得対象なし',
+    'timeout': '時間切れ', 'configuration_error': '設定不備', 'unknown': '未分類'
+} %}
+<div class="page-header">
+    <h1>スクレイピングの監視状況</h1>
+    <p class="page-subtitle">実際の抽出ジョブと登録商品の巡回結果を記録した、管理者専用の受動監視です。</p>
+    <p><a href="{{ url_for('admin.admin_dashboard') }}" class="btn btn-secondary">管理画面へ戻る</a></p>
+</div>
+
+<section class="content-card">
+    <div class="content-card-header"><h2>通知設定</h2></div>
+    <div class="content-card-body">
+        {% set alert_configured = health_rows[0].scrape_alert_configured if health_rows else none %}
+        {% if alert_configured is sameas true %}
+        <p><strong>通知先の設定あり（この画面のプロセス）</strong></p>
+        {% elif alert_configured is sameas false %}
+        <p><strong>通知先は未設定（この画面のプロセス）</strong></p>
+        {% else %}
+        <p><strong>通知設定を確認できません</strong></p>
+        {% endif %}
+        <p class="text-small text-muted mb-0">この画面を配信するプロセスの設定値の有無だけを確認しています。通知を送るworker側の設定・通知先の有効性・実際の受信は別途確認が必要です。通知先URLや秘密情報は表示しません。</p>
+    </div>
+</section>
+
+<section class="content-card">
+    <div class="content-card-header"><h2>この画面で確認できること</h2></div>
+    <div class="content-card-body">
+        <ul>
+            <li>この画面を開いても実サイトにはアクセスしません。未観測や取得0件は成功と数えず、過去の失敗を復旧扱いにしません。</li>
+            <li>各行は独立した経路です。検索から抽出できても、商品URL直接や巡回の成功を確認したことにはなりません。</li>
+            <li>一覧に載っていても、全サイト・全経路の定期テストが実行済み、または巡回が実装済みという意味ではありません。</li>
+            <li>レコードシティの登録商品巡回は現在未実装で、巡回の対象外です。その巡回行の未観測は、対応済み機能の故障を意味しません。</li>
+            <li>「観測が古い」は最近の実行証拠がない状態で、それだけでは故障の確定ではありません。未復旧の障害や復旧未確認の失敗は別記します。</li>
+            <li>「Webhook受理」は通知先サーバーのHTTP受理です。人が通知を受信・確認したことは保証しません。「通知履歴なし」も通知設定済みの証拠ではありません。</li>
+        </ul>
+        <p class="text-small text-muted mb-0">時刻は日本時間（JST）です。監視導入前の成功実績は自動では補完されません。</p>
+        <p class="text-small text-muted mb-0">CLIの <code>scrape-health --fail-on-warning</code> は、未実装・未観測も含む24経路すべてに成功証拠を要求します。対応経路だけに絞った判定ではありません。</p>
+    </div>
+</section>
+
+<section class="content-card">
+    <div class="content-card-header"><h2>サイト・経路別の観測</h2></div>
+    <div class="content-card-body">
+        {% if health_rows %}
+        <div class="table-responsive">
+            <table class="product-table">
+                <caption class="visually-hidden">サイトごとの検索・商品URL直接・巡回の観測と通知結果</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">サイト</th>
+                        <th scope="col">経路</th>
+                        <th scope="col">現在の観測状態</th>
+                        <th scope="col">最終成功</th>
+                        <th scope="col">最終観測</th>
+                        <th scope="col">最終失敗</th>
+                        <th scope="col" class="num">連続失敗</th>
+                        <th scope="col">理由</th>
+                        <th scope="col">直近の通知結果</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in health_rows %}
+                    <tr>
+                        <th scope="row">{{ site_labels.get(row.site, '未登録サイト') }}</th>
+                        <td>{{ route_labels.get(row.route, '未登録経路') }}</td>
+                        <td>
+                            {{ status_labels.get(row.status, '状態不明') }}
+                            {% if row.incident_open and row.status != 'failed' %}
+                            <br><strong>未復旧の障害あり</strong>
+                            {% elif row.status == 'stale' and row.consecutive_failures %}
+                            <br><strong>復旧未確認の失敗あり</strong>
+                            {% endif %}
+                        </td>
+                        <td>{{ row.last_success_at | jst(default='成功未確認') }}</td>
+                        <td>{{ row.last_observed_at | jst(default='未観測') }}</td>
+                        <td>{{ row.last_failure_at | jst(default='失敗記録なし') }}</td>
+                        <td class="num">{{ row.consecutive_failures if row.consecutive_failures is not none else '不明' }}</td>
+                        <td>{{ reason_labels.get(row.reason, '未分類') if row.reason else '—' }}</td>
+                        <td>{{ delivery_labels.get(row.latest_delivery_status, '通知状態不明') if row.latest_delivery_status else '通知履歴なし' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p role="status">監視データを確認できません。正常とは判定できません。</p>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

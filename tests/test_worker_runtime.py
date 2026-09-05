@@ -25,6 +25,7 @@ from services.worker_runtime import (
     get_worker_health_snapshot,
     inspect_patrol_heartbeat,
     inspect_scheduler_heartbeat,
+    inspect_scrape_health_review_heartbeat,
     inspect_worker_heartbeat,
     load_worker_runtime_settings,
     run_worker,
@@ -307,6 +308,7 @@ def test_patrol_scheduler_runs_immediately_with_configured_batch_size(monkeypatc
                     "status": "completed",
                     "eligible_count": 1123,
                     "selected_count": limit,
+                    "successful_count": limit - 1,
                     "updated_count": 2,
                     "error_count": 1,
                     "site_counts": {"snkrdunk": limit},
@@ -331,6 +333,74 @@ def test_patrol_scheduler_runs_immediately_with_configured_batch_size(monkeypatc
     assert captured["heartbeats"][-1]["event"] == "patrol_completed"
     assert captured["heartbeats"][-1]["last_patrol_eligible_count"] == 1123
     assert captured["heartbeats"][-1]["last_patrol_selected_count"] == 37
+    assert captured["heartbeats"][-1]["last_patrol_successful_count"] == 36
+
+
+@pytest.mark.parametrize("failure_mode", ["exception", "failed_summary", "error_summary", "empty_summary"])
+def test_scrape_health_review_scheduler_runs_passive_evaluation_and_contains_failures(
+    monkeypatch, caplog, failure_mode
+):
+    captured = {"jobs": {}, "heartbeats": [], "calls": []}
+
+    class FakeScheduler:
+        def add_job(self, *, id, func, trigger, **kwargs):
+            captured["jobs"][id] = {"func": func, "trigger": trigger, **kwargs}
+
+        def get_jobs(self):
+            return [SimpleNamespace(id=job_id) for job_id in captured["jobs"]]
+
+    app = create_app(
+        runtime_role="worker", config_overrides={"REGISTER_CLI_COMMANDS": False}
+    )
+    app.extensions["esp_scheduler"] = FakeScheduler()
+    monkeypatch.setattr(
+        "app._write_scheduler_heartbeat",
+        lambda current_app, **fields: captured["heartbeats"].append(fields),
+    )
+    monkeypatch.setattr(
+        "services.scrape_health.evaluate_scrape_health",
+        lambda: captured["calls"].append("evaluated") or {"status": "ok"},
+    )
+    # A monitor review only reads existing observations.  It must never launch
+    # the product patrol or add target-site traffic of its own.
+    monkeypatch.setattr(
+        "services.monitor_service.MonitorService.check_stale_products",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("passive health review must not scrape")
+        ),
+    )
+
+    _register_scheduler_jobs(app)
+    review_job = captured["jobs"]["scrape_health_review_job"]
+    assert review_job["trigger"] == "interval"
+    assert review_job["minutes"] == 5
+    assert review_job["max_instances"] == 1
+    assert review_job["coalesce"] is True
+    assert review_job["replace_existing"] is True
+
+    review_job["func"]()
+
+    assert captured["calls"] == ["evaluated"]
+    assert captured["heartbeats"][-1]["event"] == "scrape_health_review_completed"
+    assert captured["heartbeats"][-1]["last_scrape_health_review_completed_at"]
+
+    def fail_review():
+        if failure_mode == "failed_summary":
+            return {"status": "failed"}
+        if failure_mode == "error_summary":
+            return {"status": "error", "error_type": "OperationalError"}
+        if failure_mode == "empty_summary":
+            return {}
+        raise RuntimeError("offline review failure")
+
+    monkeypatch.setattr("services.scrape_health.evaluate_scrape_health", fail_review)
+    with caplog.at_level("WARNING", logger="app_runtime"):
+        review_job["func"]()
+
+    assert captured["heartbeats"][-1]["event"] == "scrape_health_review_failed"
+    assert captured["heartbeats"][-1]["last_scrape_health_review_failed_at"]
+    assert captured["heartbeats"][-1]["last_scrape_health_review_error"] == "RuntimeError"
+    assert "scheduler will continue" in caplog.text
 
 
 def test_worker_scheduler_lock_retry_defaults_on_for_worker_runtime():
@@ -864,15 +934,19 @@ def test_scheduler_heartbeat_inspection_requires_fresh_worker_role():
             now=now,
         ) == "stale"
 
-    redis_client.hashes["test:scheduler:heartbeat"][b"event"] = (
-        b"translation_recovery_failed"
-    )
-    assert inspect_scheduler_heartbeat(
-        redis_client,
-        key="test:scheduler:heartbeat",
-        freshness_seconds=1200,
-        now=now,
-    ) == "ok"
+    for live_event in (
+        b"translation_recovery_failed",
+        b"exchange_rate_refresh_completed",
+        b"scrape_health_review_completed",
+        b"scrape_health_review_failed",
+    ):
+        redis_client.hashes["test:scheduler:heartbeat"][b"event"] = live_event
+        assert inspect_scheduler_heartbeat(
+            redis_client,
+            key="test:scheduler:heartbeat",
+            freshness_seconds=1200,
+            now=now,
+        ) == "ok"
 
     redis_client.hashes["test:scheduler:heartbeat"][b"event"] = b"scheduler_started"
     redis_client.hashes["test:scheduler:heartbeat"][b"recorded_at"] = (
@@ -963,6 +1037,201 @@ def test_patrol_heartbeat_inspection_is_not_masked_by_other_scheduler_jobs():
         freshness_seconds=1200,
         now=now,
     ) == "failed"
+
+
+@pytest.mark.parametrize(
+    ("counts", "expected"),
+    [
+        ({"selected": "50", "error": "0"}, "ok"),
+        ({"selected": "50", "error": "1"}, "degraded"),
+        ({"selected": "50", "error": "49"}, "degraded"),
+        ({"selected": "50", "error": "50"}, "failed"),
+        ({"selected": "0", "error": "0"}, "no_observations"),
+        ({"selected": "0", "error": "1"}, "failed"),
+        ({"selected": "1", "error": "2"}, "failed"),
+        ({"selected": "-1", "error": "0"}, "failed"),
+        ({"selected": "1", "error": "-1"}, "failed"),
+        ({"selected": "1.0", "error": "0"}, "failed"),
+        ({"selected": "1", "error": "nan"}, "failed"),
+        ({"selected": "1", "error": ""}, "failed"),
+        ({"selected": "1"}, "failed"),
+        ({"error": "0"}, "failed"),
+        ({"selected": "1", "error": "0", "eligible": "0"}, "failed"),
+        ({"selected": "1", "error": "0", "eligible": "-1"}, "failed"),
+        ({"selected": "1", "error": "0", "updated": "2"}, "failed"),
+        ({"selected": "1", "error": "0", "updated": "bad"}, "failed"),
+        ({"selected": "1", "error": "0", "updated": ""}, "failed"),
+        ({"selected": "1", "error": "0", "eligible": "5", "updated": "1"}, "ok"),
+        ({"selected": "0", "error": "0", "eligible": "5"}, "no_observations"),
+        ({"selected": "5", "error": "0", "successful": "0"}, "no_observations"),
+        ({"selected": "5", "error": "1", "successful": "0"}, "failed"),
+        ({"selected": "5", "error": "0", "successful": "4"}, "degraded"),
+        ({"selected": "5", "error": "0", "successful": "5"}, "ok"),
+        ({"selected": "5", "error": "1", "successful": "4"}, "degraded"),
+        ({"selected": "5", "error": "1", "successful": "5"}, "failed"),
+        ({"selected": "5", "error": "0", "successful": "6"}, "failed"),
+        ({"selected": "5", "error": "0", "successful": "-1"}, "failed"),
+        ({"selected": "5", "error": "0", "successful": "bad"}, "failed"),
+    ],
+)
+def test_patrol_heartbeat_requires_valid_nonempty_success_evidence(counts, expected):
+    redis_client = FakeWorkerHeartbeatRedis()
+    now = datetime.now(timezone.utc)
+    key = "test:scheduler:heartbeat"
+    redis_client.hashes[key] = {
+        "runtime_role": "worker",
+        "recorded_at": now.isoformat(),
+        "event": "patrol_completed",
+        "last_patrol_completed_at": now.isoformat(),
+        "last_patrol_status": "completed",
+        **{f"last_patrol_{field}_count": value for field, value in counts.items()},
+    }
+
+    assert inspect_patrol_heartbeat(
+        redis_client, key=key, freshness_seconds=1200, now=now
+    ) == expected
+    # Failure or missing scrape observations do not claim the scheduler died.
+    assert inspect_scheduler_heartbeat(
+        redis_client, key=key, freshness_seconds=1200, now=now
+    ) == "ok"
+
+
+@pytest.mark.parametrize(
+    ("selected", "errors", "expected"),
+    [("0", "0", "no_observations"), ("1", "0", "failed"), ("0", "1", "failed")],
+)
+def test_patrol_no_products_never_proves_success(selected, errors, expected):
+    redis_client = FakeWorkerHeartbeatRedis()
+    now = datetime.now(timezone.utc)
+    key = "test:scheduler:heartbeat"
+    redis_client.hashes[key] = {
+        "runtime_role": "worker",
+        "last_patrol_completed_at": now.isoformat(),
+        "last_patrol_status": "no_products",
+        "last_patrol_selected_count": selected,
+        "last_patrol_error_count": errors,
+    }
+
+    assert inspect_patrol_heartbeat(
+        redis_client, key=key, freshness_seconds=1200, now=now
+    ) == expected
+
+
+def test_empty_patrol_does_not_hide_newer_failure_or_old_completion():
+    redis_client = FakeWorkerHeartbeatRedis()
+    now = datetime.now(timezone.utc)
+    key = "test:scheduler:heartbeat"
+    payload = {
+        "runtime_role": "worker",
+        "last_patrol_completed_at": now.isoformat(),
+        "last_patrol_failed_at": now.isoformat(),
+        "last_patrol_status": "no_products",
+        "last_patrol_selected_count": "0",
+        "last_patrol_error_count": "0",
+    }
+    redis_client.hashes[key] = payload
+
+    assert inspect_patrol_heartbeat(
+        redis_client, key=key, freshness_seconds=1200, now=now
+    ) == "failed"
+
+    del payload["last_patrol_failed_at"]
+    payload["last_patrol_completed_at"] = (now - timedelta(seconds=1201)).isoformat()
+    assert inspect_patrol_heartbeat(
+        redis_client, key=key, freshness_seconds=1200, now=now
+    ) == "stale"
+
+
+@pytest.mark.parametrize(
+    ("completed_age", "failed_age", "expected"),
+    [
+        (0, None, "ok"),
+        (900, None, "ok"),
+        (901, None, "stale"),
+        (-60, None, "ok"),
+        (-61, None, "stale"),
+        (None, None, "unavailable"),
+        (None, 0, "failed"),
+        (0, 0, "failed"),
+        (100, 10, "failed"),
+        (10, 100, "ok"),
+        (901, 1000, "stale"),
+    ],
+)
+def test_scrape_monitor_review_heartbeat_independent_of_live_scheduler(
+    completed_age, failed_age, expected
+):
+    redis_client = FakeWorkerHeartbeatRedis()
+    now = datetime.now(timezone.utc)
+    key = "test:scheduler:heartbeat"
+    payload = {
+        b"runtime_role": b"worker",
+        b"recorded_at": now.isoformat().encode(),
+        b"event": b"translation_recovery_completed",
+    }
+    if completed_age is not None:
+        payload[b"last_scrape_health_review_completed_at"] = (
+            now - timedelta(seconds=completed_age)
+        ).isoformat().encode()
+    if failed_age is not None:
+        payload[b"last_scrape_health_review_failed_at"] = (
+            now - timedelta(seconds=failed_age)
+        ).isoformat().encode()
+    redis_client.hashes[key] = payload
+
+    assert inspect_scrape_health_review_heartbeat(
+        redis_client, key=key, now=now
+    ) == expected
+    assert inspect_scheduler_heartbeat(
+        redis_client, key=key, freshness_seconds=1200, now=now
+    ) == "ok"
+
+
+def test_scrape_monitor_heartbeat_requires_completion_from_worker():
+    redis_client = FakeWorkerHeartbeatRedis()
+    now = datetime.now(timezone.utc)
+    key = "test:scheduler:heartbeat"
+    assert inspect_scrape_health_review_heartbeat(
+        redis_client, key=key, now=now
+    ) == "unavailable"
+
+    payload = {
+        "runtime_role": "web",
+        "last_scrape_health_review_completed_at": now.isoformat(),
+    }
+    redis_client.hashes[key] = payload
+    assert inspect_scrape_health_review_heartbeat(
+        redis_client, key=key, now=now
+    ) == "stale"
+
+    payload["runtime_role"] = "worker"
+    payload["last_scrape_health_review_completed_at"] = "not-a-timestamp"
+    assert inspect_scrape_health_review_heartbeat(
+        redis_client, key=key, now=now
+    ) == "unavailable"
+
+    payload["last_scrape_health_review_completed_at"] = (
+        now - timedelta(seconds=61)
+    ).isoformat()
+    assert inspect_scrape_health_review_heartbeat(
+        redis_client, key=key, freshness_seconds=60, now=now
+    ) == "stale"
+
+
+def test_scrape_monitor_heartbeat_connection_failure_exposes_only_exception_type(caplog):
+    class BrokenRedis:
+        def hgetall(self, key):
+            raise RuntimeError("redis://user:secret@example.test/0")
+
+    with caplog.at_level("WARNING", logger="worker_runtime"):
+        status = inspect_scrape_health_review_heartbeat(
+            BrokenRedis(), key="test:scheduler:heartbeat"
+        )
+
+    assert status == "unavailable"
+    assert "RuntimeError" in caplog.text
+    assert "secret" not in caplog.text
+    assert "redis://" not in caplog.text
 
 
 def test_worker_heartbeat_cleanup_deletes_only_its_unique_key():

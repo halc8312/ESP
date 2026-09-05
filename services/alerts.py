@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import threading
 import time
 from datetime import datetime, UTC
@@ -29,6 +30,7 @@ class AlertDispatcher:
         self._lock = threading.Lock()
         self._last_sent_by_key: dict[str, float] = {}
         self._global_sent_at: list[float] = []
+        self._in_flight_keys: set[str] = set()
 
     @property
     def selector_webhook_url(self) -> str:
@@ -51,6 +53,10 @@ class AlertDispatcher:
         return str(os.environ.get("OPERATIONAL_ALERT_WEBHOOK_URL", "") or "").strip()
 
     @property
+    def operational_webhook_configured(self) -> bool:
+        return bool(self.operational_webhook_url)
+
+    @property
     def operational_cooldown_seconds(self) -> int:
         return max(0, _env_int("OPERATIONAL_ALERT_COOLDOWN_SECONDS", 900))
 
@@ -68,6 +74,10 @@ class AlertDispatcher:
         if explicit:
             return explicit
         return self.selector_webhook_url or self.operational_webhook_url
+
+    @property
+    def scrape_webhook_configured(self) -> bool:
+        return bool(self.scrape_webhook_url)
 
     @property
     def scrape_cooldown_seconds(self) -> int:
@@ -92,32 +102,106 @@ class AlertDispatcher:
         payload: dict[str, Any],
         log_label: str,
     ) -> bool:
+        return self._dispatch_rate_limited_result(
+            webhook_url=webhook_url,
+            cooldown_seconds=cooldown_seconds,
+            max_per_window=max_per_window,
+            window_seconds=window_seconds,
+            key=key,
+            payload=payload,
+            log_label=log_label,
+        )["status"] == "delivered"
+
+    @staticmethod
+    def _safe_log_token(value: Any) -> str:
+        token = str(value or "")
+        return token if re.fullmatch(r"[A-Za-z0-9_]{1,80}", token) else "unknown"
+
+    def _dispatch_result(
+        self,
+        *,
+        status: str,
+        payload: dict[str, Any],
+        log_label: str,
+        error_type: str | None = None,
+    ) -> dict[str, str | None]:
+        # Never log the webhook URL, dedupe key, payload, or exception message.
+        log = logger.warning if status == "failed" else logger.debug
+        log(
+            "Alert dispatch category=%s event=%s status=%s error_type=%s",
+            self._safe_log_token(log_label.lower()),
+            self._safe_log_token(payload.get("event_type")),
+            status,
+            error_type or "none",
+        )
+        return {"status": status, "error_type": error_type}
+
+    def _dispatch_rate_limited_result(
+        self,
+        *,
+        webhook_url: str,
+        cooldown_seconds: int,
+        max_per_window: int,
+        window_seconds: int,
+        key: str,
+        payload: dict[str, Any],
+        log_label: str,
+    ) -> dict[str, str | None]:
+        """Return delivery disposition without treating a failed send as sent.
+
+        ``delivered`` means the webhook HTTP request was accepted, not that a
+        person received/read it. The injected sender must raise on rejection.
+        Cooldown, rate limiting, and in-flight reservations are process-local.
+        """
         if not webhook_url:
-            return False
+            return self._dispatch_result(status="unconfigured", payload=payload, log_label=log_label)
 
         now = time.monotonic()
+        suppressed = None
         with self._lock:
             window_start = now - window_seconds
-            self._global_sent_at = [ts for ts in self._global_sent_at if ts >= window_start]
-
-            if len(self._global_sent_at) >= max_per_window:
-                logger.debug("%s alert suppressed by global rate limit: %s", log_label, key)
-                return False
-
+            # A shorter-window category must not erase another category's
+            # longer-window history from the shared rate limit.
+            retention_seconds = max(
+                window_seconds,
+                self.selector_window_seconds,
+                self.operational_window_seconds,
+                self.scrape_window_seconds,
+            )
+            self._global_sent_at = [ts for ts in self._global_sent_at if ts >= now - retention_seconds]
+            sent_in_window = sum(ts >= window_start for ts in self._global_sent_at)
             last_sent = self._last_sent_by_key.get(key)
-            if last_sent is not None and (now - last_sent) < cooldown_seconds:
-                logger.debug("%s alert suppressed by cooldown: %s", log_label, key)
-                return False
+            if key in self._in_flight_keys:
+                suppressed = "in_flight"
+            elif last_sent is not None and (now - last_sent) < cooldown_seconds:
+                suppressed = "cooldown"
+            elif sent_in_window + len(self._in_flight_keys) >= max_per_window:
+                suppressed = "rate_limited"
+            else:
+                # Reservations prevent concurrent sends from exceeding the
+                # budget; only successful completions consume that budget.
+                self._in_flight_keys.add(key)
 
-            self._last_sent_by_key[key] = now
-            self._global_sent_at.append(now)
+        if suppressed:
+            return self._dispatch_result(status=suppressed, payload=payload, log_label=log_label)
 
+        status = "failed"
+        error_type = None
         try:
             self._sender(webhook_url, payload)
-            return True
+            status = "delivered"
         except Exception as exc:
-            logger.warning("%s alert dispatch failed for %s: %s", log_label, key, exc)
-            return False
+            error_type = self._safe_log_token(type(exc).__name__)
+        finally:
+            with self._lock:
+                self._in_flight_keys.discard(key)
+                if status == "delivered":
+                    accepted_at = time.monotonic()
+                    self._last_sent_by_key[key] = accepted_at
+                    self._global_sent_at.append(accepted_at)
+        return self._dispatch_result(
+            status=status, payload=payload, log_label=log_label, error_type=error_type
+        )
 
     def notify_selector_issue(
         self,
@@ -166,6 +250,25 @@ class AlertDispatcher:
         details: dict[str, Any] | None = None,
         dedupe_key: str = "",
     ) -> bool:
+        return self.notify_operational_issue_result(
+            event_type=event_type,
+            component=component,
+            severity=severity,
+            message=message,
+            details=details,
+            dedupe_key=dedupe_key,
+        )["status"] == "delivered"
+
+    def notify_operational_issue_result(
+        self,
+        *,
+        event_type: str,
+        component: str,
+        severity: str = "warning",
+        message: str = "",
+        details: dict[str, Any] | None = None,
+        dedupe_key: str = "",
+    ) -> dict[str, str | None]:
         key = dedupe_key or f"operational:{event_type}:{component}"
         payload = {
             "text": f"[operations][{severity}] {event_type} {component}",
@@ -178,7 +281,7 @@ class AlertDispatcher:
             "dedupe_key": key,
             "timestamp": datetime.now(UTC).isoformat(),
         }
-        return self._dispatch_rate_limited(
+        return self._dispatch_rate_limited_result(
             webhook_url=self.operational_webhook_url,
             cooldown_seconds=self.operational_cooldown_seconds,
             max_per_window=self.operational_max_per_window,
@@ -200,6 +303,29 @@ class AlertDispatcher:
         details: dict[str, Any] | None = None,
         dedupe_key: str = "",
     ) -> bool:
+        return self.notify_scrape_issue_result(
+            event_type=event_type,
+            site=site,
+            page_type=page_type,
+            field=field,
+            severity=severity,
+            message=message,
+            details=details,
+            dedupe_key=dedupe_key,
+        )["status"] == "delivered"
+
+    def notify_scrape_issue_result(
+        self,
+        *,
+        event_type: str,
+        site: str,
+        page_type: str,
+        field: str = "",
+        severity: str = "warning",
+        message: str = "",
+        details: dict[str, Any] | None = None,
+        dedupe_key: str = "",
+    ) -> dict[str, str | None]:
         key = dedupe_key or f"scrape:{event_type}:{site}:{page_type}:{field or 'general'}"
         payload = {
             "text": f"[scrape][{severity}] {event_type} {site}/{page_type}/{field or 'general'}",
@@ -214,7 +340,7 @@ class AlertDispatcher:
             "dedupe_key": key,
             "timestamp": datetime.now(UTC).isoformat(),
         }
-        return self._dispatch_rate_limited(
+        return self._dispatch_rate_limited_result(
             webhook_url=self.scrape_webhook_url,
             cooldown_seconds=self.scrape_cooldown_seconds,
             max_per_window=self.scrape_max_per_window,

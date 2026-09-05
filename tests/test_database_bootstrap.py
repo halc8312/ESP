@@ -1,4 +1,5 @@
 import logging
+from io import StringIO
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -13,7 +14,7 @@ from time_utils import utc_now
 
 # Every "upgrade runs all the way to head" assertion below shares this, so a new
 # migration only needs the revision updated in one place.
-ALEMBIC_HEAD_REVISION = "20260827_0020"
+ALEMBIC_HEAD_REVISION = "20260905_0021"
 
 
 def _coerce_datetime(value):
@@ -180,6 +181,82 @@ def test_sqlite_alembic_upgrade_keeps_existing_no_lock_behavior(monkeypatch):
 
     assert applied == "head"
     assert events == [("upgrade", "head")]
+
+
+@pytest.mark.parametrize("use_explicit_url", [True, False])
+def test_in_process_alembic_preserves_application_logging(
+    monkeypatch, tmp_path, use_explicit_url
+):
+    database_url = f"sqlite:///{(tmp_path / 'logging.sqlite').as_posix()}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    output = StringIO()
+    handler = logging.StreamHandler(output)
+    formatter = logging.Formatter("existing:%(name)s:%(message)s")
+    handler.setFormatter(formatter)
+    root = logging.getLogger()
+    root_handlers = [handler]
+    monkeypatch.setattr(root, "handlers", root_handlers)
+    monkeypatch.setattr(root, "level", logging.INFO)
+    app_logger = logging.getLogger("app_runtime")
+    worker_logger = logging.getLogger("worker_runtime")
+    app_handler = logging.StreamHandler(output)
+    app_handler.setFormatter(formatter)
+    runtime_configs = (
+        (app_logger, logging.DEBUG, [app_handler], False),
+        (worker_logger, logging.NOTSET, [], True),
+    )
+    for runtime_logger, level, handlers, propagate in runtime_configs:
+        monkeypatch.setattr(runtime_logger, "disabled", False)
+        monkeypatch.setattr(runtime_logger, "level", level)
+        # Attribute patching intentionally leaves global logger state intact;
+        # give this test fresh enablement caches for the temporary root level.
+        monkeypatch.setattr(runtime_logger, "_cache", {})
+        monkeypatch.setattr(runtime_logger, "handlers", handlers)
+        monkeypatch.setattr(runtime_logger, "propagate", propagate)
+        runtime_logger.info("logging configured before bootstrap")
+        assert (
+            f"existing:{runtime_logger.name}:logging configured before bootstrap"
+            in output.getvalue()
+        )
+
+    if use_explicit_url:
+        database.run_alembic_upgrade_for_database_url(database_url)
+    else:
+        database.run_alembic_upgrade()
+
+    assert root.level == logging.INFO
+    assert root.handlers is root_handlers
+    assert handler.formatter is formatter
+    for runtime_logger, level, handlers, propagate in runtime_configs:
+        assert runtime_logger.disabled is False
+        assert runtime_logger.level == level
+        assert runtime_logger.handlers is handlers
+        assert runtime_logger.propagate is propagate
+        runtime_logger.info("patrol completed after schema bootstrap")
+        assert (
+            f"existing:{runtime_logger.name}:patrol completed after schema bootstrap"
+            in output.getvalue()
+        )
+
+
+def test_standalone_alembic_keeps_cli_logging_configuration(monkeypatch, tmp_path):
+    from alembic import command
+    from alembic.config import Config
+
+    config = Config("alembic.ini")
+    config.attributes["configured_sqlalchemy_url"] = (
+        f"sqlite:///{(tmp_path / 'cli.sqlite').as_posix()}"
+    )
+    logging_calls = []
+    monkeypatch.setattr(
+        "logging.config.fileConfig",
+        lambda path, **kwargs: logging_calls.append((path, kwargs)),
+    )
+
+    command.upgrade(config, "head")
+
+    assert "skip_logging_config" not in config.attributes
+    assert logging_calls == [("alembic.ini", {"disable_existing_loggers": False})]
 
 
 def test_create_app_engine_normalizes_legacy_postgres_scheme(monkeypatch):
