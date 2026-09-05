@@ -13,10 +13,13 @@
 | 通常検索・直接取得 | 既存ジョブの終了時 | 8サイトのsearch/detail別に記録。検索はそのジョブの抽出経路であり、直接URL取得の独立成功とはしない |
 | 観測・通知の定期評価 | worker内、5分間隔 | DB状態と通知outboxを評価・再送。実サイトへはアクセスしない |
 | 保存fixture回帰 | GitHub Actions、毎日03:23 UTC | 保存HTML・mockで回帰を検証。現時点の実サイトのDOMや到達性を保証しない |
-| 独立稼働監視 | GitHub Actions、毎時17分UTC、明示有効化後 | ESP自身の`/stack-readyz`に1回だけ接続。worker・scheduler・巡回・監視ジョブ自身の停止を検出。全サイトの成功証明ではない |
+| 独立稼働監視 | GitHub Actions、毎時17分UTC、承認済みの有効化commit反映後 | ESP自身の`/stack-readyz`に1回だけ接続。worker・scheduler・巡回・監視ジョブ自身の停止を検出。全サイトの成功証明ではない |
 
-独立稼働監視は`ESP_MONITOR_BASE_URL`未設定なら **SKIPPED / UNCONFIGURED**。
-workflowが緑でも、このjobが未設定なら本番を監視済みとは扱わない。GitHubのスケジュールは遅延し得るため、厳密な障害検出SLAではない。
+独立稼働監視は、所有者の承認に基づくworkflow設定の変更で、既存webの`https://esp-1-kend.onrender.com`を明示的な既定値として有効化する。
+`ESP_MONITOR_BASE_URL`は任意の上書き設定であり、repository variableを登録したという意味ではない。未設定・空値なら承認済み既定値を使う。
+停止する場合はrepository variable `ESP_MONITOR_DISABLED=true`を設定する。この場合は **SKIPPED / DISABLED** と表示し、workflowが緑でも本番を監視済みとは扱わない。
+ESPへの接続は`halc8312/ESP`のdefault branchだけで実行し、PR・forkでは実行しない。workflowファイル自体がmainへ変更反映されたときにも1回確認する。
+GitHubのスケジュールは遅延し得るため、厳密な障害検出SLAではない。
 新規Render有料サービスは不要。ただしGitHub Actionsの実行時間を消費する。依存関係を入れるfixture回帰は毎日1回に限定し、契約の無料枠・課金上限は運用者が確認する。
 
 ## 管理者の確認場所
@@ -81,12 +84,12 @@ DB保存で例外が発生したジョブは`persistence_error`として失敗�
 4. workerログでINFOが維持され、`Scrape health review completed`と巡回件数が記録されることを確認する。in-process AlembicがrootログレベルをWARNへ戻す問題を修正済み。
 5. `/readyz`は既存のweb/DB/Redis readinessとして維持する。`/stack-readyz`は独立診断用で、Renderのweb再起動判定に使わない。
 6. `/stack-readyz`の`worker`、`scheduler`、`patrol`、`scrape_monitor`を確認する。空巡回は`no_observations`で503、監視評価の完了が15分超前なら`scrape_monitor=stale`。起動直後の初回評価前は未確認が正常。
-7. GitHub repository variable `ESP_MONITOR_BASE_URL`を、所有確認済みの既存web URLへ設定する。現在の候補は`https://esp-1-kend.onrender.com`。変更前にRenderで既存サービスを再確認する。
+7. Renderで既存サービスの同一性とweb・workerの反映完了を確認し、独立watchdogを有効化する承認済みworkflow変更をmainへ反映する。既定URLは`https://esp-1-kend.onrender.com`。別URLにする場合だけrepository variable `ESP_MONITOR_BASE_URL`で上書きし、接続先の所有を再確認する。
 8. host変更時だけ`ESP_MONITOR_ALLOWED_HOSTS`を設定する。watchdogは許可した正確なRender webホスト、HTTPS、`/stack-readyz`だけを許可し、redirectやqueryやcredentialsを受け付けない。
-9. main上でworkflowを手動実行し、実際の稼働監視がskipされず実行されたことを確認する。Actions通知を有効にし、受信経路を別途確認する。
+9. workflow変更のmainへのpushで起動する確認、またはmain上の手動実行で、実際の稼働監視がskipされず実行されたことを確認する。Actions通知を有効にし、受信経路を別途確認する。
 10. 通知WebhookのHTTP受理と実際の通知先での受信を確認する。受信未確認なら「通知検証完了」にしない。実サイトをわざと失敗させて試験しない。
 
-ロールバックする場合はweb/workerのコードを戻し、独立watchdogの変数を一時的に無効化する。新規テーブルは残して互換性を保つ。
+ロールバックする場合はweb/workerのコードを戻し、repository variable `ESP_MONITOR_DISABLED=true`で独立watchdogを一時停止する。URL変数を空にしても停止にはならない。再開は`ESP_MONITOR_DISABLED`を削除するか`false`へ変更する。新規テーブルは残して互換性を保つ。
 通常のコードロールバックに`alembic downgrade`は不要であり、監視履歴を消すdowngradeは承認なしに行わない。
 
 ## 残る境界
