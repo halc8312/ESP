@@ -1,4 +1,4 @@
-name: Scrape monitoring (fixtures and opt-in ESP heartbeat)
+name: Scrape monitoring (fixtures and ESP heartbeat)
 
 on:
   schedule:
@@ -7,6 +7,10 @@ on:
     # Dependency-backed fixture regression is daily, not hourly, to limit CI minutes.
     - cron: "23 3 * * *"
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/scrape-monitoring.yml"
   pull_request:
     paths:
       - ".github/workflows/scrape-monitoring.yml"
@@ -23,7 +27,7 @@ concurrency:
 jobs:
   fixture-regression:
     name: Offline regression (not live scraping proof)
-    if: github.event_name != 'schedule' || github.event.schedule == '23 3 * * *'
+    if: github.event_name != 'push' && (github.event_name != 'schedule' || github.event.schedule == '23 3 * * *')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -79,30 +83,34 @@ jobs:
           printf '%s\n' 'Offline fixtures verify regression behavior, not current marketplace availability or notification receipt.' >> "$GITHUB_STEP_SUMMARY"
 
   esp-heartbeat:
-    name: ESP heartbeat (opt-in; unconfigured is unverified)
-    # Never contact production from PRs; only the approved default-branch job.
-    if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name != 'schedule' || github.event.schedule == '17 * * * *')
+    name: ESP heartbeat (disabled is unverified)
+    # Only this repository's approved default-branch job may contact ESP.
+    # PRs and forks never contact production.
+    if: github.repository == 'halc8312/ESP' && github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name != 'schedule' || github.event.schedule == '17 * * * *')
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
-      ESP_MONITOR_BASE_URL: ${{ vars.ESP_MONITOR_BASE_URL }}
+      # Explicit owner-approved activation for the existing Render web service.
+      # A repository variable can override the URL; disabling is a separate switch.
+      ESP_MONITOR_BASE_URL: ${{ vars.ESP_MONITOR_BASE_URL || 'https://esp-1-kend.onrender.com' }}
       ESP_MONITOR_ALLOWED_HOSTS: ${{ vars.ESP_MONITOR_ALLOWED_HOSTS }}
+      ESP_MONITOR_DISABLED: ${{ vars.ESP_MONITOR_DISABLED }}
     steps:
-      - name: Report unconfigured live monitoring
-        if: env.ESP_MONITOR_BASE_URL == ''
+      - name: Report disabled live monitoring
+        if: env.ESP_MONITOR_DISABLED == 'true'
         run: |
-          printf '%s\n' '::notice::ESP runtime watchdog skipped: ESP_MONITOR_BASE_URL is unconfigured. Production health is NOT verified.'
-          printf '%s\n' 'Runtime watchdog: **SKIPPED / UNCONFIGURED — production health is not verified.** Set the repository variable ESP_MONITOR_BASE_URL only after confirming service ownership. No marketplace traffic is generated.' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' '::notice::ESP runtime watchdog skipped: ESP_MONITOR_DISABLED is true. Production health is NOT verified.'
+          printf '%s\n' 'Runtime watchdog: **SKIPPED / DISABLED — production health is not verified.** Clear ESP_MONITOR_DISABLED to resume the approved ESP heartbeat. No marketplace traffic is generated.' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@v4
-        if: env.ESP_MONITOR_BASE_URL != ''
+        if: env.ESP_MONITOR_DISABLED != 'true'
       - uses: actions/setup-python@v5
-        if: env.ESP_MONITOR_BASE_URL != ''
+        if: env.ESP_MONITOR_DISABLED != 'true'
         with:
           python-version: "3.11"
       - name: Inspect ESP stack once
-        if: env.ESP_MONITOR_BASE_URL != ''
+        if: env.ESP_MONITOR_DISABLED != 'true'
         run: python scripts/esp_health_watchdog.py
       - name: Explain independent alert mechanism
-        if: always() && env.ESP_MONITOR_BASE_URL != ''
+        if: always() && env.ESP_MONITOR_DISABLED != 'true'
         run: |
           printf '%s\n' 'One request to ESP /stack-readyz only. A failed job is the independent signal; GitHub Actions notifications must be enabled and receipt verified separately. Success does not prove every marketplace route works.' >> "$GITHUB_STEP_SUMMARY"
