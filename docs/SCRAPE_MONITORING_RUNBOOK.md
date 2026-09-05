@@ -12,7 +12,7 @@
 | 既存商品巡回 | worker内、15分間隔、既存の対象商品最大50件 | 対象7サイトの価格・在庫。商品がないサイトや検索経路は検証しない。Record City巡回adapterは未実装 |
 | 通常検索・直接取得 | 既存ジョブの終了時 | 8サイトのsearch/detail別に記録。検索はそのジョブの抽出経路であり、直接URL取得の独立成功とはしない |
 | 観測・通知の定期評価 | worker内、5分間隔 | DB状態と通知outboxを評価・再送。実サイトへはアクセスしない |
-| 保存fixture回帰 | GitHub Actions、毎日03:23 UTC | 保存HTML・mockで回帰を検証。現時点の実サイトのDOMや到達性を保証しない |
+| 保存fixture回帰 | GitHub Actions、毎日03:23 UTCと対象PR・手動実行時 | 保存HTML・mockで回帰を検証。現時点の実サイトのDOMや到達性を保証しない |
 | 独立稼働監視 | GitHub Actions、毎時17分UTC、承認済みの有効化commit反映後 | ESP自身の`/stack-readyz`に1回だけ接続。worker・scheduler・巡回・監視ジョブ自身の停止を検出。全サイトの成功証明ではない |
 
 独立稼働監視は、所有者の承認に基づくworkflow設定の変更で、既存webの`https://esp-1-kend.onrender.com`を明示的な既定値として有効化する。
@@ -20,7 +20,7 @@
 停止する場合はrepository variable `ESP_MONITOR_DISABLED=true`を設定する。この場合は **SKIPPED / DISABLED** と表示し、workflowが緑でも本番を監視済みとは扱わない。
 ESPへの接続は`halc8312/ESP`のdefault branchだけで実行し、PR・forkでは実行しない。workflowファイル自体がmainへ変更反映されたときにも1回確認する。
 GitHubのスケジュールは遅延し得るため、厳密な障害検出SLAではない。
-新規Render有料サービスは不要。ただしGitHub Actionsの実行時間を消費する。依存関係を入れるfixture回帰は毎日1回に限定し、契約の無料枠・課金上限は運用者が確認する。
+新規Render有料サービスは不要。ただしGitHub Actionsの実行時間を消費する。依存関係を入れるfixture回帰の定期実行は毎日1回に限定する。対象PR・手動実行時にも検証するが、mainへのpush時は独立稼働監視だけを実行する。契約の無料枠・課金上限は運用者が確認する。
 
 ## 管理者の確認場所
 
