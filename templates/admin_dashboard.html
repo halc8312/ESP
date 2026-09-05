@@ -8,6 +8,7 @@
 <div class="page-header">
     <h1>🎓 生徒の利用状況</h1>
     <p class="page-subtitle">つまずいている生徒に先回りで声をかけるための画面です。売上や仕入の金額は表示しません。</p>
+    <p><a href="{{ url_for('admin.admin_scrape_health') }}" class="btn btn-secondary">スクレイピングの監視状況</a></p>
 </div>
 
 {% if issued_password %}

@@ -17,6 +17,11 @@ from mercari_db import scrape_search_result, scrape_single_item
 from services.filter_service import filter_excluded_items, filter_items_by_price, normalize_price_bounds
 from services.product_service import save_scraped_items_to_db
 from services.scrape_job_runtime import run_tracked_job
+from services.scrape_observation import (
+    classify_scrape_failure,
+    inspect_scraped_items,
+    record_observation_safely,
+)
 from services.scrape_request import (
     build_search_url,
     classify_target_url,
@@ -94,14 +99,24 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
     excluded_count = 0
     search_url = ""
     normalized_price_min, normalized_price_max = normalize_price_bounds(price_min, price_max)
+    observed_site = site
+    observed_route = "search"
+    observation = None
+    failure_stage = "fetch_error"
+    smoke_result = _get_smoke_result_payload(request_payload)
+    scrape_started = False
 
     def finalize(scraped_items, target_site, *, allow_empty=True):
         nonlocal items, excluded_count, new_count, updated_count
+        nonlocal observation, failure_stage
+        failure_stage = "invalid_result"
         scraped_items = _validate_scraper_result(
             scraped_items,
             site=target_site,
             allow_empty=allow_empty,
         )
+        observation = inspect_scraped_items(scraped_items)
+        failure_stage = "persistence_error"
         filtered_items, excluded_count = filter_excluded_items(scraped_items, user_id)
         filtered_items, price_excluded_count = filter_items_by_price(
             filtered_items,
@@ -116,10 +131,10 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                 site=target_site,
                 user_id=user_id,
                 shop_id=shop_id,
+                raise_on_error=True,
             )
 
     try:
-        smoke_result = _get_smoke_result_payload(request_payload)
         if smoke_result is not None:
             smoke_error = str(smoke_result.get("error_msg") or "").strip()
             if smoke_error:
@@ -149,6 +164,8 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
 
         if target_url:
             url_kind, target_site = classify_target_url(target_url)
+            observed_site = target_site
+            observed_route = "search" if url_kind == "search" else "detail"
             if url_kind == "search":
                 search_scraper_map = {
                     "yahoo": yahoo_db.scrape_search_result,
@@ -164,6 +181,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                 search_url = target_url
                 search_limit = get_internal_search_limit(limit)
                 search_depth = get_search_depth(target_site, search_limit)
+                scrape_started = True
                 scraped = search_fn(
                     search_url=target_url,
                     max_items=search_limit,
@@ -183,6 +201,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                     "mercari": scrape_single_item,
                 }
                 scraper_fn = scraper_map[target_site]
+                scrape_started = True
                 finalize(
                     scraper_fn(target_url, headless=True),
                     target_site,
@@ -199,6 +218,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                 sort=sort,
                 category=category,
             )
+            scrape_started = True
 
             if site == "yahoo":
                 items = yahoo_db.scrape_search_result(
@@ -257,6 +277,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                 )
                 finalize(items, "recordcity")
             else:
+                observed_site = "mercari"
                 items = scrape_search_result(
                     search_url=search_url,
                     max_items=search_limit,
@@ -264,9 +285,21 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                     headless=True,
                 )
                 finalize(items, "mercari")
-    except Exception:
+    except Exception as exc:
+        if smoke_result is None and scrape_started:
+            record_observation_safely(
+                site=observed_site,
+                route=observed_route,
+                outcome="failure",
+                reason=classify_scrape_failure(exc, default=failure_stage),
+                success_count=0,
+                error_count=1,
+            )
         logger.exception("Scrape task failed for site=%s", site)
         raise
+
+    if smoke_result is None and observation is not None:
+        record_observation_safely(site=observed_site, route=observed_route, **observation)
 
     return {
         "items": items,

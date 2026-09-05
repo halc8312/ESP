@@ -1,0 +1,108 @@
+name: Scrape monitoring (fixtures and opt-in ESP heartbeat)
+
+on:
+  schedule:
+    # Off the busy top-of-hour. GitHub schedules can be delayed: not a hard SLA.
+    - cron: "17 * * * *"
+    # Dependency-backed fixture regression is daily, not hourly, to limit CI minutes.
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/scrape-monitoring.yml"
+      - "scripts/esp_health_watchdog.py"
+      - "tests/test_esp_health_watchdog.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scrape-monitoring-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fixture-regression:
+    name: Offline regression (not live scraping proof)
+    if: github.event_name != 'schedule' || github.event.schedule == '23 3 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      APP_ENV: test
+      DATABASE_URL: sqlite:///test_mercari.db
+      SECRET_KEY: ci-test-secret-key-32-characters-minimum
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Verify monitoring and saved parser fixtures
+        # No browser install, no marketplace probes, no application credentials.
+        # These tests stub fetches or parse saved/in-memory HTML.
+        run: |
+          python - <<'PY'
+          import socket
+          import pytest
+
+          def reject_network(*args, **kwargs):
+              raise AssertionError("Scheduled fixture tests must not access the network")
+
+          # Defense in depth: these tests already stub fetching. A forgotten
+          # Python socket mock must fail instead of becoming a live probe.
+          socket.create_connection = reject_network
+          socket.socket.connect = reject_network
+          socket.socket.connect_ex = reject_network
+          raise SystemExit(pytest.main([
+              "-q",
+              "tests/test_esp_health_watchdog.py",
+              "tests/test_health_route.py",
+              "tests/test_worker_runtime.py",
+              "tests/test_monitor_service.py",
+              "tests/test_scrape_health.py",
+              "tests/test_scrape_observation.py",
+              "tests/test_scrape_tasks.py",
+              "tests/test_admin_scrape_health.py",
+              "tests/test_cli_scrape_health.py",
+              "tests/test_alert_delivery.py",
+              "tests/test_scrape_alerts.py",
+              "tests/test_alerts.py",
+              "tests/test_mercari_item_parser.py",
+              "tests/test_snkrdunk_detail_parser.py",
+              "tests/test_recordcity.py",
+          ]))
+          PY
+      - name: Explain verification scope
+        if: always()
+        run: |
+          printf '%s\n' 'Offline fixtures verify regression behavior, not current marketplace availability or notification receipt.' >> "$GITHUB_STEP_SUMMARY"
+
+  esp-heartbeat:
+    name: ESP heartbeat (opt-in; unconfigured is unverified)
+    # Never contact production from PRs; only the approved default-branch job.
+    if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name != 'schedule' || github.event.schedule == '17 * * * *')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      ESP_MONITOR_BASE_URL: ${{ vars.ESP_MONITOR_BASE_URL }}
+      ESP_MONITOR_ALLOWED_HOSTS: ${{ vars.ESP_MONITOR_ALLOWED_HOSTS }}
+    steps:
+      - name: Report unconfigured live monitoring
+        if: env.ESP_MONITOR_BASE_URL == ''
+        run: |
+          printf '%s\n' '::notice::ESP runtime watchdog skipped: ESP_MONITOR_BASE_URL is unconfigured. Production health is NOT verified.'
+          printf '%s\n' 'Runtime watchdog: **SKIPPED / UNCONFIGURED — production health is not verified.** Set the repository variable ESP_MONITOR_BASE_URL only after confirming service ownership. No marketplace traffic is generated.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@v4
+        if: env.ESP_MONITOR_BASE_URL != ''
+      - uses: actions/setup-python@v5
+        if: env.ESP_MONITOR_BASE_URL != ''
+        with:
+          python-version: "3.11"
+      - name: Inspect ESP stack once
+        if: env.ESP_MONITOR_BASE_URL != ''
+        run: python scripts/esp_health_watchdog.py
+      - name: Explain independent alert mechanism
+        if: always() && env.ESP_MONITOR_BASE_URL != ''
+        run: |
+          printf '%s\n' 'One request to ESP /stack-readyz only. A failed job is the independent signal; GitHub Actions notifications must be enabled and receipt verified separately. Success does not prove every marketplace route works.' >> "$GITHUB_STEP_SUMMARY"

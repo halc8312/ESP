@@ -366,6 +366,9 @@ def _run_alembic_upgrade(
     normalized_url = normalize_database_url(database_url)
     config = Config(config_path)
     config.attributes["configured_sqlalchemy_url"] = normalized_url
+    # Bootstrap runs within web/worker processes whose logging is already set.
+    # Even disable_existing_loggers=False would replace root handlers/levels.
+    config.attributes["skip_logging_config"] = True
     with alembic_upgrade_lock(normalized_url):
         command.upgrade(config, revision)
     return revision

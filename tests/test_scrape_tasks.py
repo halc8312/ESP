@@ -138,7 +138,7 @@ def test_execute_scrape_job_uses_internal_smoke_payload(monkeypatch):
     monkeypatch.setattr("jobs.scrape_tasks.filter_items_by_price", lambda items, price_min, price_max: (items, 0))
     monkeypatch.setattr(
         "jobs.scrape_tasks.save_scraped_items_to_db",
-        lambda items, site, user_id, shop_id: save_calls.append((items, site, user_id, shop_id)) or (1, 0),
+        lambda items, site, user_id, shop_id, raise_on_error: save_calls.append((items, site, user_id, shop_id)) or (1, 0),
     )
 
     request_payload = build_scrape_task_request(

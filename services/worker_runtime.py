@@ -74,6 +74,8 @@ HEARTBEAT_OK = "ok"
 HEARTBEAT_UNAVAILABLE = "unavailable"
 HEARTBEAT_STALE = "stale"
 HEARTBEAT_FAILED = "failed"
+HEARTBEAT_DEGRADED = "degraded"
+HEARTBEAT_NO_OBSERVATIONS = "no_observations"
 _HEARTBEAT_FUTURE_SKEW_SECONDS = 60
 _SCHEDULER_LIVE_EVENTS = frozenset(
     {
@@ -85,6 +87,9 @@ _SCHEDULER_LIVE_EVENTS = frozenset(
         "patrol_failed",
         "translation_recovery_completed",
         "translation_recovery_failed",
+        "exchange_rate_refresh_completed",
+        "scrape_health_review_completed",
+        "scrape_health_review_failed",
     }
 )
 
@@ -313,7 +318,12 @@ def inspect_patrol_heartbeat(
     freshness_seconds: int,
     now: datetime | None = None,
 ) -> str:
-    """Return readiness for completed patrol work, independent of other jobs."""
+    """Describe completed patrol evidence, not scheduler or process liveness.
+
+    A fresh empty batch proves that the scheduler ran, but says nothing about
+    scraping health.  Likewise, another item's success cannot hide a partial
+    failure.  Worker and scheduler heartbeat checks remain independent.
+    """
     try:
         raw_payload = connection.hgetall(key)
         if not raw_payload:
@@ -348,16 +358,85 @@ def inspect_patrol_heartbeat(
         if status not in {"completed", "no_products"}:
             return HEARTBEAT_FAILED
 
-        try:
-            selected_count = int(payload.get("last_patrol_selected_count", "0"))
-            error_count = int(payload.get("last_patrol_error_count", "0"))
-        except (TypeError, ValueError):
+        counts: dict[str, int] = {}
+        for field in ("selected", "error", "eligible", "updated", "successful"):
+            raw_count = payload.get(f"last_patrol_{field}_count")
+            # Older heartbeat writers did not include all summary counters.
+            # Missing optional fields remain compatible; missing evidence does
+            # not silently become a successful zero-error batch.
+            if raw_count is None and field in {"eligible", "updated", "successful"}:
+                continue
+            if raw_count is None or not re.fullmatch(r"[0-9]+", raw_count):
+                return HEARTBEAT_FAILED
+            try:
+                counts[field] = int(raw_count)
+            except ValueError:
+                return HEARTBEAT_FAILED
+
+        selected_count = counts["selected"]
+        error_count = counts["error"]
+        successful_count = counts.get("successful", selected_count - error_count)
+        if (
+            error_count > selected_count
+            or successful_count + error_count > selected_count
+            or counts.get("eligible", selected_count) < selected_count
+            or counts.get("updated", 0) > selected_count
+            or (status == "no_products" and selected_count != 0)
+        ):
             return HEARTBEAT_FAILED
-        if selected_count > 0 and error_count >= selected_count:
-            return HEARTBEAT_FAILED
+        if successful_count == 0:
+            return HEARTBEAT_FAILED if error_count else HEARTBEAT_NO_OBSERVATIONS
+        if error_count > 0 or successful_count < selected_count:
+            return HEARTBEAT_DEGRADED
         return HEARTBEAT_OK
     except Exception as exc:
         logger.warning("Patrol heartbeat inspection failed: error=%s", type(exc).__name__)
+        return HEARTBEAT_UNAVAILABLE
+
+
+def inspect_scrape_health_review_heartbeat(
+    connection: Any,
+    *,
+    key: str,
+    freshness_seconds: int = 900,
+    now: datetime | None = None,
+) -> str:
+    """Check the passive monitor independently of other scheduler activity."""
+    try:
+        raw_payload = connection.hgetall(key)
+        if not raw_payload:
+            return HEARTBEAT_UNAVAILABLE
+        payload = _decode_redis_mapping(raw_payload)
+        if payload.get("runtime_role", "").strip().lower() != "worker":
+            return HEARTBEAT_STALE
+
+        completed_at = _parse_heartbeat_timestamp(
+            payload.get("last_scrape_health_review_completed_at", "")
+        )
+        failed_at = _parse_heartbeat_timestamp(
+            payload.get("last_scrape_health_review_failed_at", "")
+        )
+        if failed_at is not None and (
+            completed_at is None or failed_at >= completed_at
+        ):
+            return HEARTBEAT_FAILED
+        if completed_at is None:
+            return HEARTBEAT_UNAVAILABLE
+
+        current_time = now or datetime.now(timezone.utc)
+        age_seconds = (current_time - completed_at).total_seconds()
+        if not (
+            -_HEARTBEAT_FUTURE_SKEW_SECONDS
+            <= age_seconds
+            <= max(1, int(freshness_seconds))
+        ):
+            return HEARTBEAT_STALE
+        return HEARTBEAT_OK
+    except Exception as exc:
+        logger.warning(
+            "Scrape monitor heartbeat inspection failed: error=%s",
+            type(exc).__name__,
+        )
         return HEARTBEAT_UNAVAILABLE
 
 

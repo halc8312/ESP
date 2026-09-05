@@ -4,12 +4,14 @@ Admin routes - the school office's view of student activity.
 Only accounts with role='admin' can reach anything here; students get a 404 so
 the screen's existence is not advertised to them.
 """
+from datetime import datetime
 from functools import wraps
 
 from flask import (
     Blueprint,
     abort,
     flash,
+    make_response,
     redirect,
     render_template,
     request,
@@ -176,3 +178,57 @@ def admin_resume_student(user_id):
         )
 
     return _office_action(_handler)
+
+
+def _load_scrape_health_rows():
+    # Keep the monitoring read separate from student/account administration.
+    from services.scrape_health import list_scrape_health
+
+    return list_scrape_health()
+
+
+def _scrape_health_datetime(value):
+    """Normalize the health service's ISO UTC timestamps for the JST filter."""
+    if isinstance(value, datetime) or value is None:
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    return None
+
+
+@admin_bp.route("/admin/scrape-health")
+@admin_required
+def admin_scrape_health():
+    """Read passive, aggregate health evidence; never run a scrape on page load."""
+    rows = []
+    for observation in _load_scrape_health_rows():
+        # Explicit projection: do not accidentally expose future service fields
+        # such as request payloads, product URLs, or notification destinations.
+        row = {
+            key: observation.get(key)
+            for key in (
+                "site", "route", "status", "reason", "latest_delivery_status",
+                "consecutive_failures",
+            )
+        }
+        count = row["consecutive_failures"]
+        if type(count) is not int or count < 0:
+            row["consecutive_failures"] = None
+        row["incident_open"] = observation.get("incident_open") is True
+        configured = observation.get("scrape_alert_configured")
+        row["scrape_alert_configured"] = configured if type(configured) is bool else None
+        for key in ("last_observed_at", "last_success_at", "last_failure_at"):
+            row[key] = _scrape_health_datetime(observation.get(key))
+        rows.append(row)
+
+    response = make_response(render_template(
+        "admin_scrape_health.html",
+        health_rows=rows,
+        all_shops=[],
+        current_shop_id=None,
+    ))
+    response.headers["Cache-Control"] = "private, no-store"
+    return response

@@ -563,3 +563,65 @@ class ExchangeRate(Base):
     quote_currency = Column(String(3), nullable=False, unique=True, index=True)
     jpy_per_unit = Column(Float, nullable=False)
     fetched_at = Column(DateTime, nullable=False, default=utc_now)
+
+
+class ScrapeHealthState(Base):
+    """Operational aggregates only: never store tenant data or source URLs."""
+
+    __tablename__ = "scrape_health_states"
+    __table_args__ = (UniqueConstraint("site", "route", name="uq_scrape_health_site_route"),)
+
+    id = Column(Integer, primary_key=True)
+    site = Column(String(24), nullable=False)
+    route = Column(String(16), nullable=False)
+    last_observed_at = Column(DateTime, nullable=False)
+    last_success_at = Column(DateTime)
+    last_failure_at = Column(DateTime)
+    last_outcome = Column(String(24), nullable=False)
+    reason = Column(String(32))
+    consecutive_failures = Column(Integer, nullable=False, default=0)
+    incident_open = Column(Boolean, nullable=False, default=False)
+    incident_number = Column(Integer, nullable=False, default=0)
+    version = Column(Integer, nullable=False, default=1)
+    __mapper_args__ = {"version_id_col": version}
+
+
+class ScrapeHealthObservation(Base):
+    __tablename__ = "scrape_health_observations"
+    __table_args__ = (Index("ix_scrape_health_observation_route_time", "site", "route", "observed_at"),)
+
+    id = Column(Integer, primary_key=True)
+    site = Column(String(24), nullable=False)
+    route = Column(String(16), nullable=False)
+    observed_at = Column(DateTime, nullable=False)
+    outcome = Column(String(24), nullable=False)
+    reason = Column(String(32))
+    success_count = Column(Integer, nullable=False, default=0)
+    error_count = Column(Integer, nullable=False, default=0)
+
+
+class ScrapeHealthDelivery(Base):
+    """Durable alert outbox; accepted HTTP delivery does not imply human receipt."""
+
+    __tablename__ = "scrape_health_deliveries"
+    __table_args__ = (
+        UniqueConstraint("site", "route", "incident_number", "event_type", name="uq_scrape_health_delivery_event"),
+        Index("ix_scrape_health_delivery_due", "status", "next_attempt_at"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    site = Column(String(24), nullable=False)
+    route = Column(String(16), nullable=False)
+    incident_number = Column(Integer, nullable=False)
+    event_type = Column(String(16), nullable=False)
+    reason = Column(String(32))
+    status = Column(String(24), nullable=False, default="pending")
+    created_at = Column(DateTime, nullable=False)
+    next_attempt_at = Column(DateTime, nullable=False)
+    last_attempt_at = Column(DateTime)
+    delivered_at = Column(DateTime)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    failure_count = Column(Integer, nullable=False, default=0)
+    error_type = Column(String(80))
+    claim_token = Column(String(32))
+    lease_expires_at = Column(DateTime)

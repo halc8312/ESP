@@ -473,6 +473,7 @@ def _register_health_route(app: Flask) -> None:
                             "worker": "unavailable",
                             "scheduler": "unavailable",
                             "patrol": "unavailable",
+                            "scrape_monitor": "unavailable",
                         }
                     )
                 ready = False
@@ -484,6 +485,7 @@ def _register_health_route(app: Flask) -> None:
                     if include_stack:
                         from services.worker_runtime import (
                             inspect_patrol_heartbeat,
+                            inspect_scrape_health_review_heartbeat,
                             inspect_scheduler_heartbeat,
                             inspect_worker_heartbeat,
                         )
@@ -533,9 +535,14 @@ def _register_health_route(app: Flask) -> None:
                                 1200,
                             ),
                         )
+                        checks["scrape_monitor"] = inspect_scrape_health_review_heartbeat(
+                            redis_client,
+                            key=str(app.config.get("SCHEDULER_HEARTBEAT_KEY") or "esp:scheduler:heartbeat"),
+                            freshness_seconds=900,
+                        )
                         if any(
                             checks[name] != "ok"
-                            for name in ("worker", "scheduler", "patrol")
+                            for name in ("worker", "scheduler", "patrol", "scrape_monitor")
                         ):
                             ready = False
                 except Exception as exc:
@@ -550,6 +557,7 @@ def _register_health_route(app: Flask) -> None:
                                 "worker": "unavailable",
                                 "scheduler": "unavailable",
                                 "patrol": "unavailable",
+                                "scrape_monitor": "unavailable",
                             }
                         )
                     ready = False
@@ -877,16 +885,53 @@ def _register_scheduler_jobs(app: Flask) -> None:
                 last_patrol_status=summary.get("status", "completed"),
                 last_patrol_eligible_count=summary.get("eligible_count", ""),
                 last_patrol_selected_count=summary.get("selected_count", ""),
+                last_patrol_successful_count=summary.get(
+                    "successful_count",
+                    max(0, int(summary.get("selected_count") or 0) - int(summary.get("error_count") or 0)),
+                ),
                 last_patrol_updated_count=summary.get("updated_count", ""),
                 last_patrol_error_count=summary.get("error_count", ""),
                 last_patrol_site_counts=summary.get("site_counts", {}),
             )
-            logger.info(
+            log_patrol_summary = (
+                logger.warning
+                if summary.get("status") == "fatal_error" or summary.get("error_count", 0)
+                else logger.info
+            )
+            log_patrol_summary(
                 "Scheduler patrol run completed: runtime_role=%s duration_seconds=%s summary=%s",
                 app.config.get("ESP_RUNTIME_ROLE", "base"),
                 duration_seconds,
                 summary,
             )
+
+    def scrape_health_review_job():
+        # Passive DB/outbox review only. This job never requests marketplace pages.
+        with app.app_context():
+            try:
+                from services.scrape_health import evaluate_scrape_health
+
+                summary = evaluate_scrape_health()
+                if summary.get("status") != "ok":
+                    raise RuntimeError("scrape health review failed")
+                _write_scheduler_heartbeat(
+                    app,
+                    event="scrape_health_review_completed",
+                    last_scrape_health_review_completed_at=_utc_iso_now(),
+                    last_scrape_health_review_error="",
+                )
+                logger.info("Scrape health review completed: summary=%s", summary)
+            except Exception as exc:
+                _write_scheduler_heartbeat(
+                    app,
+                    event="scrape_health_review_failed",
+                    last_scrape_health_review_failed_at=_utc_iso_now(),
+                    last_scrape_health_review_error=type(exc).__name__,
+                )
+                logger.warning(
+                    "Scrape health review failed; scheduler will continue: error_type=%s",
+                    type(exc).__name__,
+                )
 
     def trash_purge_job():
         import logging
@@ -976,6 +1021,15 @@ def _register_scheduler_jobs(app: Flask) -> None:
         func=translation_recovery_job,
         trigger="interval",
         minutes=5,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        id="scrape_health_review_job",
+        func=scrape_health_review_job,
+        trigger="interval",
+        minutes=5,
+        max_instances=1,
+        coalesce=True,
         replace_existing=True,
     )
     app.extensions["esp_scheduler_jobs_registered"] = True
