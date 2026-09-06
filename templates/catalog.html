@@ -159,6 +159,10 @@
                     {% endif %}
                 </div>
                 <div class="product-card-actions">
+                    <button type="button" class="catalog-add-btn" data-request-product-id="{{ item.product_id }}"
+                        aria-label="Add {{ item.title_en or item.title }} to your request"{% if not item.in_stock %} disabled{% endif %}>
+                        {{ 'Add' if item.in_stock else 'Unavailable' }}
+                    </button>
                     <button type="button" class="quick-view-btn" data-product-id="{{ item.product_id }}">
                         Quick View
                     </button>
@@ -218,6 +222,75 @@
             </div>
         </div>
     </div>
+
+    <div class="catalog-request-bar" id="catalogRequestBar" hidden>
+        <button type="button" class="catalog-request-primary" id="catalogRequestOpen"
+            aria-haspopup="dialog" aria-controls="catalogRequestDialog">
+            Review request <span id="catalogRequestCount">(0)</span>
+        </button>
+    </div>
+    <p id="catalogRequestAnnounce" class="catalog-request-sr-only" role="status" aria-live="polite"></p>
+
+    <dialog id="catalogRequestDialog" class="catalog-request-dialog" aria-labelledby="catalogRequestTitle"
+        aria-describedby="catalogRequestDescription">
+        <div class="catalog-request-heading">
+            <h2 id="catalogRequestTitle" tabindex="-1">Your request</h2>
+            <button type="button" id="catalogRequestClose" class="catalog-request-close" aria-label="Close request">×</button>
+        </div>
+        <p id="catalogRequestDescription" class="catalog-request-copy">
+            Send an inquiry to this shop. This does not place an order, reserve stock or take payment.
+            The shop will confirm availability, shipping and the final price on Instagram.
+        </p>
+        <p id="catalogRequestFeedback" class="catalog-request-feedback" role="status" aria-live="polite" hidden></p>
+        <section id="catalogRequestSuccess" class="catalog-request-success" hidden>
+            <h3>Request received</h3>
+            <p>Your reference: <strong id="catalogRequestReference"></strong></p>
+            <p>The shop can now review your request and contact you on Instagram. Please keep this reference.</p>
+            <button type="button" id="catalogRequestDone" class="catalog-request-primary">Continue browsing</button>
+        </section>
+        <form id="catalogRequestForm">
+            <fieldset id="catalogRequestFields" class="catalog-request-fields">
+                <legend class="catalog-request-sr-only">Selected items and your contact details</legend>
+                <div class="catalog-request-list-heading">
+                    <h3>Selected items</h3>
+                    <button type="button" id="catalogRequestClear" class="catalog-request-text-btn">Clear all</button>
+                </div>
+                <p id="catalogRequestEmpty" class="catalog-request-copy">Add an item from this catalog to get started.</p>
+                <ul id="catalogRequestItems" class="catalog-request-items"></ul>
+                <div class="catalog-request-summary">
+                    <span id="catalogRequestSubtotalLabel">Reference subtotal (JPY)</span>
+                    <strong id="catalogRequestSubtotal">¥0</strong>
+                </div>
+                <p class="catalog-request-copy catalog-request-small">
+                    Reference prices are in Japanese yen. Shipping and any additional charges are confirmed by the shop.
+                    For sizes or colors, include your preferences in the message below.
+                </p>
+                <div class="catalog-request-contact">
+                    <label for="catalogRequestInstagram">Instagram username <span>(required)</span></label>
+                    <input id="catalogRequestInstagram" name="buyer_instagram" type="text" required maxlength="31"
+                        pattern="@?(?![.])(?!.*[.][.])(?!.*[.]$)[A-Za-z0-9._]{1,30}" placeholder="@your_username" autocomplete="off"
+                        title="Use 1–30 letters, numbers, underscores or single periods between characters."
+                        autocapitalize="none" spellcheck="false" aria-describedby="catalogRequestInstagramHelp">
+                    <p id="catalogRequestInstagramHelp" class="catalog-request-copy catalog-request-small">
+                        Enter your username, not a profile link, so the shop can reply to you.
+                    </p>
+                    <label for="catalogRequestName">Your name <span>(optional)</span></label>
+                    <input id="catalogRequestName" name="buyer_name" type="text" maxlength="100" autocomplete="name">
+                    <label for="catalogRequestMessage">Message <span>(optional)</span></label>
+                    <textarea id="catalogRequestMessage" name="message" rows="4" maxlength="2000"
+                        placeholder="Size, color, destination country, or any questions"></textarea>
+                </div>
+                <label id="catalogRequestReconfirmLabel" class="catalog-request-reconfirm" hidden>
+                    <input id="catalogRequestReconfirm" type="checkbox" disabled>
+                    <span>I have reviewed the updated items, quantities and reference prices.</span>
+                </label>
+                <p class="catalog-request-copy catalog-request-small">
+                    Your contact details, message and selected items will be shared with this shop to respond to your request.
+                </p>
+                <button type="submit" id="catalogRequestSubmit" class="catalog-request-primary">Send request</button>
+            </fieldset>
+        </form>
+    </dialog>
 
     <footer class="catalog-footer">
         {% if instagram_username %}
@@ -972,6 +1045,9 @@
             });
 
             document.addEventListener('keydown', function (event) {
+                if (document.getElementById('catalogRequestDialog').open) {
+                    return;
+                }
                 if (event.key === 'Escape') {
                     closeProductModal();
                     return;
@@ -985,6 +1061,13 @@
             });
         });
     </script>
+    <script type="application/json" id="catalogRequestConfig">{{ {
+        'token': pricelist.token,
+        'submit_url': url_for('catalog_requests.submit_request', token=pricelist.token),
+        'csrf_token': csrf_token(),
+        'items': items
+    } | tojson }}</script>
+    <script src="{{ url_for('static', filename='js/catalog_requests.js') }}" defer></script>
 </body>
 
 </html>

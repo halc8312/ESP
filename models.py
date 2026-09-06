@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
 from flask_login import UserMixin
@@ -625,3 +625,51 @@ class ScrapeHealthDelivery(Base):
     error_type = Column(String(80))
     claim_token = Column(String(32))
     lease_expires_at = Column(DateTime)
+
+
+class CatalogRequest(Base):
+    """A customer inquiry, retained independently of its catalog and products."""
+
+    __tablename__ = "catalog_requests"
+    __table_args__ = (
+        UniqueConstraint("user_id", "submission_key", name="uq_catalog_request_submission"),
+        Index("ix_catalog_request_owner_created", "user_id", "created_at", "id"),
+        Index("ix_catalog_request_owner_unread", "user_id", "viewed_at", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    reference = Column(String(20), unique=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    pricelist_id = Column(Integer, ForeignKey("price_lists.id", ondelete="SET NULL"))
+    shop_id = Column(Integer, ForeignKey("shops.id", ondelete="SET NULL"))
+    pricelist_name = Column(String, nullable=False)
+    shop_name = Column(String)
+    buyer_instagram = Column(String(30), nullable=False)
+    buyer_name = Column(String(100))
+    message = Column(Text)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    viewed_at = Column(DateTime)
+    submission_key = Column(String(32), nullable=False)
+    payload_hash = Column(String(64), nullable=False)
+
+    items = relationship(
+        "CatalogRequestItem", back_populates="catalog_request",
+        cascade="all, delete-orphan", order_by="CatalogRequestItem.id",
+    )
+
+
+class CatalogRequestItem(Base):
+    __tablename__ = "catalog_request_items"
+    __table_args__ = (
+        CheckConstraint("quantity >= 1 AND quantity <= 99", name="ck_catalog_request_quantity"),
+        Index("ix_catalog_request_item_request", "request_id"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    request_id = Column(Integer, ForeignKey("catalog_requests.id", ondelete="CASCADE"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"))
+    title_snapshot = Column(String, nullable=False)
+    price_jpy_snapshot = Column(Integer)
+    quantity = Column(Integer, nullable=False)
+
+    catalog_request = relationship("CatalogRequest", back_populates="items")

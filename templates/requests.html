@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}依頼一覧 - ESP{% endblock %}
+{% block header_title %}依頼一覧{% endblock %}
+{% block body_class %}has-bottom-nav wrap-fluid page-requests{% endblock %}
+
+{% block content %}
+<div class="request-page-heading">
+    <div>
+        <h1>依頼一覧</h1>
+        <p class="text-muted">公開カタログから届いた依頼を確認できます。すべてのショップの依頼を表示しています。</p>
+    </div>
+    <a class="btn" href="{{ url_for('pricelist.pricelist_list') }}">価格表へ</a>
+</div>
+
+<nav class="request-filters" aria-label="依頼の絞り込み">
+    <a class="btn {% if filter_mode == 'unread' %}btn-primary{% endif %}"
+       href="{{ url_for('catalog_requests.request_list', filter='unread') }}"
+       {% if filter_mode == 'unread' %}aria-current="page"{% endif %}>未確認 <span>{{ unread_count }}</span></a>
+    <a class="btn {% if filter_mode == 'all' %}btn-primary{% endif %}"
+       href="{{ url_for('catalog_requests.request_list', filter='all') }}"
+       {% if filter_mode == 'all' %}aria-current="page"{% endif %}>すべて</a>
+    <span class="text-muted">{{ total }}件</span>
+</nav>
+
+{% if catalog_requests %}
+<div class="request-list">
+    {% for entry in catalog_requests %}
+    <article class="content-card request-list-card">
+        <div class="content-card-body">
+            <div class="request-list-topline">
+                <span class="request-status {% if not entry.viewed_at %}request-status--unread{% endif %}">{{ '確認済み' if entry.viewed_at else '未確認' }}</span>
+                <span class="request-reference">{{ entry.reference }}</span>
+                <span class="text-muted request-time">{{ entry.created_at | jst }} 日本時間</span>
+            </div>
+            <div class="request-list-main">
+                <div class="request-list-copy">
+                    <h2><a href="{{ url_for('catalog_requests.request_detail', request_id=entry.id) }}">{{ entry.buyer_name or ('@' ~ entry.buyer_instagram) }} さんからの依頼</a></h2>
+                    <p>{{ entry.pricelist_name }}{% if entry.shop_name %}<span class="text-muted"> · {{ entry.shop_name }}</span>{% endif %}</p>
+                    <p class="text-muted">{{ entry.items | length }}商品 · 計{{ entry.items | sum(attribute='quantity') }}点</p>
+                </div>
+                <a class="btn btn-primary" href="{{ url_for('catalog_requests.request_detail', request_id=entry.id) }}">依頼を確認</a>
+            </div>
+        </div>
+    </article>
+    {% endfor %}
+</div>
+{% if pages > 1 %}
+<nav class="request-pagination" aria-label="依頼一覧のページ切り替え">
+    {% if page > 1 %}<a class="btn" href="{{ url_for('catalog_requests.request_list', filter=filter_mode, page=page-1) }}">前へ</a>{% endif %}
+    <span>{{ page }} / {{ pages }} ページ</span>
+    {% if page < pages %}<a class="btn" href="{{ url_for('catalog_requests.request_list', filter=filter_mode, page=page+1) }}">次へ</a>{% endif %}
+</nav>
+{% endif %}
+{% else %}
+<div class="content-card">
+    <div class="content-card-body request-empty-state">
+        <h2>{{ '未確認の依頼はありません' if filter_mode == 'unread' else 'まだ依頼はありません' }}</h2>
+        <p>お客様が公開カタログで商品を選び、依頼を送るとここに表示されます。</p>
+        {% if filter_mode == 'unread' %}<a class="btn" href="{{ url_for('catalog_requests.request_list', filter='all') }}">すべての依頼を見る</a>{% endif %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}

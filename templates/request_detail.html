@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}依頼 {{ catalog_request.reference }} - ESP{% endblock %}
+{% block header_title %}依頼の詳細{% endblock %}
+{% block body_class %}has-bottom-nav wrap-fluid page-requests{% endblock %}
+
+{% block content %}
+<div class="request-page-heading">
+    <div>
+        <a href="{{ url_for('catalog_requests.request_list', filter='all') }}">依頼一覧に戻る</a>
+        <h1>依頼の詳細</h1>
+        <p class="request-reference">{{ catalog_request.reference }}</p>
+    </div>
+    {% if not catalog_request.viewed_at %}
+    <form method="post" action="{{ url_for('catalog_requests.mark_read', request_id=catalog_request.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-primary" type="submit">確認済みにする</button>
+    </form>
+    {% else %}
+    <span class="request-status">確認済み · {{ catalog_request.viewed_at | jst }}</span>
+    {% endif %}
+</div>
+
+<div class="content-card">
+    <div class="content-card-body">
+        <h2>お客様・受付情報</h2>
+        <dl class="request-info-grid">
+            <div><dt>Instagram</dt><dd><a href="https://www.instagram.com/{{ catalog_request.buyer_instagram }}/" target="_blank" rel="noopener noreferrer">@{{ catalog_request.buyer_instagram }}</a></dd></div>
+            <div><dt>お名前</dt><dd>{{ catalog_request.buyer_name or '未記入' }}</dd></div>
+            <div><dt>受付日時（日本時間）</dt><dd>{{ catalog_request.created_at | jst }}</dd></div>
+            <div><dt>価格表</dt><dd>{{ catalog_request.pricelist_name }}</dd></div>
+            <div><dt>ショップ</dt><dd>{{ catalog_request.shop_name or '指定なし' }}</dd></div>
+        </dl>
+        <div class="request-message-block">
+            <h3>お客様からのメモ</h3>
+            <p class="request-message">{{ catalog_request.message or 'メモはありません。' }}</p>
+        </div>
+        <p class="text-muted request-followup-note">Instagramで在庫・サイズ・送料などを確認し、お客様へご案内ください。依頼の受付だけでは、購入確定や在庫の取り置きにはなりません。</p>
+    </div>
+</div>
+
+<div class="content-card">
+    <div class="content-card-body">
+        <h2>希望の商品</h2>
+        <p class="text-muted">受付時点の商品名と円価格を表示しています。価格未設定の商品は「要確認」と表示します。</p>
+        {% set amounts = namespace(total=0, incomplete=false) %}
+        <div class="request-detail-items">
+            {% for item in catalog_request.items %}
+            {% if item.price_jpy_snapshot is not none %}
+            {% set amounts.total = amounts.total + item.price_jpy_snapshot * item.quantity %}
+            {% else %}{% set amounts.incomplete = true %}{% endif %}
+            <article class="request-detail-item">
+                <h3>{{ item.title_snapshot }}</h3>
+                <dl>
+                    <div><dt>希望数量</dt><dd>{{ item.quantity }}点</dd></div>
+                    <div><dt>参考単価</dt><dd>{% if item.price_jpy_snapshot is not none %}¥{{ '{:,}'.format(item.price_jpy_snapshot) }}{% else %}要確認{% endif %}</dd></div>
+                    <div><dt>参考小計</dt><dd>{% if item.price_jpy_snapshot is not none %}¥{{ '{:,}'.format(item.price_jpy_snapshot * item.quantity) }}{% else %}要確認{% endif %}</dd></div>
+                </dl>
+            </article>
+            {% endfor %}
+        </div>
+        <div class="request-subtotal">
+            <span>{{ '価格がある商品の参考合計' if amounts.incomplete else '参考合計' }}（送料別）</span>
+            <strong>¥{{ '{:,}'.format(amounts.total) }}</strong>
+        </div>
+        {% if amounts.incomplete %}<p class="text-muted">価格の確認が必要な商品は、この合計に含まれていません。</p>{% endif %}
+    </div>
+</div>
+{% endblock %}
