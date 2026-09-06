@@ -589,8 +589,20 @@ class TestCatalogPriceFilterFollowsCurrency:
         """
         source = _read("templates/catalog.html")
 
-        assert "in Japanese yen" not in source
-        assert "' price in ' + currency" in source
+        # The request form has separate fixed-JPY prices. Only these filter
+        # inputs must follow the currency selected for browsing the catalog.
+        for input_id in ("priceMin", "priceMax"):
+            input_tag = re.search(rf'<input\b[^>]*\bid="{input_id}"[^>]*>', source)
+            assert input_tag is not None
+            label = re.search(r'\baria-label="([^"]*)"', input_tag.group())
+            assert label is not None
+            assert "in Japanese yen" not in label.group(1)
+
+        start = source.index("function syncPriceFilterHeading(")
+        body = source[start:source.index("function filterProducts(", start)]
+        assert "const currency = getSelectedCurrency();" in body
+        assert "[['priceMin', 'Minimum'], ['priceMax', 'Maximum']]" in body
+        assert "input.setAttribute('aria-label', entry[1] + ' price in ' + currency);" in body
 
     def test_switching_currency_refilters(self):
         source = _read("templates/catalog.html")

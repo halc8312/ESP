@@ -321,6 +321,7 @@ def _register_blueprints(app: Flask) -> None:
     from routes.archive import archive_bp
     from routes.auth import auth_bp
     from routes.catalog import catalog_bp
+    from routes.catalog_requests import catalog_requests_bp
     from routes.export import export_bp
     from routes.import_routes import import_bp
     from routes.main import main_bp
@@ -348,6 +349,7 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(trash_bp)
     app.register_blueprint(pricelist_bp)
     app.register_blueprint(catalog_bp)
+    app.register_blueprint(catalog_requests_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(translation_bp)
     app.register_blueprint(bg_removal_bp)
@@ -695,6 +697,11 @@ def _register_error_handlers(app: Flask) -> None:
         )
         message = "ページを開いたまま時間が経ったため、送信できませんでした。お手数ですが、もう一度お試しください。"
 
+        if request.endpoint == "catalog_requests.submit_request":
+            return {
+                "error": "Your session expired. Please reload the catalog and try again.",
+                "code": "csrf_failed",
+            }, 400
         if request.endpoint == "auth.login":
             return render_template("login.html", error=message), 400
         return render_template("error.html", code=400, message=message), 400
