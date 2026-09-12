@@ -1,69 +1,28 @@
 # ESP — 日本向けマーケットプレイス 商品管理・スクレイピングシステム
 
-> 複数の日本語ECサイトから商品情報を自動収集し、Shopify / eBay への一括出品・在庫管理を支援する  
-> Flask ベースの Web アプリケーションです。
+> 日本語ECサイトの商品情報を収集し、商品・販売価格・公開カタログの管理と、Shopify / eBay向けCSV出力を支援するFlaskアプリケーションです。
 
----
+このREADMEは、2026-09-12時点の実装（照合元: `72a8e6df47ebd9ec2bf4d4047b4511f325ec4317`）に合わせて整理しています。**実装が存在することと、外部サイト・外部API・デプロイ先で現在利用できることは別です。** 調査時に見つかった制約・改善事項は[リポジトリ横断レビュー](docs/REPOSITORY_REVIEW_2026-09-12.md)を参照してください。
 
 ## AI Agent Quick Start
 
-このリポジトリは、Claude Code / Codex などの AI エージェントがユーザー指示を受けて継続的に編集する前提です。まず以下を押さえてください。
+変更前に[AGENTS.md](AGENTS.md)を読み、実装・設定・運用手順を照合してください。
 
-### 現在の前提
+- 本番の運用前提は **`esp-web` + `esp-worker` + `esp-keyvalue` + `esp-postgres`** のsplit構成です。[render.yaml](render.yaml)がリポジトリ側の構成契約です。Dashboardの実設定・稼働状況は別途確認し、READMEだけから稼働確認済みと判断しないでください。
+- `worker.py`はRQ専用entrypointです。定期処理のownerはworker側に置き、web側のschedulerは無効にします。`single-web`系はローカル・legacy互換用途です。
+- 公開カタログに`source_url`、`site`、仕入れ先URLなどの内部情報を出さないでください。ユーザー・ショップ・価格表の所有権境界を維持してください。
+- 本番の`SECRET_KEY`、DB、Redis、キュー名、画像処理用共有secretの契約をweb / worker間で揃えてください。設定不足を開発用デフォルトで回避しないでください。
+- `llama.cpp/`は明示指示がない限り変更しないでください。デプロイ・DB移行・サービス増設は、文書修正とは別の操作です。
 
-- 現在の live Render は **split topology (`esp-web` + `esp-worker` + `esp-postgres` + `esp-keyvalue`)** を前提にします
-- `single-web` 系のコマンドと runbook は **互換確認 / legacy 運用向け** に残っています
-- `worker.py` は RQ / split worker 用の dedicated entrypoint です
-- 公開カタログでは **`source_url` / `site` などの内部仕入れ情報を出さない** のが必須です
-- `llama.cpp/` は同梱コードです。**明示指示がない限り触らない** でください
+| 変更箇所 | 主な入口 |
+|---|---|
+| 商品一覧・編集 | `routes/main.py`, `routes/api.py`, `routes/products.py`, `templates/index.html`, `templates/product_detail.html` |
+| 商品抽出 | `routes/scrape.py`, `jobs/scrape_tasks.py`, `services/scrape_request.py` |
+| 公開価格表・問い合わせ | `routes/pricelist.py`, `routes/catalog.py`, `routes/catalog_requests.py` |
+| 翻訳・画像処理 | `routes/translation.py`, `services/translator/`, `routes/bg_removal.py`, `services/bg_remover/` |
+| 起動・運用 | `app.py`, `worker.py`, `services/worker_runtime.py`, `cli.py`, `render.yaml` |
 
-### Render 上のサービス構成
-
-- **現在の live 構成**: `esp-web`（web service）, `esp-worker`（background worker）, `esp-keyvalue`（Valkey/Redis）, `esp-postgres`（PostgreSQL）
-- **現在の live 構成**: scheduler owner は `esp-worker` 側を前提にします
-- **single-web 構成**: ローカル互換確認や legacy runbook のためにコマンド群は残しています
-- `render.yaml` は上記 split 構成の参照元として扱い、Dashboard 側の実設定と齟齬を作らないでください
-
-### 最初に見るべきファイル
-
-- 商品一覧: `routes/main.py`, `routes/api.py`, `templates/index.html`
-- 商品編集: `routes/products.py`, `templates/product_detail.html`
-- 商品抽出: `routes/scrape.py`, `templates/scrape_form.html`, `static/js/scrape_form.js`
-- 価格表管理: `routes/pricelist.py`, `templates/pricelist_edit.html`
-- 公開カタログ: `routes/catalog.py`, `templates/catalog.html`
-- worker / deploy: `worker.py`, `services/worker_runtime.py`, `app.py`, `render.yaml`
-- 主要 E2E: `tests/test_e2e_routes.py`, `tests/test_worker_runtime.py`, `tests/test_worker_entrypoint.py`
-
-### 変更時の禁止事項
-
-- live Render を single-web 前提だと決めつけない
-- 公開カタログに内部仕入れ情報を復活させない
-- ユーザー分離、ショップ分離、価格表分離を壊さない
-- `SECRET_KEY` の未設定本番起動を正当化しない
-- Render の web / worker / postgres / keyvalue 間の env 契約を崩さない
-
-### まず使う検証コマンド
-
-```bash
-# UI / ルート変更
-pytest tests/test_e2e_routes.py -q
-
-# worker / runtime 変更
-pytest tests/test_worker_entrypoint.py tests/test_worker_runtime.py -q
-
-# legacy single-web 互換 path の再確認
-flask single-web-redeploy-readiness
-
-# 現行 split-render 前提確認
-flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict
-```
-
-### 現時点で実装済み / 未実装
-
-- 実装済み: 商品一覧 / 商品編集 / 商品抽出 UI の整理、公開価格表の複数レイアウト、Quick View、検索、テーマ固定、ショップ紐づけロゴ表示、商品画像アップロード、検索URL自動判定抽出、プレビュー×除外＋商品リストのみ登録（`is_listed=False`）、翻訳ワークフロー（登録時自動英訳 / 手動レビュー適用 / Argos・OpenAI対応）、デフォルト利益ルール自動適用
-- 未実装 / 要仕様確認: 画像白抜き、価格表カテゴリ絞り込み、PayPal 連携
-
-詳細な運用手順は `docs/RENDER_CUTOVER_RUNBOOK.md` を優先し、legacy single-web 確認が必要な場合だけ `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` を参照してください。
+主な検証入口は`python -m pytest tests/test_e2e_routes.py -q`と`python -m pytest tests/test_worker_entrypoint.py tests/test_worker_runtime.py -q`です。本番splitの運用手順は[RENDER_CUTOVER_RUNBOOK](docs/RENDER_CUTOVER_RUNBOOK.md)、legacy互換は[SINGLE_WEB_REDEPLOY_RUNBOOK](docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md)を参照してください。
 
 ---
 
@@ -89,716 +48,509 @@ flask render-cutover-readiness --require-backend postgresql --apply-migrations -
 
 ## 1. プロジェクト概要
 
-**ESP** は、日本国内の主要フリマ・ショッピングサイトから商品情報をスクレイピングし、  
-以下の一連のワークフローを自動化・管理するツールです。
+ESPは、仕入れ候補の収集から編集、翻訳、価格設定、公開カタログ、CSV出力までを管理します。
 
-```
-仕入れサイトの商品を検索・抽出
-        ↓
-商品データ（タイトル・価格・画像・バリエーション）を DB に保存
-        ↓
-価格計算ルールを適用して販売価格を自動算出
-        ↓
-Shopify 用 CSV を生成して一括出品
-        ↓
-15 分ごとのパトロールで価格変動・売り切れを自動検知
+```text
+キーワード / 商品URL / 検索結果URL
+    → 抽出ジョブ → プレビュー・選択登録 → Product / Variant等を保存
+    → 商品編集・翻訳・画像加工・販売価格設定
+    → 公開カタログ / Shopify・eBay向けCSV
+
+定期パトロール → 対象商品の価格・状態・在庫をバッチ更新
 ```
 
----
+CSV出力は外部サービスへのAPI自動出品・決済完了を意味しません。公開カタログのリクエスト受付も、在庫予約や決済処理とは別の機能です。
 
 ## 2. 主要機能
 
-### 商品抽出・商品登録
-- **キーワード商品抽出** — サイトと検索条件（キーワード、価格帯、件数）を指定して一括取得
-- **単品 URL 商品抽出** — 商品 URL を直接指定して詳細情報を取得
-- **検索 URL 自動判定** — 貼り付けた URL が単品か検索結果かを自動判定し、適切な抽出モードで実行
-- **同画面プレビュー + 選択登録** — 抽出結果をサムネイルで確認し、必要な商品だけ登録（× ボタンで個別除外可能）
-- **商品リストのみ登録** — 商品一覧に表示せず顧客用リストにのみ登録するオプション（`is_listed=False`）
-- **登録時自動英訳** — 登録と同時に翻訳ジョブを実行し、完了後に自動適用（Argos / OpenAI 対応）
-- **登録時デフォルト利益上乗せ** — ユーザー設定のデフォルト価格ルールを自動適用して販売価格を算出
-- **非同期キューシステム** — `inmemory` / `rq` の両対応。複数の取得ジョブを並列処理（HTTP 最大 10 並列、ブラウザ 2 並列）
-- **手動商品登録** — 商品抽出を使わずに直接登録
-- **CSV インポート** — 一括商品インポート
+| 分野 | 実装されている機能と条件 |
+|---|---|
+| 商品抽出 | キーワード、単品URL、検索結果URLの判定・抽出、価格帯・除外キーワードのフィルター、結果プレビューと選択登録。Record Cityを含む8サイトの抽出経路があります |
+| 非同期処理 | 開発・互換用`inmemory`と、本番split用`rq`。抽出ジョブの状態・進捗・結果・イベントはDBにも記録します |
+| 商品管理 | 日本語・英語のタイトル／説明、タグ、Vendor、SEO、バリエーション、画像URL・アップロード・並び替え、説明文テンプレート、ゴミ箱・アーカイブ、履歴 |
+| 登録・価格 | 手動登録、CSVインポート、商品リストのみの登録（`is_listed=False`）、登録時のデフォルト価格ルール適用、商品別・バリエーション別販売価格 |
+| 翻訳 | Argos / OpenAI、登録時自動翻訳、提案のレビュー・適用、原文ハッシュと手動編集の保護。OpenAI設定でもArgosへのフォールバック経路があります |
+| 画像白抜き | rembgによる背景除去ジョブ、結果の確認・適用・却下。モデル、キュー、webへの結果返送設定が必要です。実装済みですが利用可能性は実推論で確認してください |
+| 公開カタログ | トークンURL、複数レイアウト、テーマ、検索、タグ絞り込み、Quick View、ショップロゴ、公開期限、価格・為替関連表示、閲覧記録 |
+| カタログリクエスト | 商品・価格のスナップショットを伴う受付と状態管理。予約・注文確定・決済ではありません |
+| アカウント | ログイン、ユーザー・ショップごとの管理、`student` / `admin`ロール、利用停止状態。一般ユーザー作成と管理権限の付与は別操作です |
+| メール | Resend送信基盤と設定確認・テスト送信CLI。標準は無効で、APIキーだけでは送信を開始しません。業務イベントの自動通知を一括して保証する機能ではありません |
+| 運用 | ヘルスチェック、worker / scheduler heartbeat、抽出観測・アラート、セレクター修復候補と検証、DB・stack・デプロイ診断CLI |
 
-### 商品データ管理
-- 日本語 / 英語のタイトル・説明文・タグ・Vendor・SEO 設定の編集
-- 商品一覧からの英語名・販売価格インライン編集
-- 商品画像の URL 追加 / アップロード / 並び替え / 削除
-- **バリエーション（カラー・サイズ等）** の CRUD および一括生成ウィザード
-- **説明文テンプレート** 機能（複数テンプレートの使い回し・一括適用）
-- ソフトデリート（ゴミ箱）＆アーカイブ（SOLD 管理）
-- スナップショット履歴（価格・ステータスの変更履歴）
-
-### 価格計算
-- **動的価格計算**: `販売価格 = (仕入値 + 送料) × (1 + 利益率%) + 固定費`
-- ユーザーごとの価格ルール CRUD
-- API 経由での一括価格更新（固定額・利益率・複合の各モード）
-
-### エクスポート
-| エクスポート種別 | 形式 | 主な用途 |
-|---|---|---|
-| Shopify 商品登録 CSV | Shopify 標準 | 新規出品・更新 |
-| Shopify 在庫更新 CSV | Handle + Qty | 在庫数同期 |
-| Shopify 価格更新 CSV | Handle + Price | 価格差分更新 |
-| eBay File Exchange CSV | eBay 標準 | eBay 一括出品 |
-
-### 公開カタログ
-- トークンベースの公開価格表（仕入れ先バイヤー向け）
-- レイアウト選択（グリッド / エディトリアル / リスト）
-- 価格表ごとのベーステーマ固定（ダーク / ライト）
-- 商品検索、Quick View、ショップロゴ表示
-- 公開ページでは `source_url` / `site` などの内部仕入れ情報を非表示
-- ページビュー解析（IP ハッシュ・リファラー・UA）
-- 通貨変換（JPY → USD）
-
-### ユーザー・ショップ管理
-- マルチユーザー対応（Flask-Login によるセッション管理）
-- ユーザーごとに複数ショップ（Shopify アカウント）を管理
-- 商品・価格表はユーザーごとに完全分離
-
-### その他
-- **除外キーワードフィルター**（部分一致 / 完全一致）
-- **セルフヒーリング CSS セレクター**（サイト変更時に自動修復）
-- **スクレイピングメトリクス** とヘルスチェック
-
----
+セレクター修復は設定・対象サイト・検証条件に依存します。「全サイトのDOM変更を無条件で自動修復する」ものとして扱わないでください。
 
 ## 3. 対応スクレイピングサイト
 
-| サイト | URL | 取得方式 | 検索 | 詳細 | パトロール |
-|--------|-----|---------|------|------|------------|
-| **メルカリ** | jp.mercari.com | Playwright (StealthyFetcher) | ✅ | ✅ | ✅ |
-| **ラクマ** | fril.jp / item.fril.jp | Playwright（検索）+ HTTP（詳細） | ✅ | ✅ | ✅ |
-| **Yahoo!ショッピング** | shopping.yahoo.co.jp | HTTP（JSON in page） | ✅ | ✅ | ✅ |
-| **ヤフオク!** | auctions.yahoo.co.jp | HTTP（埋め込み JSON） | ✅ | ✅ | ✅ |
-| **駿河屋** | suruga-ya.jp | HTTP（JSON-LD） | ✅ | ✅ | ✅ |
-| **オフモール** | netmall.hardoff.co.jp | HTTP（JSON-LD） | ✅ | ✅ | ✅ |
-| **SNKRDUNK** | snkrdunk.com | 動的フェッチ（検索）+ HTTP（詳細） | ✅ | ✅ | ✅ |
+表の「実装あり」はコード上の対応範囲です。サイト側の変更・アクセス制限や実行環境により取得に失敗する場合があり、現在の到達性を保証しません。
 
-> **Selenium 不使用**: 2026-03-10 の Stage 4b 完了により、全サイトが Playwright + HTTP（Scrapling）に移行済みです。
+| サイト | 主なドメイン | 検索・詳細抽出 | 定期パトロール |
+|---|---|---|---|
+| メルカリ | `jp.mercari.com` | 実装あり | 対象 |
+| ラクマ | `fril.jp`, `item.fril.jp` | 実装あり | 対象 |
+| Yahoo!ショッピング | `shopping.yahoo.co.jp` | 実装あり | 対象 |
+| ヤフオク! | `auctions.yahoo.co.jp` | 実装あり | 対象 |
+| 駿河屋 | `suruga-ya.jp` | 実装あり | 対象 |
+| オフモール | `netmall.hardoff.co.jp` | 実装あり | 対象 |
+| SNKRDUNK | `snkrdunk.com` | 実装あり | 対象 |
+| Record City（レコードシティ） | `recordcity.jp` | 実装あり | **現行の対象リストには含まれない** |
 
----
+根拠: [抽出リクエスト](services/scrape_request.py)、[抽出タスク](jobs/scrape_tasks.py)、[監視サービス](services/monitor_service.py)。抽出対応数とパトロール対応数を混同しないでください。
+
+取得にはサイト別のHTTP・DOMパーサー・Scrapling・Playwright / Patchright経路を使います。フォールバックもあるため、固定の「各サイトは常にHTTPのみ」という説明は避けています。Record Cityは`RECORDCITY_FETCH_PROVIDER`で経路を明示選択し、Blueprintのworkerは`browser` + `persistent-chrome`を使用します。外部providerのcredentialを設定しただけではproduction取得経路を変更しません。
+
+`persistent-chrome`はRecord City専用のbranded Chrome + Patchright persistent contextをXvfb上で動かす構成です。**DockerfileにはChromeのインストール処理があります。** 通常のローカル既定値`headless`とは必要なブラウザ・表示環境が異なります。
 
 ## 4. 技術スタック
 
-### Web フレームワーク
-| ライブラリ | バージョン | 用途 |
-|---|---|---|
-| Flask | `requirements.txt` で固定 | Web フレームワーク |
-| SQLAlchemy | `requirements.txt` で固定 | ORM |
-| Flask-Login | `requirements.txt` で固定 | 認証・セッション |
-| Flask-APScheduler | `requirements.txt` で固定 | バックグラウンドスケジューラ |
-| Gunicorn | `requirements.txt` で固定 | WSGI 本番サーバー |
+直接依存のバージョンは[requirements.txt](requirements.txt)、開発用は[requirements-dev.txt](requirements-dev.txt)を参照してください。直接依存の固定だけで推移依存まで固定されるわけではありません。
 
-### スクレイピング・HTTP
-| ライブラリ | バージョン | 用途 |
-|---|---|---|
-| Scrapling | `requirements.txt` で固定 | 高速 HTTP クライアント（Fetcher / StealthyFetcher） |
-| Playwright | `requirements.txt` で固定 | ブラウザ自動操作（JS 重複サイト用） |
-| Patchright | `requirements.txt` で固定 | Playwright ブラウザバイナリ管理 |
-| curl_cffi | `requirements.txt` で固定 | アンチボット HTTP クライアント |
-| BeautifulSoup4 | `requirements.txt` で固定 | HTML パース |
-| requests | `requirements.txt` で固定 | HTTP クライアント（補助用） |
+| 層 | 主な構成 |
+|---|---|
+| 実行環境 | Python 3.11をDocker / CIで使用 |
+| Web・認証 | Flask、Flask-Login、Flask-WTF、Gunicorn |
+| DB・マイグレーション | SQLAlchemy、Alembic、psycopg、SQLite / PostgreSQL |
+| ジョブ・定期処理 | Redis / Valkey、RQ、Flask-APScheduler |
+| 取得・解析 | Scrapling、Playwright、Patchright、curl_cffi、BeautifulSoup4、requests、msgspec |
+| 翻訳・画像 | Argos Translate、OpenAI SDK、Pillow、rembg |
+| 表示・安全性 | Jinja2、CSS / JavaScript、nh3によるHTMLサニタイズ |
+| コンテナ・運用 | Python 3.11-slim、Tini、Xvfb、Render Blueprint、GitHub Actions |
 
-### データ処理・その他
-| ライブラリ | バージョン | 用途 |
-|---|---|---|
-| msgspec | `requirements.txt` で固定 | 高速 JSON シリアライズ |
-| browserforge | `requirements.txt` で固定 | ブラウザフィンガープリント生成 |
-| nh3 | `requirements.txt` で固定 | HTML サニタイズ |
-| argostranslate / openai | `requirements.txt` で固定 | 翻訳バックエンド |
-| Pillow / rembg | `requirements.txt` で固定 | 画像処理 |
-
-### インフラ
-- **コンテナ**: Docker（Python 3.11-slim ベース）
-- **DB**: SQLite（デフォルト）/ PostgreSQL・MySQL（DATABASE_URL 指定時）
-- **設定**: 環境変数
-
----
+SQLiteはローカルの既定値、PostgreSQLは本番splitの構成です。MySQL用ドライバーや検証環境はこの構成に含まれないため、MySQLを同等の検証済みバックエンドとしては案内しません。
 
 ## 5. システムアーキテクチャ
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                   Flask Web アプリケーション                    │
-├────────────────────────────────────────────────────────────────┤
-│  ルート (13 ブループリント)                                     │
-│  main / products / scrape / export / api                        │
-│  auth / shops / pricing / pricelist / catalog                   │
-│  archive / trash / settings / import_routes                     │
-├────────────────────────────────────────────────────────────────┤
-│  サービス層 (15 モジュール)                                     │
-│  ┌─────────────────┐  ┌──────────────────┐                   │
-│  │ scrape_queue    │  │ monitor_service   │ ← APScheduler      │
-│  │ product_service │  │ pricing_service   │                    │
-│  │ image_service   │  │ filter_service    │                    │
-│  │ selector_healer │  │ patrol/ (×7)      │                    │
-│  └─────────────────┘  └──────────────────┘                   │
-├────────────────────────────────────────────────────────────────┤
-│  スクレイパー層 (7 モジュール)                                  │
-│  mercari / rakuma / yahoo / yahuoku                             │
-│  surugaya / offmall / snkrdunk                                  │
-├────────────────────────────────────────────────────────────────┤
-│  スクレイピングクライアント                                     │
-│  fetch_static (Scrapling Fetcher)                               │
-│  fetch_dynamic (Playwright StealthyFetcher)                     │
-├────────────────────────────────────────────────────────────────┤
-│  外部サイト (7 日本語 EC サイト)                                │
-└────────────────────────────────────────────────────────────────┘
-              ↕
-┌────────────────────────────────────────────────────────────────┐
-│  データベース (SQLite / PostgreSQL)  ← 13 モデル               │
-└────────────────────────────────────────────────────────────────┘
+```text
+利用者・公開カタログ閲覧者
+             │
+             ▼
+esp-web: Gunicorn / Flask
+  routes / 認証・所有権確認 / 公開表示 / CSV / media配信
+       │                     │
+       │ enqueue             │ 永続データ
+       ▼                     ▼
+esp-keyvalue            esp-postgres
+  Redis / Valkey          商品・アカウント・価格表
+  RQ / lock / heartbeat   ジョブ・提案・画像処理状態・観測
+       │                     ▲
+       ▼                     │
+esp-worker: tini -- python worker.py
+  RQ SimpleWorker / browser runtime
+  抽出・翻訳・画像処理 / worker所有APScheduler
+       │
+       └─ 画像処理結果を共有secretで認証してwebへ返送
+                         │
+                         ▼
+                 webの永続ディスク
+                 /var/data/images
 ```
 
-### スクレイプキューシステム
+### 本番splitとローカル互換の違い
 
-- **プロセス内インメモリキュー**（`services/scrape_queue.py`）
-- ThreadPoolExecutor で HTTP（最大 10 並列）とブラウザ（最大 2 並列）を分離
-- ジョブ状態: `QUEUED → RUNNING → COMPLETED / FAILED`
-- ⚠️ Gunicorn は必ず `--workers 1` で運用（インメモリのため複数ワーカー不可）
+| 項目 | `rq` / split | `inmemory` / 単一プロセス |
+|---|---|---|
+| 実行主体 | dedicated `worker.py` | webプロセス内のキュー |
+| 状態 | RQとDBのジョブ記録を利用 | プロセス内の実行管理。DB記録があっても実行中スレッドは再起動で消失 |
+| 並列性 | 現行entrypointは`SimpleWorker`。`scrape`と`media`のキューを受け持つ | ThreadPoolExecutorのHTTP / browser実行枠 |
+| scheduler | 指定したworker 1台が所有 | `WEB_SCHEDULER_MODE=auto`ではweb / inmemory側が所有 |
+| 用途 | 本番の運用前提 | 開発・legacy互換確認 |
 
----
+inmemory側の実行枠をRQ workerの同時実行数として読み替えないでください。`MEDIA_QUEUE_NAME`を別名にしても、自動で画像専用workerが作られるわけではありません。現行のworkerは複数キューを読む1つのworkerです。
+
+DockerのGunicorn既定値は`--worker-class gthread --workers 1 --threads 8 --max-requests 0 --timeout 600`です。この構成は維持していますが、「本番もinmemoryだから必ず1」という説明ではありません。inmemoryのプロセス分離制約と、本番splitの増設・並列化設計は分けて検証してください。
 
 ## 6. データベース構造
 
-| モデル | テーブル名 | 概要 |
-|--------|-----------|------|
-| `User` | users | ユーザーアカウント |
-| `Shop` | shops | ショップ（Shopify 等）管理 |
-| `Product` | products | 商品情報（スクレイプ結果） |
-| `Variant` | variants | バリエーション（色・サイズ等） |
-| `ProductSnapshot` | product_snapshots | 価格・ステータス変更履歴 |
-| `DescriptionTemplate` | description_templates | 説明文テンプレート |
-| `PricingRule` | pricing_rules | 価格計算ルール |
-| `ExclusionKeyword` | exclusion_keywords | 除外キーワードフィルター |
-| `PriceList` | price_lists | 公開価格表 |
-| `PriceListItem` | price_list_items | 価格表に含まれる商品 |
-| `CatalogPageView` | catalog_page_views | カタログ閲覧解析ログ |
+定義は[models.py](models.py)、接続・schema bootstrapは[database.py](database.py)、変更履歴は`alembic/`を参照してください。
 
-主要カラム（`products` テーブル抜粋）:
+| 分野 | 主なモデル |
+|---|---|
+| 所有者・ショップ | `User`, `Shop` |
+| 商品・販売価格 | `Product`, `Variant`, `ProductSnapshot`, `PricingRule`, `DescriptionTemplate`, `ExclusionKeyword` |
+| 公開カタログ | `PriceList`, `PriceListItem`, `CatalogPageView` |
+| リクエスト受付 | `CatalogRequest`, `CatalogRequestItem` |
+| 抽出ジョブ | `ScrapeJob`, `ScrapeJobEvent` |
+| 翻訳・画像処理 | `TranslationSuggestion`, `ImageProcessingJob` |
+| 運用・修復 | `SelectorRepairCandidate`, `SelectorActiveOverride`, `ScrapeObservation`, `ScrapeHealthState`, `ScrapeHealthTransitionDelivery` |
+| 為替 | `ExchangeRate` |
 
-| カラム | 型 | 説明 |
-|--------|----|------|
-| `site` | String | 取得元サイト名 |
-| `source_url` | String | 元商品 URL |
-| `last_title` | String | 最新タイトル |
-| `last_price` | Integer | 最新価格（JPY） |
-| `last_status` | String | ステータス（on_sale / sold / deleted） |
-| `custom_title` | String | カスタムタイトル（日本語） |
-| `custom_title_en` | String | カスタムタイトル（英語） |
-| `selling_price` | Integer | 商品共通の算出済み販売価格（0も有効） |
-| `patrol_fail_count` | Integer | パトロール連続失敗回数 |
+`Product.site` / `source_url`は内部の取得元情報です。`archived`、`deleted_at`、`is_listed`は別の状態であり、売切れ状態と同一ではありません。`last_patrolled_at`、`next_patrol_at`、`patrol_fail_count`がパトロールの選択・再試行に使われます。
 
-`variants.price` は取得元価格、`variants.selling_price` はバリエーション別の販売価格です。販売画面とCSVは共通の価格解決処理を使い、バリエーション別価格が未設定なら商品の共通販売価格へ戻ります。
+`Variant.price`は取得元価格、`Variant.selling_price`は販売価格の上書きです。販売価格の解決では明示的な`0`も有効です。バリエーション別価格、商品共通価格、旧データの取得元価格へのフォールバックや比率調整は[pricing_service.py](services/pricing_service.py)に集約されています。
 
----
+翻訳提案には`worker_token` / `lease_expires_at`がありますが、画像処理ジョブに同じ回復契約があると仮定しないでください。ジョブがDBに存在することだけでは、再起動後の自動再開・重複実行防止は保証されません。
 
 ## 7. セットアップ・起動方法
 
-### Docker を使う場合（推奨）
+以下のシェル例は**Bash**です。PowerShellでは環境変数を`$env:NAME = "value"`形式に読み替え、異なるシェルの構文を同じブロックで混用しないでください。PythonはまずDocker / CIと同じ3.11で検証してください。
+
+### ローカルPython: SQLite + inmemory
 
 ```bash
-# イメージのビルド
-docker build -t esp-app .
+git clone https://github.com/halc8312/ESP.git
+cd ESP
+python3.11 -m venv .venv
+source .venv/bin/activate
 
-# 起動（ポート 10000）
-docker run -p 10000:10000 \
-  -e SECRET_KEY=your-secret-key \
-  -e DATABASE_URL=sqlite:///mercari.db \
-  esp-app
-```
-
-### ローカル環境（Python 3.11+）
-
-```bash
-# 1. 依存パッケージのインストール（アプリ実行のみ）
-python -m pip install -r requirements.txt
-
-# 開発・テスト・依存監査も行う場合はこちら（runtime 依存を含む）
+# 実行のみならrequirements.txt、開発・テスト込みならこちら
 python -m pip install -r requirements-dev.txt
-
-# 2. Playwright / Scrapling ブラウザのインストール
 scrapling install
 patchright install chromium
 
-# 3. 管理者ユーザーの作成
-flask create-user
+export FLASK_APP=app
+export APP_ENV=development
+export RUNTIME_ROLE=""
+export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+export DATABASE_URL="sqlite:///mercari.db"
+export SCRAPE_QUEUE_BACKEND=inmemory
+# 開発中に意図せず登録商品を外部巡回しないよう、ここでは無効
+export WEB_SCHEDULER_MODE=disabled
 
-# 4. DB マイグレーション適用
-py -3 -m alembic upgrade head
+# 接続先は開発DBであることを確認。schema適用とwrite/read確認を行う
+python -m flask db-smoke --apply-migrations
 
-# 5. 開発サーバー起動
-flask run --port 5000
+# 対話式でユーザー名・パスワードを入力。作成時のroleはstudent
+python -m flask create-user
+# 管理画面が必要なユーザーにだけ付与。USERNAMEを作成名に置換
+python -m flask set-user-role USERNAME admin
 
-# 本番相当の起動（シングルワーカー必須）
-gunicorn --worker-class gthread --workers 1 --threads 8 \
-         --max-requests 0 --timeout 600 \
-         --bind 0.0.0.0:5000 wsgi:app
-
-# 単一 Web Service の既存本番互換:
-# `SCRAPE_QUEUE_BACKEND=inmemory` の間は、web が scheduler を自動で所有する。
-# このモードでは scheduler lock も file lock 側へ倒すので、Redis は不要。
-# 将来 `SCRAPE_QUEUE_BACKEND=rq` に切り替えたら、web 側 scheduler は自動で無効になり、
-# worker を別サービスで立てる前提になる。
-
-# Arc 2/B4 のローカル検証例（Render 契約はまだ不要）
-# 先にローカル Redis/PostgreSQL を立てたうえで:
-# 推奨: repo 直下の compose を使う
-docker compose -f docker-compose.local.yml up -d
-# 既存の SQLite のまま queue だけ試すなら `DATABASE_URL` は省略可。
-# PostgreSQL 前提で進める時は:
-$env:DATABASE_URL="postgresql+psycopg://esp:esp@localhost:5432/esp_local"
-$env:SCRAPE_QUEUE_BACKEND="rq"
-$env:REDIS_URL="redis://localhost:6379/0"
-# まず DB smoke を通す:
-flask db-smoke --require-backend postgresql --apply-migrations
-# detail parser だけを local dump で確認:
-flask detail-fixture-smoke --site mercari --fixture-path mercari_page_dump_live.html --target-url https://jp.mercari.com/item/m71383569733
-# search result dump が skeleton/challenge ではなく実結果を含むか確認:
-flask search-fixture-smoke --site mercari --fixture-path search_dump.html --target-url https://jp.mercari.com/search?keyword=sneaker
-# 7サイトの実URLを使う受入確認（各URLは SITE=URL 形式で1つずつ指定）:
-python scripts/live_search_acceptance.py \
-  --target "mercari=<検索結果URL>" --target "rakuma=<検索結果URL>" \
-  --target "yahoo=<検索結果URL>" --target "surugaya=<検索結果URL>" \
-  --target "offmall=<検索結果URL>" --target "yahuoku=<検索結果URL>" \
-  --target "snkrdunk=<検索結果URL>"
-# GitHub Actions の「Live Search URL Acceptance」からも同じ7サイト確認を手動実行できる。
-# local-first の順序つき総合確認:
-flask local-verify --profile full --require-backend postgresql --apply-migrations
-# queue + worker + status/result までまとめて通す:
-flask stack-smoke --require-backend postgresql --apply-migrations
-# Product / Variant / ProductSnapshot まで保存されるかを見る:
-flask stack-smoke --require-backend postgresql --apply-migrations --mode persist
-# real Mercari dump を parser に通したうえで full-stack smoke:
-flask stack-smoke --require-backend postgresql --apply-migrations --mode persist --fixture-site mercari --fixture-path mercari_page_dump_live.html --fixture-target-url https://jp.mercari.com/item/m71383569733
-# real SNKRDUNK dump を parser に通したうえで full-stack smoke:
-flask stack-smoke --require-backend postgresql --apply-migrations --mode persist --fixture-site snkrdunk --fixture-path dump.html --fixture-target-url https://snkrdunk.com/products/nike-air-max-95-og-big-bubble-neon-yellow-2025-2026
-# その後 web/worker を起動:
-flask run --port 5000
-# Worker は別端末で dedicated entrypoint を起動:
-# 定期 patrol / trash purge / translation lease recovery を持たせる worker は 1 台だけ `WORKER_ENABLE_SCHEDULER=1`
-py -3 worker.py
-# 旧 `run_rq_worker.py` も互換ラッパとして残してある。
-# `worker.py` は既定で shared browser runtime を有効化し、Mercari browser を warm する。
-# また、worker 起動時にも schema bootstrap / additive patchset / drift verify を走らせる。
-# 初回 deploy や再deploy 時は web / worker が同じ DATABASE_URL を参照し、
-# DB ユーザーが migration を適用できることを前提にする。
-# worker/RQ の現在状態を JSON で確認:
-flask worker-health
-# backlog warning も失敗扱いにしたい時:
-flask worker-health --fail-on-warning
-# legacy single-web 互換 path を安全に再デプロイできるかを見る:
-flask predeploy-check --target single-web
-# legacy single-web 向けの local gate を一本で回す:
-flask single-web-redeploy-readiness
-# legacy single-web 向けの operator 手順をまとめて出す:
-flask single-web-redeploy-checklist --base-url https://<current-web-url> --username <smoke-user> --password <smoke-password>
-# legacy single-web path の post-deploy smoke を流す:
-flask single-web-postdeploy-smoke --base-url https://<current-web-url>
-# 現行 split worker の post-deploy 確認ポイントを出す:
-flask render-worker-postdeploy-checklist --blueprint-path render.yaml
-# single-web + inmemory の互換経路を実際に流す:
-flask single-web-smoke --mode preview
-# 現行 split (`web + worker + postgres + key value`) 向け readiness:
-flask predeploy-check --target split-render --strict
-# paid split の local rehearsal 前提を出す:
-flask render-local-split-checklist --blueprint-path render.yaml
-# paid split の local rehearsal gate を repo 既定の local env で一発実行:
-flask render-local-split-readiness
-# paid split 前の operator bundle をまとめて出す:
-flask render-cutover-brief --base-url https://<esp-web-url> --username <smoke-user> --password <smoke-password>
-# paid split の予算ガードが render.yaml とズレていないかを見る:
-flask render-budget-guardrail-audit --blueprint-path render.yaml
-# DB 単体の smoke（local PostgreSQL を指して migrate + connect + write/read を確認したい時）:
-flask db-smoke --require-backend postgresql --apply-migrations
-# parser 単体の fixture smoke（queue/DB を使わず detail dump を検証したい時）:
-flask detail-fixture-smoke --site mercari --fixture-path mercari_page_dump_live.html --target-url https://jp.mercari.com/item/m71383569733
-# local verification suite（single-web predeploy + parser fixture + db + fixture-backed stack smoke を順に回す）:
-flask local-verify --profile full --require-backend postgresql --apply-migrations
-# RQ + worker + API/result page まで含む full-stack smoke:
-flask stack-smoke --require-backend postgresql --apply-migrations
-# persist 経路まで見る full-stack smoke:
-flask stack-smoke --require-backend postgresql --apply-migrations --mode persist
-# real parser を通した fixture-backed full-stack smoke:
-flask stack-smoke --require-backend postgresql --apply-migrations --mode persist --fixture-site mercari --fixture-path mercari_page_dump_live.html --fixture-target-url https://jp.mercari.com/item/m71383569733
-flask stack-smoke --require-backend postgresql --apply-migrations --mode persist --fixture-site snkrdunk --fixture-path dump.html --fixture-target-url https://snkrdunk.com/products/nike-air-max-95-og-big-bubble-neon-yellow-2025-2026
-
-# live site に触れない local RQ end-to-end smoke:
-py -3 -m pytest tests/test_rq_scrape_e2e.py -q
+python -m flask run --host 127.0.0.1 --port 5000
 ```
 
-### Render Blueprint / Live Topology
+[.env.example](.env.example)は設定のひな型です。`.env`を置くだけで、`worker.py`やGunicornを含むすべての起動方法が自動読込するとは仮定しないでください。自分で管理する`.env`を利用する場合、Bashでは`set -a; . ./.env; set +a`などで明示的に読み込みます。secretは保存先・権限を管理し、Gitに追加しないでください。
 
-リポジトリ直下の `render.yaml` は、現在の split Render 構成（`esp-web` / `esp-worker` / `esp-keyvalue` / `esp-postgres`）の参照元として扱います。Render Dashboard 上の実設定と齟齬が出ると AI エージェントが誤った前提で変更しやすくなるので、コメントや env 契約は live 実態に合わせて維持してください。
+`python -m alembic upgrade head`は明示的なマイグレーション適用コマンドです。既存DBへの適用前はバックアップと接続先を確認してください。
 
-- live では `esp-web` と `esp-worker` が同じ `DATABASE_URL` / `REDIS_URL` / `SECRET_KEY` 契約を共有する
-- `SCRAPE_QUEUE_BACKEND` を含む queue 契約は web / worker / keyvalue の3者で揃える
-- Blueprint の web は web 自身に必須な DB/Redis 到達性だけを確認する `/readyz` を health check に使う。live worker、worker 所有 scheduler、実際のpatrol完了は運用確認用 `/stack-readyz` で判定する。worker は`tini -- python worker.py`で起動し、TiniがPythonを直接監督し、PythonがRecord City用private Xvfbを起動・停止する
-- `SECRET_KEY` は `esp-web` / `esp-worker` の両方に同じ値を手動設定する。開発用デフォルト値のまま本番起動しない
-- `SCHEMA_BOOTSTRAP_MODE=auto` を維持する。PostgreSQL の Alembic upgrade は advisory lock で全処理を直列化するため、web / worker が同時起動しても migration DDL を競合させない
-- 画像とショップロゴの永続化がまだ filesystem 前提なので、Blueprint では web に小さい persistent disk を付け、`IMAGE_STORAGE_PATH=/var/data/images` を使う
+### ローカルsplit: PostgreSQL + Redis + dedicated worker
 
----
+[ローカルCompose](docker-compose.local.yml)はPostgreSQLとRedisを起動します。web / workerアプリ自体は別端末で起動します。Composeの固定パスワード・公開ポート・Redis永続化無効設定は**開発用**であり、本番用のデータ保全設定ではありません。
+
+```bash
+docker compose -f docker-compose.local.yml up -d
+
+# webとworkerの両端末で同じ仮想環境・以下の設定・SECRET_KEYを使用する
+export FLASK_APP=app
+export APP_ENV=development
+export RUNTIME_ROLE=""
+export DATABASE_URL="postgresql+psycopg://esp:esp@localhost:5432/esp_local"
+export SCRAPE_QUEUE_BACKEND=rq
+export REDIS_URL="redis://localhost:6379/0"
+export SCRAPE_QUEUE_NAME=scrape
+export MEDIA_QUEUE_NAME=media
+export WEB_SCHEDULER_MODE=disabled
+
+python -m flask db-smoke --require-backend postgresql --apply-migrations
+# liveサイトを使わない内部payloadによるstack確認
+python -m flask stack-smoke --require-backend postgresql --apply-migrations
+
+# 端末A
+python -m flask run --host 127.0.0.1 --port 5000
+```
+
+```bash
+# 端末B: 上の共通設定を読み込み済みで実行
+# 定期処理を担当させるworkerだけ1にする。巡回対象への外部通信が発生する
+export WORKER_ENABLE_SCHEDULER=1
+python worker.py
+```
+
+`WORKER_ENABLE_SCHEDULER`の通常の既定値は`false`です。定期巡回が不要な検証では`0`にしてください。旧`run_rq_worker.py`は互換ラッパーです。
+
+画像白抜きをsplitで試す場合は、web / workerに同じ`BG_REMOVAL_INTERNAL_SECRET`と`BG_REMOVAL_BACKEND=rembg`を設定します。ローカルworkerには`ESP_WEB_INTERNAL_URL=http://127.0.0.1:5000`など、**workerから到達できるweb URL**も指定してください。モデルの利用可能性は別途確認が必要です。
+
+### Docker: ローカル単一webの確認
+
+本番はこの単一web例ではなく、後述のBlueprintを使用します。コンテナは`myuser`で実行されるため、DB・画像・インポートプレビューには書込み可能な場所が必要です。`/app/mercari.db`への暗黙の書込みや、コンテナ内だけの保存に依存しないでください。
+
+```bash
+docker build -t esp-app .
+docker volume create esp-local-data
+# 新規の開発用volumeだけを初期化。アプリ本体はrootで実行しない
+# 既存データのvolumeに対して無条件に所有権を変更しないこと
+docker run --rm --user root -v esp-local-data:/var/data esp-app \
+  sh -c 'mkdir -p /var/data/images /var/data/import_previews && chown -R myuser:myuser /var/data'
+
+export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+docker run --rm --name esp-local -p 127.0.0.1:10000:10000 \
+  -v esp-local-data:/var/data \
+  -e APP_ENV=development -e RUNTIME_ROLE= -e SECRET_KEY \
+  -e SCRAPE_QUEUE_BACKEND=inmemory -e WEB_SCHEDULER_MODE=disabled \
+  -e DATABASE_URL=sqlite:////var/data/mercari.db \
+  -e IMAGE_STORAGE_PATH=/var/data/images \
+  -e IMPORT_PREVIEW_STORAGE_PATH=/var/data/import_previews \
+  esp-app
+
+# 起動後、別端末から対話式でユーザーを作成
+# docker exec -it esp-local python -m flask --app app create-user
+# docker exec -it esp-local python -m flask --app app set-user-role USERNAME admin
+```
+
+この例はSQLite・画像をvolumeに保存するローカル確認用で、RQや本番HTTPS・外部サービスを検証するものではありません。
+
+### Render Blueprint / split topology
+
+[render.yaml](render.yaml)と[RENDER_CUTOVER_RUNBOOK](docs/RENDER_CUTOVER_RUNBOOK.md)を参照してください。Blueprintにはweb / worker / PostgreSQL / Key Valueが定義され、`autoDeployTrigger: off`です。READMEの更新はデプロイ操作ではありません。
+
+web / workerで`DATABASE_URL`、`REDIS_URL`、`SECRET_KEY`、キュー名、画像処理用secretを揃えます。webは`WEB_SCHEDULER_MODE=disabled`、定期処理ownerのworkerは`WORKER_ENABLE_SCHEDULER=1`です。`SCHEMA_BOOTSTRAP_MODE=auto`ではPostgreSQLのAlembic upgradeをadvisory lockで直列化します。移行権限・バックアップは別途必要です。
+
+webの画像保存先は永続ディスク上の`/var/data/images`です。workerからの画像返送にはBlueprintで渡す`WEB_INTERNAL_HOST`と`WEB_INTERNAL_PORT=8080`を使います。内部ホスト名を単に`esp-web`と決め打ちしないでください。TiniはPythonを監督し、Python側がRecord City用Xvfbを起動・停止します。
 
 ## 8. 環境変数
 
-| 変数名 | デフォルト | 説明 |
-|--------|----------|------|
-| `APP_ENV` | `development` | `production` の場合は本番セキュリティ設定を fail-closed で検証する |
-| `RUNTIME_ROLE` | 空 | Render では `web` / `worker` を設定し、`APP_ENV=production` と合わせて本番起動条件を明示する |
-| `SECRET_KEY` | `dev-secret-key-change-this` | Flask セッション署名キー。本番では未設定・既知デフォルト・32文字未満を起動時に拒否する。web / worker で同じ値を使う |
-| `DATABASE_URL` | `sqlite:///mercari.db` | DB 接続文字列 |
-| `SCHEMA_BOOTSTRAP_MODE` | `auto` (`web`/`cli`) | `alembic` 優先で schema を適用。Alembic 未導入時は `legacy` にフォールバック |
-| `SCRAPE_QUEUE_BACKEND` | `inmemory` | `inmemory` または `rq`。`rq` はローカル Redis で先行検証可能 |
-| `REDIS_URL` | `redis://localhost:6379/0` | `SCRAPE_QUEUE_BACKEND=rq` と本番ログイン/登録レート制限の共有ストア接続先 |
-| `VALKEY_URL` | 空 | `REDIS_URL` の代替。本番レート制限用の共有ストアとして利用可能 |
-| `ALLOW_PUBLIC_SIGNUP` | development: `true`, production: `false` | 本番では明示的に `true` にしない限り `/register` を拒否する |
-| `FORCE_HTTPS` | production: `true` | 本番 HTTP リクエストを HTTPS へ 301 redirect する |
-| `HSTS_ENABLED` | production: `true` | HTTPS 応答へ HSTS を付与する |
-| `SESSION_COOKIE_SECURE` | production: `true` | 本番セッション Cookie を Secure に固定する |
-| `SCRAPE_QUEUE_NAME` | `scrape` | RQ queue 名 |
-| `RQ_BURST` | `false` | `worker.py` を burst モードで1回だけ動かすか |
-| `RQ_WITH_SCHEDULER` | `false` | RQ の scheduler 機能を worker に有効化するか。通常は `false` |
-| `SCRAPE_JOB_HEARTBEAT_SECONDS` | `30` | running job の heartbeat 間隔 |
-| `SCRAPE_JOB_STALL_TIMEOUT_SECONDS` | `900` | heartbeat が止まった running job を failed 扱いに切り替える秒数 |
-| `SCRAPE_JOB_ORPHAN_TIMEOUT_SECONDS` | `60` | durable state は non-terminal だが Redis/RQ 上に job 本体が見つからない場合に failed 扱いへ切り替える猶予秒数 |
-| `WORKER_ENABLE_SCHEDULER` | `false` | patrol / trash purge / translation lease recovery の APScheduler をこの worker が所有するか。`true` にする worker は 1 台だけ |
-| `WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP` | `true` | worker 起動時に、stall timeout を超えた `running` job を durable state 上で `failed` に掃除するか |
-| `WORKER_BACKLOG_WARN_COUNT` | `25` | worker 起動時 backlog 診断で warning を出す queued job 件数しきい値。`0` で無効 |
-| `WORKER_BACKLOG_WARN_AGE_SECONDS` | `900` | worker 起動時 backlog 診断で warning を出す oldest queued/running age しきい値。`0` で無効 |
-| `WORKER_HEARTBEAT_ENABLED` | `false` (`worker.py` では `true` 既定) | dedicated worker が一意な Redis key をTTL付きで更新するか |
-| `WORKER_HEARTBEAT_KEY_PREFIX` | `esp:worker:heartbeat` | worker heartbeat key の共有prefix。web / worker で同じ値を使う |
-| `WORKER_HEARTBEAT_INTERVAL_SECONDS` | `15` | worker heartbeat の更新間隔 |
-| `WORKER_HEARTBEAT_TTL_SECONDS` | `90` | worker heartbeat key のTTL。停止時は自分の一意keyだけを削除する |
-| `WORKER_HEARTBEAT_FRESHNESS_SECONDS` | `60` | `/stack-readyz` が live worker と判定できる最終更新からの最大秒数 |
-| `SELECTOR_ALERT_WEBHOOK_URL` | unset | selector healer / repair candidate 通知の送信先 webhook。Discord raw webhook も利用可 |
-| `OPERATIONAL_ALERT_WEBHOOK_URL` | unset | worker backlog などの silent operational alert 送信先 webhook |
-| `OPERATIONAL_ALERT_COOLDOWN_SECONDS` | `900` | 同一 operational alert の再送 cooldown |
-| `OPERATIONAL_ALERT_MAX_PER_WINDOW` | `10` | operational alert の window 内最大送信数 |
-| `OPERATIONAL_ALERT_WINDOW_SECONDS` | `300` | operational alert の rate-limit window 秒数 |
-| `WEB_SCHEDULER_MODE` | `auto` | `auto` は `SCRAPE_QUEUE_BACKEND=inmemory` の web だけ scheduler を持つ。`enabled` / `disabled` で明示上書き可能 |
-| `SCHEDULER_LOCK_BACKEND` | `auto` | scheduler lock。`auto` は single-service web/inmemory では file lock、worker/rq 側では Redis lock を優先する |
-| `SCHEDULER_LOCK_KEY` | `esp:scheduler:lock` | Redis lock key |
-| `SCHEDULER_LOCK_TTL_SECONDS` | `120` | Redis scheduler lock の TTL |
-| `SCHEDULER_HEARTBEAT_ENABLED` | Redis設定時に有効 (`worker.py` では `true` 既定) | scheduler owner が Redis hash heartbeat を更新するか |
-| `SCHEDULER_HEARTBEAT_KEY` | `esp:scheduler:heartbeat` | scheduler heartbeat hash key。web / worker で同じ値を使う |
-| `SCHEDULER_HEARTBEAT_FRESHNESS_SECONDS` | `1200` | `/stack-readyz` が worker role の scheduler heartbeat を新鮮とみなす秒数。15分patrol周期に5分の余裕を持つ |
-| `PATROL_HEARTBEAT_FRESHNESS_SECONDS` | `1200` | `/stack-readyz` が最後に成功したpatrolバッチを新鮮とみなす秒数。fatal errorや全件失敗も検知する |
-| `PATROL_BATCH_SIZE` | `50` | 15分ごとのpatrolバッチで処理する最大商品数。起動直後にも1回実行する |
-| `ENABLE_SHARED_BROWSER_RUNTIME` | `false` (`worker.py` では `true` 既定) | shared Playwright browser runtime を使うか |
-| `WARM_BROWSER_POOL` | `false` (`worker.py` では `true` 既定) | worker 起動時に browser pool を warm するか |
-| `BROWSER_POOL_WARM_SITES` | `mercari` | 起動時に warm する browser site 一覧 |
-| `BROWSER_POOL_MAX_CONTEXTS` | `1` | shared browser 1 プロセスあたりの同時 page/context 実行上限 |
-| `BROWSER_POOL_RESTART_ATTEMPTS` | `1` | browser crash 時の自動再起動回数 |
-| `BROWSER_POOL_MAX_TASKS_BEFORE_RESTART` | `0` | 0 より大きい時、同一 browser を使うジョブ回数の上限。超えたら次ジョブ開始前に計画的 recycle |
-| `BROWSER_POOL_MAX_RUNTIME_SECONDS` | `0` | 0 より大きい時、browser 生存時間の上限。超えたら次ジョブ開始前に計画的 recycle |
-| `BROWSER_POOL_STARTUP_TIMEOUT_SECONDS` | `60` | shared browser 起動タイムアウト |
-| `RECORDCITY_BROWSER_PROFILE` | `headless` | Record City専用Patchright profile。Render workerはbranded Chromeの`persistent-chrome`をXvfb上で使い、Cookie・local storageを同一contextで維持する |
-| `RECORDCITY_FETCH_PROVIDER` | `browser` | Record Cityのproduction取得経路。Render workerは`browser`を明示し、credentialの存在だけで外部providerへ切り替えない |
-| `MERCARI_USE_BROWSER_POOL_DETAIL` | `false` (`worker.py` では `true` 既定) | Mercari detail DOM fetch を browser pool 経由にする。split worker では `true` を維持し、web/CLI/test は必要時のみ有効化する想定 |
-| `MERCARI_PATROL_USE_BROWSER_POOL` | `false` (`worker.py` では `true` 既定) | Mercari patrol DOM fetch を browser pool 経由にする |
-| `SNKRDUNK_USE_BROWSER_POOL_DYNAMIC` | `false` (`worker.py` では `true` 既定) | SNKRDUNK search と dynamic detail fallback を browser pool 経由にする |
-| `LOG_LEVEL` | `INFO` (`worker.py`) | worker/browser pool instrumentation の出力レベル |
-| `PORT` | `10000` | Gunicorn バインドポート |
-| `IMAGE_STORAGE_PATH` | `static/images` | ダウンロード画像、ショップロゴ、商品アップロード画像の保存先。Render disk を付ける場合は `/var/data/images` を推奨 |
-| `IMPORT_PREVIEW_STORAGE_PATH` | Flask `instance/import_previews` | CSV インポートのプレビュー本文を一時保存するサーバー側パス。session には不透明トークンだけを保持する |
-| `MERCARI_USE_NETWORK_PAYLOAD` | `false` | メルカリ API インターセプト有効化 |
-| `{SITE}_DETAIL_CONCURRENCY` | サイト依存 | 詳細ページの並列取得数 |
-| `{SITE}_DETAIL_TIMEOUT` | サイト依存 | タイムアウト秒数 |
-| `{SITE}_DETAIL_RETRIES` | サイト依存 | リトライ回数 |
-| `{SITE}_DETAIL_BACKOFF` | サイト依存 | リトライ間隔（秒） |
+以下は主要な設定です。**一般の既定値、worker entrypointの上書き、Blueprintの明示設定は異なります。** 詳細は[app.py](app.py)、[security_config.py](security_config.py)、[worker.py](worker.py)、[render.yaml](render.yaml)および各サービスを確認してください。
 
-`{SITE}` には `MERCARI`, `RAKUMA`, `YAHOO`, `YAHUOKU`, `SURUGAYA`, `OFFMALL`, `SNKRDUNK` が入ります。
+### 基本・セキュリティ
 
-本番では最低でも以下を明示設定してください。
+| 変数 | 既定値・扱い |
+|---|---|
+| `APP_ENV` / `RUNTIME_ROLE` | 開発では`development` / 空。本番では`production` / `web`または`worker`。`RUNTIME_ROLE=web/worker`だけでも本番セキュリティ判定の対象 |
+| `SECRET_KEY` | 開発用既定値あり。本番は未設定・既知の開発値・32文字未満を拒否。web / workerで同じ十分長いランダム値を使用 |
+| `DATABASE_URL` | `sqlite:///mercari.db`。本番はPostgreSQL。`postgres://` / `postgresql://`はpsycopg用URLへ正規化 |
+| `SCHEMA_BOOTSTRAP_MODE` | Blueprintは`auto`。新しいschema変更はAlembicに追加し、legacy救済patchを通常の変更手段にしない |
+| `REDIS_URL` / `VALKEY_URL` | 本番レート制限は共有ストア設定必須。splitのDB・キュー契約では両プロセスに同じ`REDIS_URL`を明示 |
+| `ALLOW_PUBLIC_SIGNUP` | 開発は通常有効、本番は既定で無効。公開登録を本番の管理者作成手段にしない |
+| `FORCE_HTTPS`, `HSTS_ENABLED`, `SESSION_COOKIE_SECURE` | 本番では有効に固定。ローカルHTTPの都合で本番設定を弱めない |
+| `SESSION_COOKIE_SAMESITE` | `Lax`。CookieはHttpOnlyも有効 |
+| `LOGIN_RATE_LIMIT` / `LOGIN_RATE_WINDOW_SECONDS` | `5` / `900` |
+| `REGISTER_RATE_LIMIT` / `REGISTER_RATE_WINDOW_SECONDS` | `3` / `3600` |
+| `MAX_CONTENT_LENGTH` | `8388608`（8 MiB） |
 
-- `SECRET_KEY` を十分長いランダム文字列で設定する
-- split 構成では `esp-web` / `esp-worker` の `SECRET_KEY` を一致させる
-- `REDIS_URL` または `VALKEY_URL` を設定し、ログイン/登録レート制限を共有ストアで有効化する
-- `APP_ENV=production` と `RUNTIME_ROLE=web` / `worker` を Render の各サービスに設定する
-- public signup は原則閉じ、必要な場合だけ `ALLOW_PUBLIC_SIGNUP=true` を明示する
-- `SCHEMA_BOOTSTRAP_MODE=auto` を維持する
-- 画像アップロードを保持したい環境では永続ストレージ付きの `IMAGE_STORAGE_PATH` を使う
+### キュー・scheduler・ブラウザ
 
-shared browser runtime を有効にした worker は、起動時の durable backlog 要約、browser warm・restart・close 前 health snapshot を worker log に出します。backlog warning がしきい値を超えたままなら、`OPERATIONAL_ALERT_WEBHOOK_URL` が設定されている場合だけ silent alert も送れます。`{SITE}_BROWSER_POOL_MAX_CONTEXTS`、`{SITE}_BROWSER_POOL_MAX_TASKS_BEFORE_RESTART`、`{SITE}_BROWSER_POOL_MAX_RUNTIME_SECONDS` を使うと site 別に上限を上書きできます。
+| 変数 | 既定値・扱い |
+|---|---|
+| `SCRAPE_QUEUE_BACKEND` | `inmemory`。本番splitは`rq` |
+| `SCRAPE_QUEUE_NAME` | `scrape` |
+| `MEDIA_QUEUE_NAME` | worker側で空ならscrape queueへフォールバック。Blueprintは`media`を明示 |
+| `RQ_BURST` / `RQ_WITH_SCHEDULER` | 通常`false`。RQ schedulerと定期巡回用APSchedulerは別 |
+| `WEB_SCHEDULER_MODE` | `auto`。本番splitは`disabled` |
+| `WORKER_ENABLE_SCHEDULER` | `false`。定期処理ownerのworker 1台だけ`1` |
+| `SCHEDULER_LOCK_BACKEND` | `auto`。inmemory互換はfile lock、worker / rqではRedis側のlockを使用 |
+| `PATROL_BATCH_SIZE` | 通常`50`。全商品の15分以内の巡回完了を保証する値ではない |
+| `WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP` | `true`。起動時に抽出ジョブの停滞整理・翻訳lease回復を実行する経路あり |
+| `SCRAPE_JOB_HEARTBEAT_SECONDS` | `30` |
+| `SCRAPE_JOB_STALL_TIMEOUT_SECONDS` / `SCRAPE_JOB_ORPHAN_TIMEOUT_SECONDS` | `900` / `60`。抽出ジョブの停滞・孤立判定用 |
+| `WORKER_BACKLOG_WARN_COUNT` / `WORKER_BACKLOG_WARN_AGE_SECONDS` | `25` / `900`。起動時backlog診断のしきい値 |
+| `WORKER_HEARTBEAT_ENABLED` | 一般設定は`false`、`worker.py`は有効を既定にする |
+| `WORKER_HEARTBEAT_INTERVAL_SECONDS` / `WORKER_HEARTBEAT_TTL_SECONDS` | `15` / `90` |
+| `WORKER_HEARTBEAT_KEY_PREFIX` | `esp:worker:heartbeat`。web / workerで一致させる |
+| `WORKER_HEARTBEAT_FRESHNESS_SECONDS` | `60` |
+| `SCHEDULER_HEARTBEAT_ENABLED` / `SCHEDULER_HEARTBEAT_KEY` | splitでは有効にし、共有keyは`esp:scheduler:heartbeat` |
+| `SCHEDULER_HEARTBEAT_FRESHNESS_SECONDS` / `PATROL_HEARTBEAT_FRESHNESS_SECONDS` | 通常`1200` / `1200` |
+| `ENABLE_SHARED_BROWSER_RUNTIME` / `WARM_BROWSER_POOL` | 一般設定では無効、worker entrypointでは有効を既定にする |
+| `BROWSER_POOL_WARM_SITES` | `mercari` |
+| `BROWSER_POOL_MAX_CONTEXTS` | 通常`1`。サイト別設定・各取得経路の並列性とは分けて考える |
+| `BROWSER_POOL_MAX_TASKS_BEFORE_RESTART` / `BROWSER_POOL_MAX_RUNTIME_SECONDS` | 通常`0`。正の値で計画的recycleの上限を設定 |
+| `MERCARI_USE_BROWSER_POOL_DETAIL` / `MERCARI_PATROL_USE_BROWSER_POOL` / `SNKRDUNK_USE_BROWSER_POOL_DYNAMIC` | worker entrypoint / Blueprintでは有効化する設定 |
+| `RECORDCITY_BROWSER_PROFILE` | ローカルは`headless`、Blueprint workerは`persistent-chrome` |
+| `RECORDCITY_FETCH_PROVIDER` | `browser`。`zyte` / `scraperapi` / `template`等の選択は明示設定と対応credentialが必要 |
+| `SELECTOR_ALERT_WEBHOOK_URL` / `OPERATIONAL_ALERT_WEBHOOK_URL` | 未設定なら該当通知先なし。通知のcooldown / rate-limit設定も確認 |
+| `WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP` | `false`。修復候補の自動処理は明示設定と検証条件が必要 |
 
-`flask predeploy-check` は deploy 前の安全確認用です。`--target split-render` は現在の Render live 構成を、`--target single-web` は legacy 互換 path を前提に、queue / schema bootstrap / scheduler / storage の blocker と warning を JSON で返します。CLI 実行時には current DB に対する `schema-drift-check` も併せて走るので、軽い再デプロイ前確認でも additive drift を見落としにくくしています。
+サイト別の詳細並列数・タイムアウト・リトライや`{SITE}_BROWSER_POOL_*`は、対応する実装の変数名を確認して設定してください。すべてのサイトが同じ変数・取得機能を持つとは限りません。
 
-`flask single-web-redeploy-readiness` は、legacy single-web 互換 path を再デプロイしてよいかをローカルで判定する gate です。`predeploy-check --target single-web` と `local-verify --profile parser` を一つに束ねるので、互換確認を一発で回せます。手順全体は `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` にまとめています。
+### 翻訳・画像・メール
 
-`flask single-web-redeploy-checklist` は、legacy single-web 互換 path を安全に再デプロイするための operator 向け JSON checklist です。local gate、Dashboard 上で崩してはいけない env 前提、post-deploy smoke、rollback を一つにまとめます。post-deploy smoke のコマンド列には cautious default として `--retries 4 --retry-delay-seconds 2` を含めています。手順全体は `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` にまとめています。
-
-`flask single-web-postdeploy-smoke --base-url https://...` は、legacy single-web path 向け post-deploy smoke です。`render-postdeploy-smoke` の single-web 版で、`queue_backend=inmemory`、`runtime_role=web`、`scheduler_enabled=true` を前提に `/stack-readyz`、`/healthz`、`/login`、`/scrape`、`/api/scrape/jobs` を確認します。`--username` と `--password` を付けると authenticated route も見られ、`--ensure-user` を付けると必要時だけ `/register` を試します。deploy 直後の cold start や一時的な 502/503 を吸収したい時は `--retries` と `--retry-delay-seconds` で再試行回数を上げられます。
-
-`flask single-web-smoke` は、`single-web + SCRAPE_QUEUE_BACKEND=inmemory` の互換 path を live site なしで end-to-end に確認するコマンドです。内部 smoke payload を使って job enqueue、`/api/scrape/status/<job_id>`、`/api/scrape/jobs`、`/scrape/result/<job_id>` まで確認します。`--mode preview` では DB に商品が保存されないこと、`--mode persist` では保存経路まで確認できます。
-
-`flask db-smoke` は `DATABASE_URL` に対する明示的な DB smoke です。`--apply-migrations` を付けると Alembic/legacy 設定に従って schema を適用したうえで、接続・簡易 write/read・主要テーブル存在確認を行います。local PostgreSQL を立てた段階で、まずこれを通してから web/worker の end-to-end に進めるのが安全です。
-
-`flask schema-drift-check` は、persistent DB に additive patchset の不足が残っていないかを見る軽い監査です。特に既存 SQLite を持ったまま再デプロイする前に有効で、今回のような `scrape_jobs.context_payload` 欠落も deploy 前に見つけられます。
-
-`flask detail-fixture-smoke` は queue / Redis / DB を使わずに local detail dump を real parser へ通すための軽量チェックです。`--strict` を付けると title / price / image / page_type などの warning を blocker 扱いにできます。日々の DOM 修正時はこれで parser 単体を先に見てから `stack-smoke` へ進めるのが安全です。
-
-`flask search-fixture-smoke` は local search-result dump が「実際の item URL を含む検索結果」なのか、「skeleton / challenge / 未描画ページ」なのかを素早く判定する軽量チェックです。現在は Mercari search dump に対応していて、`item_urls_missing` や `search_results_not_rendered` を blocker として返します。日々の DOM 修正時に、detail 側へ進む前の入口チェックとして使えます。
-
-`flask local-verify` は、いま積み上げた local-first 検証を順序つきでまとめて回すコマンドです。すべての profile で current DB に対する `schema-drift-check` を先に走らせるので、既存 SQLite や local PostgreSQL に additive drift が残っている状態を日常の再デプロイ前に拾えます。`--profile parser` は single-web predeploy と schema drift 監査に続いて `single-web-smoke --mode preview` を実行し、その後に detail fixture 群と、`search_dump.html` があれば Mercari search fixture 判定も advisory step として含みます。`--profile stack` は split-render を含む advisory predeploy + db-smoke + fixture-backed stack smoke、`--profile full` はその両方に加えて `single-web-smoke --mode persist --fixture-site mercari ...` と `single-web-smoke --mode persist --fixture-site snkrdunk ...` も含みます。predeploy/search 系の advisory step は「今ある dump の質」や「切替準備の不足」を見える化するために出し、suite 全体の成否は schema drift / single-web / parser / db / stack の実動作で判定します。daily の DOM 修正後は `parser`、しっかり確認する時は `full` を流す運用を想定しています。
-
-`flask render-cutover-readiness` は、現在の Render split 構成に対するローカル判定 gate です。single-web predeploy は advisory として残しつつ、persistent DB の `schema-drift-check`、split-render predeploy、split worker health、`local-verify --profile full` を一つに束ねます。手順全体は `docs/RENDER_CUTOVER_RUNBOOK.md` にまとめています。
-
-`flask render-blueprint-audit` は `render.yaml` の静的監査です。`esp-web` / `esp-worker` / `esp-keyvalue` / `esp-postgres` の service 名、`autoDeployTrigger: off`、`/readyz`、Tini worker command、Record City専用persistent Chrome profile、managed `DATABASE_URL` / `REDIS_URL`、manual secret env の棚卸しを確認します。Render Dashboard に入る前の secret/env チェックとして使えます。
-
-`flask render-budget-guardrail-audit --blueprint-path render.yaml` は、repo に記録した budget guardrail 前提と `render.yaml` の plan を照合する監査です。いまの前提では `esp-web=starter`, `esp-worker=standard`, `esp-keyvalue=starter`, `esp-postgres=basic-1gb` を要求し、core recurring cost estimate は `$61/month` として扱います。これは repo に固定した planning assumption で、actual purchase 前には Render 側の価格再確認が別途必要です。
-
-`flask render-local-split-checklist` は、paid split をローカルで rehearse するための operator 向け JSON checklist です。`docker-compose.local.yml`、local PostgreSQL/Redis 用 env 契約、PowerShell の env export 例、local PostgreSQL/Redis の TCP 到達確認、`db-smoke` / `worker-health` / `local-verify --profile full` / `render-cutover-readiness` の実行順を一つにまとめます。`render-cutover-readiness` が落ちた時に「何を揃えれば gate が通るか」を先に見たい時は、まずこれを出してください。
-
-`flask render-local-split-readiness` は、repo に固定した local split env を一時適用して `render-local-split-checklist` と `render-cutover-readiness --strict` をまとめて回す one-shot gate です。shell に手で env を積まずに paid split rehearsal を再現したい時は、まずこれを使うのが安全です。
-
-`flask render-cutover-brief` は、初回 paid cutover に必要な operator 情報をまとめて出す bundle です。`render-budget-guardrail-audit`, `render-dashboard-inputs`, `render-worker-postdeploy-checklist`, `render-local-split-readiness`, `render-cutover-checklist` を 1 回で集約するので、契約直前に確認コマンドを行き来しなくて済みます。
-
-`flask render-dashboard-inputs` は `render.yaml` から Dashboard 入力用の env 一覧を JSON で出します。service ごとの `manual_envs`、`managed_envs`、`fixed_envs` を分けて見られるので、「Render 側で手入力するもの」と「Blueprint に任せるもの」を混ぜにくくなります。
-
-`flask render-postdeploy-smoke --base-url https://...` は、初回 paid activation 後の full-stack 健全性チェックです。Render lifecycle 用 `/readyz` はweb自身に必須なDB・Redis到達性だけを判定し、CLIは運用確認用 `/stack-readyz` でそれらに加えて live worker heartbeat、worker role の scheduler heartbeat、実際のpatrol完了、`queue_backend=rq`、web scheduler無効化を必須確認します。最小情報だけを返す `/healthz` では `runtime_role=web` を確認します。加えて `/login`、`/scrape`、`/api/scrape/jobs` が 500 を返していないことも見ます。`--username` と `--password` を付けるとログイン後の `/scrape` と `/api/scrape/jobs` も確認するので、今回 staging で実際に壊れた「認証後にだけ 500 になる」系も Deploy 後すぐに検知できます。初回 smoke user がまだ存在しない場合は `--ensure-user` を付けると、login が通らなかった時だけ `/register` を試してから authenticated route smoke へ進みます。deploy 直後の一時 502/503 や cold start を見越すなら `--retries` と `--retry-delay-seconds` を増やして判定を安定化できます。
-
-`flask render-worker-postdeploy-checklist --blueprint-path render.yaml` は、paid split の worker post-deploy で見るべき log marker と runtime 契約を JSON で出します。`esp-worker` の fixed / managed / manual env、`tini -- python worker.py`とPython-owned Xvfb、scheduler owner、browser warm、Record City profile/provider、backlog warning 閾値を `render.yaml` から読み取り、worker 起動ログで何を確認すべきかを operator 向けに固定します。
-
-`flask render-cutover-checklist` は、初回 paid cutover 時の実行順を JSON で出します。pre-cutover command、Dashboard 上の手動 step、manual secret env、post-deploy command、rollback step を一つにまとめるので、operator が runbook と CLI を行き来しなくて済みます。pre-cutover command には `schema-drift-check` と `render-local-split-checklist` も含まれるので、persistent DB の additive drift と local split rehearse 手順を見落としにくくなります。`--base-url` と smoke user を渡しておけば、post-deploy smoke のコマンド列まで具体化され、deploy 直後の false negative を減らすために `--retries 4 --retry-delay-seconds 2` も自動で含まれます。
-
-`flask stack-smoke` は live site に触れない full-stack smoke です。local DB/Redis に対して一時ユーザーを作り、internal smoke payload を preview または persist mode で RQ に enqueue し、`worker.py` 相当の burst worker で処理し、最後に `/api/scrape/status/<job_id>`、`/api/scrape/jobs`、`/scrape/result/<job_id>` を確認します。`--mode persist` を付けると `Product` / `Variant` / `ProductSnapshot` まで検証します。通常は完了後に一時 user/job/product を cleanup し、`--keep-artifacts` を付けた時だけ残します。`--fixture-site mercari` や `--fixture-site snkrdunk` を付けると internal dummy item の代わりに local HTML dump を real parser に通した結果で同じ smoke を流せます。
-
----
+| 変数 | 既定値・扱い |
+|---|---|
+| `TRANSLATOR_BACKEND` | `argos`。Blueprintは`openai`。フォールバック用Argosも考慮 |
+| `TRANSLATOR_SOURCE_LANG` / `TRANSLATOR_TARGET_LANG` | `ja` / `en` |
+| `OPENAI_API_KEY` | OpenAI backend利用時に必要。該当プロセスのsecret環境変数で設定 |
+| `BG_REMOVAL_BACKEND` | Blueprintは`rembg`。利用するweb / worker双方で揃える |
+| `BG_REMOVAL_INTERNAL_SECRET` | workerからwebへの画像アップロード認証用。web / worker双方に同じsecretを設定し、Flaskの`SECRET_KEY`と混同しない |
+| `ESP_WEB_INTERNAL_URL` / `WEB_INTERNAL_URL` / `WEB_PUBLIC_URL` | 画像処理workerのweb到達先上書き。未設定なら`WEB_INTERNAL_HOST` + portを使用 |
+| `WEB_INTERNAL_HOST` / `WEB_INTERNAL_PORT` | Blueprintはwebのhostを注入し、内部portは`8080` |
+| `U2NET_HOME` | Dockerでは`/opt/rembg`。モデル保存場所。ビルドの事前読込失敗はビルド失敗にならないため、推論確認が必要 |
+| `IMAGE_STORAGE_PATH` | `static/images`。本番は永続ディスク上の`/var/data/images` |
+| `IMPORT_PREVIEW_STORAGE_PATH` | 通常はFlask instance配下。実行ユーザーから書込み可能な保存先が必要 |
+| `MAX_IMAGE_DOWNLOAD_BYTES` / `MAX_IMAGE_PIXELS` | `.env.example`では`5242880` / `20000000` |
+| `ALLOWED_IMAGE_HOSTS` | 任意の外部画像host allowlist。URL・画像の検証を置き換える設定ではない |
+| `MAIL_ENABLED` | `false`。credentialだけでは送信有効にならない |
+| `MAIL_FROM` | `.env.example`は`noreply@jp-items.com`。送信providerで利用できる送信元を設定 |
+| `RESEND_API_KEY` | メールを送るプロセスにのみ必要。Git・ログ・READMEに実値を書かない |
+| `PORT` | DockerのGunicorn fallbackは`10000`。開発例では`flask run --port 5000`で明示 |
 
 ## 9. 使い方
 
-### 商品のスクレイピング
+### 抽出・編集・価格
 
-1. ブラウザで `http://localhost:5000/scrape` を開く
-2. サイト（例: メルカリ）・キーワード・価格帯・件数を入力して「実行」
-3. ジョブがキューに投入され、ステータス画面でリアルタイム確認
-4. 結果プレビュー画面で取り込む商品にチェックを入れて「登録」
+`/scrape`で対応サイト、キーワードまたはURL、価格帯・件数などを指定します。結果を確認して必要な商品を登録し、商品一覧・詳細画面で画像、説明、翻訳、バリエーション、販売価格を編集します。プレビュー取得とDBへの登録は別の段階です。
 
-単品 URL を直接入力してスクレイピングすることも可能です。
+価格ルールの基本式は`(仕入値 + 送料) × (1 + 利益率 / 100) + 固定費`です。最終表示・CSV出力の価格には、バリエーション別の明示販売価格や旧データのフォールバックも関係します。[共通価格解決処理](services/pricing_service.py)を参照してください。
 
-### 商品の編集・価格設定
+### 翻訳・画像白抜き
 
-1. 商品一覧（`/`）から商品を選択
-2. タイトル・説明文・バリエーション・価格ルールを編集
-3. 販売価格は `(仕入値 + 送料) × (1 + 利益率%) + 固定費` で自動計算
+翻訳提案と画像加工結果はジョブの状態を確認してから適用します。登録時の翻訳には自動適用経路もあります。画像白抜きでは、workerは商品画像を直接置換せず、webに結果を返し、利用者が適用または却下します。
 
-### エクスポート
+`rq`はworkerが必要です。画像処理の`inmemory`互換経路はリクエスト内で同期実行されるため、常に非同期・即時応答になると仮定しないでください。モデル読込・推論・画像返送が成功するかを利用環境で確認してください。
 
-1. `/export/shopify`（商品登録 CSV）、`/export_stock_update`（在庫更新 CSV）等にアクセス
-2. CSV をダウンロードして Shopify 管理画面からインポート
+### 公開カタログ
 
-### 公開カタログの作成
+価格表管理で商品、レイアウト、テーマ、公開状態・期限を設定し、`/catalog/<token>`を共有します。公開ページでは検索、タグ絞り込み、Quick Viewを利用できます。公開期限切れ・非公開・所有者停止などの条件も表示可否に影響します。
 
-1. `/pricelist` でカタログを作成
-2. レイアウトとベーステーマ（ダーク / ライト）を選択
-3. 商品を追加・並び替え・価格カスタマイズ
-4. 発行されたトークン URL（`/catalog/<token>`）をバイヤーへ共有
-5. 公開側では検索と Quick View を使って商品を確認できる
+公開レスポンスに内部仕入れ情報を含めない設計を維持してください。画像も公開用の自社media経路を使用します。カタログのリクエスト受付は決済ではなく、決済完了や在庫確保を表示・保証する機能として扱わないでください。
 
----
+### メール設定と送信確認
+
+```bash
+# ローカルの設定だけを確認。通信・送信はしない
+python -m flask mail-check
+
+# 設定と入力のdry-run。--sendがない限り送信しない
+# example.comの宛先は説明用。実送信時は指定された検証用宛先に置き換える
+python -m flask mail-test --to recipient@example.com --delivery-key esp-mail-check-v1
+```
+
+`mail-check`は設定がreadyでない場合に終了コード2を返します。外部providerの認証や受信確認は行いません。実送信を行う場合にだけ`MAIL_ENABLED=true`と有効な送信設定を用意し、`mail-test`に`--send`を追加してください。同じテスト送信の再試行には同じdelivery keyを使います。送信APIの受付成功は受信者への到達確認ではありません。
 
 ## 10. 自動監視（パトロール）
 
-APScheduler により **15 分おきに全登録商品を巡回**し、価格・ステータスの変化を検出します。
+[MonitorService](services/monitor_service.py)は、schedulerから通常15分間隔で呼ばれる**件数制限付きバッチ**です。scheduler起動後の初回実行もあります。
 
-- **軽量パトロール** — 詳細再スクレイピングではなく価格・在庫のみ取得
-- **指数バックオフ** — 連続失敗時は次回間隔を延長（最大 180 分）
-- **自動アーカイブ** — SOLD / DELETED 検知時にステータスを自動更新
-- **スナップショット保存** — 変化があった場合に `ProductSnapshot` へ記録
+対象は、対応する7サイトの商品で、`is_listed=True`、未アーカイブ、未削除、かつ`next_patrol_at`の条件を満たすものです。未巡回・古い巡回順を優先し、通常は`PATROL_BATCH_SIZE=50`件まで処理します。Record City、商品リストのみの登録、まだ再試行時刻に達していない商品などは同じ扱いではありません。
 
----
+失敗時の待機は**線形バックオフ**で、`min(15分 × 連続失敗回数, 180分)`です。指数バックオフではありません。対象が多い場合や失敗が続く場合、全体を1巡する時間は15分を超えます。
+
+パトロールは取得結果に応じて商品の状態・価格とバリエーション在庫等を更新します。売切れ判定には信頼度・再確認の処理がありますが、**この更新処理自体は自動アーカイブや`ProductSnapshot`追加を行いません**。他の操作で作られる履歴・アーカイブと混同しないでください。
+
+現在の在庫反映処理には、サイズ名の部分一致と、終端状態に矛盾するバリエーション在庫の扱いに改善事項があります。[横断レビュー](docs/REPOSITORY_REVIEW_2026-09-12.md)のP1項目を参照してください。自動更新だけを正確性の保証にせず、重要な在庫は取得元と照合してください。
 
 ## 11. CSV エクスポート
 
-### Shopify 商品登録 CSV（`/export/shopify`）
+| 種別 | 用途 |
+|---|---|
+| Shopify商品登録CSV | タイトル・説明・分類・バリエーション・画像等の登録／更新 |
+| Shopify在庫更新CSV | 在庫数の更新 |
+| Shopify価格更新CSV | 販売価格の更新 |
+| eBay File Exchange CSV | eBay向け一括出品データの作成 |
 
-| 列名 | 内容 |
-|------|------|
-| Handle | URL ハンドル（SKU ベース） |
-| Title | カスタムタイトル |
-| Body (HTML) | 商品説明 |
-| Vendor / Type / Tags | 商品分類 |
-| Variant Price | 算出済み販売価格 |
-| Variant SKU | SKU |
-| Image Src | 自社サーバー経由の画像 URL |
-| Status | active / draft |
+Shopify商品CSVの入口は`/export/shopify`、在庫更新は`/export_stock_update`、eBayは`/export_ebay`です。列・価格解決・画像URLの実際の仕様は[routes/export.py](routes/export.py)を確認してください。
 
-### eBay File Exchange CSV（`/export_ebay`）
-
-- 為替レート（JPY → USD）と利益率を適用した価格を出力
-- Item Specifics フィールド対応
-
----
+出力したCSVは対応先で内容を確認して取り込みます。CSVを生成しただけで外部在庫が同期されたり、出品や決済が完了したりするものではありません。サイト側CSV仕様の変更も別途検証してください。
 
 ## 12. テスト
 
 ```bash
-# 開発・テスト・依存監査ツールを含めてインストール
 python -m pip install -r requirements-dev.txt
-
-# テスト全体を実行
-python -m pytest tests/ -v
-
-# 依存関係の整合性と脆弱性監査
 python -m pip check
+python -m pytest -q
+
+# 変更領域を絞る場合
+python -m pytest tests/test_e2e_routes.py -q
+python -m pytest tests/test_worker_entrypoint.py tests/test_worker_runtime.py -q
+python -m pytest tests/test_monitor_service.py -q
+
+# 除外なしの脆弱性監査。CIが除外している項目も見えるようにする
 python -m pip_audit -r requirements.txt
-
-# 特定のテストファイルのみ
-python -m pytest tests/test_scrape_queue.py -v
-
-# キーワードで絞り込み
-python -m pytest -k "mercari" -v
 ```
 
-主なテストファイル:
+[CI](.github/workflows/ci.yml)はPython 3.11で依存整合性、監査、pytest、本番セキュリティ設定のsmokeを実行します。現行CIの監査コマンドは次の例外付きです。
 
-| ファイル | 内容 |
-|---------|------|
-| `test_scrape_queue.py` | キューのジョブライフサイクル |
-| `test_rakuma_playwright.py` | ラクマスクレイパー |
-| `test_mercari_*.py` | メルカリスクレイパー全般 |
-| `test_stage4_selenium_removal.py` | Selenium 完全削除の確認 |
-| `test_e2e_routes.py` | 全ルートの E2E テスト |
-| `test_monitor_service.py` | パトロールサービス |
-| `test_selector_healer.py` | セルフヒーリングセレクター |
-| `test_auth.py` | 認証 |
+```bash
+python -m pip_audit -r requirements.txt --ignore-vuln CVE-2026-54499
+```
 
-> **既知の前提**: ブラウザバイナリは Python パッケージとは別に `scrapling install` / `patchright install chromium` で導入します。<br>
-> live browser を必要としないテストでは、重い外部依存を `tests/conftest.py` 側で隔離・初期化しています。
+これはArgosが固定しているStanza依存に対する例外であり、脆弱性が存在しないという意味ではありません。例外の継続可否と依存更新方法は[横断レビュー](docs/REPOSITORY_REVIEW_2026-09-12.md)を参照してください。
 
----
+[tests/conftest.py](tests/conftest.py)はSQLiteテストDBを構成します。通常のpytest成功を、そのまま本番PostgreSQL・Redis・RQの統合検証成功と読み替えないでください。テストによるセレクター設定の変更は一時ディレクトリへ隔離されています。
+
+[Docker Build Validation](.github/workflows/docker-build.yml)はイメージのビルドに加えて、Patchrightのpersistent Chrome / Xvfb起動とSIGTERM時の終了処理を確認します。一方、現在のDocker smokeは画像白抜きの実推論やすべての外部サイトの到達性を確認するものではありません。
+
+### DB・キュー・fixtureの確認
+
+以下は環境・DBへアクセスする診断です。`--apply-migrations`やpersist系は書込みを伴います。破棄可能なローカルDB・キューを指定してから実行してください。
+
+```bash
+python -m flask db-smoke --require-backend postgresql --apply-migrations
+python -m flask stack-smoke --require-backend postgresql --apply-migrations --mode persist
+python -m flask local-verify --profile full --require-backend postgresql --apply-migrations
+python -m flask worker-health --fail-on-warning
+python -m flask schema-drift-check
+```
+
+`detail-fixture-smoke`、`search-fixture-smoke`は保存したHTMLの解析確認、`stack-smoke --fixture-site ...`はfixtureを利用したstack確認の入口です。fixtureごとの対応サイト・引数は各CLIの`--help`を参照してください。`scripts/live_search_acceptance.py`や手動のlive acceptance workflowは外部通信を伴い、通常の単体テストとは別です。既存の7サイト受入ツールを、Record Cityを含めた全8サイトの証明として扱わないでください。
 
 ## 13. ディレクトリ構成
 
-```
-ESP/
-├── app.py                      # Flask アプリ本体、ブループリント登録、スケジューラ起動
-├── models.py                   # SQLAlchemy ORM モデル（13 テーブル）
-├── database.py                 # DB 設定（SQLite WAL モード、SessionLocal）
-├── requirements.txt            # Python 依存パッケージ
-├── requirements-dev.txt        # 開発・テスト・依存監査用パッケージ
-├── Dockerfile                  # Docker ビルド設定
-├── selector_config.py          # CSS セレクター読み込み・キャッシュ
-├── utils/                      # 共通ユーティリティ
-│
-├── *_db.py                     # サイト別スクレイパー（7 ファイル）
-│   ├── mercari_db.py
-│   ├── rakuma_db.py
-│   ├── yahoo_db.py
-│   ├── yahuoku_db.py
-│   ├── surugaya_db.py
-│   ├── offmall_db.py
-│   └── snkrdunk_db.py
-│
-├── routes/                     # Flask ブループリント（13 モジュール）
-│   ├── main.py                 # ダッシュボード、商品一覧
-│   ├── scrape.py               # スクレイピングフォーム、キュー
-│   ├── export.py               # CSV エクスポート
-│   ├── products.py             # 商品詳細・編集
-│   ├── api.py                  # JSON API
-│   ├── auth.py                 # 認証
-│   ├── shops.py                # ショップ管理
-│   ├── pricing.py              # 価格ルール
-│   ├── pricelist.py            # 価格表管理
-│   ├── catalog.py              # 公開カタログ
-│   ├── archive.py              # アーカイブ管理
-│   ├── trash.py                # ゴミ箱管理
-│   ├── settings.py             # ユーザー設定
-│   └── import_routes.py        # CSV インポート
-│
-├── services/                   # ビジネスロジック層（15 モジュール）
-│   ├── scrape_queue.py         # ジョブキューシステム
-│   ├── scraping_client.py      # fetch_static / fetch_dynamic ラッパー
-│   ├── monitor_service.py      # 定期パトロールサービス
-│   ├── product_service.py      # 商品 DB 永続化
-│   ├── pricing_service.py      # 価格計算
-│   ├── filter_service.py       # キーワードフィルター
-│   ├── image_service.py        # 画像ダウンロード・配信
-│   ├── selector_healer.py      # CSS セレクター自動修復
-│   ├── mercari_item_parser.py  # メルカリ DOM パーサー
-│   ├── rakuma_item_parser.py   # ラクマ DOM パーサー
-│   └── patrol/                 # 軽量パトロールスクレイパー（7 サイト分）
-│
-├── templates/                  # Jinja2 テンプレート（20 ファイル）
-├── static/                     # CSS / JS / 画像アセット
-├── config/                     # CSS セレクター設定・フィンガープリントキャッシュ
-├── tests/                      # pytest テストスイート
-├── docs/                       # 設計書・ロードマップ・仕様書
-└── knowledge/                  # 運用ナレッジベース（インシデント記録等）
-```
+責務別の抜粋です。モジュール数・テーブル数・テンプレート数を固定値として管理せず、実ファイルを参照してください。
 
----
+```text
+ESP/
+├── app.py / wsgi.py             # Flask構成・WSGI・health・scheduler
+├── worker.py                   # dedicated RQ worker
+├── cli.py                      # 運用・診断CLI
+├── database.py / models.py      # DB接続・bootstrap・モデル
+├── security_config.py          # 本番セキュリティ設定
+├── alembic/                    # schemaマイグレーション
+├── requirements*.txt           # 実行・開発依存
+├── Dockerfile / render.yaml    # コンテナ・本番split契約
+├── docker-compose.local.yml    # ローカルPostgreSQL / Redis
+├── *_db.py                     # Record Cityを含むサイト別取得入口
+├── routes/                     # 商品・抽出・価格表・公開・認証・管理・翻訳・画像等
+├── jobs/
+│   ├── scrape_tasks.py
+│   ├── translation_tasks.py
+│   └── bg_removal_tasks.py
+├── services/
+│   ├── scrape_queue.py / queue_backend.py / scrape_job_store.py
+│   ├── worker_runtime.py / browser_pool.py
+│   ├── monitor_service.py / patrol/
+│   ├── translator/ / bg_remover/ / media_queue.py
+│   ├── product_service.py / pricing_service.py / image_service.py
+│   ├── catalog_request_service.py / mail_service.py / mail_cli.py
+│   └── repair_store.py / repair_worker.py / selector_healer.py
+├── templates/ / static/        # UI・CSS・JavaScript・アセット
+├── config/ / utils/            # 取得設定・共通処理
+├── tests/ / .github/workflows/  # 回帰テスト・CI・運用workflow
+├── docs/ / knowledge/          # 設計・runbook・運用記録
+└── llama.cpp/                  # 別コンポーネント。明示指示なしに変更しない
+```
 
 ## 14. 開発ロードマップ・現状ステータス
 
-### 完了済みマイルストーン
+### 実装済みと未完了を分ける
 
-| Stage | 内容 | 完了日 |
-|-------|------|--------|
-| Stage 0 | キューシステム構築（ThreadPoolExecutor） | 2026-03 |
-| Stage 1 | ラクマ Playwright 移行 | 2026-03 |
-| Stage 2 | メルカリパトロール Playwright 移行 | 2026-03 |
-| Stage 3 | メルカリ全体 Playwright 移行 | 2026-03 |
-| Stage 4a | パトロール層 Selenium 完全削除 | 2026-03 |
-| Stage 4b | DB スクレイピング層 Selenium 完全削除 | 2026-03-10 |
+RQ / DBへの抽出ジョブ記録、Record City抽出、翻訳レビューと回復、画像白抜きの投入・確認・適用／却下、公開カタログのタグ絞り込み、ロール管理、カタログリクエスト、Resend送信基盤は実装済みです。ただしモデル・認証情報・外部サービス・運用状態の確認は別途必要です。
 
-### 現在の技術状態
+背景処理とジョブ永続化を一括して「未実装」とする旧記述は更新しました。タグによる絞り込みがあることと、独立したカテゴリ体系・階層分類の仕様が完成していることも別です。PayPal等の決済連携、在庫予約、注文確定は、受付機能とは分けて仕様確認してください。
 
-- ✅ Selenium ゼロ（全サイト Playwright + HTTP に移行済み）
-- ✅ Docker イメージから Chrome 導入処理を削除済み
-- ✅ 7 サイトスクレイパー + 7 軽量パトロールスクレイパー稼働中
-- ✅ セルフヒーリング CSS セレクターシステム実装済み（ベータ）
-- ✅ マルチユーザー・マルチショップ対応
-- ✅ 商品一覧 / 商品編集 / 商品抽出 UI のコンパクト化を反映済み
-- ✅ 公開価格表の複数レイアウト、テーマ固定、Quick View、検索、アクセス解析を実装済み
-- ✅ 商品編集での画像アップロードを実装済み
+### 優先する改善領域
 
-### 今後の予定課題
+在庫反映の正確性、画像ジョブの中断回復・競合制御、依存監査例外、PostgreSQL / Redisを使う統合テスト、モデルの実推論smoke、文書とサイト能力定義の同期が改善候補です。根拠・再現条件・受入テスト案は[2026-09-12横断レビュー](docs/REPOSITORY_REVIEW_2026-09-12.md)にまとめています。
 
-- 商品画像の白抜き / 背景処理
-- 価格表のカテゴリ絞り込み設計
-- PayPal 連携を含む簡易 EC 化の仕様検討
-- ジョブキューの DB 永続化（複数ワーカー対応化）
-
-詳細は [`docs/UNIFIED_ROADMAP.md`](docs/UNIFIED_ROADMAP.md) を参照してください。
-
----
+過去の計画は[UNIFIED_ROADMAP](docs/UNIFIED_ROADMAP.md)を参照してください。過去のStage完了やタスク記録は、その後に変更された現在の機能・Docker構成を保証するものではありません。
 
 ## 15. 運用上の注意事項
 
-### ⚠️ Gunicorn ワーカー数は必ず 1 にする
+### readinessと業務状態は分けて見る
 
-```bash
-gunicorn --workers 1 --threads 8 --max-requests 0 ...
-```
+Blueprintのhealth checkは`/readyz`です。これはweb自身に必要なDB・Redisなどの到達性確認です。worker heartbeat、worker所有scheduler、最近のpatrol完了を含む運用確認は`/stack-readyz`を使用し、`/healthz`の最小情報と混同しないでください。webが応答するだけでは、キューが消化されている証明にはなりません。
 
-スクレイプキューはプロセス内インメモリシングルトンです。  
-`--workers` を 2 以上にするとジョブ状態が別プロセスから参照できなくなります。
+### 現行splitのCLI入口
 
-### `--max-requests 0` を必ず指定する
+| 用途 | CLI |
+|---|---|
+| 設定・schema監査 | `predeploy-check --target split-render --strict`, `schema-drift-check` |
+| Blueprint・入力値監査 | `render-blueprint-audit`, `render-dashboard-inputs`, `render-budget-guardrail-audit --blueprint-path render.yaml` |
+| ローカルrehearsal | `render-local-split-checklist`, `render-local-split-readiness` |
+| split readiness | `render-cutover-readiness --require-backend postgresql --apply-migrations --strict` |
+| operator向け手順 | `render-cutover-brief`, `render-cutover-checklist`, `render-worker-postdeploy-checklist --blueprint-path render.yaml` |
+| deploy後の確認 | `render-postdeploy-smoke --base-url https://YOUR-WEB-HOST`, `worker-health --fail-on-warning` |
 
-`max-requests > 0` に設定するとワーカーが定期再起動し、実行中のバックグラウンドジョブが失われます。
+各コマンドは`python -m flask`に続けて実行します。追加引数・副作用は`--help`と[runbook](docs/RENDER_CUTOVER_RUNBOOK.md)で確認してください。`--apply-migrations`はDB変更、認証付きsmokeや`--ensure-user`は認証・登録操作を伴い得ます。smoke用パスワードを共有ログやシェル履歴へ残さないよう管理してください。
 
-### Playwright ブラウザキャッシュ
+費用監査CLIの金額はリポジトリ側のplanning assumptionです。実際の契約・サービス増設前に料金とリソース条件を別途確認してください。
 
-Docker 環境では `PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright` を設定しており、  
-root ユーザーと実行ユーザー（myuser）で Playwright ブラウザを共有しています。
+### legacy single-webは別の契約
 
-### データベース
+`single-web-redeploy-readiness`、`single-web-redeploy-checklist`、`single-web-postdeploy-smoke`、`single-web-smoke`、`predeploy-check --target single-web`は互換確認用です。現行splitの実行手順と混ぜないでください。
 
-- デフォルトは SQLite（`mercari.db`）で WAL モードが有効です
-- 本番環境では `DATABASE_URL` 環境変数で PostgreSQL / MySQL を指定することを推奨します
+inmemory実行中はGunicornの複数プロセス化やプロセス再起動で実行管理が分断・消失します。`--workers 1` / `--max-requests 0`という互換運用上の注意はこの事情によるもので、RQの耐久性やすべてのジョブの中断回復を保証する説明ではありません。
 
-### Render / split worker 運用
+### 永続データ・secret・外部サービス
 
-- `worker.py` は起動時に schema bootstrap / additive patchset / drift verify を実行します
-- Render の worker が web より先に起動しても self-heal できる想定ですが、初回 deploy では DB ユーザーに schema 変更権限が必要です
-- 本番では `SECRET_KEY` の未設定、開発用デフォルト値、短すぎる値、共有レート制限ストア未設定を起動時に拒否します。必ず web / worker の両方に同じ `SECRET_KEY` と `REDIS_URL` / `VALKEY_URL` を設定してください
-- `price_lists.theme` など additive column を含む deploy では、worker crash-loop の有無を post-deploy で必ず確認してください
+DB、画像・ロゴ、処理結果、必要なモデル資産の保存先とバックアップ・復旧手順を確認してください。コンテナ再作成で消えるfilesystemに依存せず、workerの停止時はキュー・DB状態・heartbeatも確認します。schema変更ではwebだけでなくworkerの起動失敗も確認してください。
 
----
+モデルのpreload成功・providerのAPI受付・CI成功は、それぞれ実推論・メール到達・本番業務全体の成功と同じではありません。外部サイト、外部API、認証情報、商品データを利用する検証は明示的に範囲を定めて実施してください。
 
 ## ライセンス
 
