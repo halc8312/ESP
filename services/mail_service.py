@@ -197,7 +197,7 @@ class ResendMailer:
         if configuration["status"] == "disabled":
             return MailResult("disabled", "mail_disabled")
         if configuration["status"] != "ready":
-            return MailResult("configuration_error", configuration["error_codes"][0])
+            return MailResult(configuration["status"], configuration["error_codes"][0])
         errors = validate_message(message, idempotency_key)
         if errors:
             return MailResult("rejected", errors[0])

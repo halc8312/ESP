@@ -88,7 +88,9 @@ def test_enabled_requires_key_and_valid_sender(message):
     session = FakeSession()
     no_key = ResendMailer(MailSettings.from_env({"MAIL_ENABLED": "true"}), session=session)
     assert no_key.configuration_status()["status"] == "unconfigured"
-    assert no_key.send(message, idempotency_key="test/one").code == "api_key_missing"
+    assert no_key.send(message, idempotency_key="test/one").to_dict() == {
+        "status": "unconfigured", "code": "api_key_missing",
+    }
     invalid_sender = ResendMailer(MailSettings.from_env({
         "MAIL_ENABLED": "true", "MAIL_FROM": "noreply@jp-items.com\r\nBcc: victim@example.com", "RESEND_API_KEY": _KEY,
     }), session=session)
