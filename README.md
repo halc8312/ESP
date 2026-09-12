@@ -170,7 +170,7 @@ DockerのGunicorn既定値は`--worker-class gthread --workers 1 --threads 8 --m
 | リクエスト受付 | `CatalogRequest`, `CatalogRequestItem` |
 | 抽出ジョブ | `ScrapeJob`, `ScrapeJobEvent` |
 | 翻訳・画像処理 | `TranslationSuggestion`, `ImageProcessingJob` |
-| 運用・修復 | `SelectorRepairCandidate`, `SelectorActiveOverride`, `ScrapeObservation`, `ScrapeHealthState`, `ScrapeHealthTransitionDelivery` |
+| 運用・修復 | `SelectorRepairCandidate`, `SelectorActiveRuleSet`, `ScrapeHealthObservation`, `ScrapeHealthState`, `ScrapeHealthDelivery` |
 | 為替 | `ExchangeRate` |
 
 `Product.site` / `source_url`は内部の取得元情報です。`archived`、`deleted_at`、`is_listed`は別の状態であり、売切れ状態と同一ではありません。`last_patrolled_at`、`next_patrol_at`、`patrol_fail_count`がパトロールの選択・再試行に使われます。
