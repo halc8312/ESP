@@ -3102,7 +3102,10 @@ def run_stack_smoke(
 def register_cli_commands(app):
     """Register CLI commands with the Flask app."""
 
+    from services.mail_cli import register_mail_cli_commands
     from services.recordcity_probe import RECORDCITY_PROBE_STRATEGIES
+
+    register_mail_cli_commands(app)
 
     @app.cli.command("recordcity-probe")
     @click.argument("url", type=str)
