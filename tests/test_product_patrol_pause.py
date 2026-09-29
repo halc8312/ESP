@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from models import PriceList, PriceListItem, Product, Shop, User, Variant
+from services.product_service import save_scraped_items_to_db
 from time_utils import utc_now
 
 
@@ -102,6 +103,7 @@ def test_correct_supported_url_resumes_next_patrol_without_erasing_history(
     "http://snkrdunk.com/products/DD1391-100/",
     "https://user:secret@snkrdunk.com/products/DD1391-100/",
     "https://snkrdunk.com:8443/products/DD1391-100/",
+    "https://snkrdunk.com/products/DD1391-100/?slide=ri\nght",
     "",
 ])
 def test_invalid_resume_is_rejected_without_other_product_edits(
@@ -191,8 +193,9 @@ def test_known_product_identity_allows_safe_url_correction(client, db_session, p
 
 
 @pytest.mark.parametrize("same_shop", [True, False])
+@pytest.mark.parametrize("query_suffix", ["", "?slide=right#photo-2"])
 def test_existing_product_url_in_registration_scope_cannot_be_reused(
-    client, db_session, paused_product, same_shop
+    client, db_session, paused_product, same_shop, query_suffix
 ):
     url = "https://snkrdunk.com/products/DD1391-100/"
     existing = Product(
@@ -203,12 +206,65 @@ def test_existing_product_url_in_registration_scope_cannot_be_reused(
     )
     db_session.add(existing)
     db_session.commit()
-    response = client.post(f"/product/{paused_product.product.id}", data=_edit_data(paused_product))
+    response = client.post(
+        f"/product/{paused_product.product.id}",
+        data=_edit_data(paused_product, patrol_source_url=url + query_suffix),
+    )
     assert response.status_code == 400
     assert "すでに登録されています" in response.get_data(as_text=True)
     db_session.refresh(paused_product.product)
     assert paused_product.product.patrol_paused_reason == "invalid_url"
     assert paused_product.product.source_url != url
+
+
+@pytest.mark.parametrize("site, canonical_url", [
+    ("snkrdunk", "https://snkrdunk.com/products/DD1391-100/"),
+    ("yahoo", "https://store.shopping.yahoo.co.jp/example-store/item123.html"),
+])
+def test_corrected_query_url_uses_same_identity_as_later_registration(
+    client, db_session, paused_product, site, canonical_url
+):
+    product = paused_product.product
+    product.site = site
+    db_session.commit()
+    response = client.post(
+        f"/product/{product.id}",
+        data=_edit_data(paused_product, patrol_source_url=canonical_url + "?slide=right#photo-2"),
+    )
+    assert response.status_code == 302
+    db_session.refresh(product)
+    assert product.source_url == canonical_url
+    assert product.patrol_paused_reason is None
+
+    counts = save_scraped_items_to_db(
+        [{"url": canonical_url + "?ref=campaign", "title": "Refreshed product",
+          "price": 4600, "status": "on_sale", "image_urls": []}],
+        user_id=paused_product.owner.id,
+        site=site,
+        shop_id=paused_product.shop.id,
+        raise_on_error=True,
+    )
+    assert counts == (0, 1)
+    db_session.expire_all()
+    assert db_session.query(Product).filter_by(user_id=paused_product.owner.id).one().id == product.id
+    assert product.last_title == "Refreshed product"
+    assert product.last_price == 4600
+
+
+def test_query_rejected_by_patrol_policy_is_not_accepted_by_normalizing_first(
+    client, db_session, paused_product
+):
+    product = paused_product.product
+    product.site = "mercari"
+    db_session.commit()
+    response = client.post(
+        f"/product/{product.id}",
+        data=_edit_data(paused_product, patrol_source_url="https://jp.mercari.com/item/m12345?q=search"),
+    )
+    assert response.status_code == 400
+    db_session.refresh(product)
+    assert product.patrol_paused_reason == "invalid_url"
+    assert product.source_url == "https://snkrdunk.com/search/?q=shoes"
 
 
 def test_other_users_matching_product_url_does_not_block_correction(client, db_session, paused_product):

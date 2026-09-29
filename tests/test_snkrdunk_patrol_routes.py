@@ -96,6 +96,55 @@ def test_used_listing_selects_matching_offer_and_never_parent_minimum():
     assert result["status"] == "sold"
 
 
+@pytest.mark.parametrize("as_list", [False, True])
+def test_parent_patrol_rejects_child_listing_offer_even_when_product_url_matches(monkeypatch, as_list):
+    product = _product(PARENT)
+    child = {"@type": "Offer", "url": USED, "price": 1000, "availability": "https://schema.org/OutOfStock"}
+    product["offers"] = [child] if as_list else child
+    page = _page(product, url=PARENT)
+    monkeypatch.setattr("services.scraping_client.fetch_marketplace_static", lambda *a, **k: page)
+    result = SnkrdunkPatrol().fetch(PARENT)
+    assert not result.success
+    assert result.price is None
+    assert result.status == "unknown"
+
+
+def test_parent_selects_its_own_offer_after_unrelated_child_offer():
+    product = _product(PARENT)
+    product["offers"] = [
+        {"@type": "Offer", "url": USED, "price": 1000, "availability": "https://schema.org/OutOfStock"},
+        {"@type": "Offer", "url": PARENT, "price": 6500, "availability": "https://schema.org/InStock"},
+    ]
+    result = _parse_detail_page(_page(product, url=PARENT), PARENT)
+    assert result["price"] == 6500
+    assert result["status"] == "on_sale"
+
+
+@pytest.mark.parametrize("availability,status", [(None, "unknown"), ("InStock", "on_sale")])
+def test_parent_aggregate_uses_own_fields_and_never_inherits_nested_child_stock(availability, status):
+    product = _product(PARENT)
+    product["offers"] = {
+        "@type": "AggregateOffer", "lowPrice": 6500,
+        "offers": [{"@type": "Offer", "url": USED, "price": 1000, "availability": "https://schema.org/OutOfStock"}],
+    }
+    if availability:
+        product["offers"]["availability"] = f"https://schema.org/{availability}"
+    result = _parse_detail_page(_page(product, url=PARENT), PARENT)
+    assert result["price"] == 6500
+    assert result["status"] == status
+
+
+def test_parent_aggregate_never_inherits_nested_child_price():
+    product = _product(PARENT)
+    product["offers"] = {
+        "@type": "AggregateOffer", "availability": "https://schema.org/InStock",
+        "offers": [{"@type": "Offer", "url": USED, "price": 1000, "availability": "https://schema.org/OutOfStock"}],
+    }
+    result = _parse_detail_page(_page(product, url=PARENT), PARENT)
+    assert result["price"] is None
+    assert result["status"] == "on_sale"
+
+
 def test_matching_product_is_selected_after_unrelated_recommendation():
     payload = [_product(PARENT + "/used/111", price=1000), _product(USED)]
     result = _parse_detail_page(_page(payload), USED)
@@ -169,3 +218,47 @@ def test_apparel_next_data_requires_exact_target_identity(target_url, expected_p
     result = _parse_detail_page(page, USED)
     assert result["price"] == expected_price
     assert result["status"] == ("sold" if expected_price is not None else "unknown")
+
+
+@pytest.mark.parametrize("url", [PARENT, USED])
+@pytest.mark.parametrize("next_item_fields", [{}, {"price": 6500}, {"status": "on_sale"}])
+def test_incomplete_target_next_data_falls_back_to_matching_jsonld(monkeypatch, url, next_item_fields):
+    next_data = {"props": {"pageProps": {"item": {"url": url, "name": "Partial target", **next_item_fields}}}}
+    page = _page(_product(url), url=url, text='<script id="__NEXT_DATA__" type="application/json">' + json.dumps(next_data) + '</script>')
+    monkeypatch.setattr("services.scraping_client.fetch_marketplace_static", lambda *a, **k: page)
+    result = SnkrdunkPatrol().fetch(url)
+    assert result.success
+    assert result.price == 6500
+    assert result.status == "active"
+
+
+@pytest.mark.parametrize("other_url", [PARENT, PARENT + "/used/111"])
+def test_partial_used_next_data_never_falls_back_to_unrelated_jsonld(other_url):
+    next_data = {"props": {"pageProps": {"item": {"url": USED, "name": "Partial target"}}}}
+    page = _page(_product(other_url, price=1000, availability="OutOfStock"), text='<script id="__NEXT_DATA__" type="application/json">' + json.dumps(next_data) + '</script>')
+    result = _parse_detail_page(page, USED)
+    assert result["title"] == "Partial target"
+    assert result["price"] is None
+    assert result["status"] == "unknown"
+
+
+def test_complete_target_next_data_preserves_precedence_over_jsonld():
+    next_data = {"props": {"pageProps": {"item": {"url": USED, "name": "Preferred target", "price": 8000, "status": "on_sale"}}}}
+    page = _page(_product(USED, price=1000, availability="OutOfStock"), text='<script id="__NEXT_DATA__" type="application/json">' + json.dumps(next_data) + '</script>')
+    result = _parse_detail_page(page, USED)
+    assert result["title"] == "Preferred target"
+    assert result["price"] == 8000
+    assert result["status"] == "on_sale"
+    assert result["_scrape_meta"]["strategy"] == "next_data"
+
+
+def test_partial_target_sources_combine_verified_stock_and_price(monkeypatch):
+    next_data = {"props": {"pageProps": {"item": {"url": USED, "name": "Target", "status": "on_sale"}}}}
+    product = _product(USED)
+    product["offers"].pop("availability")
+    page = _page(product, text='<script id="__NEXT_DATA__" type="application/json">' + json.dumps(next_data) + '</script>')
+    monkeypatch.setattr("services.scraping_client.fetch_marketplace_static", lambda *a, **k: page)
+    result = SnkrdunkPatrol().fetch(USED)
+    assert result.success
+    assert result.price == 6500
+    assert result.status == "active"

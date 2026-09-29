@@ -27,7 +27,7 @@ from services.scrape_safety import (
     validate_marketplace_url,
 )
 from time_utils import utc_now
-from utils import is_valid_detail_url
+from utils import is_valid_detail_url, normalize_url
 
 products_bp = Blueprint('products', __name__)
 
@@ -403,6 +403,10 @@ def product_detail(product_id):
                     )
                     if not is_valid_detail_url(patrol_source_url, product.site):
                         raise UnsafeScrapeUrlError()
+                    # Registration strips query/fragment before identifying a
+                    # product. Use that same URL for collision checks and the
+                    # eventual save, only after validating the original input.
+                    patrol_source_url = normalize_url(patrol_source_url)
                     if product.site == "snkrdunk":
                         try:
                             original_identity = snkrdunk_detail_path_identity(urlparse(product.source_url).path)

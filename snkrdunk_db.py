@@ -338,17 +338,31 @@ def _target_apparel_jsonld(product: dict, target_url: str) -> dict | None:
             and (not offer.get("url") or same_target(offer.get("url")))
         )
 
-    if same_target(product.get("url")) or same_target(product.get("@id")):
-        if not is_used or individual_offer(offers):
-            return product
-    # Some schemas describe a parent Product with a separate Offer URL for
-    # each listing. Select the matching offer, never the first/cheapest one.
+    product_matches = same_target(product.get("url")) or same_target(product.get("@id"))
+    # Product identity does not override explicit identities on its offers:
+    # a parent Product can contain only individual used listings. Select the
+    # target offer, never the first/cheapest child listing.
     candidates = offers if isinstance(offers, list) else [offers]
+    matched_offers = []
     for offer in candidates:
-        if isinstance(offer, dict) and same_target(offer.get("url")):
-            if not is_used or individual_offer(offer):
-                return {**product, "offers": offer}
-    return None
+        if not isinstance(offer, dict):
+            continue
+        if offer.get("url"):
+            if not same_target(offer["url"]):
+                continue
+        elif not product_matches or (is_used and isinstance(offers, list)):
+            continue
+
+        if individual_offer(offer):
+            matched_offers.append(offer)
+        elif not is_used and str(offer.get("@type") or "").lower() == "aggregateoffer":
+            # Only the aggregate's own price/availability describe the parent.
+            # Nested offers are separate inventory entities; recursive generic
+            # readers must not infer parent stock from a sold child listing.
+            matched_offers.append({key: value for key, value in offer.items() if key != "offers"})
+    if len(matched_offers) != 1:
+        return None
+    return {**product, "offers": matched_offers[0]}
 
 
 def _extract_product_jsonld(page, *, target_apparel_url: str | None = None):
@@ -581,7 +595,11 @@ def _parse_detail_page(page, url: str) -> dict:
             if status_source:
                 field_sources["status"] = status_source
 
-            if result.get("title"):
+            complete_apparel_inventory = (
+                result["status"] == "sold"
+                or (result["status"] == "on_sale" and (result["price"] or 0) > 0)
+            )
+            if result.get("title") and (not is_apparel or complete_apparel_inventory):
                 return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
 
     app_router_result = {} if is_apparel else _parse_app_router_detail(page, url, page_text)
@@ -637,7 +655,10 @@ def _parse_detail_page(page, url: str) -> dict:
 
         availability = _extract_jsonld_availability(product_jsonld.get("offers"))
         status, status_source = _infer_snkrdunk_status({}, "" if is_apparel else page_text, availability)
-        result["status"] = status
+        # For the same verified apparel identity, missing JSON-LD stock must
+        # not erase explicit Next-data stock while its price is supplemented.
+        if not is_apparel or status != "unknown":
+            result["status"] = status
         if status_source:
             field_sources["status"] = status_source
 
