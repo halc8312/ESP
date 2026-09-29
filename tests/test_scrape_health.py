@@ -72,6 +72,23 @@ def test_empty_observation_cannot_clear_failure_or_invent_success(app):
     assert row()["status"] == "failed"
 
 
+def test_short_search_keeps_incident_open_but_verified_target_recovers(app):
+    from services.search_result_quality import build_search_quality, inspect_search_quality
+
+    record(reason="fetch_error")
+    record(reason="fetch_error")
+    items = [{"title": "record", "url": "https://www.recordcity.jp/catalog/1",
+              "price": 1200, "status": "on_sale"}]
+    assert record(**inspect_search_quality(items, build_search_quality(items, requested_count=10)))
+    assert row()["incident_open"] is True
+    assert row()["reason"] == "incomplete_results"
+    assert row()["latest_delivery_status"] == "pending"
+    assert row()["consecutive_failures"] == 3
+    assert record(**inspect_search_quality(items, build_search_quality(items, requested_count=1)))
+    assert row()["incident_open"] is False
+    assert row()["status"] == "healthy"
+
+
 def test_mixed_batch_records_success_without_resolving_incident(app):
     record(reason="fetch_error", error_count=1)
     record(reason="fetch_error", success_count=49, error_count=1)

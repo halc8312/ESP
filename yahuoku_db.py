@@ -10,6 +10,7 @@ from urllib.parse import urljoin
 from services.extraction_policy import attach_extraction_trace, pick_first
 from services.scrape_alerts import report_detail_result
 from services.scrape_safety import (
+    SearchResult,
     ScrapeFailure,
     UnsafeScrapeUrlError,
     is_usable_detail_result,
@@ -430,7 +431,7 @@ def scrape_search_result(
                 break
             current_url = _find_next_page_url(page, current_url)
 
-        require_search_outcome(
+        search_end_reason = require_search_outcome(
             "yahuoku",
             candidate_count=len(candidate_urls),
             text=first_page_text,
@@ -453,7 +454,7 @@ def scrape_search_result(
             candidate_count=len(candidate_urls),
             item_count=len(results),
         )
-        return results
+        return SearchResult(results, end_reason=search_end_reason)
     except Exception as exc:
         logger.exception("Error in scrape_search_result: %s", exc)
         raise

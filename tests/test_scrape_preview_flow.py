@@ -833,3 +833,46 @@ def test_failed_persist_job_with_partial_items_opens_recovery_preview(client, db
     response = client.get('/scrape/result/partial-job')
     assert response.status_code == 302
     assert response.headers['Location'].endswith('/scrape?job_id=partial-job')
+
+
+def test_search_quality_survives_failed_job_api_and_is_user_scoped(client, db_session, monkeypatch):
+    from services.search_result_quality import build_search_quality
+
+    user = login_user(client, db_session, 'quality_owner')
+    item = {"url": "https://www.recordcity.jp/catalog/1", "title": "Retained",
+            "price": 1000, "status": "on_sale"}
+    quality = build_search_quality([item], requested_count=10, duplicate_count=1)
+    queue = FakeQueue()
+    queue.jobs['quality-partial'] = {
+        'job_id': 'quality-partial', 'status': 'failed', 'site': 'recordcity',
+        'user_id': user.id, 'error': 'stopped', 'context': {'persist_to_db': False},
+        'result': {'items': [item], 'partial': True, 'search_quality': quality},
+    }
+    monkeypatch.setattr('routes.api.get_queue', lambda: queue)
+    response = client.get('/api/scrape/status/quality-partial')
+    assert response.status_code == 200
+    assert response.json['result']['search_quality'] == quality
+    queue.jobs['quality-partial']['user_id'] = user.id + 1
+    assert client.get('/api/scrape/status/quality-partial').status_code == 404
+
+
+def test_persisted_search_result_explains_unverified_shortage(client, db_session, monkeypatch):
+    from services.search_result_quality import build_search_quality
+
+    user = login_user(client, db_session, 'quality_result_owner')
+    item = {"url": "https://www.recordcity.jp/catalog/1", "title": "Retained",
+            "price": 1000, "status": "on_sale"}
+    queue = FakeQueue()
+    queue.jobs['quality-completed'] = {
+        'job_id': 'quality-completed', 'status': 'completed', 'site': 'recordcity',
+        'user_id': user.id, 'result': {'items': [item], 'limit': 10,
+            'search_quality': build_search_quality([item], requested_count=10, duplicate_count=1)},
+    }
+    monkeypatch.setattr('routes.scrape.get_queue', lambda: queue)
+    response = client.get('/scrape/result/quality-completed')
+    assert response.status_code == 200
+    text = response.get_data(as_text=True)
+    assert '有効 1 / 希望 10件' in text
+    assert '重複 1件' in text
+    assert '終了理由未確認' in text
+    assert '正常終了を確認できなかった' in text

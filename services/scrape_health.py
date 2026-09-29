@@ -30,6 +30,7 @@ REASONS = frozenset({
     "persistence_error", "inconclusive", "empty_result", "timeout",
     "configuration_error", "unknown",
     "job_stalled", "job_orphaned", "worker_failed", "worker_stopped", "worker_canceled",
+    "incomplete_results",
 })
 TERMINAL_DELIVERY_STATUSES = ("delivered", "superseded", "exhausted", "expired")
 DISPATCH_STATUSES = ("delivered", "unconfigured", "cooldown", "rate_limited", "in_flight", "failed")

@@ -12,6 +12,7 @@ from scrape_metrics import check_scrape_health, get_metrics, log_scrape_result
 from services.extraction_policy import attach_extraction_trace, pick_first
 from services.scrape_alerts import report_detail_result
 from services.scrape_safety import (
+    SearchResult,
     ScrapeFailure,
     UnsafeScrapeUrlError,
     is_usable_detail_result,
@@ -536,7 +537,7 @@ def scrape_search_result(
                 break
             current_url = _find_next_page_url(page, current_url)
 
-        require_search_outcome(
+        search_end_reason = require_search_outcome(
             "yahoo",
             candidate_count=len(candidate_urls),
             text=first_page_text,
@@ -567,7 +568,7 @@ def scrape_search_result(
         if health["action_required"]:
             logger.warning("Yahoo scrape health check: %s", health["message"])
         metrics.finish()
-        return items
+        return SearchResult(items, end_reason=search_end_reason)
     except Exception as exc:
         metrics.record_attempt(False, search_url, str(exc))
         metrics.finish()

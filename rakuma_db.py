@@ -17,6 +17,7 @@ from selector_config import get_selectors
 from scrape_metrics import get_metrics, log_scrape_result, check_scrape_health
 from services.rakuma_item_parser import parse_rakuma_item_page
 from services.scrape_safety import (
+    SearchResult,
     ScrapeFailure,
     ScrapeHttpError,
     UnsafeScrapeUrlError,
@@ -221,7 +222,7 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
     print(f"DEBUG: Found {len(hrefs)} unique links on search page.")
 
     item_urls = list(hrefs)
-    require_search_outcome(
+    search_end_reason = require_search_outcome(
         "rakuma",
         candidate_count=len(item_urls),
         text=body_text,
@@ -259,7 +260,7 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
         candidate_count=len(candidate_urls),
         item_count=len(filtered_items),
     )
-    return filtered_items
+    return SearchResult(filtered_items, end_reason=search_end_reason)
 
 
 def scrape_search_result(

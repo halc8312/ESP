@@ -148,6 +148,11 @@ def test_recordcity_partial_snapshot_survives_failure_without_product_registrati
     assert datetime.fromisoformat(progress_time).tzinfo == timezone.utc
     assert stored["context"]["progress"]["requested_count"] == 3
     assert stored["result"]["excluded_count"] == 1
+    quality = stored["result"]["search_quality"]
+    assert (quality["requested_count"], quality["unique_count"], quality["valid_count"]) == (3, 2, 2)
+    assert quality["duplicate_count"] == 1
+    assert quality["excluded_count"] == quality["displayed_count"] == 1
+    assert quality["completion_verified"] is False
     assert not save_calls
 
 

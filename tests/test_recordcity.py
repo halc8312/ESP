@@ -552,3 +552,186 @@ def test_search_reports_real_page_and_detail_checkpoints_before_block(monkeypatc
     assert len(snapshots[1][0]) == 1
     assert snapshots[1][1]["processed_count"] == 1
     assert len([call for call in calls if call[1] == "detail"]) == 2
+
+
+def test_search_fetches_catalog_aliases_once_across_listing_pages(monkeypatch):
+    search_url = "https://www.recordcity.jp/catalog?search=record"
+    second_url = "https://www.recordcity.jp/catalog?search=record&page=2"
+    first_page = _FakePage(
+        anchors=[
+            _FakeElement(attrib={"href": "/ja/catalog/4936480"}),
+            _FakeElement(attrib={"href": "/en/catalog/4936480/?source=listing"}),
+            _FakeElement(text="次へ", attrib={"href": second_url}),
+        ],
+        text="2件",
+    )
+    second_page = _FakePage(
+        anchors=[
+            _FakeElement(attrib={"href": "https://recordcity.jp/catalog/4936480"}),
+            _FakeElement(attrib={"href": "https://recordcity.jp/en/catalog/4936480/#details"}),
+            _FakeElement(attrib={"href": "/catalog/4936481"}),
+        ],
+        text="2件",
+    )
+
+    def pages(url):
+        if url == search_url:
+            return first_page
+        if url == second_url:
+            return second_page
+        return _product_page_for_url(url)
+
+    calls = _stub_fetch(monkeypatch, pages)
+    snapshots = []
+    results = recordcity_db.scrape_search_result(
+        search_url,
+        max_items=10,
+        progress_callback=lambda items, progress: snapshots.append((items, progress)),
+    )
+
+    assert [url for url, kind in calls if kind == "detail"] == [
+        "https://www.recordcity.jp/ja/catalog/4936480",
+        "https://www.recordcity.jp/catalog/4936481",
+    ]
+    assert len(results) == 2
+    assert snapshots[-1][1]["candidates_count"] == 2
+    assert snapshots[-1][1]["pages_fetched"] == 2
+
+
+def test_missing_next_link_does_not_prove_listing_exhaustion(monkeypatch):
+    search_url = "https://www.recordcity.jp/catalog?search=record"
+    _stub_fetch(
+        monkeypatch,
+        lambda url: _listing_page(2) if url == search_url else _product_page_for_url(url),
+    )
+    snapshots = []
+
+    results = recordcity_db.scrape_search_result(
+        search_url,
+        max_items=10,
+        progress_callback=lambda items, progress: snapshots.append((items, progress)),
+    )
+
+    assert len(results) == 2
+    assert snapshots[-1][0] == results
+    assert snapshots[-1][1]["phase"] == "completed"
+    assert snapshots[-1][1]["end_reason"] == "unknown"
+    assert snapshots[-1][1]["detail_error_count"] == 0
+
+
+def test_explicit_zero_result_text_is_reported_without_detail_fetches(monkeypatch):
+    calls = _stub_fetch(monkeypatch, _FakePage(text="検索結果 0件"))
+    snapshots = []
+
+    results = recordcity_db.scrape_search_result(
+        "https://www.recordcity.jp/catalog?search=missing",
+        max_items=10,
+        progress_callback=lambda items, progress: snapshots.append((items, progress)),
+    )
+
+    assert results == []
+    assert [kind for _, kind in calls] == ["search"]
+    assert snapshots[-1][0] == []
+    assert snapshots[-1][1]["phase"] == "completed"
+    assert snapshots[-1][1]["end_reason"] == "explicit_empty"
+    assert snapshots[-1][1]["candidates_count"] == 0
+
+
+def test_next_page_beyond_max_scroll_reports_page_limit(monkeypatch):
+    search_url = "https://www.recordcity.jp/catalog?search=record"
+    second_url = "https://www.recordcity.jp/catalog?search=record&page=2"
+    listing = _FakePage(
+        anchors=[
+            _FakeElement(attrib={"href": "/catalog/4936480"}),
+            _FakeElement(text="次へ", attrib={"href": second_url}),
+        ],
+        text="2件",
+    )
+    calls = _stub_fetch(
+        monkeypatch,
+        lambda url: listing if url == search_url else _product_page_for_url(url),
+    )
+    snapshots = []
+
+    results = recordcity_db.scrape_search_result(
+        search_url,
+        max_items=10,
+        max_scroll=1,
+        progress_callback=lambda items, progress: snapshots.append((items, progress)),
+    )
+
+    assert len(results) == 1
+    assert [url for url, kind in calls if kind == "search"] == [search_url]
+    assert snapshots[-1][1]["phase"] == "completed"
+    assert snapshots[-1][1]["end_reason"] == "page_limit"
+    assert snapshots[-1][1]["pages_fetched"] == 1
+
+
+def test_repeated_next_page_reports_loop_without_refetch(monkeypatch):
+    search_url = "https://www.recordcity.jp/catalog?search=record"
+    second_url = "https://www.recordcity.jp/catalog?search=record&page=2"
+    first_page = _FakePage(
+        anchors=[
+            _FakeElement(attrib={"href": "/catalog/4936480"}),
+            _FakeElement(attrib={"href": second_url, "rel": "next"}),
+        ],
+        text="2件",
+    )
+    second_page = _FakePage(
+        anchors=[
+            _FakeElement(attrib={"href": "/catalog/4936481"}),
+            _FakeElement(attrib={"href": search_url, "rel": "next"}),
+        ],
+        text="2件",
+    )
+
+    def pages(url):
+        if url == search_url:
+            return first_page
+        if url == second_url:
+            return second_page
+        return _product_page_for_url(url)
+
+    calls = _stub_fetch(monkeypatch, pages)
+    snapshots = []
+
+    results = recordcity_db.scrape_search_result(
+        search_url,
+        max_items=10,
+        max_scroll=5,
+        progress_callback=lambda items, progress: snapshots.append((items, progress)),
+    )
+
+    assert len(results) == 2
+    assert [url for url, kind in calls if kind == "search"] == [search_url, second_url]
+    assert snapshots[-1][1]["phase"] == "completed"
+    assert snapshots[-1][1]["end_reason"] == "pagination_loop"
+    assert snapshots[-1][1]["pages_fetched"] == 2
+
+
+def test_partial_detail_failure_is_visible_in_final_checkpoint(monkeypatch):
+    search_url = "https://www.recordcity.jp/catalog?search=record"
+
+    def pages(url):
+        if url == search_url:
+            return _listing_page(2)
+        if url.endswith("/catalog/1"):
+            raise RuntimeError("ordinary detail fetch failure")
+        return _product_page_for_url(url)
+
+    _stub_fetch(monkeypatch, pages)
+    snapshots = []
+
+    results = recordcity_db.scrape_search_result(
+        search_url,
+        max_items=10,
+        progress_callback=lambda items, progress: snapshots.append((items, progress)),
+    )
+
+    assert len(results) == 1
+    assert results[0]["url"].endswith("/catalog/2")
+    assert snapshots[-1][0] == results
+    assert snapshots[-1][1]["phase"] == "completed"
+    assert snapshots[-1][1]["processed_count"] == 2
+    assert snapshots[-1][1]["detail_error_count"] == 1
+    assert snapshots[-1][1]["end_reason"] == "unknown"
