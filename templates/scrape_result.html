@@ -73,6 +73,17 @@
     <p class="text-muted" style="margin: 12px 0 0;">
         要求 {{ limit }}件 / 表示 {{ items|length }}件{% if excluded_count %} / 除外 {{ excluded_count }}件{% endif %}
     </p>
+    {% if search_quality %}
+    {% set end_labels = {'requested_reached': '希望件数に到達', 'listing_exhausted': '一覧末尾',
+        'explicit_empty': '対象なしを確認', 'page_limit': 'ページ上限', 'candidate_limit': '候補上限',
+        'pagination_loop': 'ページ送りの循環', 'unknown': '終了理由未確認'} %}
+    <p>有効 {{ search_quality.valid_count }} / 希望 {{ search_quality.requested_count }}件
+        （取得率 {{ (search_quality.acquisition_rate * 100)|round|int }}%）・重複除外後 {{ search_quality.unique_count }}件・重複 {{ search_quality.duplicate_count }}件・
+        {{ end_labels.get(search_quality.end_reason, '終了理由未確認') }}</p>
+    {% if not search_quality.completion_verified %}
+    <p class="error">取得件数または内容の確認が不十分です。正常終了を確認できなかったため、取得済みの商品を確認してください。</p>
+    {% endif %}
+    {% endif %}
 
     {% if items %}
     <div class="content-card">

@@ -361,6 +361,7 @@ def scrape_result(job_id):
             new_count=result.get("new_count", 0),
             updated_count=result.get("updated_count", 0),
             excluded_count=result.get("excluded_count", 0),
+            search_quality=result.get("search_quality"),
             error_msg=result.get("error_msg", ""),
             all_shops=all_shops,
             current_shop_id=current_shop_id,

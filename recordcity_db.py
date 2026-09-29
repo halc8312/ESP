@@ -30,9 +30,11 @@ from services.scrape_safety import (
     raise_for_unsafe_detail_result,
     require_search_outcome,
     require_usable_details,
+    has_no_results_evidence,
     validate_fetch_response,
     validate_marketplace_url,
 )
+from services.search_result_quality import search_item_identity
 
 logger = logging.getLogger(__name__)
 
@@ -382,9 +384,10 @@ def _extract_search_urls(page, base_url: str, max_items: int) -> list:
             full_url = validate_marketplace_url(full_url, SITE, kind="detail")
         except UnsafeScrapeUrlError:
             continue
-        if full_url in seen:
+        identity = search_item_identity({"url": full_url}, site=SITE)
+        if identity in seen:
             continue
-        seen.add(full_url)
+        seen.add(identity)
         urls.append(full_url)
         if len(urls) >= max_items:
             break
@@ -436,6 +439,9 @@ def _scrape_search_result_in_navigation_session(
     seen_pages = set()
     max_pages = max(1, int(max_scroll or 1))
     processed_count = 0
+    detail_error_count = 0
+    candidate_identities = set()
+    end_reason = "unknown"
 
     def checkpoint(phase):
         if progress_callback is not None:
@@ -444,6 +450,8 @@ def _scrape_search_result_in_navigation_session(
                 "pages_fetched": len(seen_pages),
                 "candidates_count": len(candidate_urls),
                 "processed_count": processed_count,
+                "detail_error_count": detail_error_count,
+                "end_reason": end_reason,
             })
 
     while current_url and current_url not in seen_pages and len(seen_pages) < max_pages:
@@ -453,14 +461,26 @@ def _scrape_search_result_in_navigation_session(
             first_page_text = _page_text(page)
 
         for item_url in _extract_search_urls(page, current_url, candidate_target):
-            if item_url not in candidate_urls:
+            identity = search_item_identity({"url": item_url}, site=SITE)
+            if identity not in candidate_identities:
+                candidate_identities.add(identity)
                 candidate_urls.append(item_url)
             if len(candidate_urls) >= candidate_target:
                 break
         checkpoint("listing")
         if len(candidate_urls) >= candidate_target:
+            end_reason = "candidate_limit"
             break
         current_url = _find_next_page_url(page, current_url)
+
+    if end_reason != "candidate_limit":
+        if current_url in seen_pages:
+            end_reason = "pagination_loop"
+        elif current_url and len(seen_pages) >= max_pages:
+            end_reason = "page_limit"
+        elif not candidate_urls and has_no_results_evidence(first_page_text, SITE):
+            end_reason = "explicit_empty"
+        # Missing a next link does not establish normal listing exhaustion.
 
     require_search_outcome(
         SITE, candidate_count=len(candidate_urls), text=first_page_text
@@ -485,21 +505,26 @@ def _scrape_search_result_in_navigation_session(
                 # job-wide rate signal and must not fan out over candidates.
                 raise
             logger.warning("Record City detail scrape failed for %s: %s", item_url, exc)
+            detail_error_count += 1
             checkpoint("details")
             continue
         except Exception as exc:
             raise_for_unsafe_detail_result(SITE, exc)
             logger.warning("Record City detail scrape failed for %s: %s", item_url, exc)
+            detail_error_count += 1
             checkpoint("details")
             continue
         raise_for_unsafe_detail_result(SITE, result)
         if is_usable_detail_result(result):
             results.append(result)
+        else:
+            detail_error_count += 1
         checkpoint("details")
 
     require_usable_details(
         SITE, candidate_count=len(candidate_urls), item_count=len(results)
     )
+    checkpoint("completed")
     return results
 
 

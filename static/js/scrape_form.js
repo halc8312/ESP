@@ -264,6 +264,8 @@
 
     function renderPreview(result) {
         var items = result.items || [];
+        var quality = result.search_quality;
+        var incomplete = quality && quality.completion_verified === false;
         var resultError = String(
             result.error_msg
             || (result.status === "blocked" ? "サイト側のアクセス制限により商品を取得できませんでした。" : "")
@@ -295,8 +297,23 @@
 
         if (resultError && result.partial) {
             setStep("review", "抽出は途中で停止しました。保存済みの" + items.length + "件を選んで登録できます。", "warning");
+        } else if (incomplete) {
+            setStep("review", "取得件数または内容の確認が不十分です。取得済みの商品と終了理由を確認してください。", "warning");
         } else {
             setStep("review", "抽出結果の確認ができました。必要な商品だけ選んで登録してください。", "success");
+        }
+
+        if (quality) {
+            var qualityText = document.createElement("p");
+            var endLabels = {
+                requested_reached: "希望件数に到達", listing_exhausted: "一覧末尾",
+                explicit_empty: "対象なしを確認", page_limit: "ページ上限",
+                candidate_limit: "候補上限", pagination_loop: "ページ送りの循環", unknown: "終了理由未確認"
+            };
+            qualityText.textContent = "有効 " + quality.valid_count + " / 希望 " + quality.requested_count
+                + "件（取得率 " + Math.round(quality.acquisition_rate * 100) + "%）・重複除外後 " + quality.unique_count + "件・重複 " + quality.duplicate_count
+                + "件・" + (endLabels[quality.end_reason] || "終了理由未確認");
+            previewMeta.appendChild(qualityText);
         }
 
         if (result.search_url) {
@@ -312,7 +329,7 @@
         if (!items.length) {
             var empty = document.createElement("p");
             empty.className = "text-muted";
-            empty.textContent = "条件に一致する商品はありませんでした。";
+            empty.textContent = incomplete ? "商品を確認できませんでした。抽出条件と終了理由を確認してください。" : "条件に一致する商品はありませんでした。";
             previewGrid.appendChild(empty);
             updateRegisterButtonState();
             previewSection.scrollIntoView({ behavior: "smooth", block: "start" });

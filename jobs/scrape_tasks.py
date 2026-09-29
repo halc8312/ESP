@@ -34,6 +34,11 @@ from services.scrape_request import (
     get_internal_search_limit,
     get_search_depth,
 )
+from services.search_result_quality import (
+    build_search_quality,
+    deduplicate_search_items,
+    inspect_search_quality,
+)
 
 
 logger = logging.getLogger("scrape_tasks")
@@ -118,19 +123,16 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
     failure_stage = "fetch_error"
     smoke_result = _get_smoke_result_payload(request_payload)
     scrape_started = False
+    search_progress = {}
+    search_quality = None
 
     def checkpoint(scraped_items, progress):
         # Only the RecordCity search adapter currently reports incremental work.
         # Keep validated snapshots durable without registering products twice.
+        nonlocal search_progress
+        search_progress = dict(progress)
         validated = _validate_scraper_result(scraped_items, site="recordcity")
-        unique = []
-        seen = set()
-        for item in validated:
-            identity = str(item.get("url") or "").strip()
-            if not identity or identity in seen:
-                continue
-            seen.add(identity)
-            unique.append(item)
+        unique, duplicates = deduplicate_search_items(validated, site="recordcity")
         filtered, excluded = filter_excluded_items(unique, user_id)
         filtered, price_excluded = filter_items_by_price(
             filtered, price_min=normalized_price_min, price_max=normalized_price_max,
@@ -144,13 +146,18 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                 "price_min": normalized_price_min, "price_max": normalized_price_max,
                 "sort": sort, "category": category, "limit": limit,
                 "site": "recordcity", "persist_to_db": persist_to_db, "shop_id": shop_id,
+                "search_quality": build_search_quality(
+                    unique, requested_count=limit, duplicate_count=duplicates, site="recordcity",
+                    progress=progress, excluded_count=excluded + price_excluded,
+                    displayed_count=len(staged_items),
+                ),
             },
             {**progress, "items_count": len(staged_items), "requested_count": limit},
         )
 
     def finalize(scraped_items, target_site, *, allow_empty=True):
         nonlocal items, excluded_count, new_count, updated_count
-        nonlocal observation, failure_stage
+        nonlocal observation, failure_stage, search_quality
         assert_current_job_active()
         failure_stage = "invalid_result"
         scraped_items = _validate_scraper_result(
@@ -158,7 +165,16 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
             site=target_site,
             allow_empty=allow_empty,
         )
-        observation = inspect_scraped_items(scraped_items)
+        duplicates = 0
+        if observed_route == "search" and smoke_result is None:
+            scraped_items, duplicates = deduplicate_search_items(scraped_items, site=target_site)
+            search_quality = build_search_quality(
+                scraped_items, requested_count=limit, duplicate_count=duplicates, site=target_site,
+                progress=search_progress,
+            )
+            observation = inspect_search_quality(scraped_items, search_quality)
+        else:
+            observation = inspect_scraped_items(scraped_items)
         failure_stage = "persistence_error"
         filtered_items, excluded_count = filter_excluded_items(scraped_items, user_id)
         filtered_items, price_excluded_count = filter_items_by_price(
@@ -168,6 +184,9 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
         )
         excluded_count += price_excluded_count
         items = filtered_items[:limit]
+        if search_quality is not None:
+            search_quality["excluded_count"] = excluded_count
+            search_quality["displayed_count"] = len(items)
         if persist_to_db:
             new_count, updated_count = save_scraped_items_to_db(
                 items,
@@ -362,6 +381,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
         "site": site,
         "persist_to_db": persist_to_db,
         "shop_id": shop_id,
+        **({"search_quality": search_quality} if search_quality is not None else {}),
     }
 
 

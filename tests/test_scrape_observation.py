@@ -26,8 +26,11 @@ def task_observations(monkeypatch):
 def test_search_observes_pre_filter_results(task_observations, monkeypatch):
     monkeypatch.setattr(scrape_tasks, "scrape_search_result", lambda **kw: [_item()])
     monkeypatch.setattr(scrape_tasks, "filter_excluded_items", lambda items, user_id: ([], len(items)))
-    result = scrape_tasks.execute_scrape_job({"site": "mercari", "keyword": "fixture", "persist_to_db": False})
+    result = scrape_tasks.execute_scrape_job({"site": "mercari", "keyword": "fixture", "limit": 1, "persist_to_db": False})
     assert result["items"] == []
+    assert result["search_quality"]["unique_count"] == 1
+    assert result["search_quality"]["excluded_count"] == 1
+    assert result["search_quality"]["acquisition_rate"] == 1.0
     assert task_observations == [dict(site="mercari", route="search", outcome="success", reason=None, success_count=1, error_count=0)]
 
 
@@ -40,12 +43,72 @@ def test_direct_detail_uses_classified_site_not_request_site(task_observations, 
     assert task_observations[0]["outcome"] == "success"
 
 
-def test_search_empty_is_not_success_or_failure(task_observations, monkeypatch):
-    monkeypatch.setattr(scrape_tasks, "scrape_search_result", lambda **kw: [])
-    scrape_tasks.execute_scrape_job({"keyword": "fixture", "persist_to_db": False})
+def test_explicit_search_empty_is_not_success_or_failure(task_observations, monkeypatch):
+    def empty_search(**kw):
+        kw["progress_callback"]([], {"end_reason": "explicit_empty"})
+        return []
+    monkeypatch.setattr(scrape_tasks.recordcity_db, "scrape_search_result", empty_search)
+    scrape_tasks.execute_scrape_job({"site": "recordcity", "keyword": "fixture", "persist_to_db": False})
     assert task_observations[0]["outcome"] == "no_observations"
     assert task_observations[0]["success_count"] == 0
     assert task_observations[0]["error_count"] == 0
+
+
+def test_unknown_empty_search_does_not_claim_confirmed_no_matches(task_observations, monkeypatch):
+    monkeypatch.setattr(scrape_tasks, "scrape_search_result", lambda **kw: [])
+    result = scrape_tasks.execute_scrape_job({"keyword": "fixture", "persist_to_db": False})
+    assert task_observations[0]["reason"] == "incomplete_results"
+    assert task_observations[0]["outcome"] == "failure"
+    assert result["search_quality"]["end_reason"] == "unknown"
+
+
+def test_duplicate_search_result_is_one_card_and_one_observation(task_observations, monkeypatch):
+    first = _item()
+    duplicate = _item(url=first["url"] + "/?ref=campaign#image")
+    monkeypatch.setattr(scrape_tasks, "scrape_search_result", lambda **kw: [first, duplicate])
+    saved = []
+    monkeypatch.setattr(scrape_tasks, "save_scraped_items_to_db", lambda items, **kw: (saved.extend(items) or (1, 0)))
+    result = scrape_tasks.execute_scrape_job({"limit": 10, "persist_to_db": True})
+    assert result["items"] == saved == [first]
+    quality = result["search_quality"]
+    assert (quality["unique_count"], quality["duplicate_count"], quality["acquisition_rate"]) == (1, 1, .1)
+    assert task_observations == [dict(site="mercari", route="search", outcome="failure", reason="incomplete_results", success_count=1, error_count=1)]
+
+
+def test_user_target_is_used_instead_of_internal_fetch_buffer(task_observations, monkeypatch):
+    def search(**kw):
+        assert kw["max_items"] == 70
+        return [_item(url=f"https://jp.mercari.com/item/m-{n}") for n in range(50)]
+    monkeypatch.setattr(scrape_tasks, "scrape_search_result", search)
+    result = scrape_tasks.execute_scrape_job({"limit": 50, "persist_to_db": False})
+    assert task_observations[0]["outcome"] == "success"
+    assert result["search_quality"]["requested_count"] == 50
+    assert result["search_quality"]["end_reason"] == "requested_reached"
+
+
+def test_unidentifiable_results_cannot_recover_search_health(task_observations, monkeypatch):
+    rows = [_item(url="") for _ in range(10)]
+    monkeypatch.setattr(scrape_tasks, "scrape_search_result", lambda **kw: rows)
+    result = scrape_tasks.execute_scrape_job({"limit": 10, "persist_to_db": False})
+    assert len(result["items"]) == 10  # Retain evidence; do not merge unknown identities.
+    quality = result["search_quality"]
+    assert quality["invalid_identity_count"] == 10
+    assert quality["unique_count"] == quality["valid_count"] == 0
+    assert quality["acquisition_rate"] == 0
+    assert quality["completion_verified"] is False
+    assert task_observations[0]["outcome"] == "failure"
+    assert task_observations[0]["reason"] == "invalid_result"
+    assert task_observations[0]["success_count"] == 0
+
+
+def test_mixed_result_does_not_mark_truncated_invalid_card_complete(task_observations, monkeypatch):
+    rows = [_item(status="unknown"), _item(url="https://jp.mercari.com/item/m-valid")]
+    monkeypatch.setattr(scrape_tasks, "scrape_search_result", lambda **kw: rows)
+    result = scrape_tasks.execute_scrape_job({"limit": 1, "persist_to_db": False})
+    assert result["items"] == rows[:1]  # The scraper's original ordering remains intact.
+    assert result["search_quality"]["end_reason"] == "requested_reached"
+    assert result["search_quality"]["completion_verified"] is False
+    assert task_observations[0]["reason"] == "unknown_status"
 
 
 @pytest.mark.parametrize("overrides,reason", [
