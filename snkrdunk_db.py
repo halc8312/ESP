@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import re
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from selector_config import get_selectors
 from services.detail_field_strategy_runner import DetailFieldStrategy, run_detail_field_strategies
@@ -20,6 +20,7 @@ from services.scrape_safety import (
     raise_for_unsafe_detail_result,
     require_search_outcome,
     require_usable_details,
+    snkrdunk_detail_path_identity,
     validate_fetch_response,
     validate_marketplace_url,
 )
@@ -304,7 +305,53 @@ def _collect_image_urls(raw_value) -> list:
     return image_urls
 
 
-def _extract_product_jsonld(page):
+def _snkrdunk_url_identity(raw_url, *, base_url: str = "") -> tuple[str, ...] | None:
+    if not isinstance(raw_url, str) or not raw_url.strip():
+        return None
+    try:
+        normalized = validate_marketplace_url(urljoin(base_url, raw_url), "snkrdunk", kind="detail")
+    except UnsafeScrapeUrlError:
+        return None
+    return snkrdunk_detail_path_identity(urlparse(normalized).path)
+
+
+def _target_apparel_jsonld(product: dict, target_url: str) -> dict | None:
+    """Bind product/offer data to the requested apparel inventory entity.
+
+    Used-listing prices must never fall back to the parent product's minimum
+    price, nor may recommendations determine the target listing's stock.
+    """
+    target = _snkrdunk_url_identity(target_url)
+    if target is None:
+        return None
+    is_used = len(target) == 3
+    offers = product.get("offers")
+
+    def same_target(value):
+        return _snkrdunk_url_identity(value, base_url=target_url) == target
+
+    def individual_offer(offer):
+        return (
+            isinstance(offer, dict)
+            and str(offer.get("@type") or "Offer").lower() == "offer"
+            and not any(key in offer for key in ("lowPrice", "highPrice", "offers"))
+            and (not offer.get("url") or same_target(offer.get("url")))
+        )
+
+    if same_target(product.get("url")) or same_target(product.get("@id")):
+        if not is_used or individual_offer(offers):
+            return product
+    # Some schemas describe a parent Product with a separate Offer URL for
+    # each listing. Select the matching offer, never the first/cheapest one.
+    candidates = offers if isinstance(offers, list) else [offers]
+    for offer in candidates:
+        if isinstance(offer, dict) and same_target(offer.get("url")):
+            if not is_used or individual_offer(offer):
+                return {**product, "offers": offer}
+    return None
+
+
+def _extract_product_jsonld(page, *, target_apparel_url: str | None = None):
     scripts = page.css("script[type='application/ld+json']")
 
     def _find_product(node):
@@ -322,7 +369,9 @@ def _extract_product_jsonld(page):
             else:
                 types = [str(node_type).lower()] if node_type else []
             if "product" in types:
-                return node
+                if target_apparel_url is None:
+                    return node
+                return _target_apparel_jsonld(node, target_apparel_url)
 
             for key in ("@graph", "mainEntity", "itemListElement"):
                 found = _find_product(node.get(key))
@@ -425,6 +474,8 @@ def _parse_detail_page(page, url: str) -> dict:
     result = _empty_result(url, status="unknown")
     field_sources = {}
     page_text = str(page.get_all_text() or "")
+    identity = _snkrdunk_url_identity(url)
+    is_apparel = bool(identity and identity[0] == "apparels")
     script_el = page.find("#__NEXT_DATA__")
     data = None
 
@@ -448,6 +499,13 @@ def _parse_detail_page(page, url: str) -> dict:
             or page_props.get("initialState", {}).get("product", {})
             or {}
         )
+        if not isinstance(item, dict):
+            item = {}
+        if is_apparel and not any(
+            _snkrdunk_url_identity(item.get(key), base_url=url) == identity
+            for key in ("url", "productUrl")
+        ):
+            item = {}
         if item:
             meta_title = _normalize_snkrdunk_title(
                 _get_first_meta_content(page, ["meta[property='og:title']", "meta[name='twitter:title']"])
@@ -463,7 +521,10 @@ def _parse_detail_page(page, url: str) -> dict:
                 result["title"] = title
                 field_sources["title"] = title_source
 
-            price_raw = item.get("price") or item.get("lowestPrice") or item.get("minPrice")
+            # A used apparel listing's own price is not its parent's minimum.
+            price_raw = item.get("price")
+            if not (is_apparel and len(identity) == 3):
+                price_raw = price_raw or item.get("lowestPrice") or item.get("minPrice")
             if price_raw is not None:
                 try:
                     result["price"] = int(price_raw)
@@ -515,7 +576,7 @@ def _parse_detail_page(page, url: str) -> dict:
             if image_source:
                 field_sources["images"] = image_source
 
-            status, status_source = _infer_snkrdunk_status(item, page_text)
+            status, status_source = _infer_snkrdunk_status(item, "" if is_apparel else page_text)
             result["status"] = status
             if status_source:
                 field_sources["status"] = status_source
@@ -523,11 +584,11 @@ def _parse_detail_page(page, url: str) -> dict:
             if result.get("title"):
                 return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
 
-    app_router_result = _parse_app_router_detail(page, url, page_text)
+    app_router_result = {} if is_apparel else _parse_app_router_detail(page, url, page_text)
     if app_router_result:
         return app_router_result
 
-    product_jsonld = _extract_product_jsonld(page)
+    product_jsonld = _extract_product_jsonld(page, target_apparel_url=url if is_apparel else None)
     if product_jsonld:
         meta_title = _normalize_snkrdunk_title(
             _get_first_meta_content(page, ["meta[property='og:title']", "meta[name='twitter:title']"])
@@ -575,13 +636,18 @@ def _parse_detail_page(page, url: str) -> dict:
             field_sources["images"] = image_source
 
         availability = _extract_jsonld_availability(product_jsonld.get("offers"))
-        status, status_source = _infer_snkrdunk_status({}, page_text, availability)
+        status, status_source = _infer_snkrdunk_status({}, "" if is_apparel else page_text, availability)
         result["status"] = status
         if status_source:
             field_sources["status"] = status_source
 
         if result.get("title"):
             return attach_extraction_trace(result, strategy="json_ld", field_sources=field_sources)
+
+    if is_apparel:
+        # No verified target data: page-wide prices/buttons can belong to
+        # recommendations or another used listing. Keep the last good record.
+        return result
 
     logger.debug("No structured product data found, falling back to meta/CSS selectors")
     healer = get_healer()

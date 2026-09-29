@@ -79,6 +79,34 @@ def test_admin_page_explains_passive_scope_and_webhook_acceptance(client, db_ses
     assert "/admin/scrape-health" in client.get("/admin").get_data(as_text=True)
 
 
+@pytest.mark.parametrize("reason,label", [
+    ("job_stalled", "ジョブの更新停止"),
+    ("job_orphaned", "キューからジョブ消失"),
+    ("worker_failed", "ワーカー実行失敗"),
+    ("worker_stopped", "ワーカー処理停止"),
+    ("worker_canceled", "ジョブ取消"),
+])
+def test_persisted_worker_failures_keep_diagnostic_reason_in_admin_page(
+    client, db_session, reason, label
+):
+    from services.scrape_health import record_scrape_observation, list_scrape_health
+
+    _login(client, db_session)
+    assert record_scrape_observation(
+        site="recordcity", route="search", outcome="failure", reason=reason, error_count=1
+    )
+    row = next(
+        row for row in list_scrape_health()
+        if row["site"] == "recordcity" and row["route"] == "search"
+    )
+    assert row["reason"] == reason
+    assert row["last_success_at"] is None
+    assert row["consecutive_failures"] == 1
+    response = client.get("/admin/scrape-health")
+    assert response.status_code == 200
+    assert label in response.get_data(as_text=True)
+
+
 def test_admin_page_renders_all_site_route_rows_without_collapsing_missing_evidence(
     client, db_session, health_rows
 ):

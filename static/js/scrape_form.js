@@ -287,11 +287,17 @@
             setStep("running", "商品抽出に失敗しました。内容を確認して再試行してください。", "error");
             showFlash("商品抽出に失敗しました: " + resultError, "error");
             updateRegisterButtonState();
-            previewSection.scrollIntoView({ behavior: "smooth", block: "start" });
-            return;
+            if (!items.length || result.partial !== true) {
+                previewSection.scrollIntoView({ behavior: "smooth", block: "start" });
+                return;
+            }
         }
 
-        setStep("review", "抽出結果の確認ができました。必要な商品だけ選んで登録してください。", "success");
+        if (resultError && result.partial) {
+            setStep("review", "抽出は途中で停止しました。保存済みの" + items.length + "件を選んで登録できます。", "warning");
+        } else {
+            setStep("review", "抽出結果の確認ができました。必要な商品だけ選んで登録してください。", "success");
+        }
 
         if (result.search_url) {
             var metaLink = document.createElement("a");
@@ -414,6 +420,16 @@
     }
 
     function describeStatusContext(data) {
+        var progress = data.context && data.context.progress;
+        if (progress) {
+            var phase = progress.phase === "listing" ? "一覧を確認中" : "詳細を確認中";
+            var updated = new Date(progress.updated_at);
+            var lastUpdate = isNaN(updated.getTime()) ? "" : "・最終進捗 " + updated.toLocaleTimeString("ja-JP");
+            return phase + "：取得済み " + Number(progress.items_count || 0) + " / 希望 "
+                + Number(progress.requested_count || 0) + "件・一覧 "
+                + Number(progress.pages_fetched || 0) + "ページ確認・詳細 "
+                + Number(progress.processed_count || 0) + "件確認" + lastUpdate;
+        }
         var detailLabel = data.context && data.context.detail_label ? data.context.detail_label : "";
         if (!detailLabel) {
             return "抽出状況を確認しています。";
@@ -447,9 +463,10 @@
                 }
 
                 if (data.status === "failed") {
-                    previewSection.hidden = false;
-                    setStep("running", "商品抽出に失敗しました。内容を確認して再試行してください。", "error");
-                    showFlash("商品抽出に失敗しました: " + (data.error || "不明なエラー"), "error");
+                    var partialResult = data.result || {};
+                    partialResult.job_id = data.job_id;
+                    partialResult.error_msg = data.error || "不明なエラー";
+                    renderPreview(partialResult);
                     refreshTracker();
                     if (window.ESPUI) {
                         window.ESPUI.toast(data.error || "商品抽出に失敗しました。", { type: "error" });
@@ -545,7 +562,8 @@
                     excludedCount: 0
                 };
 
-                if (data.context && data.context.persist_to_db !== false && data.result_url) {
+                if (data.context && data.context.persist_to_db !== false && data.result_url
+                        && !(data.status === "failed" && data.result && data.result.partial && data.result.items && data.result.items.length)) {
                     window.location.href = data.result_url;
                     return;
                 }
@@ -558,9 +576,10 @@
                 }
 
                 if (data.status === "failed") {
-                    previewSection.hidden = false;
-                    setStep("running", "前回の商品抽出は失敗しました。", "error");
-                    showFlash("商品抽出に失敗しました: " + (data.error || "不明なエラー"), "error");
+                    var partialResult = data.result || {};
+                    partialResult.job_id = data.job_id;
+                    partialResult.error_msg = data.error || "不明なエラー";
+                    renderPreview(partialResult);
                     return;
                 }
 

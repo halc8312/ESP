@@ -44,8 +44,6 @@ _DETAIL_URL_PATTERNS: dict[str, re.Pattern] = {
     "yahuoku": re.compile(
         r"(page\.auctions\.yahoo\.co\.jp|auctions\.yahoo\.co\.jp/jp/auction)", re.I
     ),
-    # snkrdunk: https://snkrdunk.com/products/<slug>
-    "snkrdunk": re.compile(r"snkrdunk\.com/products/", re.I),
     # recordcity: https://www.recordcity.jp/catalog/<id> (also /ja/catalog/<id>)
     "recordcity": re.compile(r"recordcity\.jp/(?:[a-z]{2}/)?catalog/\d+", re.I),
 }
@@ -67,6 +65,17 @@ def is_valid_detail_url(url: str, site: str) -> bool:
     """
     if not url or not url.strip():
         return False
+
+    if site == "snkrdunk":
+        # The fetcher and patrol must accept the same exact routes and hosts.
+        # In particular apparel/used listings are not sneaker product pages.
+        from services.scrape_safety import UnsafeScrapeUrlError, validate_marketplace_url
+
+        try:
+            validate_marketplace_url(url, site, kind="detail")
+        except UnsafeScrapeUrlError:
+            return False
+        return True
 
     # Reject obvious search / listing URLs
     if _SEARCH_INDICATORS.search(url):

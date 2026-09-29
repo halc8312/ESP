@@ -36,6 +36,8 @@ class SnkrdunkPatrol(BasePatrol):
             if missing_result is not None:
                 return missing_result
             parsed = _parse_detail_page(page, url)
+            if not str(parsed.get("title") or "").strip():
+                return PatrolResult(error="SNKRDUNK target product data could not be verified")
             price = parsed.get("price")
             detail_status = parsed.get("status", "unknown")
             status = "active" if detail_status == "on_sale" else detail_status

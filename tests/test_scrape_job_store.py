@@ -197,3 +197,43 @@ def test_get_job_backlog_snapshot_reports_oldest_queued_and_running(app, db_sess
     assert snapshot["oldest_running_job_id"] == "job-backlog-running"
     assert snapshot["oldest_queued_age_seconds"] >= 120
     assert snapshot["oldest_running_age_seconds"] >= 240
+
+
+def test_terminal_state_cannot_be_revived_by_late_worker(app):
+    from services.scrape_job_store import mark_job_failed, mark_job_progress
+    create_job_record("fenced-store", "recordcity")
+    mark_job_running("fenced-store")
+    snapshot = {"items": [{"title": "saved"}]}
+    assert mark_job_progress("fenced-store", snapshot, {"items_count": 1})
+    mark_job_failed("fenced-store", "first failure")
+    assert mark_job_running("fenced-store") is False
+    assert mark_job_completed("fenced-store", {"items": [{"title": "late"}]}) is False
+    assert mark_job_progress("fenced-store", {"items": []}, {}) is False
+    mark_job_failed("fenced-store", "second failure")
+    stored = get_job_record("fenced-store")
+    assert stored["error"] == "first failure"
+    assert stored["result"]["items"] == snapshot["items"]
+
+
+def test_watchdog_records_one_failure_after_terminal_transition(app, monkeypatch):
+    from datetime import timedelta
+    from database import SessionLocal
+    from models import ScrapeJob
+    from services.scrape_job_store import maybe_mark_job_stalled
+    create_job_record("observed-stall", "recordcity")
+    mark_job_running("observed-stall")
+    session = SessionLocal()
+    row = session.query(ScrapeJob).filter_by(job_id="observed-stall").one()
+    row.updated_at -= timedelta(hours=1)
+    session.commit()
+    session.close()
+    observations = []
+    def observe(**kwargs):
+        # Another independent read already sees the final state.
+        assert get_job_record("observed-stall")["status"] == "failed"
+        observations.append(kwargs)
+    monkeypatch.setattr("services.scrape_observation.record_observation_safely", observe)
+    assert maybe_mark_job_stalled("observed-stall", 60)
+    assert not maybe_mark_job_stalled("observed-stall", 60)
+    assert len(observations) == 1
+    assert observations[0]["reason"] == "job_stalled"

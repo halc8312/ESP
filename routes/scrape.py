@@ -322,6 +322,9 @@ def scrape_result(job_id):
             )
 
         if status["status"] == "failed":
+            partial = status.get("result") or {}
+            if partial.get("partial") and partial.get("items"):
+                return redirect(url_for("scrape.scrape_form", job_id=job_id))
             return render_template(
                 "scrape_result.html",
                 search_url="",
@@ -389,10 +392,10 @@ def _resolve_selected_items(payload):
     status = queue.get_status(job_id, user_id=current_user.id)
     if status is None:
         return None, None, (jsonify({"error": "Job not found"}), 404)
-    if status["status"] != "completed":
-        return None, None, (jsonify({"error": "Job is not completed yet"}), 409)
-
     result = status.get("result") or {}
+    recoverable = status["status"] == "failed" and result.get("partial") is True and bool(result.get("items"))
+    if status["status"] != "completed" and not recoverable:
+        return None, None, (jsonify({"error": "Job is not completed yet"}), 409)
     items = result.get("items") or []
     selected_items = []
     seen = set()

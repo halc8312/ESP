@@ -138,11 +138,12 @@ def test_build_scrape_task_includes_native_price_params_for_supported_sites(
 def test_build_scrape_task_routes_recordcity_keyword_search(monkeypatch):
     captured = {}
 
-    def fake_search_result(search_url, max_items, max_scroll, headless):
+    def fake_search_result(search_url, max_items, max_scroll, headless, progress_callback=None):
         captured["search_url"] = search_url
         captured["max_items"] = max_items
         captured["max_scroll"] = max_scroll
         captured["headless"] = headless
+        captured["progress_callback"] = progress_callback
         return []
 
     monkeypatch.setattr(
@@ -177,6 +178,7 @@ def test_build_scrape_task_routes_recordcity_keyword_search(monkeypatch):
     assert captured["max_items"] == 10
     assert captured["max_scroll"] == 2
     assert captured["headless"] is True
+    assert callable(captured["progress_callback"])
     assert result["site"] == "recordcity"
     assert result["search_url"] == captured["search_url"]
 

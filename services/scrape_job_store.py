@@ -89,6 +89,29 @@ def _record_event(session, job_id: str, event_type: str, payload: Any = None) ->
     )
 
 
+
+def _terminal_observation(record: ScrapeJob, reason: str) -> dict[str, Any] | None:
+    request = _json_loads(record.request_payload) or {}
+    if any(key in request for key in ("__smoke_result", "_smoke_result", "smoke_result")):
+        return None
+    site, route = record.site, "search"
+    if request.get("target_url"):
+        from services.scrape_request import classify_target_url
+        try:
+            kind, site = classify_target_url(request["target_url"])
+            route = "search" if kind == "search" else "detail"
+        except ValueError:
+            pass
+    # Staged data is recoverable, but does not prove the whole job succeeded.
+    return dict(site=site, route=route, outcome="failure", reason=reason,
+                success_count=0, error_count=1)
+
+
+def _observe_terminal_safely(observation):
+    if observation:
+        from services.scrape_observation import record_observation_safely
+        record_observation_safely(**observation)
+
 def create_job_record(
     job_id: str,
     site: str,
@@ -100,7 +123,7 @@ def create_job_record(
     session = SessionLocal()
     now = _utcnow()
     try:
-        record = session.query(ScrapeJob).filter_by(job_id=job_id).one_or_none()
+        record = session.query(ScrapeJob).filter_by(job_id=job_id).with_for_update().one_or_none()
         if record is None:
             record = ScrapeJob(job_id=job_id, logical_job_id=job_id)
             session.add(record)
@@ -126,19 +149,20 @@ def create_job_record(
     return job_id
 
 
-def mark_job_running(job_id: str, event_payload: Any = None) -> None:
+def mark_job_running(job_id: str, event_payload: Any = None) -> bool:
     session = SessionLocal()
     now = _utcnow()
     try:
-        record = session.query(ScrapeJob).filter_by(job_id=job_id).one_or_none()
-        if record is None:
-            return
+        record = session.query(ScrapeJob).filter_by(job_id=job_id).with_for_update().one_or_none()
+        if record is None or record.status != "queued":
+            return False
         record.status = "running"
         if record.started_at is None:
             record.started_at = now
         record.updated_at = now
         _record_event(session, job_id, "running", event_payload)
         session.commit()
+        return True
     except Exception:
         session.rollback()
         raise
@@ -150,7 +174,7 @@ def mark_job_heartbeat(job_id: str) -> None:
     session = SessionLocal()
     now = _utcnow()
     try:
-        record = session.query(ScrapeJob).filter_by(job_id=job_id).one_or_none()
+        record = session.query(ScrapeJob).filter_by(job_id=job_id).with_for_update().one_or_none()
         if record is None or record.status != "running":
             return
         record.updated_at = now
@@ -162,13 +186,41 @@ def mark_job_heartbeat(job_id: str) -> None:
         session.close()
 
 
-def mark_job_completed(job_id: str, result: Any) -> None:
+def mark_job_progress(job_id: str, result: dict[str, Any], progress: dict[str, Any]) -> bool:
+    """Checkpoint real scraper work. A heartbeat alone never increments these counters.
+
+    The snapshot is staged in the authenticated job record, not the product
+    table. Finalization remains the only automatic product-persistence step.
+    Terminal records are immutable so a late callback cannot undo a failure.
+    """
     session = SessionLocal()
     now = _utcnow()
     try:
-        record = session.query(ScrapeJob).filter_by(job_id=job_id).one_or_none()
-        if record is None:
-            return
+        record = session.query(ScrapeJob).filter_by(job_id=job_id).with_for_update().one_or_none()
+        if record is None or record.status != "running":
+            return False
+        context = _json_loads(record.context_payload) or {}
+        context["progress"] = {**progress, "updated_at": now.isoformat() + "Z"}
+        record.context_payload = _json_dumps(context)
+        record.result_payload = _json_dumps({**result, "partial": True})
+        record.result_summary = _json_dumps(_build_result_summary(result))
+        record.updated_at = now
+        session.commit()
+        return True
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def mark_job_completed(job_id: str, result: Any) -> bool:
+    session = SessionLocal()
+    now = _utcnow()
+    try:
+        record = session.query(ScrapeJob).filter_by(job_id=job_id).with_for_update().one_or_none()
+        if record is None or record.status in SCRAPE_JOB_TERMINAL_STATUSES:
+            return False
         if record.started_at is None:
             record.started_at = now
         record.status = "completed"
@@ -180,6 +232,7 @@ def mark_job_completed(job_id: str, result: Any) -> None:
         record.updated_at = now
         _record_event(session, job_id, "completed", _build_result_summary(result))
         session.commit()
+        return True
     except Exception:
         session.rollback()
         raise
@@ -187,13 +240,14 @@ def mark_job_completed(job_id: str, result: Any) -> None:
         session.close()
 
 
-def mark_job_failed(job_id: str, error_message: str, error_payload: Any = None) -> None:
+def mark_job_failed(job_id: str, error_message: str, error_payload: Any = None, *, observe_reason: str | None = None) -> bool:
     session = SessionLocal()
     now = _utcnow()
+    observation = None
     try:
-        record = session.query(ScrapeJob).filter_by(job_id=job_id).one_or_none()
-        if record is None:
-            return
+        record = session.query(ScrapeJob).filter_by(job_id=job_id).with_for_update().one_or_none()
+        if record is None or record.status in SCRAPE_JOB_TERMINAL_STATUSES:
+            return False
         if record.started_at is None:
             record.started_at = now
         record.status = "failed"
@@ -204,12 +258,16 @@ def mark_job_failed(job_id: str, error_message: str, error_payload: Any = None) 
         record.finished_at = now
         record.updated_at = now
         _record_event(session, job_id, "failed", {"message": str(error_message)})
+        pending_observation = _terminal_observation(record, observe_reason) if observe_reason else None
         session.commit()
+        observation = pending_observation
+        return True
     except Exception:
         session.rollback()
         raise
     finally:
         session.close()
+        _observe_terminal_safely(observation)
 
 
 def _get_stall_timeout_seconds(stall_timeout_seconds: int | None = None) -> int:
@@ -257,8 +315,9 @@ def _orphan_error_payload(timeout_seconds: int) -> dict[str, Any]:
 def maybe_mark_job_stalled(job_id: str, stall_timeout_seconds: int | None = None) -> bool:
     session = SessionLocal()
     now = _utcnow()
+    observation = None
     try:
-        record = session.query(ScrapeJob).filter_by(job_id=job_id).one_or_none()
+        record = session.query(ScrapeJob).filter_by(job_id=job_id).with_for_update().one_or_none()
         if record is None or record.status != "running":
             return False
 
@@ -282,13 +341,16 @@ def maybe_mark_job_stalled(job_id: str, stall_timeout_seconds: int | None = None
             "stalled",
             {"stalled_after_seconds": timeout_seconds},
         )
+        pending_observation = _terminal_observation(record, "job_stalled")
         session.commit()
+        observation = pending_observation
         return True
     except Exception:
         session.rollback()
         raise
     finally:
         session.close()
+        _observe_terminal_safely(observation)
 
 
 def _get_orphan_timeout_seconds(orphan_timeout_seconds: int | None = None) -> int:
@@ -304,8 +366,9 @@ def _get_orphan_timeout_seconds(orphan_timeout_seconds: int | None = None) -> in
 def maybe_mark_job_orphaned(job_id: str, orphan_timeout_seconds: int | None = None) -> bool:
     session = SessionLocal()
     now = _utcnow()
+    observation = None
     try:
-        record = session.query(ScrapeJob).filter_by(job_id=job_id).one_or_none()
+        record = session.query(ScrapeJob).filter_by(job_id=job_id).with_for_update().one_or_none()
         if record is None or record.status in SCRAPE_JOB_TERMINAL_STATUSES:
             return False
 
@@ -329,13 +392,16 @@ def maybe_mark_job_orphaned(job_id: str, orphan_timeout_seconds: int | None = No
             "orphaned",
             {"orphaned_after_seconds": timeout_seconds},
         )
+        pending_observation = _terminal_observation(record, "job_orphaned")
         session.commit()
+        observation = pending_observation
         return True
     except Exception:
         session.rollback()
         raise
     finally:
         session.close()
+        _observe_terminal_safely(observation)
 
 
 def reconcile_stalled_jobs(stall_timeout_seconds: int | None = None) -> list[str]:
@@ -343,8 +409,10 @@ def reconcile_stalled_jobs(stall_timeout_seconds: int | None = None) -> list[str
     now = _utcnow()
     timeout_seconds = _get_stall_timeout_seconds(stall_timeout_seconds)
     reconciled_job_ids: list[str] = []
+    observations = []
+    committed = False
     try:
-        running_jobs = session.query(ScrapeJob).filter_by(status="running").all()
+        running_jobs = session.query(ScrapeJob).filter_by(status="running").with_for_update().all()
         for record in running_jobs:
             reference_time = _resolve_stall_reference(record)
             if reference_time is None:
@@ -366,15 +434,20 @@ def reconcile_stalled_jobs(stall_timeout_seconds: int | None = None) -> list[str
                 {"stalled_after_seconds": timeout_seconds},
             )
             reconciled_job_ids.append(record.job_id)
+            observations.append(_terminal_observation(record, "job_stalled"))
 
         if reconciled_job_ids:
             session.commit()
+            committed = True
         return reconciled_job_ids
     except Exception:
         session.rollback()
         raise
     finally:
         session.close()
+        if committed:
+            for observation in observations:
+                _observe_terminal_safely(observation)
 
 
 def _serialize_job_record(record: ScrapeJob) -> dict[str, Any]:

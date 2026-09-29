@@ -125,6 +125,21 @@ _YAHOO_STORE_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}", re.IGNORECASE)
 _YAHOO_PAGE_ID_RE = re.compile(r"([a-z0-9][a-z0-9._-]{0,98})\.html", re.IGNORECASE)
 
 
+def snkrdunk_detail_path_identity(path: str) -> tuple[str, ...] | None:
+    """Recognize supported product routes, including individual apparel listings.
+
+    Keep one path contract for URL classification, patrol and target identity
+    checks. A used listing is a different inventory entity from its parent.
+    """
+    match = re.fullmatch(r"/products/([A-Za-z0-9][A-Za-z0-9._~-]*)/?", path or "")
+    if match and match.group(1) not in {".", ".."}:
+        return ("products", match.group(1))
+    match = re.fullmatch(r"/apparels/([1-9][0-9]*)(?:/used/([1-9][0-9]*))?/?", path or "")
+    if match:
+        return ("apparels", match.group(1), match.group(2)) if match.group(2) else ("apparels", match.group(1))
+    return None
+
+
 def _is_yahoo_detail_path(host: str, path: str) -> bool:
     """Recognize the documented ``/{store}/{item-code}.html`` shape.
 
@@ -162,7 +177,7 @@ def _is_detail_path(site: str, host: str, path: str) -> bool:
     if site == "yahuoku":
         return "/auction/" in normalized_path
     if site == "snkrdunk":
-        return normalized_path.startswith("/products/")
+        return snkrdunk_detail_path_identity(normalized_path) is not None
     if site == "recordcity":
         # /catalog/4936480, and the /ja/... form the site redirects to.
         return bool(re.fullmatch(r"/(?:[a-z]{2}/)?catalog/\d+/?", normalized_path))

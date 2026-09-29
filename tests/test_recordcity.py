@@ -530,3 +530,25 @@ class TestReadingAListing:
 
         detail_calls = [url for url, kind in calls if kind == "detail"]
         assert len(detail_calls) == len(set(detail_calls)) == 2
+
+
+def test_search_reports_real_page_and_detail_checkpoints_before_block(monkeypatch):
+    def pages(url):
+        if "?" in url:
+            return _listing_page(3)
+        if url.endswith("/2"):
+            raise ScrapeBlockedError("CAPTCHA required")
+        return _product_page_for_url(url)
+    calls = _stub_fetch(monkeypatch, pages)
+    snapshots = []
+    with pytest.raises(ScrapeBlockedError):
+        recordcity_db.scrape_search_result(
+            "https://www.recordcity.jp/catalog?search=record", max_items=3,
+            progress_callback=lambda items, progress: snapshots.append((items, progress)),
+        )
+    assert snapshots[0][0] == []
+    assert snapshots[0][1]["phase"] == "listing"
+    assert snapshots[0][1]["pages_fetched"] == 1
+    assert len(snapshots[1][0]) == 1
+    assert snapshots[1][1]["processed_count"] == 1
+    assert len([call for call in calls if call[1] == "detail"]) == 2

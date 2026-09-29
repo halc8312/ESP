@@ -7,6 +7,13 @@ from models import Product, ScrapeJob, Shop, User, Variant
 from time_utils import utc_now
 
 
+@pytest.fixture(autouse=True)
+def _keep_preview_registration_tests_offline(monkeypatch):
+    # Translation has its own suite. Registration defaults to auto-translate,
+    # which would otherwise download language models during these route tests.
+    monkeypatch.setattr('routes.scrape._enqueue_translation_for_products', lambda *args, **kwargs: 0)
+
+
 class FakeQueue:
     def __init__(self):
         self.jobs = {}
@@ -791,3 +798,38 @@ def test_scrape_form_offers_recordcity_keyword_search(client, db_session):
 
     assert response.status_code == 200
     assert '<option value="recordcity">レコードシティ</option>' in html
+
+
+@pytest.mark.parametrize("job_status,partial,expected", [("failed", True, 200), ("failed", False, 409), ("running", True, 409)])
+def test_partial_registration_requires_terminal_checkpoint_and_is_idempotent(client, db_session, monkeypatch, job_status, partial, expected):
+    user = login_user(client, db_session, 'recover_partial_user')
+    queue = FakeQueue()
+    queue.jobs['partial-job'] = {
+        'job_id': 'partial-job', 'status': job_status, 'site': 'recordcity', 'user_id': user.id,
+        'result': {'items': [{'url': 'https://www.recordcity.jp/catalog/4936480',
+                             'title': 'Retained record', 'price': 1200, 'status': 'on_sale', 'image_urls': []}],
+                   'site': 'recordcity', 'partial': partial, 'persist_to_db': False},
+        'error': 'interrupted', 'elapsed_seconds': 10, 'context': {'persist_to_db': False},
+    }
+    monkeypatch.setattr('routes.scrape.get_queue', lambda: queue)
+    payload = {'job_id': 'partial-job', 'selected_indices': [0, 0], 'translate': False}
+    response = client.post('/scrape/register-selected', json=payload)
+    assert response.status_code == expected
+    if expected == 200:
+        assert client.post('/scrape/register-selected', json=payload).status_code == 200
+        db_session.expire_all()
+        assert db_session.query(Product).filter_by(user_id=user.id).count() == 1
+        # The same record cannot be recovered by another tenant.
+        queue.jobs['partial-job']['user_id'] = user.id + 1
+        assert client.post('/scrape/register-selected', json=payload).status_code == 404
+
+
+def test_failed_persist_job_with_partial_items_opens_recovery_preview(client, db_session, monkeypatch):
+    user = login_user(client, db_session, 'recover_persist_user')
+    queue = FakeQueue()
+    queue.jobs['partial-job'] = {'job_id': 'partial-job', 'status': 'failed', 'user_id': user.id,
+                                'result': {'partial': True, 'items': [{'title': 'Retained'}]}, 'error': 'stopped'}
+    monkeypatch.setattr('routes.scrape.get_queue', lambda: queue)
+    response = client.get('/scrape/result/partial-job')
+    assert response.status_code == 302
+    assert response.headers['Location'].endswith('/scrape?job_id=partial-job')
