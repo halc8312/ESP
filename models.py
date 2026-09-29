@@ -135,6 +135,10 @@ class Product(Base):
     patrol_fail_count = Column(Integer, default=0)
     last_patrolled_at = Column(DateTime, nullable=True, index=True)
     next_patrol_at = Column(DateTime, nullable=True, index=True)
+    # Deterministic URL errors require correction, not endless timed retries.
+    # Keep the rejected URL to distinguish a correction from the paused input.
+    patrol_paused_reason = Column(String(32), nullable=True)
+    patrol_paused_source_url = Column(String, nullable=True)
 
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now)

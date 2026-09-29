@@ -72,6 +72,43 @@ class MonitorService:
         session_db.commit()
 
     @staticmethod
+    def _pause_invalid_url(product, session_db, now=None):
+        """Record a deterministic error once, preserving last verified data."""
+        MonitorService._mercari_soft_sold_counts.pop(product.id, None)
+        product.patrol_fail_count = (product.patrol_fail_count or 0) + 1
+        product.last_patrolled_at = now or utc_now()
+        product.next_patrol_at = None
+        product.patrol_paused_reason = "invalid_url"
+        product.patrol_paused_source_url = product.source_url
+        session_db.commit()
+
+    @staticmethod
+    def _resume_valid_urls(session_db):
+        """Resume after URL correction or a newly supported route, without I/O.
+
+        Revalidation is cheap and uses the current URL policy. Invalid paused
+        rows do not occupy the batch limit or repeatedly emit failure events.
+        A successful fetch, not this revalidation, clears the failure counter.
+        """
+        resumed = 0
+        paused = session_db.query(Product).filter(
+            Product.site.in_(list(MonitorService._patrols)),
+            Product.patrol_paused_reason == "invalid_url",
+            Product.archived != True,
+            Product.is_listed.isnot(False),
+            Product.deleted_at == None,
+        )
+        for product in paused.yield_per(200):
+            if is_valid_detail_url(product.source_url, product.site):
+                product.patrol_paused_reason = None
+                product.patrol_paused_source_url = None
+                product.next_patrol_at = None
+                resumed += 1
+        if resumed:
+            session_db.commit()
+        return resumed
+
+    @staticmethod
     def check_stale_products(limit=15):
         """
         Check items that haven't been updated for the longest time.
@@ -96,6 +133,8 @@ class MonitorService:
             "updated_count": 0,
             "successful_count": 0,
             "error_count": 0,
+            "paused_count": 0,
+            "resumed_count": 0,
             "site_counts": {},
             "site_results": {},
         }
@@ -117,12 +156,14 @@ class MonitorService:
             # Find due products by patrol cursor, independent from the
             # product-list updated_at sort.
             now = utc_now()
+            summary["resumed_count"] = MonitorService._resume_valid_urls(session_db)
             patrol_cursor = func.coalesce(Product.last_patrolled_at, Product.updated_at, Product.created_at)
             eligible_products = session_db.query(Product).filter(
                 Product.site.in_(list(MonitorService._patrols.keys())),
                 Product.archived != True,
                 Product.is_listed.isnot(False),
                 Product.deleted_at == None,
+                Product.patrol_paused_reason == None,
                 or_(Product.next_patrol_at == None, Product.next_patrol_at <= now),
             )
             summary["eligible_count"] = eligible_products.count()
@@ -157,7 +198,8 @@ class MonitorService:
                             f"skipping: {product.source_url[:80]}"
                         )
                         failure_stage = "persistence_error"
-                        MonitorService._apply_backoff(product, session_db)
+                        MonitorService._pause_invalid_url(product, session_db)
+                        summary["paused_count"] += 1
                         error_count += 1
                         add_result(product_site, "error_count", "invalid_url")
                         continue

@@ -135,17 +135,18 @@
         }
     }
 
-    function getRunningPhase(elapsedSeconds) {
-        if (elapsedSeconds < 8) {
-            return "検索結果ページから候補商品を集めています。";
+    function getRunningPhase(data) {
+        var progress = data.context && data.context.progress;
+        if (!progress) {
+            return "抽出処理を実行しています。完了までお待ちください。";
         }
-        if (elapsedSeconds < 18) {
-            return "商品ページを順番に確認しています。";
-        }
-        if (elapsedSeconds < 35) {
-            return "候補の整形と重複確認を進めています。";
-        }
-        return "最後の候補まで確認しています。別タブでの作業も続けられます。";
+        var phase = progress.phase === "listing" ? "一覧を確認中" : "詳細を確認中";
+        var updated = new Date(progress.updated_at);
+        var lastUpdate = isNaN(updated.getTime()) ? "" : "・最終進捗 " + updated.toLocaleTimeString("ja-JP");
+        return phase + "：取得済み " + Number(progress.items_count || 0) + " / 希望 "
+            + Number(progress.requested_count || 0) + "件・一覧 "
+            + Number(progress.pages_fetched || 0) + "ページ確認・詳細 "
+            + Number(progress.processed_count || 0) + "件確認" + lastUpdate;
     }
 
     function updateUI(data) {
@@ -175,7 +176,7 @@
             statusMessage.textContent = "商品を抽出しています";
             statusCopy.textContent = "完了後に結果画面へ自動で移動します。";
             queuePosition.textContent = "実行中";
-            phaseMessage.textContent = getRunningPhase(Number(data.elapsed_seconds || 0));
+            phaseMessage.textContent = getRunningPhase(data);
         }
     }
 
@@ -201,6 +202,10 @@
                 }
 
                 if (data.status === "failed") {
+                    if (data.result && data.result.partial === true && data.result.items && data.result.items.length) {
+                        window.location.href = "/scrape/result/" + jobId;
+                        return;
+                    }
                     showError(data.error || "不明なエラー");
                     return;
                 }

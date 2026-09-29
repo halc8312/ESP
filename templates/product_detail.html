@@ -1940,9 +1940,36 @@
             <section class="content-card product-edit-panel product-source-summary-card" id="productSourcePanel">
                 <header class="content-card-header">
                     <h2>仕入設定 (自動取得)</h2>
-                    <span class="product-edit-chip product-source-summary-readonly-chip">読み取り専用</span>
+                    <span class="product-edit-chip product-source-summary-readonly-chip">{% if product.patrol_paused_reason %}巡回停止中{% else %}読み取り専用{% endif %}</span>
                 </header>
                 <div class="content-card-body">
+                    {% if product.patrol_paused_reason %}
+                    <div class="product-basic-note" id="productPatrolPausedNotice" role="status">
+                        <strong>価格・在庫の自動確認を停止しています。</strong>
+                        {% if product.patrol_paused_reason == 'invalid_url' %}
+                        登録された仕入れ元URLを、対応する商品ページとして確認できませんでした。
+                        {% elif product.patrol_paused_reason == 'unsupported_route' %}
+                        この商品ページ形式の巡回には対応していません。
+                        {% else %}
+                        巡回の再開には管理者への確認が必要です。
+                        {% endif %}
+                        表示中の価格・在庫は最後に取得できた情報です。
+                    </div>
+                    {% if product.patrol_paused_reason in ['invalid_url', 'unsupported_route'] %}
+                    <div class="form-group">
+                        <label for="patrolSourceUrl">巡回する商品ページURL</label>
+                        <input type="text" inputmode="url" id="patrolSourceUrl" name="patrol_source_url"
+                            value="{{ product.source_url }}" maxlength="2048"
+                            aria-describedby="patrolSourceHelp">
+                        <p class="field-helper-text" id="patrolSourceHelp">同じ仕入れ元サイトの、同じ商品を示すURLを確認してください。検索結果や一覧のURLでは再開できません。</p>
+                        <label for="resumePatrol">
+                            <input type="checkbox" id="resumePatrol" name="resume_patrol" value="on">
+                            URLを確認し、保存時に巡回を再開する
+                        </label>
+                        <p class="field-helper-text">再開後は次回の定期巡回から価格・在庫を確認します。チェックしなければ、ほかの編集を保存しても停止状態を維持します。</p>
+                    </div>
+                    {% endif %}
+                    {% endif %}
                     <div class="product-source-summary-grid">
                         <div class="product-source-summary-row">
                             <span>仕入れ元サイト</span>

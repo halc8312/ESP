@@ -16,7 +16,13 @@ import yahuoku_db
 from mercari_db import scrape_search_result, scrape_single_item
 from services.filter_service import filter_excluded_items, filter_items_by_price, normalize_price_bounds
 from services.product_service import save_scraped_items_to_db
-from services.scrape_job_runtime import run_tracked_job
+from services.scrape_job_runtime import (
+    ScrapeJobAlreadyTerminated,
+    assert_current_job_active,
+    checkpoint_current_job,
+    defer_current_job_observation,
+    run_tracked_job,
+)
 from services.scrape_observation import (
     classify_scrape_failure,
     inspect_scraped_items,
@@ -31,6 +37,13 @@ from services.scrape_request import (
 
 
 logger = logging.getLogger("scrape_tasks")
+
+
+def _record_task_observation(**observation):
+    # Tracked workers publish only after winning the terminal-state transition;
+    # standalone diagnostic calls retain their existing observation behavior.
+    if not defer_current_job_observation(observation):
+        record_observation_safely(**observation)
 
 
 def _validate_scraper_result(scraped_items, *, site: str, allow_empty: bool = True):
@@ -106,9 +119,39 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
     smoke_result = _get_smoke_result_payload(request_payload)
     scrape_started = False
 
+    def checkpoint(scraped_items, progress):
+        # Only the RecordCity search adapter currently reports incremental work.
+        # Keep validated snapshots durable without registering products twice.
+        validated = _validate_scraper_result(scraped_items, site="recordcity")
+        unique = []
+        seen = set()
+        for item in validated:
+            identity = str(item.get("url") or "").strip()
+            if not identity or identity in seen:
+                continue
+            seen.add(identity)
+            unique.append(item)
+        filtered, excluded = filter_excluded_items(unique, user_id)
+        filtered, price_excluded = filter_items_by_price(
+            filtered, price_min=normalized_price_min, price_max=normalized_price_max,
+        )
+        staged_items = filtered[:limit]
+        checkpoint_current_job(
+            {
+                "items": staged_items, "new_count": 0, "updated_count": 0,
+                "excluded_count": excluded + price_excluded, "error_msg": "",
+                "search_url": search_url, "keyword": keyword,
+                "price_min": normalized_price_min, "price_max": normalized_price_max,
+                "sort": sort, "category": category, "limit": limit,
+                "site": "recordcity", "persist_to_db": persist_to_db, "shop_id": shop_id,
+            },
+            {**progress, "items_count": len(staged_items), "requested_count": limit},
+        )
+
     def finalize(scraped_items, target_site, *, allow_empty=True):
         nonlocal items, excluded_count, new_count, updated_count
         nonlocal observation, failure_stage
+        assert_current_job_active()
         failure_stage = "invalid_result"
         scraped_items = _validate_scraper_result(
             scraped_items,
@@ -187,6 +230,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                     max_items=search_limit,
                     max_scroll=search_depth,
                     headless=True,
+                    **({"progress_callback": checkpoint} if target_site == "recordcity" else {}),
                 )
                 finalize(scraped, target_site)
             else:
@@ -274,6 +318,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                     max_items=search_limit,
                     max_scroll=search_depth,
                     headless=True,
+                    progress_callback=checkpoint,
                 )
                 finalize(items, "recordcity")
             else:
@@ -286,8 +331,8 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                 )
                 finalize(items, "mercari")
     except Exception as exc:
-        if smoke_result is None and scrape_started:
-            record_observation_safely(
+        if smoke_result is None and scrape_started and not isinstance(exc, ScrapeJobAlreadyTerminated):
+            _record_task_observation(
                 site=observed_site,
                 route=observed_route,
                 outcome="failure",
@@ -299,7 +344,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
         raise
 
     if smoke_result is None and observation is not None:
-        record_observation_safely(site=observed_site, route=observed_route, **observation)
+        _record_task_observation(site=observed_site, route=observed_route, **observation)
 
     return {
         "items": items,

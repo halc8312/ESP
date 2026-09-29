@@ -414,6 +414,7 @@ def _scrape_search_result_in_navigation_session(
     max_items: int = 5,
     max_scroll: int = 3,
     headless: bool = True,
+    progress_callback=None,
 ) -> list:
     """
     Read a Record City listing page and then each product it links to.
@@ -434,6 +435,16 @@ def _scrape_search_result_in_navigation_session(
     current_url = search_url
     seen_pages = set()
     max_pages = max(1, int(max_scroll or 1))
+    processed_count = 0
+
+    def checkpoint(phase):
+        if progress_callback is not None:
+            progress_callback(list(results), {
+                "phase": phase,
+                "pages_fetched": len(seen_pages),
+                "candidates_count": len(candidate_urls),
+                "processed_count": processed_count,
+            })
 
     while current_url and current_url not in seen_pages and len(seen_pages) < max_pages:
         seen_pages.add(current_url)
@@ -446,6 +457,7 @@ def _scrape_search_result_in_navigation_session(
                 candidate_urls.append(item_url)
             if len(candidate_urls) >= candidate_target:
                 break
+        checkpoint("listing")
         if len(candidate_urls) >= candidate_target:
             break
         current_url = _find_next_page_url(page, current_url)
@@ -457,6 +469,7 @@ def _scrape_search_result_in_navigation_session(
     for item_url in candidate_urls:
         if len(results) >= requested:
             break
+        processed_count += 1
         try:
             result = scrape_item_detail(item_url)
         except ScrapeBlockedError:
@@ -472,14 +485,17 @@ def _scrape_search_result_in_navigation_session(
                 # job-wide rate signal and must not fan out over candidates.
                 raise
             logger.warning("Record City detail scrape failed for %s: %s", item_url, exc)
+            checkpoint("details")
             continue
         except Exception as exc:
             raise_for_unsafe_detail_result(SITE, exc)
             logger.warning("Record City detail scrape failed for %s: %s", item_url, exc)
+            checkpoint("details")
             continue
         raise_for_unsafe_detail_result(SITE, result)
         if is_usable_detail_result(result):
             results.append(result)
+        checkpoint("details")
 
     require_usable_details(
         SITE, candidate_count=len(candidate_urls), item_count=len(results)
@@ -492,6 +508,7 @@ def scrape_search_result(
     max_items: int = 5,
     max_scroll: int = 3,
     headless: bool = True,
+    progress_callback=None,
 ) -> list:
     """Read one listing and its products in a job-scoped browser session."""
     from services.recordcity_browser_fetch import recordcity_navigation_session
@@ -502,4 +519,5 @@ def scrape_search_result(
             max_items=max_items,
             max_scroll=max_scroll,
             headless=headless,
+            progress_callback=progress_callback,
         )

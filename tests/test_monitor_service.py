@@ -139,8 +139,8 @@ def test_monitor_service_excludes_products_registered_only_to_a_list(
 # ---------------------------------------------------------------------------
 
 
-def test_invalid_url_skipped_with_backoff(client, db_session, monkeypatch):
-    """Products with search URLs are skipped and get patrol backoff applied."""
+def test_invalid_url_paused_without_repeated_retries(client, db_session, monkeypatch):
+    """A deterministic invalid URL needs correction, not endless backoff."""
     user = _create_user(db_session, 'monitor_invalid_url_user')
     old_time = utc_now() - timedelta(days=1)
 
@@ -176,10 +176,19 @@ def test_invalid_url_skipped_with_backoff(client, db_session, monkeypatch):
     # Product-list updated_at is not used as a patrol backoff cursor.
     assert refreshed.updated_at == old_time
     assert refreshed.last_patrolled_at is not None
-    # next_patrol_at is pushed into the future (at least 10 min from now)
-    assert refreshed.next_patrol_at > utc_now() + timedelta(minutes=10)
+    assert refreshed.next_patrol_at is None
+    assert refreshed.patrol_paused_reason == "invalid_url"
+    assert refreshed.patrol_paused_source_url == bad_product.source_url
     # Price unchanged
     assert refreshed.last_price == 500
+
+    last_attempt = refreshed.last_patrolled_at
+    summary = MonitorService.check_stale_products(limit=10)
+    db_session.expire_all()
+    assert summary["selected_count"] == 0
+    assert summary["error_count"] == 0
+    assert refreshed.patrol_fail_count == 1
+    assert refreshed.last_patrolled_at == last_attempt
 
 
 def test_patrol_failure_records_patrol_backoff_without_touching_list_timestamp(client, db_session, monkeypatch):

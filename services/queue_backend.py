@@ -200,10 +200,11 @@ class InMemoryQueueBackend:
     def get_status(self, job_id: str, user_id: int | None = None) -> Optional[dict[str, Any]]:
         from services.scrape_job_store import get_job_record, maybe_mark_job_stalled
 
-        maybe_mark_job_stalled(job_id)
-
-        live_status = self._get_queue().get_status(job_id, user_id=user_id)
         stored_status = get_job_record(job_id, user_id=user_id)
+        if stored_status is not None:
+            maybe_mark_job_stalled(job_id)
+            stored_status = get_job_record(job_id, user_id=user_id)
+        live_status = self._get_queue().get_status(job_id, user_id=user_id)
         return _merge_job_payload(stored_status, live_status)
 
     def get_jobs_for_user(
@@ -268,7 +269,7 @@ class RQQueueBackend:
             default_timeout=int(os.environ.get("SCRAPE_JOB_TIMEOUT_SECONDS", "1800")),
         )
 
-    def _rq_job_exists(self, job_id: str) -> bool:
+    def _rq_job_status(self, job_id: str) -> str:
         try:
             from redis import Redis
             from services.rq_compat import import_rq_job, import_rq_no_such_job_error
@@ -279,10 +280,11 @@ class RQQueueBackend:
         NoSuchJobError = import_rq_no_such_job_error()
         connection = Redis.from_url(self._redis_url)
         try:
-            Job.fetch(job_id, connection=connection)
-            return True
+            job = Job.fetch(job_id, connection=connection)
+            status = job.get_status(refresh=True)
+            return str(getattr(status, "value", status) or "unknown")
         except NoSuchJobError:
-            return False
+            return "missing"
 
     def _maybe_mark_missing_job_as_orphaned(
         self,
@@ -294,14 +296,20 @@ class RQQueueBackend:
             return job_payload
 
         try:
-            job_exists = self._rq_job_exists(str(job_payload["job_id"]))
+            queue_status = self._rq_job_status(str(job_payload["job_id"]))
         except Exception:
             return job_payload
 
-        if job_exists:
-            return job_payload
+        from services.scrape_job_store import get_job_record, mark_job_failed, maybe_mark_job_orphaned
 
-        from services.scrape_job_store import get_job_record, maybe_mark_job_orphaned
+        if queue_status in {"failed", "stopped", "canceled"}:
+            reason = "worker_" + queue_status
+            message = "ワーカーでジョブが終了しました。取得済みの商品を確認してから再実行してください。"
+            mark_job_failed(str(job_payload["job_id"]), message,
+                            {"message": message, "kind": reason}, observe_reason=reason)
+            return get_job_record(str(job_payload["job_id"]), user_id=user_id)
+        if queue_status != "missing":
+            return job_payload
 
         if maybe_mark_job_orphaned(str(job_payload["job_id"])):
             refreshed = get_job_record(str(job_payload["job_id"]), user_id=user_id)
@@ -353,9 +361,14 @@ class RQQueueBackend:
     def get_status(self, job_id: str, user_id: int | None = None) -> Optional[dict[str, Any]]:
         from services.scrape_job_store import get_job_record, maybe_mark_job_stalled
 
-        maybe_mark_job_stalled(job_id)
         stored = get_job_record(job_id, user_id=user_id)
-        return self._maybe_mark_missing_job_as_orphaned(stored, user_id=user_id)
+        if stored is None:
+            return None
+        stored = self._maybe_mark_missing_job_as_orphaned(stored, user_id=user_id)
+        if stored and not _is_terminal_status(stored.get("status")):
+            maybe_mark_job_stalled(job_id)
+            stored = get_job_record(job_id, user_id=user_id)
+        return stored
 
     def get_jobs_for_user(
         self,
@@ -363,24 +376,13 @@ class RQQueueBackend:
         limit: int = 5,
         include_terminal: bool = True,
     ) -> list[dict[str, Any]]:
-        from services.scrape_job_store import list_job_records_for_user, maybe_mark_job_stalled
+        from services.scrape_job_store import list_job_records_for_user
 
-        jobs = list_job_records_for_user(
-            user_id=user_id,
-            limit=limit,
-            include_terminal=include_terminal,
-        )
-        for job in jobs:
-            maybe_mark_job_stalled(job["job_id"])
-        jobs = list_job_records_for_user(
-            user_id=user_id,
-            limit=limit,
-            include_terminal=include_terminal,
-        )
-        return [
-            self._maybe_mark_missing_job_as_orphaned(job, user_id=user_id)
-            for job in jobs
-        ]
+        jobs = list_job_records_for_user(user_id=user_id, limit=limit,
+                                         include_terminal=include_terminal)
+        return [resolved for job in jobs
+                if (resolved := self.get_status(job["job_id"], user_id=user_id)) is not None
+                and (include_terminal or not _is_terminal_status(resolved.get("status")))]
 
 
 def _job_sort_key(value) -> float:
@@ -412,7 +414,7 @@ def _merge_job_payload(
     merged = normalize_scrape_job_payload(stored_status)
     live_normalized = normalize_scrape_job_payload(live_status)
 
-    if not (_is_terminal_status(merged.get("status")) and not _is_terminal_status(live_normalized.get("status"))):
+    if not _is_terminal_status(merged.get("status")):
         for field in ("status", "elapsed_seconds", "queue_position", "finished_at"):
             if live_normalized.get(field) is not None:
                 merged[field] = live_normalized[field]
@@ -425,7 +427,7 @@ def _merge_job_payload(
         if live_normalized.get(field) is not None:
             merged[field] = live_normalized[field]
 
-    if live_normalized.get("result") is not None or merged.get("result") is None:
+    if not _is_terminal_status(stored_status.get("status")) and (live_normalized.get("result") is not None or merged.get("result") is None):
         merged["result"] = live_normalized.get("result")
 
     if live_normalized.get("error") and not _is_terminal_status(merged.get("status")):

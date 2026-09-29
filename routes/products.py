@@ -5,7 +5,8 @@ import json
 import os
 import re
 import uuid
-from flask import Blueprint, render_template, request, redirect, url_for, session
+from urllib.parse import urlparse
+from flask import Blueprint, render_template, request, redirect, url_for, session, flash
 from flask_login import login_required, current_user
 from sqlalchemy import or_
 from werkzeug.utils import secure_filename
@@ -20,7 +21,13 @@ from services.pricing_service import (
 )
 from services.rich_text import normalize_rich_text
 from services.scrape_request import SITE_LABELS
+from services.scrape_safety import (
+    UnsafeScrapeUrlError,
+    snkrdunk_detail_path_identity,
+    validate_marketplace_url,
+)
 from time_utils import utc_now
+from utils import is_valid_detail_url, normalize_url
 
 products_bp = Blueprint('products', __name__)
 
@@ -379,6 +386,45 @@ def product_detail(product_id):
         current_images = _split_snapshot_images(snapshot)
 
         if request.method == "POST":
+            patrol_source_url = None
+            if request.form.get("resume_patrol") == "on":
+                # Validate before any edit is applied. A normal save must not
+                # restart the same deterministic failure or erase its history.
+                candidate_url = (request.form.get("patrol_source_url") or "").strip()
+                try:
+                    if (
+                        product.patrol_paused_reason not in {"invalid_url", "unsupported_route"}
+                        or len(candidate_url) > 2048
+                        or any(ord(char) < 32 or ord(char) == 127 for char in candidate_url)
+                    ):
+                        raise UnsafeScrapeUrlError()
+                    patrol_source_url = validate_marketplace_url(
+                        candidate_url, product.site, kind="detail"
+                    )
+                    if not is_valid_detail_url(patrol_source_url, product.site):
+                        raise UnsafeScrapeUrlError()
+                    # Registration strips query/fragment before identifying a
+                    # product. Use that same URL for collision checks and the
+                    # eventual save, only after validating the original input.
+                    patrol_source_url = normalize_url(patrol_source_url)
+                    if product.site == "snkrdunk":
+                        try:
+                            original_identity = snkrdunk_detail_path_identity(urlparse(product.source_url).path)
+                        except ValueError:
+                            original_identity = None
+                        corrected_identity = snkrdunk_detail_path_identity(urlparse(patrol_source_url).path)
+                        if original_identity is not None and original_identity != corrected_identity:
+                            raise UnsafeScrapeUrlError()
+                except UnsafeScrapeUrlError:
+                    return _render_product_detail(
+                        session_db,
+                        product,
+                        snapshot,
+                        current_images,
+                        error="巡回を再開できません。同じ仕入れ元サイトの、同じ商品を示す対応URLを確認してください。",
+                        status_code=400,
+                    )
+
             original_pricing_config = (
                 product.pricing_rule_id,
                 product.manual_margin_rate,
@@ -411,9 +457,37 @@ def product_detail(product_id):
                         error="選択したショップが見つかりません",
                         status_code=400,
                     )
-                product.shop_id = owned_shop.id
+                target_shop_id = owned_shop.id
             else:
-                product.shop_id = None
+                target_shop_id = None
+
+            if patrol_source_url is not None:
+                # Match registration's shop/unscoped identity lookup so a URL
+                # correction cannot redirect later refreshes to another row.
+                duplicate_scope = Product.shop_id.is_(None)
+                if target_shop_id is not None:
+                    duplicate_scope = or_(Product.shop_id == target_shop_id, duplicate_scope)
+                duplicate = (
+                    session_db.query(Product.id)
+                    .filter(
+                        Product.user_id == current_user.id,
+                        Product.id != product.id,
+                        Product.source_url == patrol_source_url,
+                        duplicate_scope,
+                    )
+                    .first()
+                )
+                if duplicate is not None:
+                    return _render_product_detail(
+                        session_db,
+                        product,
+                        snapshot,
+                        current_images,
+                        error="この仕入れ元URLの商品はすでに登録されています。既存の商品を確認してください。",
+                        status_code=400,
+                    )
+
+            product.shop_id = target_shop_id
 
             # --- 基本情報 (Product) ---
             product.custom_title = request.form.get("title")
@@ -708,9 +782,17 @@ def product_detail(product_id):
                         )
                     product.selling_price = primary_sale_price
 
+            if patrol_source_url is not None:
+                product.source_url = patrol_source_url
+                product.patrol_paused_reason = None
+                product.patrol_paused_source_url = None
+                product.next_patrol_at = None
+
             product.updated_at = utc_now()
             session_db.commit()
             uploaded_image_urls = []
+            if patrol_source_url is not None:
+                flash("仕入れ元URLを保存しました。次回の定期巡回から確認を再開します。", "success")
             return redirect(url_for('products.product_detail', product_id=product.id))
 
         images = _split_snapshot_images(snapshot)

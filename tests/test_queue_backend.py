@@ -204,7 +204,7 @@ def test_get_queue_backend_maps_missing_rq_job_to_failed(app, monkeypatch):
             session.close()
 
         backend = get_queue_backend()
-        monkeypatch.setattr(backend, "_rq_job_exists", lambda job_id: False)
+        monkeypatch.setattr(backend, "_rq_job_status", lambda job_id: "missing")
         status = backend.get_status("orphan-job-1", user_id=1)
 
     assert status is not None
@@ -238,7 +238,7 @@ def test_get_queue_backend_keeps_fresh_missing_rq_job_non_terminal(app, monkeypa
         )
 
         backend = get_queue_backend()
-        monkeypatch.setattr(backend, "_rq_job_exists", lambda job_id: False)
+        monkeypatch.setattr(backend, "_rq_job_status", lambda job_id: "missing")
         status = backend.get_status("orphan-job-2", user_id=1)
 
     assert status is not None
@@ -248,3 +248,55 @@ def test_get_queue_backend_keeps_fresh_missing_rq_job_non_terminal(app, monkeypa
 def test_job_sort_key_handles_datetime_values():
     value = datetime(2026, 3, 24, 12, 0, 0)
     assert _job_sort_key(value) == value.timestamp()
+
+
+@pytest.mark.parametrize("queue_status", ["failed", "stopped", "canceled"])
+def test_rq_terminal_state_reconciles_immediately_and_preserves_partial(app, db_session, monkeypatch, queue_status):
+    from services.queue_backend import RQQueueBackend
+    from services.scrape_job_store import get_job_record, mark_job_progress
+    _create_user(db_session)
+    create_job_record("rq-terminal", "recordcity", user_id=1, context={"persist_to_db": False})
+    mark_job_running("rq-terminal")
+    mark_job_progress("rq-terminal", {"items": [{"title": "retained"}]}, {"items_count": 1})
+    backend = RQQueueBackend("redis://unused", "scrape")
+    monkeypatch.setattr(backend, "_rq_job_status", lambda job_id: queue_status)
+    observations = []
+    monkeypatch.setattr("services.scrape_observation.record_observation_safely", lambda **kw: observations.append(kw))
+    status = backend.get_status("rq-terminal", user_id=1)
+    assert status["status"] == "failed"
+    assert status["error_payload"]["kind"] == "worker_" + queue_status
+    assert status["result"]["items"][0]["title"] == "retained"
+    backend.get_status("rq-terminal", user_id=1)
+    assert len(observations) == 1
+    assert get_job_record("rq-terminal")["status"] == "failed"
+
+
+def test_rq_redis_unavailable_does_not_invent_terminal_failure(app, monkeypatch):
+    from services.queue_backend import RQQueueBackend
+    create_job_record("rq-unknown", "recordcity")
+    mark_job_running("rq-unknown")
+    backend = RQQueueBackend("redis://unused", "scrape")
+    def unavailable(job_id):
+        raise ConnectionError("unavailable")
+    monkeypatch.setattr(backend, "_rq_job_status", unavailable)
+    assert backend.get_status("rq-unknown")["status"] == "running"
+
+
+def test_rq_status_of_another_user_is_not_read_or_reconciled(app, db_session, monkeypatch):
+    from services.queue_backend import RQQueueBackend
+    _create_user(db_session, user_id=2)
+    create_job_record("rq-other-user", "recordcity", user_id=2)
+    backend = RQQueueBackend("redis://unused", "scrape")
+    monkeypatch.setattr(backend, "_rq_job_status", lambda job_id: pytest.fail("cross-tenant queue lookup"))
+    assert backend.get_status("rq-other-user", user_id=1) is None
+
+
+def test_terminal_durable_failure_wins_over_late_inmemory_completion():
+    from services.queue_backend import _merge_job_payload
+    merged = _merge_job_payload(
+        {"job_id": "late", "status": "failed", "error": "watchdog", "result": {"items": [1], "partial": True}},
+        {"job_id": "late", "status": "completed", "result": {"items": [1, 2]}},
+    )
+    assert merged["status"] == "failed"
+    assert merged["error"] == "watchdog"
+    assert merged["result"]["items"] == [1]
