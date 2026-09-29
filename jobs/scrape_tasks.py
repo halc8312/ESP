@@ -39,6 +39,7 @@ from services.search_result_quality import (
     deduplicate_search_items,
     inspect_search_quality,
 )
+from services.scrape_safety import SearchResult
 
 
 logger = logging.getLogger("scrape_tasks")
@@ -160,6 +161,11 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
         nonlocal observation, failure_stage, search_quality
         assert_current_job_active()
         failure_stage = "invalid_result"
+        # Validation intentionally copies list-compatible adapters to a plain
+        # list. Preserve verified completion evidence before that copy.
+        result_progress = dict(search_progress)
+        if isinstance(scraped_items, SearchResult) and scraped_items.end_reason == "explicit_empty":
+            result_progress["end_reason"] = "explicit_empty"
         scraped_items = _validate_scraper_result(
             scraped_items,
             site=target_site,
@@ -170,7 +176,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
             scraped_items, duplicates = deduplicate_search_items(scraped_items, site=target_site)
             search_quality = build_search_quality(
                 scraped_items, requested_count=limit, duplicate_count=duplicates, site=target_site,
-                progress=search_progress,
+                progress=result_progress,
             )
             observation = inspect_search_quality(scraped_items, search_quality)
         else:

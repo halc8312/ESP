@@ -44,6 +44,20 @@ class UnsafeScrapeUrlError(ScrapeFailure):
     """A discovered or redirected URL escaped the per-site allowlist."""
 
 
+class SearchResult(list):
+    """List-compatible result carrying verified empty-search evidence.
+
+    Adapters attach the reason returned by ``require_search_outcome``. Keeping
+    it on the result avoids mutable global state and survives sync/async task
+    boundaries. A bare list still carries no completion evidence. Page text,
+    URLs, and search terms never belong in this metadata.
+    """
+
+    def __init__(self, items=(), *, end_reason="unknown"):
+        super().__init__(items)
+        self.end_reason = "explicit_empty" if end_reason == "explicit_empty" and not self else "unknown"
+
+
 _SITE_HOSTS = {
     "mercari": {
         "search": ("jp.mercari.com",),
@@ -647,12 +661,19 @@ def validate_fetch_response(
         raise ScrapeBlockedError(f"{site}のアクセス確認画面を検出しました。")
 
 
-def require_search_outcome(site: str, *, candidate_count: int, text: str) -> None:
-    """Require candidates or explicit evidence that a zero-result page is valid."""
+def require_search_outcome(site: str, *, candidate_count: int, text: str) -> str:
+    """Validate the listing and return only verified empty-search evidence.
+
+    Finding candidates does not prove that the requested count or listing end
+    was reached. Adapters must preserve an explicit-empty reason in their
+    SearchResult instead of turning it into an indistinguishable bare [].
+    """
     if _looks_blocked(text):
         raise ScrapeBlockedError(f"{site}のアクセス確認画面を検出しました。")
-    if candidate_count > 0 or has_no_results_evidence(text, site):
-        return
+    if candidate_count > 0:
+        return "unknown"
+    if has_no_results_evidence(text, site):
+        return "explicit_empty"
     raise ScrapeSelectorDriftError(
         f"{site}の検索ページから商品を確認できませんでした。"
         "サイト側の表示変更または通信障害の可能性があります。"

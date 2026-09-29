@@ -35,6 +35,7 @@ from services.mercari_browser_fetch import (
 from services.scraping_client import fetch_dynamic, gather_with_concurrency, get_async_fetch_settings, run_coro_sync
 from services.scrape_alerts import report_detail_result
 from services.scrape_safety import (
+    SearchResult,
     UnsafeScrapeUrlError,
     install_navigation_guard,
     is_usable_detail_result,
@@ -1192,13 +1193,13 @@ async def _scrape_search_async(
             except Exception:
                 body_text = ""
             raise_for_blocked_navigation(blocked_urls, "mercari")
-            require_search_outcome(
+            search_end_reason = require_search_outcome(
                 "mercari",
                 candidate_count=len(item_urls),
                 text=body_text,
             )
             print(f"DEBUG: Found {len(item_urls)} valid item URLs.")
-            return item_urls[:max_items * 2]  # 最大 max_items * 2 件
+            return SearchResult(item_urls[:max_items * 2], end_reason=search_end_reason)
 
     return await run_browser_page_task(
         "mercari",
@@ -1265,7 +1266,8 @@ async def _collect_search_items_async(item_urls: list[str], max_items: int) -> l
         candidate_count=len(candidate_urls),
         item_count=len(filtered_items),
     )
-    return filtered_items
+    end_reason = item_urls.end_reason if isinstance(item_urls, SearchResult) else "unknown"
+    return SearchResult(filtered_items, end_reason=end_reason)
 
 
 def scrape_search_result(

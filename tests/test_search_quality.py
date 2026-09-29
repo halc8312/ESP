@@ -6,6 +6,7 @@ from services.search_result_quality import (
     build_search_quality,
     deduplicate_search_items,
     inspect_search_quality,
+    search_item_identity,
 )
 
 
@@ -70,6 +71,95 @@ def test_other_supported_site_ignores_query_fragment_and_trailing_slash():
 
     assert unique == [first, distinct]
     assert duplicate_count == 1
+
+
+@pytest.mark.parametrize(
+    "site,host,path",
+    [
+        ("snkrdunk", "snkrdunk.com", "/products/DD1391-100"),
+        ("snkrdunk", "snkrdunk.com", "/apparels/123"),
+        ("snkrdunk", "snkrdunk.com", "/apparels/123/used/456"),
+        ("surugaya", "suruga-ya.jp", "/product/detail/123456789"),
+    ],
+)
+@pytest.mark.parametrize("first_prefix", ["", "www."])
+def test_known_host_aliases_preserve_the_first_item(site, host, path, first_prefix):
+    second_prefix = "" if first_prefix else "www."
+    first = _item(url=f"https://{first_prefix}{host}{path}", title="First title")
+    duplicate = _item(
+        url=f"https://{second_prefix}{host}{path}/?source=listing#details",
+        title="Later title",
+        price=2000,
+    )
+
+    unique, duplicate_count = deduplicate_search_items([first, duplicate], site=site)
+
+    assert unique == [first]
+    assert unique[0] is first
+    assert duplicate_count == 1
+    assert search_item_identity(first) == search_item_identity(duplicate)
+
+
+def test_snkrdunk_parent_and_individual_used_listings_remain_distinct():
+    paths = [
+        "/apparels/123",
+        "/apparels/123/used/456",
+        "/apparels/123/used/457",
+        "/apparels/124/used/456",
+        "/products/123",
+    ]
+    originals = [_item(url=f"https://snkrdunk.com{path}") for path in paths]
+    alias = _item(url="https://www.snkrdunk.com/apparels/123/used/456/?source=search")
+
+    unique, duplicate_count = deduplicate_search_items(
+        [*originals[:2], alias, *originals[2:]], site="snkrdunk"
+    )
+
+    assert unique == originals
+    assert duplicate_count == 1
+
+
+def test_surugaya_product_ids_remain_distinct_across_host_aliases():
+    first = _item(url="https://suruga-ya.jp/product/detail/123456789")
+    second = _item(url="https://www.suruga-ya.jp/product/detail/987654321")
+    alias = _item(url="https://www.suruga-ya.jp/product/detail/123456789/?source=search")
+
+    unique, duplicate_count = deduplicate_search_items(
+        [first, second, alias], site="surugaya"
+    )
+
+    assert unique == [first, second]
+    assert duplicate_count == 1
+
+
+@pytest.mark.parametrize(
+    "site,host,path",
+    [
+        ("snkrdunk", "snkrdunk.com", "/apparels/123/used/456"),
+        ("surugaya", "suruga-ya.jp", "/product/detail/123456789"),
+    ],
+)
+@pytest.mark.parametrize("invalid_host", ["www.{host}.evil.example", "store.{host}"])
+def test_host_aliases_do_not_accept_lookalikes_or_other_subdomains(site, host, path, invalid_host):
+    valid = _item(url=f"https://{host}{path}")
+    invalid = _item(url=f"https://{invalid_host.format(host=host)}{path}")
+
+    unique, duplicate_count = deduplicate_search_items([valid, invalid], site=site)
+
+    assert unique == [valid, invalid]
+    assert duplicate_count == 0
+    assert search_item_identity(invalid, site=site) is None
+
+
+def test_other_sites_do_not_globally_strip_www_from_invalid_product_hosts():
+    valid = _item(url="https://jp.mercari.com/item/m12345678901")
+    invalid = _item(url="https://www.jp.mercari.com/item/m12345678901")
+
+    unique, duplicate_count = deduplicate_search_items([valid, invalid], site="mercari")
+
+    assert unique == [valid, invalid]
+    assert duplicate_count == 0
+    assert search_item_identity(invalid, site="mercari") is None
 
 
 @pytest.mark.parametrize(

@@ -19,9 +19,9 @@ END_REASONS = frozenset({
 def search_item_identity(item: dict, *, site: str | None = None) -> str | None:
     """Use validated product paths, never titles or untrusted standalone SKUs.
 
-    Query/fragment removal matches product persistence. RecordCity additionally
-    has language/host aliases for the same catalog ID. Missing/invalid URLs are
-    kept separately rather than accidentally collapsing unrelated results.
+    Query/fragment removal matches product persistence. Known apex/www aliases
+    share an identity; RecordCity also has language aliases for a catalog ID.
+    Missing/invalid URLs remain separate from unrelated results.
     """
     try:
         if site is None:
@@ -34,7 +34,12 @@ def search_item_identity(item: dict, *, site: str | None = None) -> str | None:
         match = re.fullmatch(r"/(?:[a-z]{2}/)?catalog/(\d+)/?", parsed.path)
         if match:
             return f"recordcity:{match.group(1)}"
-    return urlunsplit(("https", parsed.hostname, parsed.path.rstrip("/"), "", ""))
+    host = parsed.hostname
+    if site == "snkrdunk" and host in {"snkrdunk.com", "www.snkrdunk.com"}:
+        host = "snkrdunk.com"
+    elif site == "surugaya" and host in {"suruga-ya.jp", "www.suruga-ya.jp"}:
+        host = "suruga-ya.jp"
+    return urlunsplit(("https", host, parsed.path.rstrip("/"), "", ""))
 
 
 def deduplicate_search_items(items: list[dict], *, site: str) -> tuple[list[dict], int]:

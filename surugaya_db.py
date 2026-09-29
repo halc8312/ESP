@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup
 from services.extraction_policy import attach_extraction_trace, pick_first_valid
 from services.scrape_alerts import report_detail_result
 from services.scrape_safety import (
+    SearchResult,
     ScrapeBlockedError,
     ScrapeFailure,
     UnsafeScrapeUrlError,
@@ -1336,12 +1337,12 @@ def scrape_search_result(
                     "駿河屋の検索ページでアクセス制限が検出されました。"
                     "時間をおいて再度お試しください。"
                 )
-            require_search_outcome(
+            search_end_reason = require_search_outcome(
                 "surugaya",
                 candidate_count=0,
                 text=soup.get_text(" ", strip=True) if soup is not None else "",
             )
-            return results
+            return SearchResult(results, end_reason=search_end_reason)
 
         # Scrape each product detail
         for url in product_urls:
