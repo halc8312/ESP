@@ -7,6 +7,7 @@ import os
 import logging
 from contextvars import ContextVar
 import threading
+import time
 from typing import Any, Callable
 
 from services.scrape_job_store import (
@@ -16,12 +17,28 @@ from services.scrape_job_store import (
     mark_job_heartbeat,
     mark_job_running,
     mark_job_progress,
+    mark_job_wait,
 )
 
 
 logger = logging.getLogger("scrape_job_runtime")
 _current_job_id: ContextVar[str | None] = ContextVar("scrape_job_id", default=None)
 _pending_observations: ContextVar[list | None] = ContextVar("scrape_job_observations", default=None)
+_last_wait_report: ContextVar[tuple | None] = ContextVar("scrape_job_wait_report", default=None)
+
+
+def report_current_job_wait(reason: str, retry_after_seconds: float) -> None:
+    """Expose a shared-site wait without replacing durable partial products."""
+    job_id = _current_job_id.get()
+    if job_id is None:
+        return
+    now = time.monotonic()
+    previous = _last_wait_report.get()
+    if previous and previous[0] == reason and now - previous[1] < 3:
+        return
+    if not mark_job_wait(job_id, reason, retry_after_seconds):
+        raise ScrapeJobAlreadyTerminated("ジョブは既に終了しています。取得済みの商品を確認してください。")
+    _last_wait_report.set((reason, now))
 
 
 class ScrapeJobAlreadyTerminated(RuntimeError):
@@ -29,6 +46,8 @@ class ScrapeJobAlreadyTerminated(RuntimeError):
 
 
 def assert_current_job_active() -> None:
+    from services.marketplace_access import check_request_budget
+    check_request_budget()
     job_id = _current_job_id.get()
     if job_id is not None:
         record = get_job_record(job_id)
@@ -88,14 +107,17 @@ def _start_heartbeat(job_id: str) -> tuple[threading.Event, threading.Thread]:
 
 
 def run_tracked_job(job_id: str, task_fn: Callable[..., Any], *task_args, **task_kwargs):
+    from services.marketplace_access import request_budget
     if mark_job_running(job_id) is False:
         raise RuntimeError("ジョブは既に開始または終了しています。")
     token = _current_job_id.set(job_id)
     observation_token = _pending_observations.set([])
+    wait_token = _last_wait_report.set(None)
     stop_event, heartbeat_thread = _start_heartbeat(job_id)
     try:
         try:
-            result = task_fn(*task_args, **task_kwargs)
+            with request_budget(max_requests=120, max_seconds=900):
+                result = task_fn(*task_args, **task_kwargs)
         except Exception as exc:
             if mark_job_failed(job_id, str(exc)):
                 _publish_job_observations()
@@ -109,3 +131,4 @@ def run_tracked_job(job_id: str, task_fn: Callable[..., Any], *task_args, **task
         heartbeat_thread.join(timeout=1.0)
         _pending_observations.reset(observation_token)
         _current_job_id.reset(token)
+        _last_wait_report.reset(wait_token)

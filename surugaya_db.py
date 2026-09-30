@@ -317,7 +317,7 @@ def _fetch_with_retry(session, url: str, timeout: int = 30, max_attempts: int = 
             )
             last_response = response
             last_error = None
-        except UnsafeScrapeUrlError:
+        except (UnsafeScrapeUrlError, ScrapeBlockedError):
             raise
         except Exception as exc:
             response = None

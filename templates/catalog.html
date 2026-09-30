@@ -126,7 +126,7 @@
                 {% if pricelist.layout == 'editorial' %}
                 <div class="product-card-meta">
                     <span class="meta-pill">{{ item.image_urls|length }} images</span>
-                    <span class="meta-pill">{{ 'Available' if item.in_stock else 'Unavailable' }}</span>
+                    <span class="meta-pill" data-availability-label>{{ 'Stock not checked' if item.detail_status in ['none', 'pending'] else 'Available' if item.in_stock else 'Unavailable' }}</span>
                 </div>
                 {% endif %}
                 {% if item.tags %}
@@ -151,7 +151,9 @@
                 <div class="product-card-shipping">{{ shipping_note }}</div>
                 {% endif %}
                 <div class="product-card-footer">
-                    {% if item.in_stock %}
+                    {% if item.detail_status in ['none', 'pending'] %}
+                    <span class="stock-badge out-of-stock">Stock not checked</span>
+                    {% elif item.in_stock %}
                     <span class="stock-badge in-stock">In Stock</span>
                     <span class="stock-qty">Qty: {{ item.stock }}</span>
                     {% else %}
@@ -160,8 +162,8 @@
                 </div>
                 <div class="product-card-actions">
                     <button type="button" class="catalog-add-btn" data-request-product-id="{{ item.product_id }}"
-                        aria-label="Add {{ item.title_en or item.title }} to your request"{% if not item.in_stock %} disabled{% endif %}>
-                        {{ 'Add' if item.in_stock else 'Unavailable' }}
+                        aria-label="{{ 'Check availability of' if item.detail_status in ['none', 'pending'] else 'Add' }} {{ item.title_en or item.title }}{{ '' if item.detail_status in ['none', 'pending'] else ' to your request' }}"{% if not item.in_stock and item.detail_status not in ['none', 'pending'] %} disabled{% endif %}>
+                        {{ 'Check availability' if item.detail_status in ['none', 'pending'] else 'Add' if item.in_stock else 'Unavailable' }}
                     </button>
                     <button type="button" class="quick-view-btn" data-product-id="{{ item.product_id }}">
                         Quick View
@@ -786,12 +788,13 @@
             stock.innerHTML = '';
             const stockBadge = document.createElement('span');
             stockBadge.className = 'stock-badge ' + (data.in_stock ? 'in-stock' : 'out-of-stock');
-            stockBadge.textContent = data.in_stock ? 'In Stock' : 'Out of Stock';
+            const unchecked = data.detail_status === 'none' || data.detail_status === 'pending';
+            stockBadge.textContent = unchecked ? 'Stock not checked' : data.in_stock ? 'In Stock' : 'Out of Stock';
             stock.appendChild(stockBadge);
 
             const stockQty = document.createElement('span');
             stockQty.className = 'stock-qty';
-            stockQty.textContent = data.in_stock ? 'Qty: ' + (data.stock || 0) : 'Qty: 0';
+            stockQty.textContent = unchecked ? '' : data.in_stock ? 'Qty: ' + (data.stock || 0) : 'Qty: 0';
             stock.appendChild(stockQty);
 
             // Prefer English description for international public customers
@@ -1064,6 +1067,7 @@
     <script type="application/json" id="catalogRequestConfig">{{ {
         'token': pricelist.token,
         'submit_url': url_for('catalog_requests.submit_request', token=pricelist.token),
+        'details_url': url_for('catalog.catalog_product_details', token=pricelist.token, product_id=0),
         'csrf_token': csrf_token(),
         'items': items
     } | tojson }}</script>

@@ -8,7 +8,7 @@ from collections import Counter
 from datetime import timedelta
 from urllib.parse import unquote, urlparse
 
-from flask import Blueprint, render_template, abort, jsonify, request, session
+from flask import Blueprint, render_template, abort, current_app, jsonify, request, session
 from flask_login import login_required, current_user
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import joinedload, subqueryload
@@ -19,6 +19,7 @@ from services.exchange_rate_service import apply_safety_margin, get_exchange_rat
 from services.image_service import split_image_url_string
 from services.pricing_service import resolve_product_display_price
 from services.rich_text import build_rich_text_excerpt, normalize_rich_text, rich_text_to_plain_text
+from services.rate_limit_service import get_client_ip, get_rate_limiter
 from time_utils import utc_now
 
 catalog_bp = Blueprint('catalog', __name__)
@@ -26,6 +27,11 @@ catalog_bp = Blueprint('catalog', __name__)
 SEARCH_REFERRERS = ("google.", "bing.", "yahoo.", "duckduckgo.", "baidu.", "ecosia.")
 SOCIAL_REFERRERS = ("facebook.", "instagram.", "tiktok.", "twitter.", "x.com", "youtube.", "line.", "pinterest.")
 DEFAULT_CURRENCY_RATE = 150
+DETAIL_START_WINDOW_SECONDS = 900
+DETAIL_START_LIMIT = 20
+DETAIL_OWNER_START_LIMIT = 300
+DETAIL_POLL_WINDOW_SECONDS = 300
+DETAIL_POLL_LIMIT = 120
 
 
 def _latest_snapshot(product):
@@ -320,6 +326,25 @@ def _split_catalog_tags(raw_tags):
     return normalized
 
 
+def _public_detail_status(product):
+    """Expose availability, never the worker's internal states or errors."""
+    if product.last_status in {"sold", "deleted"}:
+        return "unavailable"
+    state = product.detail_fetch_state
+    if state is None or state == "complete":
+        stock = sum(variant.inventory_qty or 0 for variant in product.variants)
+        return "ready" if stock > 0 else "unavailable"
+    if state in {"queued", "running"}:
+        return "pending"
+    if state == "pending" and product.detail_source_url == product.source_url:
+        # Admission can retain selected demand in the database until capacity
+        # becomes available. Unselected cards have no captured source.
+        return "pending"
+    if product.detail_retry_at and product.detail_retry_at > utc_now():
+        return "pending"
+    return "none"
+
+
 def _build_catalog_item(item):
     p = item.product
     if p.archived or p.deleted_at:
@@ -331,13 +356,25 @@ def _build_catalog_item(item):
     )
 
     display_title = _public_catalog_title(p)
-    resolved_product_price = resolve_product_display_price(p, p.variants)
+    if p.detail_fetch_state is None:
+        # Only legacy products retain the source-price fallback.
+        resolved_product_price = resolve_product_display_price(p, p.variants)
+    elif p.selling_price is not None:
+        # An explicit product sale price also supports the existing variant
+        # pricing contract. Completing details never removes staged provenance.
+        resolved_product_price = resolve_product_display_price(p, p.variants)
+    else:
+        explicit_prices = [variant.selling_price for variant in p.variants if variant.selling_price is not None]
+        resolved_product_price = min(explicit_prices) if explicit_prices else None
     display_price = (
         item.custom_price
         if item.custom_price is not None
         else resolved_product_price
     )
-    total_stock = sum(v.inventory_qty or 0 for v in p.variants)
+    detail_status = _public_detail_status(p)
+    # A list card's placeholder stock must not become an orderable quantity,
+    # even if a manual edit has populated variants before verification.
+    total_stock = sum(v.inventory_qty or 0 for v in p.variants) if detail_status == "ready" else 0
 
     # Public catalog: prefer curated custom content over raw scraped text.
     # Never expose source_url, site, or other internal sourcing details.
@@ -358,6 +395,7 @@ def _build_catalog_item(item):
         "image_urls": image_urls,
         "stock": total_stock,
         "in_stock": total_stock > 0,
+        "detail_status": detail_status,
         "description_html": description_html,
         "description_en_html": description_en_html,
         "description_text": description_text,
@@ -365,6 +403,103 @@ def _build_catalog_item(item):
         "description_snippet": build_rich_text_excerpt(description_en or description, limit=80),
         "tags": tags,
     }
+
+
+def _detail_catalog_item(session_db, pricelist, product_id):
+    """Validate the public token's exact product/shop scope before queuing."""
+    if pricelist.shop_id is not None and (
+        pricelist.shop is None or pricelist.shop.user_id != pricelist.user_id
+    ):
+        return None
+    query = (
+        session_db.query(PriceListItem)
+        .join(Product)
+        .filter(
+            PriceListItem.price_list_id == pricelist.id,
+            PriceListItem.product_id == product_id,
+            PriceListItem.visible.is_(True),
+            Product.user_id == pricelist.user_id,
+            Product.archived.is_(False),
+            Product.deleted_at.is_(None),
+        )
+        .options(joinedload(PriceListItem.product).subqueryload(Product.variants))
+        .options(joinedload(PriceListItem.product).joinedload(Product.shop))
+    )
+    if pricelist.shop_id is not None:
+        query = query.filter(Product.shop_id == pricelist.shop_id)
+    item = query.first()
+    if item and item.product.shop_id is not None and (
+        item.product.shop is None or item.product.shop.user_id != pricelist.user_id
+    ):
+        return None
+    return item
+
+
+def _detail_rate_limit(pricelist):
+    """Bound public work requests with the existing atomic shared limiter."""
+    starting = request.method == "POST"
+    scope = "catalog_detail_start" if starting else "catalog_detail_poll"
+    window = DETAIL_START_WINDOW_SECONDS if starting else DETAIL_POLL_WINDOW_SECONDS
+    limit = DETAIL_START_LIMIT if starting else DETAIL_POLL_LIMIT
+    try:
+        limiter = get_rate_limiter()
+        count = limiter.increment(scope, f"{pricelist.token}:{get_client_ip(request)}", window)
+        owner_count = limiter.increment(
+            "catalog_detail_owner_start", str(pricelist.user_id), window,
+        ) if starting and count <= limit else 0
+    except Exception:
+        return jsonify(error="Availability checks are temporarily unavailable."), 503
+    if count > limit or owner_count > DETAIL_OWNER_START_LIMIT:
+        response = jsonify(error="Please wait before checking availability again.")
+        response.headers["Retry-After"] = str(window)
+        return response, 429
+    return None
+
+
+@catalog_bp.route("/catalog/<token>/products/<int:product_id>/details", methods=["GET", "POST"])
+def catalog_product_details(token, product_id):
+    """Start deferred details or poll only the token's visible product."""
+    session_db = SessionLocal()
+    try:
+        pricelist = _pricelist_by_token(session_db, token)
+        item = _detail_catalog_item(session_db, pricelist, product_id) if pricelist else None
+        if item is None:
+            return jsonify(error="Not found"), 404
+        limited = _detail_rate_limit(pricelist)
+        if limited is not None:
+            return limited
+        if request.method == "POST" and _public_detail_status(item.product) not in {"ready", "unavailable"}:
+            owner_id, shop_id = pricelist.user_id, item.product.shop_id
+            # Release the read transaction before the queue service claims the
+            # product in its own transaction. It validates ownership again.
+            session_db.rollback()
+            from services.product_detail_jobs import enqueue_product_details
+            result = enqueue_product_details([product_id], owner_id, shop_id=shop_id, respect_backoff=True)
+            session_db.expire_all()
+            pricelist = _pricelist_by_token(session_db, token)
+            item = _detail_catalog_item(session_db, pricelist, product_id) if pricelist else None
+            if item is None:
+                return jsonify(error="Not found"), 404
+            if result.get("failed") and _public_detail_status(item.product) == "none":
+                return jsonify(status="none", retry_after_seconds=30), 503
+        _attach_latest_snapshots(session_db, [item.product])
+        public_item = _build_catalog_item(item)
+        status = public_item["detail_status"]
+        payload = {"status": status, "item": public_item}
+        if status == "pending":
+            retry_at = item.product.detail_retry_at
+            default_retry = 30 if item.product.detail_fetch_state == "pending" else 3
+            payload["retry_after_seconds"] = max(
+                3, min(3600, int((retry_at - utc_now()).total_seconds()) + 1),
+            ) if retry_at and retry_at > utc_now() else default_retry
+        return jsonify(payload), 202 if status == "pending" else 200
+    except Exception as error:
+        session_db.rollback()
+        # Worker exceptions can contain source URLs, credentials or raw HTML.
+        current_app.logger.warning("Catalog availability check failed (%s)", type(error).__name__)
+        return jsonify(error="Availability checks are temporarily unavailable.", status="none"), 503
+    finally:
+        session_db.close()
 
 
 def _hash_ip(request_obj):

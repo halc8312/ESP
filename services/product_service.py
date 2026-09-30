@@ -224,6 +224,7 @@ def save_scraped_items_to_db(
     now = utc_now()
     repricing_product_ids = set()
     saved_product_ids: list[int] = []
+    completion_translation_ids: list[str] = []
 
     try:
         shop_id_from_session = False
@@ -243,6 +244,19 @@ def save_scraped_items_to_db(
             session.pop("current_shop_id", None)
 
         for item in items:
+            if item.get("_listing_card") is True:
+                product, created = _save_listing_card(
+                    session_db, item, user_id=user_id, site=site,
+                    shop_id=resolved_shop_id, is_listed=is_listed,
+                )
+                if product is None:
+                    rejected_count += 1
+                    continue
+                processed_count += 1
+                new_count += int(created)
+                if product.id not in saved_product_ids:
+                    saved_product_ids.append(product.id)
+                continue
             raw_url = item.get("url", "")
             if not raw_url:
                 rejected_count += 1
@@ -265,6 +279,14 @@ def save_scraped_items_to_db(
                 user_id=user_id,
                 shop_id=resolved_shop_id,
             )
+            if product is not None and product.detail_fetch_state not in (None, "complete"):
+                # Preserve the permissive legacy manual-selection contract,
+                # while requiring real detail evidence for shallow products.
+                normalized_item = normalize_item_for_persistence(item, manual_selection=False)
+                status = normalized_item.get("status") or "unknown"
+                if evaluate_persistence(site, normalized_item, scrape_meta, product, manual_selection=False) == "reject":
+                    rejected_count += 1
+                    continue
             persistence_action = evaluate_persistence(
                 site,
                 normalized_item,
@@ -365,6 +387,9 @@ def save_scraped_items_to_db(
                         updated_count += 1
                     processed_count += 1
                     saved_product_ids.append(product.id)
+                    translation_id = _complete_deferred_if_verified(session_db, product, item, site=site)
+                    if translation_id:
+                        completion_translation_ids.append(translation_id)
                     continue
 
                 title_changed = bool(title.strip()) and product.last_title != title
@@ -410,14 +435,23 @@ def save_scraped_items_to_db(
                 image_urls="|".join(cached_image_urls),
             )
             session_db.add(snapshot)
-
-        session_db.commit()
+            translation_id = _complete_deferred_if_verified(session_db, product, item, site=site)
+            if translation_id:
+                completion_translation_ids.append(translation_id)
 
         for product_id in repricing_product_ids:
             update_product_selling_price(product_id, session=session_db)
 
-        if repricing_product_ids:
-            session_db.commit()
+        from services.scrape_job_runtime import assert_current_job_active
+
+        assert_current_job_active()
+        session_db.commit()
+
+        if completion_translation_ids:
+            from services.product_detail_jobs import _dispatch_translation
+
+            for translation_id in completion_translation_ids:
+                _dispatch_translation(translation_id)
 
         summary = {
             "input_count": input_count,
@@ -437,3 +471,196 @@ def save_scraped_items_to_db(
         return summary if return_summary else (0, 0)
     finally:
         session_db.close()
+
+
+def _complete_deferred_if_verified(session_db, product, item, *, site):
+    """A normal verified detail registration supersedes an older lazy request."""
+    if product.detail_fetch_state in (None, "complete"):
+        return
+    from services.search_result_quality import search_item_identity
+
+    identity = search_item_identity(item, site=site)
+    if identity is None or identity != search_item_identity({"url": product.source_url}, site=site):
+        return
+    meta = item.get("_scrape_meta") or {}
+    if str(meta.get("confidence") or "high").lower() == "low":
+        return
+    if evaluate_persistence(site, item, meta, product, manual_selection=False) == "reject":
+        return
+    product.detail_fetch_state = "complete"
+    # Any already queued worker now fails its token check before writing.
+    product.detail_job_id = None
+    product.detail_lease_expires_at = None
+    product.detail_retry_at = None
+    product.detail_fail_count = 0
+    product.detail_error_code = None
+    translation_id = None
+    if product.detail_translate_requested:
+        from services.product_detail_jobs import _create_completion_translation
+
+        translation_id = _create_completion_translation(session_db, product)
+        product.detail_translate_requested = False
+    return translation_id
+
+
+def _save_listing_card(session_db, item, *, user_id, site, shop_id, is_listed):
+    """Persist a validated shallow card without replacing any older details."""
+    from services.listing_cards import validate_listing_card
+
+    validated = validate_listing_card(item, site=site)
+    if not validated:
+        return None, False
+    url = normalize_url(item["url"])
+    product = _find_product_for_source(
+        session_db, url=url, user_id=user_id, shop_id=shop_id,
+    )
+    if product is None and site == "recordcity":
+        # Language/host aliases share one validated catalog ID. Keep the
+        # existing owner/shop lookup rule, including only the unscoped fallback.
+        from services.search_result_quality import search_item_identity
+
+        identity = search_item_identity(item, site=site)
+        source_id = item["source_id"]
+        candidates = session_db.query(Product).filter(
+            Product.user_id == user_id, Product.site == site,
+            Product.source_url.like(f"%/catalog/{source_id}%"),
+            Product.shop_id.is_(None) if shop_id is None else (
+                (Product.shop_id == shop_id) | Product.shop_id.is_(None)
+            ),
+        ).order_by(Product.id).all()
+        matching = [candidate for candidate in candidates if search_item_identity({"url": candidate.source_url}, site=site) == identity]
+        product = next((candidate for candidate in matching if candidate.shop_id == shop_id), matching[0] if matching else None)
+    if product is not None:
+        if product.deleted_at is not None:
+            return None, False
+        if product.shop_id is None and shop_id is not None:
+            product.shop_id = shop_id
+        if is_listed:
+            product.is_listed = True
+        # Even a pending card may now contain a verified sold observation or
+        # manually edited inventory. Re-importing a list never changes it.
+        return product, False
+
+    normalized = normalize_item_for_persistence(item)
+    status = normalized["status"]
+    now = utc_now()
+    product = Product(
+        user_id=user_id, shop_id=shop_id, site=site, source_url=url,
+        last_title=_normalize_text(normalized["title"]),
+        last_price=normalized["price"], last_status=status,
+        is_listed=is_listed, created_at=now, updated_at=now,
+        detail_fetch_state="pending", detail_fail_count=0,
+    )
+    session_db.add(product)
+    session_db.flush()
+    sku_hash = hashlib.md5(url.encode("utf-8")).hexdigest()[:10].upper()
+    session_db.add(Variant(
+        product_id=product.id, option1_value="Default Title",
+        sku=f"MER-{sku_hash}", price=product.last_price,
+        inventory_qty=_default_inventory_for_status(status), taxable=False, position=1,
+    ))
+    # Keep the source image internal without 300–500 synchronous downloads.
+    # Public views use their existing placeholder until selected detail jobs
+    # cache images. Thumbnail-only background jobs are a future release gate.
+    images = _normalize_image_urls(normalized["image_urls"])[:1]
+    session_db.add(ProductSnapshot(
+        product_id=product.id, scraped_at=now, title=product.last_title,
+        price=product.last_price, status=status, description="",
+        image_urls="|".join(images),
+    ))
+    return product, True
+
+
+def cache_deferred_detail_images(item, product_id, job_id):
+    """Cache a bounded set before taking DB locks, with request-scoped filenames."""
+    from services.image_service import cache_product_image
+    from services.scrape_job_runtime import assert_current_job_active
+
+    urls = _normalize_image_urls(item.get("image_urls"))[:8]
+    if not _IMAGE_CACHE_ENABLED:
+        return urls
+    cached = []
+    for index, url in enumerate(urls):
+        assert_current_job_active()
+        if not url.startswith(("http://", "https://")):
+            cached.append(url)
+            continue
+        local = cache_product_image(url, product_id, index, cache_namespace=job_id)
+        cached.append(local or url)
+    assert_current_job_active()
+    return cached
+
+
+def save_scraped_product_detail(session_db, product, item, *, cached_images=None):
+    """Apply one verified detail to the exact locked Product in caller's transaction.
+
+    Reject ambiguous data before writing. The caller fences the request token
+    and commits this update together with its terminal detail state.
+    """
+    from services.search_result_quality import search_item_identity
+
+    normalized = normalize_item_for_persistence(item)
+    source_identity = search_item_identity({"url": product.source_url}, site=product.site)
+    result_identity = search_item_identity(item, site=product.site)
+    if source_identity is None or result_identity != source_identity:
+        raise ValueError("detail_identity_mismatch")
+    action = evaluate_persistence(product.site, normalized, item.get("_scrape_meta"), product)
+    if action == "reject":
+        raise ValueError("detail_unverified")
+    now = utc_now()
+    status = normalized["status"]
+    if action == "allow_status_only":
+        product.last_status = status
+        if status in {"sold", "deleted"}:
+            for variant in product.variants:
+                variant.inventory_qty = 0
+        product.updated_at = now
+        return
+
+    price = normalized["price"]
+    title = _normalize_text(normalized["title"])
+    product.last_title = title
+    product.last_price = price
+    product.last_status = status
+    product.updated_at = now
+    parsed_variants = _normalize_scraped_variants(
+        normalized.get("variants"), fallback_price=price, status=status,
+    )
+    # The initial listing default variant has no detail options. Replace it
+    # only on the first successful completion, preserving any chosen sale price.
+    if parsed_variants and len(product.variants) == 1 and product.variants[0].option1_value == "Default Title":
+        old = product.variants[0]
+        sale_override = old.selling_price
+        product.variants.remove(old)
+        for index, raw in enumerate(parsed_variants, 1):
+            product.variants.append(Variant(
+                option1_value=raw["option1_value"], option2_value=raw["option2_value"],
+                option3_value=raw["option3_value"], price=raw["price"],
+                inventory_qty=raw["inventory_qty"], position=index,
+                taxable=False, selling_price=sale_override,
+                sku=f"MER-{hashlib.md5(product.source_url.encode('utf-8')).hexdigest()[:10].upper()}-{index}",
+            ))
+        for number in (1, 2, 3):
+            key = f"option{number}_name"
+            setattr(product, key, _normalize_text(normalized.get(key)) or parsed_variants[0][key])
+    else:
+        for variant in product.variants:
+            if len(product.variants) == 1 or variant.option1_value == "Default Title":
+                variant.price = price
+            if status in {"sold", "deleted"}:
+                variant.inventory_qty = 0
+            elif status == "on_sale" and variant.option1_value == "Default Title":
+                variant.inventory_qty = variant.inventory_qty or 1
+    images = list(cached_images) if cached_images is not None else _cache_external_images(_normalize_image_urls(normalized.get("image_urls")), product.id)
+    if not images:
+        previous = session_db.query(ProductSnapshot).filter_by(product_id=product.id).order_by(
+            ProductSnapshot.scraped_at.desc(), ProductSnapshot.id.desc(),
+        ).first()
+        images = _normalize_image_urls(previous.image_urls) if previous else []
+    session_db.add(ProductSnapshot(
+        product_id=product.id, scraped_at=now, title=title, price=price,
+        status=status, description=_normalize_text(normalized.get("description")),
+        image_urls="|".join(images),
+    ))
+    if product_has_pricing_config(product):
+        update_product_selling_price(product.id, session=session_db)

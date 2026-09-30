@@ -7,6 +7,8 @@ explicit failures instead of an ambiguous empty list.
 """
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import ipaddress
 import logging
 import re
@@ -483,7 +485,17 @@ async def install_navigation_guard(context, site: str, *, kind: str) -> list[str
 
     Returns the list of blocked *top-level* navigation URLs.
     """
-    blocked_urls: list[str] = []
+    from services.marketplace_access import async_marketplace_access, current_access_lease
+
+    class NavigationFailures(list):
+        access_failure = None
+
+    blocked_urls = NavigationFailures()
+    # Browser event callbacks can run outside the caller's ContextVar scope.
+    # Capture the actual task lease; the governor verifies that it still owns
+    # an unexpired shared token before allowing each navigation.
+    parent_lease = current_access_lease(site)
+    navigation_context = contextvars.copy_context()
 
     async def _guard(route, request):
         is_navigation = False
@@ -515,16 +527,34 @@ async def install_navigation_guard(context, site: str, *, kind: str) -> list[str
                     blocked_urls.append(request_url)
                     await route.abort("blockedbyclient")
                     return
+                try:
+                    async with async_marketplace_access(site, parent_lease=parent_lease):
+                        await route.continue_()
+                    return
+                except ScrapeFailure as exc:
+                    blocked_urls.access_failure = exc
+                    await route.abort("blockedbyclient")
+                    return
         await route.continue_()
 
     router = getattr(context, "route", None)
     if not callable(router):
         raise ScrapeHttpError(f"{site}のブラウザ通信ガードを設定できませんでした。")
-    await router("**/*", _guard)
+    async def _guard_in_navigation_context(route, request):
+        # Driver callbacks do not necessarily inherit the job context that
+        # registered them. Retain its shared mutable budget and cancellation
+        # checks together with the owned browser lease.
+        task = navigation_context.copy().run(asyncio.create_task, _guard(route, request))
+        await task
+
+    await router("**/*", _guard_in_navigation_context)
     return blocked_urls
 
 
 def raise_for_blocked_navigation(blocked_urls: list[str], site: str) -> None:
+    access_failure = getattr(blocked_urls, "access_failure", None)
+    if access_failure is not None:
+        raise access_failure
     if not blocked_urls:
         return
     if is_marketplace_host_url(blocked_urls[0], site):
@@ -637,6 +667,12 @@ def validate_fetch_response(
     """Validate HTTP status, final URL, and challenge markers when exposed."""
     if fetch_result is None:
         raise ScrapeHttpError(f"{site}から応答を取得できませんでした。")
+
+    from services.marketplace_access import observe_access_response
+
+    # Also observe patched transports and browser responses, so failures from
+    # all supported adapters enter the same shared cooldown.
+    observe_access_response(site, fetch_result, body=page_text(fetch_result) if text is None else text)
 
     status = response_status(fetch_result)
     if status is not None and 300 <= status < 400:

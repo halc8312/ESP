@@ -549,7 +549,18 @@ def _classify_waf_failure(probe: _WafProbe, html: str) -> tuple[str, str] | None
 
 
 def _raise_waf_failure(probe: _WafProbe, reason_code: str, explanation: str) -> None:
+    from services.marketplace_access import observe_access_response
+    from services.scrape_safety import ScrapeFailure
+
     status = probe.final_status
+    try:
+        observe_access_response(
+            _SITE, status or 200,
+            headers={"x-amzn-waf-action": "captcha" if reason_code == "RC_WAF_CAPTCHA_REQUIRED" else "challenge"},
+            body="captcha" if reason_code == "RC_WAF_CAPTCHA_REQUIRED" else "awswafintegration",
+        )
+    except ScrapeFailure:
+        pass
     logger.warning(
         "Record City WAF probe failed: probe=%s attempt=%d "
         "profile=%s reason=%s main=%s waf=%s "

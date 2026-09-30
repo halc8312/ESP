@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ipaddress
 import math
+import os
 import re
 from urllib.parse import urlencode, urlparse
 
@@ -149,6 +150,36 @@ def get_internal_search_limit(limit: int) -> int:
     return min(150, max(requested + 10, int(math.ceil(requested * 1.4))))
 
 
+def recordcity_listing_enabled() -> bool:
+    """Keep the list-card adapter opt-in until verified against current HTML."""
+    return os.environ.get("RECORDCITY_LISTING_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def normalize_scrape_limit(limit, *, site: str, target_kind: str = "search", acquisition_mode: str = "detail") -> int:
+    """Apply the same limits in the web process and worker.
+
+    Larger requests are available only for verified list-card adapters. A
+    caller cannot opt another site into a larger detail crawl.
+    """
+    if target_kind == "item":
+        return 1
+    try:
+        requested = int(limit or 10)
+    except (TypeError, ValueError, OverflowError):
+        requested = 10
+    maximum = 500 if site == "recordcity" and acquisition_mode == "listing" and recordcity_listing_enabled() else 100
+    return min(maximum, max(1, requested))
+
+
+def resolve_scrape_acquisition(site: str, target_url: str | None) -> tuple[str, str, str]:
+    """Return effective site, URL kind and the server-selected acquisition mode."""
+    target_kind = "search"
+    if target_url:
+        target_kind, site = classify_target_url(target_url)
+    mode = "listing" if site == "recordcity" and target_kind == "search" and recordcity_listing_enabled() else "detail"
+    return site, target_kind, mode
+
+
 def get_search_depth(site: str, limit: int) -> int:
     """Return a site-aware depth value for the requested item count."""
     requested = max(1, int(limit or 10))
@@ -174,6 +205,8 @@ def build_scrape_job_context(
     limit: int,
     persist_to_db: bool,
 ) -> dict[str, object]:
+    site, target_kind, acquisition_mode = resolve_scrape_acquisition(site, target_url)
+    limit = normalize_scrape_limit(limit, site=site, target_kind=target_kind, acquisition_mode=acquisition_mode)
     if target_url:
         url_kind, _url_site = classify_target_url(target_url)
         if url_kind == "search":
@@ -186,6 +219,7 @@ def build_scrape_job_context(
                 "persist_to_db": persist_to_db,
                 "target_url": target_url,
                 "keyword": keyword or "",
+                "acquisition_mode": acquisition_mode,
             }
         return {
             "site_label": "URLから抽出",
@@ -195,6 +229,7 @@ def build_scrape_job_context(
             "persist_to_db": persist_to_db,
             "target_url": target_url,
             "keyword": keyword or "",
+            "acquisition_mode": acquisition_mode,
         }
 
     requested_limit = max(1, int(limit or 10))
@@ -206,6 +241,7 @@ def build_scrape_job_context(
         "persist_to_db": persist_to_db,
         "target_url": "",
         "keyword": keyword or "",
+        "acquisition_mode": acquisition_mode,
     }
 
 
@@ -324,6 +360,7 @@ def build_scrape_task_request(
     persist_to_db: bool = True,
     shop_id: int | None = None,
 ) -> dict[str, object]:
+    site, target_kind, acquisition_mode = resolve_scrape_acquisition(site, target_url)
     return {
         "site": site,
         "target_url": target_url or "",
@@ -332,7 +369,8 @@ def build_scrape_task_request(
         "price_max": price_max,
         "sort": sort or "",
         "category": category,
-        "limit": max(1, int(limit or 10)),
+        "limit": normalize_scrape_limit(limit, site=site, target_kind=target_kind, acquisition_mode=acquisition_mode),
+        "acquisition_mode": acquisition_mode,
         "user_id": user_id,
         "persist_to_db": persist_to_db,
         "shop_id": shop_id,

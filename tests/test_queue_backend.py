@@ -120,7 +120,8 @@ def test_get_queue_backend_requires_rq_dependencies(app, monkeypatch):
             )
 
 
-def test_get_queue_backend_maps_stalled_running_job_to_failed(app):
+@pytest.mark.parametrize("queue_status", ["started", "unavailable"])
+def test_get_queue_backend_maps_stalled_running_job_to_failed(app, monkeypatch, queue_status):
     with app.app_context():
         from database import SessionLocal
         from datetime import timedelta
@@ -159,14 +160,24 @@ def test_get_queue_backend_maps_stalled_running_job_to_failed(app):
             session.close()
 
         backend = get_queue_backend()
+        # This job was never enqueued in Redis. An unrelated localhost Redis
+        # (including CI's governor-test service) would correctly report it as
+        # missing, which tests orphan handling rather than heartbeat expiry.
+        def observed_queue_status(job_id):
+            if queue_status == "unavailable":
+                raise ConnectionError("test Redis unavailable")
+            return queue_status
+        monkeypatch.setattr(backend, "_rq_job_status", observed_queue_status)
         status = backend.get_status("stalled-job-1", user_id=1)
 
     assert status is not None
     assert status["status"] == "failed"
+    assert status["error_payload"]["kind"] == "job_stalled"
     assert "停止" in status["error"]
 
 
-def test_get_queue_backend_maps_missing_rq_job_to_failed(app, monkeypatch):
+@pytest.mark.parametrize("durable_status", ["queued", "running"])
+def test_get_queue_backend_maps_missing_rq_job_to_failed(app, monkeypatch, durable_status):
     with app.app_context():
         from database import SessionLocal
         from datetime import timedelta
@@ -192,6 +203,8 @@ def test_get_queue_backend_maps_missing_rq_job_to_failed(app, monkeypatch):
             request_payload={"site": "mercari", "persist_to_db": False},
             mode="preview",
         )
+        if durable_status == "running":
+            mark_job_running("orphan-job-1")
 
         session = SessionLocal()
         try:
@@ -209,6 +222,7 @@ def test_get_queue_backend_maps_missing_rq_job_to_failed(app, monkeypatch):
 
     assert status is not None
     assert status["status"] == "failed"
+    assert status["error_payload"]["kind"] == "job_orphaned"
     assert "見つかりません" in status["error"]
 
 

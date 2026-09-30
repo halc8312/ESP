@@ -43,6 +43,8 @@ def normalize_status_for_persistence(status: Optional[str]) -> str:
 
 def _can_promote_unknown_status_for_manual_selection(item: Optional[dict]) -> bool:
     candidate = dict(item or {})
+    if candidate.get("_listing_card") is True:
+        return False
     title = str(candidate.get("title") or "").strip()
     if not title:
         return False

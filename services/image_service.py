@@ -6,6 +6,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import os
+import re
 import socket
 from io import BytesIO
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -46,6 +47,7 @@ DEFAULT_ALLOWED_IMAGE_HOSTS = frozenset(
         "www.suruga-ya.jp",
         "netmall.hardoff.co.jp",
         "cdn.snkrdunk.com",
+        "files.recordcity.jp",
     }
 )
 
@@ -351,6 +353,8 @@ def cache_product_image(
     image_url: str,
     product_id: int,
     index: int,
+    *,
+    cache_namespace: str | None = None,
 ) -> str | None:
     """Download an external image and cache it under ``IMAGE_STORAGE_PATH``.
 
@@ -366,7 +370,9 @@ def cache_product_image(
     dest_dir = os.path.join(IMAGE_STORAGE_PATH, PRODUCT_IMAGES_SUBDIR)
     os.makedirs(dest_dir, exist_ok=True)
 
-    filename_base = f"prod_{product_id}_{index}"
+    if cache_namespace is not None and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", cache_namespace) is None:
+        raise ImageValidationError("Image cache namespace is invalid.")
+    filename_base = f"prod_{product_id}_{index}" if cache_namespace is None else f"prod_{product_id}_{cache_namespace}_{index}"
 
     try:
         headers = build_image_fetch_headers(image_url)

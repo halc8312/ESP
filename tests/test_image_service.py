@@ -76,6 +76,30 @@ def test_validate_image_url_requires_https_exact_allowlisted_host(monkeypatch):
         validate_image_url("https://127.0.0.1/a.png")
 
 
+def test_recordcity_image_caching_uses_exact_host_only():
+    assert validate_image_url("https://files.recordcity.jp/images/record.jpg") == "https://files.recordcity.jp/images/record.jpg"
+    for url in (
+        "http://files.recordcity.jp/images/record.jpg",
+        "https://child.files.recordcity.jp/images/record.jpg",
+        "https://files.recordcity.jp.example.net/images/record.jpg",
+    ):
+        with pytest.raises(ImageValidationError):
+            validate_image_url(url)
+
+
+def test_deferred_image_cache_namespace_does_not_overwrite_prior_request(monkeypatch, tmp_path):
+    monkeypatch.setattr(image_service, "IMAGE_STORAGE_PATH", str(tmp_path))
+    contents = iter((b"old", b"new"))
+    monkeypatch.setattr(image_service, "download_external_image", lambda *a, **kw: (next(contents), ".png"))
+    old = image_service.cache_product_image("https://files.recordcity.jp/a.png", 42, 0, cache_namespace="old-request")
+    new = image_service.cache_product_image("https://files.recordcity.jp/b.png", 42, 0, cache_namespace="new-request")
+    assert old != new
+    assert (tmp_path / "product_images/prod_42_old-request_0.png").read_bytes() == b"old"
+    assert (tmp_path / "product_images/prod_42_new-request_0.png").read_bytes() == b"new"
+    with pytest.raises(ImageValidationError):
+        image_service.cache_product_image("https://files.recordcity.jp/a.png", 42, 0, cache_namespace="../../unsafe")
+
+
 def test_image_dns_resolution_rejects_any_private_address(monkeypatch):
     monkeypatch.setenv("ALLOWED_IMAGE_HOSTS", "img.example.com")
     monkeypatch.setattr(
