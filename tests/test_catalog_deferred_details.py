@@ -242,6 +242,71 @@ def test_new_two_stage_product_never_exposes_source_price_as_customer_price(clie
     assert client.get(endpoint(catalog)).json["item"]["price"] == 1900
 
 
+def test_completed_staged_product_keeps_cost_private_on_get_add_and_submit(client, db_session, deferred_catalog):
+    catalog = deferred_catalog
+    private_cost = 987654321
+    catalog.product.detail_fetch_state = "complete"
+    catalog.product.last_status = "on_sale"
+    catalog.product.last_price = private_cost
+    catalog.product.selling_price = None
+    catalog.product.variants[0].price = private_cost
+    catalog.product.variants[0].selling_price = None
+    db_session.commit()
+
+    availability = client.get(endpoint(catalog))
+    assert availability.json["status"] == "ready"
+    assert availability.json["item"]["price"] is None
+    detail = client.get(f"/catalog/{catalog.pricelist.token}/product/{catalog.product.id}")
+    assert detail.json["price"] is None
+    page = client.get(f"/catalog/{catalog.pricelist.token}").get_data(as_text=True)
+    config = json.loads(re.search(r'id="catalogRequestConfig">(.*?)</script>', page, re.S).group(1))
+    assert config["items"][0]["price"] is None
+    assert "Price on request" in page
+    assert str(private_cost) not in page
+
+    stale = client.post(f"/catalog/{catalog.pricelist.token}/requests", json=inquiry(catalog, private_cost))
+    assert stale.status_code == 409 and stale.json["code"] == "catalog_changed"
+    assert stale.json["items"][0]["price"] is None
+    assert str(private_cost) not in stale.get_data(as_text=True)
+    assert db_session.query(CatalogRequest).count() == 0
+    accepted = client.post(f"/catalog/{catalog.pricelist.token}/requests", json=inquiry(catalog, None))
+    assert accepted.status_code == 201
+    assert db_session.query(CatalogRequest).one().items[0].price_jpy_snapshot is None
+
+
+@pytest.mark.parametrize("price_source,customer_price", [("product", 2100), ("variant", 2200), ("list", 2300)])
+def test_completed_staged_product_uses_only_configured_customer_price(
+    client, db_session, deferred_catalog, price_source, customer_price,
+):
+    catalog = deferred_catalog
+    catalog.product.detail_fetch_state = "complete"
+    catalog.product.last_status = "on_sale"
+    catalog.product.selling_price = None
+    if price_source == "product":
+        catalog.product.selling_price = customer_price
+    elif price_source == "variant":
+        catalog.product.variants[0].selling_price = customer_price
+    else:
+        catalog.row.custom_price = customer_price
+    db_session.commit()
+    assert client.get(endpoint(catalog)).json["item"]["price"] == customer_price
+    accepted = client.post(f"/catalog/{catalog.pricelist.token}/requests", json=inquiry(catalog, customer_price))
+    assert accepted.status_code == 201
+    assert db_session.query(CatalogRequest).one().items[0].price_jpy_snapshot == customer_price
+
+
+def test_legacy_null_detail_state_retains_existing_customer_price_fallback(client, db_session, deferred_catalog):
+    catalog = deferred_catalog
+    catalog.product.detail_fetch_state = None
+    catalog.product.last_status = "on_sale"
+    catalog.product.selling_price = None
+    db_session.commit()
+    assert client.get(endpoint(catalog)).json["item"]["price"] == 777
+    accepted = client.post(f"/catalog/{catalog.pricelist.token}/requests", json=inquiry(catalog, 777))
+    assert accepted.status_code == 201
+    assert db_session.query(CatalogRequest).one().items[0].price_jpy_snapshot == 777
+
+
 def test_public_detail_start_requires_csrf_but_poll_is_read_only(app, client, deferred_catalog, monkeypatch):
     monkeypatch.setitem(app.config, "WTF_CSRF_ENABLED", True)
     response = client.post(endpoint(deferred_catalog))

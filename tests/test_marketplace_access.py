@@ -310,6 +310,97 @@ def test_nested_budget_is_shared_and_rejection_has_no_network_effect():
             pass
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("refusal", ["site_cooldown", "site_busy", "site_interval", "redis_failure"])
+def test_refused_admission_does_not_consume_job_request_budget(monkeypatch, asynchronous, refusal):
+    store = access.MemoryAccessStore()
+    monkeypatch.setattr(access, "get_access_store", lambda: store)
+    original = store.acquire
+
+    def refused(*args, **kwargs):
+        if refusal == "redis_failure":
+            raise access.AccessStoreUnavailable("test Redis unavailable")
+        return 60, refusal
+
+    monkeypatch.setattr(store, "acquire", refused)
+    calls = []
+
+    async def operation():
+        async with access.async_marketplace_access("recordcity", timeout_seconds=0):
+            calls.append("network")
+
+    with access.request_budget(max_requests=1) as budget:
+        with pytest.raises((ScrapeBlockedError, access.AccessStoreUnavailable)):
+            if asynchronous:
+                run_async(operation())
+            else:
+                with access.marketplace_access("recordcity", timeout_seconds=0):
+                    calls.append("network")
+        assert budget.requests == 0
+        assert calls == []
+        monkeypatch.setattr(store, "acquire", original)
+        if asynchronous:
+            run_async(operation())
+        else:
+            with access.marketplace_access("recordcity"):
+                calls.append("network")
+        assert budget.requests == 1
+    assert calls == ["network"]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_budget_race_after_grant_releases_only_new_owner(monkeypatch, asynchronous):
+    store = access.MemoryAccessStore()
+    monkeypatch.setattr(access, "get_access_store", lambda: store)
+    original = store.acquire
+    calls = []
+    with access.request_budget(max_requests=1) as budget:
+        def other_request_wins(*args, **kwargs):
+            result = original(*args, **kwargs)
+            if result[0] <= 0:
+                budget.check(consume=True)
+            return result
+        monkeypatch.setattr(store, "acquire", other_request_wins)
+
+        async def operation():
+            async with access.async_marketplace_access("recordcity"):
+                calls.append("forbidden")
+
+        with pytest.raises(access.AccessBudgetExceeded):
+            if asynchronous:
+                run_async(operation())
+            else:
+                with access.marketplace_access("recordcity"):
+                    calls.append("forbidden")
+        assert calls == []
+        assert budget.requests == 1
+        assert not store.states["recordcity"]["leases"]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_budget_failure_after_parent_admission_keeps_browser_reservation(asynchronous):
+    async def operation(budget):
+        async with access.async_marketplace_access("recordcity", consume_request=False) as parent:
+            budget.requests = 1
+            with pytest.raises(access.AccessBudgetExceeded):
+                async with access.async_marketplace_access("recordcity", parent_lease=parent):
+                    pytest.fail("exhausted request reached the network")
+            assert parent.owner in parent.store.states["recordcity"]["leases"]
+        assert not parent.store.states["recordcity"]["leases"]
+
+    with access.request_budget(max_requests=1) as budget:
+        if asynchronous:
+            run_async(operation(budget))
+        else:
+            with access.marketplace_access("recordcity", consume_request=False) as parent:
+                budget.requests = 1
+                with pytest.raises(access.AccessBudgetExceeded):
+                    with access.marketplace_access("recordcity", parent_lease=parent):
+                        pytest.fail("exhausted request reached the network")
+                assert parent.owner in parent.store.states["recordcity"]["leases"]
+            assert not parent.store.states["recordcity"]["leases"]
+
+
 def test_elapsed_budget_stops_before_store_admission(monkeypatch):
     calls = []
     with access.request_budget(max_seconds=1) as budget:
@@ -447,7 +538,9 @@ def test_async_repeated_cancel_during_admission_does_not_leak_owner(monkeypatch)
         assert original("recordcity", "replacement", interval=0, concurrency=1,
                         lease_seconds=10, consume=True) == (0, "")
 
-    run_async(exercise())
+    with access.request_budget(max_requests=1) as budget:
+        run_async(exercise())
+        assert budget.requests == 0
 
 
 def test_inherited_context_does_not_let_parallel_children_share_parent_slot():

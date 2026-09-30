@@ -57,6 +57,9 @@ IP/provider. The existing configured transport can still be used initially.
 Scrapling hidden retries are disabled; each application retry/redirect must
 acquire admission. Browser scope extends through cleanup. If cancellation
 cleanup cannot be confirmed, renewal stops and the lease remains until expiry.
+Refused admission does not consume the job's request count. Provider API
+authentication/quota errors stop that operation, while only confirmed target
+response evidence can pause the shared marketplace site.
 
 These controls count top-level documents and explicit HTTP fetch attempts.
 Browser image/XHR subresources and the existing image downloader are not
@@ -91,6 +94,8 @@ the existing scheduled recovery refill it by owner; unselected cards are never
 fetched. Existing queued RQ tasks are checked before replacement, and Redis
 uncertainty does not permit duplicate enqueue. Failures retain a bounded
 backoff and require an explicit retry; no infinite automatic retry loop is added.
+Recovery rechecks the selected source and owner/shop scope under the claim
+lock and final update; editing a URL alone does not select its replacement.
 Translation follows detail completion with source-hash deduplication and the
 existing protection for manually edited English fields.
 

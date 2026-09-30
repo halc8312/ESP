@@ -172,7 +172,7 @@ def _fail_request(product_id, job_id, code, *, queued_only=False, user_id=None, 
         session.close()
 
 
-def enqueue_product_details(product_ids, user_id, *, shop_id=_SHOP_UNSET, translate=False, respect_backoff=False):
+def enqueue_product_details(product_ids, user_id, *, shop_id=_SHOP_UNSET, translate=False, respect_backoff=False, require_existing_demand=False):
     """Queue only selected incomplete products, deduplicating concurrent requests.
 
     Explicit ``shop_id=None`` selects unscoped products; omitting it accepts any
@@ -180,6 +180,8 @@ def enqueue_product_details(product_ids, user_id, *, shop_id=_SHOP_UNSET, transl
     Public catalog requests use ``respect_backoff=True``: a customer's request
     cannot clear a future cooldown solely from missing or changed metadata.
     Authorized owner selection may reset a corrected source or shop immediately.
+    Recovery uses ``require_existing_demand=True`` to recheck the selected
+    source/scope under the admission guard, instead of authorizing a new target.
     """
     summary = {"queued": 0, "skipped": 0, "failed": 0, "pending": 0, "product_ids": []}
     seen = set()
@@ -219,6 +221,11 @@ def enqueue_product_details(product_ids, user_id, *, shop_id=_SHOP_UNSET, transl
             query = _owned_product_query(session, product_id, user_id)
             if shop_id is not _SHOP_UNSET:
                 query = query.filter(Product.shop_id == shop_id)
+            if require_existing_demand:
+                query = query.filter(
+                    Product.detail_source_url == Product.source_url,
+                    Product.detail_scope_key == _current_scope_expression(),
+                )
             product = query.with_for_update().first()
             now = utc_now()
             if product is None or product.detail_fetch_state in (None, "complete"):
@@ -259,14 +266,20 @@ def enqueue_product_details(product_ids, user_id, *, shop_id=_SHOP_UNSET, transl
             new_token = f"product-detail-{uuid.uuid4().hex}"
             source_url = product.source_url
             expected_shop_id = product.shop_id
-            claimed = session.query(Product).filter(
+            claim = session.query(Product).filter(
                 Product.id == product_id, Product.user_id == user_id,
                 Product.detail_job_id == old_token,
                 Product.detail_fetch_state == old_state,
                 Product.source_url == source_url, Product.shop_id == expected_shop_id,
                 Product.deleted_at.is_(None),
                 or_(Product.shop_id.is_(None), Product.shop_id.in_(session.query(Shop.id).filter(Shop.user_id == user_id))),
-            ).update({
+            )
+            if require_existing_demand:
+                claim = claim.filter(
+                    Product.detail_source_url == source_url,
+                    Product.detail_scope_key == _scope_key(user_id, expected_shop_id),
+                )
+            claimed = claim.update({
                 Product.detail_fetch_state: "queued", Product.detail_job_id: new_token,
                 Product.detail_source_url: source_url,
                 Product.detail_scope_key: _scope_key(user_id, expected_shop_id),
@@ -511,11 +524,12 @@ def recover_product_detail_jobs(*, limit=100):
                 Product.detail_lease_expires_at.is_(None), Product.detail_lease_expires_at <= now,
             ),
         )
-        # An old owner/shop's selection is not consent in a new scope. Only
-        # explicit enqueue may re-arm that request. Filter invalid shops and
-        # stale scopes before LIMIT, so they cannot starve later valid rows.
+        # An old source/owner/shop selection is not consent for a changed
+        # target. Only explicit enqueue may re-arm that request. Filter stale
+        # sources/scopes and invalid shops before either candidate LIMIT.
         eligible = session.query(Product).filter(
             Product.deleted_at.is_(None), recoverable,
+            Product.detail_source_url == Product.source_url,
             Product.detail_scope_key == _current_scope_expression(),
             or_(Product.shop_id.is_(None), exists().where(
                 Shop.id == Product.shop_id, Shop.user_id == Product.user_id,
@@ -552,7 +566,7 @@ def recover_product_detail_jobs(*, limit=100):
         if job_id and _keep_existing_queued_request(product_id, job_id):
             summary["skipped"] += 1
             continue
-        result = enqueue_product_details([product_id], owner_id)
+        result = enqueue_product_details([product_id], owner_id, require_existing_demand=True)
         for key in summary:
             summary[key] += result[key]
         if result["failed"]:

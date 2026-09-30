@@ -356,13 +356,16 @@ def _build_catalog_item(item):
     )
 
     display_title = _public_catalog_title(p)
-    if p.detail_fetch_state is not None and p.selling_price is None:
-        # Source listing prices are procurement data. New two-stage products
-        # need an explicit customer price rather than the legacy cost fallback.
+    if p.detail_fetch_state is None:
+        # Only legacy products retain the source-price fallback.
+        resolved_product_price = resolve_product_display_price(p, p.variants)
+    elif p.selling_price is not None:
+        # An explicit product sale price also supports the existing variant
+        # pricing contract. Completing details never removes staged provenance.
+        resolved_product_price = resolve_product_display_price(p, p.variants)
+    else:
         explicit_prices = [variant.selling_price for variant in p.variants if variant.selling_price is not None]
         resolved_product_price = min(explicit_prices) if explicit_prices else None
-    else:
-        resolved_product_price = resolve_product_display_price(p, p.variants)
     display_price = (
         item.custom_price
         if item.custom_price is not None

@@ -106,7 +106,9 @@ class RecordCityExternalResponse:
 
     @property
     def headers(self) -> dict[str, str]:
-        return dict(self.target_headers)
+        # Provider HTTP headers describe the API transport. They must not be
+        # interpreted as the marketplace's WAF or rate-limit response.
+        return dict(self.target_headers) if self.header_source == "target" else {}
 
     @property
     def body(self) -> str:
@@ -337,10 +339,14 @@ def _provider_failure(
         details.append(f"HTTP {status_code}")
     if error_type:
         details.append(f"error={error_type}")
-    return ScrapeHttpError(
+    failure = ScrapeHttpError(
         "レコードシティの外部取得に失敗しました（" + ", ".join(details) + "）。",
-        status_code=status_code,
     )
+    # Patrol callers use status_code to infer a target refusal or deletion.
+    # Preserve provider diagnostics without claiming a target HTTP response.
+    failure.failure_scope = "provider"
+    failure.provider_status_code = status_code
+    return failure
 
 
 def _call_provider(source: str, operation, *, body_collector=None):
@@ -363,8 +369,7 @@ def _call_provider(source: str, operation, *, body_collector=None):
 
 
 def _bounded_provider_call(source: str, operation):
-    from services.marketplace_access import marketplace_access, observe_access_response
-    from services.scrape_safety import ScrapeFailure
+    from services.marketplace_access import marketplace_access
 
     collector = _BoundedBody()
     with marketplace_access(_SITE):
@@ -373,13 +378,9 @@ def _bounded_provider_call(source: str, operation):
             lambda: operation(collector),
             body_collector=collector,
         )
-        try:
-            # Provider failures still enter the target site's cooldown. Keep
-            # their existing provider/target diagnostics instead of replacing
-            # them with an ambiguous generic marketplace error.
-            observe_access_response(_SITE, _response_status(response), headers=getattr(response, "headers", None))
-        except ScrapeFailure:
-            pass
+        # A provider attempt consumes the target site's access allowance, but
+        # its authentication/quota response is not a target-site response.
+        # Target cooldown is applied only after target metadata/HTML validation.
     raw_length = _header_value(getattr(response, "headers", None), "content-length")
     if raw_length:
         try:
@@ -1012,8 +1013,13 @@ def _validate_external_page(
     from services.scrape_safety import ScrapeFailure
 
     def _observe_failure():
+        if not authoritative_status and response.header_source != "target":
+            return
         try:
-            observe_access_response(_SITE, response.target_status, headers=response.target_headers, body=response.text)
+            observe_access_response(
+                _SITE, response.target_status,
+                headers=response.headers, body=response.text,
+            )
         except ScrapeFailure:
             pass
 
@@ -1038,13 +1044,26 @@ def _validate_external_page(
             status_code=response.transport_status,
         )
 
+    from services.scrape_safety import _looks_blocked
+
+    if not authoritative_status and response.header_source != "target" and (
+        _looks_like_waf_captcha(html)
+        or _looks_like_waf_challenge(html)
+        or _looks_blocked(html)
+        or "request blocked" in html.lower()
+    ):
+        raise _provider_failure(
+            response.source,
+            "RC_EXTERNAL_BLOCK_SOURCE_AMBIGUOUS",
+            status_code=response.transport_status,
+        )
+
     captcha_seen = (
         action == "captcha"
         or (authoritative_status and status == 405)
         or _looks_like_waf_captcha(html)
     )
     if captcha_seen:
-        _observe_failure()
         # Preserve provider/target attribution when the transport did not
         # expose authoritative target metadata.  A target header is explicit
         # even when the provider could not report the target status; a body
@@ -1055,6 +1074,7 @@ def _validate_external_page(
                 "RC_EXTERNAL_BLOCK_SOURCE_AMBIGUOUS",
                 status_code=response.transport_status,
             )
+        _observe_failure()
         # CAPTCHA is a terminal human-verification requirement.  Check it
         # before Product/listing readiness so retained JSON-LD underneath a
         # CAPTCHA page cannot be normalized into a successful HTTP 200 page.
@@ -1093,7 +1113,6 @@ def _validate_external_page(
         or _looks_like_waf_challenge(html)
         or "request blocked" in html.lower()
     ):
-        _observe_failure()
         raise _provider_failure(
             response.source,
             "RC_EXTERNAL_BLOCK_SOURCE_AMBIGUOUS",

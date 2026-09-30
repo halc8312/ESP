@@ -10,7 +10,7 @@ import pytest
 from services import marketplace_access as admission
 from services import scraping_client
 from services.scrape_safety import (
-    ScrapeBlockedError, UnsafeScrapeUrlError, install_navigation_guard,
+    ScrapeBlockedError, ScrapeHttpError, UnsafeScrapeUrlError, install_navigation_guard,
     raise_for_blocked_navigation,
 )
 
@@ -258,24 +258,92 @@ async def test_recordcity_runtime_alias_owns_base_site_before_startup(monkeypatc
     assert budget.requests == 0, "starting a browser is not a marketplace request"
 
 
-def test_external_provider_uses_target_site_shared_pause(monkeypatch):
+@pytest.mark.parametrize("source", ["zyte", "scraperapi", "template"])
+@pytest.mark.parametrize("provider_status", [401, 403, 429])
+def test_external_provider_failure_does_not_pause_marketplace(monkeypatch, source, provider_status):
     from curl_cffi import requests
 
-    monkeypatch.setenv("SURUGAYA_SCRAPERAPI_KEY", "fixture-key")
-    for name in ("SURUGAYA_ZYTE_API_KEY", "SURUGAYA_FETCH_API_URL_TEMPLATE", "SURUGAYA_PROXY_URL"):
+    for name in ("SURUGAYA_ZYTE_API_KEY", "SURUGAYA_SCRAPERAPI_KEY", "SURUGAYA_FETCH_API_URL_TEMPLATE", "SURUGAYA_PROXY_URL"):
         monkeypatch.delenv(name, raising=False)
+    env_name = {
+        "zyte": "SURUGAYA_ZYTE_API_KEY",
+        "scraperapi": "SURUGAYA_SCRAPERAPI_KEY",
+        "template": "SURUGAYA_FETCH_API_URL_TEMPLATE",
+    }[source]
+    monkeypatch.setenv(env_name, "https://provider.example/?target={url}" if source == "template" else "fixture-key")
+    # A configured later route must not turn an operational failure into a
+    # second provider request, even though it is not a target refusal.
+    monkeypatch.setenv("SURUGAYA_PROXY_URL", "http://proxy.example:8080")
     calls = []
-    monkeypatch.setattr(
-        requests, "get",
-        lambda *args, **kwargs: calls.append("provider") or SimpleNamespace(status_code=403, text="denied", headers={}),
-    )
-    with pytest.raises(ScrapeBlockedError):
+    response = SimpleNamespace(status_code=provider_status, text="invalid API key or quota", headers={})
+    monkeypatch.setattr(requests, "post", lambda *args, **kwargs: calls.append("post") or response)
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: calls.append("get") or response)
+    with pytest.raises(ScrapeHttpError, match="PROVIDER_HTTP_ERROR") as failure:
         scraping_client.fetch_surugaya_external("https://www.suruga-ya.jp/product/detail/123")
-    immediate_admission(monkeypatch)
+    assert failure.value.status_code is None
+    assert failure.value.provider_status_code == provider_status
+    assert not isinstance(failure.value, ScrapeBlockedError)
+    with admission.marketplace_access("surugaya", timeout_seconds=0):
+        pass
+    assert calls == ["post" if source == "zyte" else "get"]
+
+
+@pytest.mark.parametrize("source", ["zyte", "scraperapi", "template"])
+@pytest.mark.parametrize("target_status", [403, 429])
+def test_external_confirmed_target_failure_pauses_marketplace(monkeypatch, source, target_status):
+    from curl_cffi import requests
+
+    for name in ("SURUGAYA_ZYTE_API_KEY", "SURUGAYA_SCRAPERAPI_KEY", "SURUGAYA_FETCH_API_URL_TEMPLATE", "SURUGAYA_PROXY_URL"):
+        monkeypatch.delenv(name, raising=False)
+    env_name = {
+        "zyte": "SURUGAYA_ZYTE_API_KEY",
+        "scraperapi": "SURUGAYA_SCRAPERAPI_KEY",
+        "template": "SURUGAYA_FETCH_API_URL_TEMPLATE",
+    }[source]
+    monkeypatch.setenv(env_name, "https://provider.example/?target={url}" if source == "template" else "fixture-key")
+    monkeypatch.setenv("SURUGAYA_PROXY_URL", "http://proxy.example:8080")
+    target = "https://www.suruga-ya.jp/product/detail/123"
+    status_header = "sa-statuscode" if source == "scraperapi" else "x-surugaya-status"
+    response = SimpleNamespace(
+        status_code=200, text="Request blocked", headers={status_header: str(target_status)},
+        json=lambda: {"url": target, "browserHtml": "Request blocked", "statusCode": target_status},
+    )
+    calls = []
+    monkeypatch.setattr(requests, "post", lambda *args, **kwargs: calls.append("post") or response)
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: calls.append("get") or response)
+    with pytest.raises(ScrapeBlockedError) as failure:
+        scraping_client.fetch_surugaya_external(target)
+    assert failure.value.status_code == target_status
     with pytest.raises(ScrapeBlockedError):
-        with admission.marketplace_access("surugaya"):
-            pytest.fail("provider failure did not pause Surugaya")
-    assert calls == ["provider"]
+        with admission.marketplace_access("surugaya", timeout_seconds=0):
+            pytest.fail("confirmed target refusal did not pause Surugaya")
+    assert calls == ["post" if source == "zyte" else "get"]
+
+
+def test_external_missing_html_does_not_switch_provider(monkeypatch):
+    from curl_cffi import requests
+
+    monkeypatch.setenv("SURUGAYA_ZYTE_API_KEY", "fixture-key")
+    monkeypatch.setenv("SURUGAYA_SCRAPERAPI_KEY", "later-key")
+    response = SimpleNamespace(status_code=200, headers={}, json=lambda: {"statusCode": 200})
+    monkeypatch.setattr(requests, "post", lambda *args, **kwargs: response)
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: pytest.fail("invalid provider response fell through"))
+    with pytest.raises(ScrapeHttpError, match="EMPTY_HTML"):
+        scraping_client.fetch_surugaya_external("https://www.suruga-ya.jp/product/detail/123")
+
+
+@pytest.mark.parametrize("body", ["<html>Access denied</html>", "<script>window.gokuProps={}</script>"])
+def test_external_ambiguous_provider_block_does_not_pause_marketplace(monkeypatch, body):
+    from curl_cffi import requests
+
+    monkeypatch.delenv("SURUGAYA_ZYTE_API_KEY", raising=False)
+    monkeypatch.setenv("SURUGAYA_SCRAPERAPI_KEY", "fixture-key")
+    response = SimpleNamespace(status_code=200, text=body, headers={})
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
+    with pytest.raises(ScrapeHttpError, match="BLOCK_SOURCE_AMBIGUOUS"):
+        scraping_client.fetch_surugaya_external("https://www.suruga-ya.jp/product/detail/123")
+    with admission.marketplace_access("surugaya", timeout_seconds=0):
+        pass
 
 
 def test_external_json_decode_does_not_consume_network_request_budget(monkeypatch):

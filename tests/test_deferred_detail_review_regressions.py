@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.orm import Query
 
-from models import Product, ProductSnapshot, TranslationSuggestion, User, Variant
+from models import Product, ProductSnapshot, Shop, TranslationSuggestion, User, Variant
 from services import product_detail_jobs as jobs
 from services.product_service import save_scraped_items_to_db
 from time_utils import utc_now
@@ -154,3 +154,137 @@ def test_full_registration_translation_reuses_same_source_but_not_curated_source
     assert _enqueue_translation_for_products([case.product.id], case.owner.id, db_session) == 1
     assert db_session.query(TranslationSuggestion).count() == 2
     assert len(inline) == 1
+
+
+@pytest.mark.parametrize("state", ["pending", "queued", "running"])
+def test_recovery_never_rearms_a_changed_source_without_new_selection(db_session, detail_case, state):
+    case = detail_case
+    assert jobs.enqueue_product_details([case.product.id], case.owner.id)["queued"] == 1
+    db_session.refresh(case.product)
+    old_source = case.product.detail_source_url
+    old_job_id = case.product.detail_job_id
+    case.product.source_url = "https://www.recordcity.jp/ja/catalog/9991"
+    case.product.detail_fetch_state = state
+    case.product.detail_lease_expires_at = utc_now() - timedelta(seconds=1)
+    db_session.commit()
+    case.dispatched.clear()
+
+    assert jobs.recover_product_detail_jobs(limit=1) == {"queued": 0, "skipped": 0, "failed": 0}
+    db_session.refresh(case.product)
+    assert case.dispatched == []
+    assert case.product.detail_fetch_state == state
+    assert case.product.detail_job_id == old_job_id
+    assert case.product.detail_source_url == old_source
+
+    # A later deliberate owner selection remains authorized to request the
+    # corrected URL, including a fresh token fencing the old worker.
+    assert jobs.enqueue_product_details([case.product.id], case.owner.id)["queued"] == 1
+    db_session.refresh(case.product)
+    assert case.product.detail_fetch_state == "queued"
+    assert case.product.detail_job_id != old_job_id
+    assert case.product.detail_source_url == case.product.source_url
+    assert len(case.dispatched) == 1
+    assert case.dispatched[0][2] == case.product.source_url
+
+
+def test_stale_source_rows_are_filtered_before_recovery_candidate_limits(db_session, detail_case):
+    case = detail_case
+    stale = []
+    for number in range(jobs._OWNER_ACTIVE_LIMIT + 1):
+        old_source = f"https://www.recordcity.jp/ja/catalog/{10000 + number}"
+        product = Product(
+            user_id=case.owner.id, site="recordcity",
+            source_url=f"https://www.recordcity.jp/ja/catalog/{20000 + number}",
+            detail_source_url=old_source, detail_scope_key=jobs._scope_key(case.owner.id, None),
+            detail_fetch_state=("pending", "queued", "running")[number % 3],
+            detail_job_id=f"old-source-job-{number}",
+            detail_lease_expires_at=utc_now() - timedelta(seconds=1),
+        )
+        db_session.add(product)
+        stale.append(product)
+    db_session.flush()
+    valid_source = "https://www.recordcity.jp/ja/catalog/30000"
+    valid = Product(
+        user_id=case.owner.id, site="recordcity", source_url=valid_source,
+        detail_source_url=valid_source, detail_scope_key=jobs._scope_key(case.owner.id, None),
+        detail_fetch_state="pending",
+    )
+    db_session.add(valid)
+    db_session.commit()
+
+    assert jobs.recover_product_detail_jobs(limit=1)["queued"] == 1
+    db_session.expire_all()
+    assert [args[0] for args in case.dispatched] == [valid.id]
+    assert db_session.get(Product, valid.id).detail_fetch_state == "queued"
+    for product in stale:
+        saved = db_session.get(Product, product.id)
+        assert saved.detail_source_url != saved.source_url
+        assert saved.detail_job_id.startswith("old-source-job-")
+
+
+@pytest.mark.parametrize("drift", ["source", "owner", "owned_shop", "foreign_shop"])
+def test_recovery_rechecks_selected_target_after_collection(db_session, detail_case, monkeypatch, drift):
+    case = detail_case
+    selected_source = case.product.source_url
+    selected_scope = jobs._scope_key(case.owner.id, None)
+    case.product.detail_source_url = selected_source
+    case.product.detail_scope_key = selected_scope
+    shop = Shop(user_id=case.other.id if drift == "foreign_shop" else case.owner.id, name="new shop")
+    db_session.add(shop)
+    db_session.commit()
+    original_enqueue = jobs.enqueue_product_details
+    calls = []
+
+    def edit_after_collection(product_ids, user_id, **kwargs):
+        calls.append((product_ids, user_id, kwargs))
+        if drift == "source":
+            case.product.source_url = "https://www.recordcity.jp/ja/catalog/9992"
+        elif drift == "owner":
+            case.product.user_id = case.other.id
+        else:
+            case.product.shop_id = shop.id
+        db_session.commit()
+        return original_enqueue(product_ids, user_id, **kwargs)
+
+    monkeypatch.setattr(jobs, "enqueue_product_details", edit_after_collection)
+    result = jobs.recover_product_detail_jobs(limit=1)
+    assert len(calls) == 1, "inject the edit after a valid candidate was collected"
+    assert calls[0][2]["require_existing_demand"] is True
+    assert result["queued"] == 0 and case.dispatched == []
+    db_session.refresh(case.product)
+    assert case.product.detail_fetch_state == "pending"
+    assert case.product.detail_source_url == selected_source
+    assert case.product.detail_scope_key == selected_scope
+    assert case.product.detail_job_id is None
+
+
+@pytest.mark.parametrize("drift", ["selected_source", "selected_scope"])
+def test_recovery_final_claim_fences_changed_selection(db_session, detail_case, monkeypatch, drift):
+    case = detail_case
+    case.product.detail_source_url = case.product.source_url
+    case.product.detail_scope_key = jobs._scope_key(case.owner.id, None)
+    db_session.commit()
+    original_update = Query.update
+    changed = False
+
+    def drift_before_claim(query, values, *args, **kwargs):
+        nonlocal changed
+        if values.get(Product.detail_fetch_state) == "queued" and not changed:
+            changed = True
+            change = (
+                {Product.detail_source_url: "https://www.recordcity.jp/ja/catalog/9993"}
+                if drift == "selected_source" else {Product.detail_scope_key: "unselected-scope"}
+            )
+            # Use the claiming session to simulate a change between read and
+            # conditional UPDATE without a second SQLite writer lock.
+            original_update(query.session.query(Product).filter(Product.id == case.product.id),
+                            change, synchronize_session=False)
+        return original_update(query, values, *args, **kwargs)
+
+    monkeypatch.setattr(Query, "update", drift_before_claim)
+    result = jobs.recover_product_detail_jobs(limit=1)
+    assert changed
+    assert result["queued"] == 0 and case.dispatched == []
+    db_session.refresh(case.product)
+    assert case.product.detail_fetch_state == "pending"
+    assert case.product.detail_job_id is None

@@ -720,24 +720,86 @@ def test_selected_provider_requires_matching_credentials(monkeypatch):
         )
 
 
-def test_scraperapi_provider_403_is_not_attributed_to_recordcity(monkeypatch):
-    monkeypatch.setenv("RECORDCITY_SCRAPERAPI_KEY", "secret")
+@pytest.mark.parametrize("source", ["zyte", "scraperapi", "template"])
+@pytest.mark.parametrize("provider_status", [401, 403, 429])
+def test_provider_http_error_is_not_attributed_to_recordcity(monkeypatch, source, provider_status):
+    from services.marketplace_access import marketplace_access
+
+    env_name = {
+        "zyte": "RECORDCITY_ZYTE_API_KEY",
+        "scraperapi": "RECORDCITY_SCRAPERAPI_KEY",
+        "template": "RECORDCITY_FETCH_API_URL_TEMPLATE",
+    }[source]
+    monkeypatch.setenv(env_name, "https://provider.example/?target={url}" if source == "template" else "secret")
+    calls = []
 
     class Client:
         @staticmethod
         def get(*_args, **_kwargs):
-            return FakeResponse(status_code=403, text="invalid api key")
+            calls.append("get")
+            return FakeResponse(status_code=provider_status, text="invalid API key or quota")
+
+        @staticmethod
+        def post(*_args, **_kwargs):
+            calls.append("post")
+            return FakeResponse(status_code=provider_status, text="invalid API key or quota")
 
     monkeypatch.setattr(external_fetch, "_get_curl_requests", lambda: Client)
 
     with pytest.raises(
         ScrapeHttpError,
         match="RC_EXTERNAL_PROVIDER_HTTP_ERROR",
-    ):
+    ) as failure:
         external_fetch.fetch_recordcity_external(
             DETAIL_URL,
-            provider="scraperapi",
+            provider=source,
         )
+    assert failure.value.status_code is None
+    assert failure.value.provider_status_code == provider_status
+    assert not isinstance(failure.value, ScrapeBlockedError)
+    with marketplace_access("recordcity", timeout_seconds=0):
+        pass
+    assert calls == ["post" if source == "zyte" else "get"]
+
+
+@pytest.mark.parametrize("source", ["zyte", "scraperapi", "template"])
+@pytest.mark.parametrize("target_status", [403, 429])
+def test_confirmed_target_refusal_pauses_recordcity(monkeypatch, source, target_status):
+    from services.marketplace_access import marketplace_access
+
+    env_name = {
+        "zyte": "RECORDCITY_ZYTE_API_KEY",
+        "scraperapi": "RECORDCITY_SCRAPERAPI_KEY",
+        "template": "RECORDCITY_FETCH_API_URL_TEMPLATE",
+    }[source]
+    monkeypatch.setenv(env_name, "https://provider.example/?target={url}" if source == "template" else "secret")
+    monkeypatch.setenv("RECORDCITY_FETCH_PROVIDER", source)
+    status_header = "sa-statuscode" if source == "scraperapi" else "x-recordcity-status"
+    calls = []
+    response = FakeResponse(
+        text="Request blocked.", headers={status_header: str(target_status)},
+        payload={"url": DETAIL_URL, "browserHtml": "Request blocked.", "statusCode": target_status},
+    )
+
+    class Client:
+        @staticmethod
+        def get(*_args, **_kwargs):
+            calls.append("get")
+            return response
+
+        @staticmethod
+        def post(*_args, **_kwargs):
+            calls.append("post")
+            return response
+
+    monkeypatch.setattr(external_fetch, "_get_curl_requests", lambda: Client)
+    with pytest.raises(ScrapeBlockedError) as failure:
+        external_fetch.fetch_recordcity_page_sync(DETAIL_URL, kind="detail", wait_selector=READY_SELECTOR)
+    assert failure.value.status_code == target_status
+    with pytest.raises(ScrapeBlockedError):
+        with marketplace_access("recordcity", timeout_seconds=0):
+            pytest.fail("confirmed target refusal did not pause RecordCity")
+    assert calls == ["post" if source == "zyte" else "get"]
 
 
 def test_scraperapi_reported_target_403_remains_target_evidence(monkeypatch):
@@ -806,12 +868,15 @@ def test_provider_redirect_without_target_metadata_is_provider_error():
         )
 
 
-def test_provider_waf_body_without_target_metadata_is_ambiguous():
+@pytest.mark.parametrize("html", [CHALLENGE_HTML, CAPTCHA_WITH_PRODUCT_HTML, PRODUCT_HTML + "Access denied"])
+def test_provider_waf_body_without_target_metadata_is_ambiguous(html):
+    from services.marketplace_access import marketplace_access
+
     response = external_fetch.RecordCityExternalResponse(
         url=DETAIL_URL,
         target_status=200,
         transport_status=200,
-        text=CHALLENGE_HTML,
+        text=html,
         source="test",
         status_source="provider",
     )
@@ -827,6 +892,23 @@ def test_provider_waf_body_without_target_metadata_is_ambiguous():
         )
 
     assert "RC_EXTERNAL_WAF" not in str(exc_info.value)
+    with marketplace_access("recordcity", timeout_seconds=0):
+        pass
+
+
+def test_provider_waf_header_is_not_observed_as_target_header():
+    from services.marketplace_access import marketplace_access
+
+    response = external_fetch.RecordCityExternalResponse(
+        url=DETAIL_URL, target_status=200, transport_status=200,
+        text="<html>provider job is pending</html>", source="test",
+        header_source="provider", status_source="provider",
+        target_headers={"x-amzn-waf-action": "captcha"},
+    )
+    with pytest.raises(ScrapeSelectorDriftError):
+        external_fetch._validate_external_page(response, kind="detail", wait_selector=READY_SELECTOR)
+    with marketplace_access("recordcity", timeout_seconds=0):
+        pass
 
 
 def test_external_search_rejects_final_url_that_drops_requested_query(monkeypatch):

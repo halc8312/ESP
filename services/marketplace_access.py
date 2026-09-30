@@ -288,13 +288,15 @@ def current_access_lease(site_or_url):
     return _held.get().get(resolve_site(site_or_url))
 
 
-def _prepare(site_or_url, consume, parent):
+def _prepare(site_or_url, parent):
     site = resolve_site(site_or_url)
     # A copied ContextVar must not let concurrent HTTP child tasks share a
     # browser reservation. Only the navigation guard passes an explicit parent.
     if parent and (parent.site != site or parent.lost.is_set() or parent.stop.is_set()):
         raise AccessLeaseLost("取得処理のロックが失効しました。")
-    _check_active(consume=consume)
+    # Waiting or a refused admission is not a marketplace request. Consume
+    # the shared job budget only after the owned lease has been granted.
+    _check_active()
     store = parent.store if parent else get_access_store()
     interval = _setting(f"{site.upper()}_ACCESS_INTERVAL_SECONDS", 2, 0, 60)
     if is_production_runtime():
@@ -310,7 +312,7 @@ def _waiting(reason, seconds):
 
 @contextmanager
 def marketplace_access(site_or_url, timeout_seconds=120, consume_request=True, parent_lease=None):
-    site, parent, store, interval, concurrency = _prepare(site_or_url, consume_request, parent_lease)
+    site, parent, store, interval, concurrency = _prepare(site_or_url, parent_lease)
     lease = parent or AccessLease(site, uuid.uuid4().hex, store)
     deadline = time.monotonic() + min(120, max(0, timeout_seconds))
     token = None
@@ -333,6 +335,7 @@ def marketplace_access(site_or_url, timeout_seconds=120, consume_request=True, p
             lease.start()
             token = _held.set({**_held.get(), site: lease})
         _waiting("", 0)
+        _check_active(consume=consume_request)
         yield lease
         _check_active()
         if lease.lost.is_set():
@@ -346,7 +349,7 @@ def marketplace_access(site_or_url, timeout_seconds=120, consume_request=True, p
 
 @asynccontextmanager
 async def async_marketplace_access(site_or_url, timeout_seconds=120, consume_request=True, parent_lease=None):
-    site, parent, store, interval, concurrency = _prepare(site_or_url, consume_request, parent_lease)
+    site, parent, store, interval, concurrency = _prepare(site_or_url, parent_lease)
     lease = parent or AccessLease(site, uuid.uuid4().hex, store)
     deadline = time.monotonic() + min(120, max(0, timeout_seconds))
     token = None
@@ -392,6 +395,7 @@ async def async_marketplace_access(site_or_url, timeout_seconds=120, consume_req
             lease.start()
             token = _held.set({**_held.get(), site: lease})
         _waiting("", 0)
+        _check_active(consume=consume_request)
         yield lease
         _check_active()
         if lease.lost.is_set():
