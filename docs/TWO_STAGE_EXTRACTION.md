@@ -11,20 +11,26 @@ returned HTTP 403. Synthetic fixtures prove the contract, not live-site support.
 
 Do not enable the flag until real keyword/category/filtered listing fixtures,
 pagination, representative images and missing-field counts are verified.
-Thumbnail-first background caching is another release gate: initial card saves
-perform zero image downloads, and public pages retain their existing image
-placeholder until selected detail jobs cache images. Source CDN URLs are never
+Initial card saves perform zero image downloads. A separate durable thumbnail
+ledger fetches one image per card in bounded, owner-balanced batches and keeps
+the placeholder until a managed image is available. Source CDN URLs are never
 made public as a workaround. All other sites retain their current extraction
 path and 100-item cap. Their list-first adapters are future work.
 
-The existing split topology also stores media on the web service's disk, not
-a shared worker disk. Before activation, cached detail/thumbnail images must
-be delivered to web storage through an authenticated handoff (or an explicitly
-approved shared object-storage design); writing a worker-local `/media/` path
-is not evidence that the public image is accessible. The existing background
-removal handoff and `WEB_INTERNAL_HOST`/`WEB_INTERNAL_PORT` provide a possible
-starting point without a new Render resource. This integration is not included
-in the prototype.
+The split topology stores media on the web service's disk. Staged detail and
+thumbnail jobs deliver validated bytes through the existing private web channel
+using `WEB_INTERNAL_HOST`/`WEB_INTERNAL_PORT` and a purpose-specific HMAC with
+the shared `SECRET_KEY`. No known development signing key is accepted. Slots
+are immutable and bound to the product, job token, image index and payload;
+the web route rechecks the active database claim before accepting an upload.
+Local integration tests exercise worker download, signed ingress, snapshot
+update and public media GET. Actual Render channel/disk behavior still needs
+verification before enabling listing extraction; a worker-local `/media/` path
+alone is not evidence that the public image is accessible.
+
+The legacy non-preview RQ full-save path still has a worker-local image cache.
+The standard preview-then-register UI caches on the web process. This release
+does not claim to repair historical images or every legacy full-save API path.
 
 SNKRDUNK apparel IDs 300058 and 721913 still require actual successful page
 HTML/structured data before extending the target-matched parser. No guessed
@@ -62,7 +68,9 @@ authentication/quota errors stop that operation, while only confirmed target
 response evidence can pause the shared marketplace site.
 
 These controls count top-level documents and explicit HTTP fetch attempts.
-Browser image/XHR subresources and the existing image downloader are not
+Staged detail/thumbnail image downloads admit every HTTP hop, including
+redirects, and observe refusal/cooldown responses before closing their lease.
+Browser image/XHR subresources and legacy image-download callers are not
 individually paced by this governor. Images for a selected detail job are
 bounded to eight and use existing host, size and timeout validation.
 Queue admission and owner-balanced detail refill reduce monopolization; the
@@ -89,6 +97,18 @@ with a request-specific cache namespace. Old jobs cannot overwrite product
 state, translations, or the new request's image artifacts. Stale-request cache
 orphans may remain and should be included in future image retention cleanup.
 
+Thumbnail batches contain at most ten images, with one active batch per owner
+and five globally. Each batch is bounded to 30 HTTP attempts and 300 seconds.
+Only admitted first image requests count toward the five image-attempt limit;
+cooldown or capacity denial retains the claim for later recovery without
+exhausting image attempts. Queue dispatch has its own five-attempt bound.
+Expired queued/running RQ batches remain in owner/global capacity until the
+old job is confirmed gone. Unknown or uninspected jobs are not reissued, and
+an expired running image-upload token is never renewed by recovery.
+The thumbnail ledger checks owner, owned shop, product URL and exact current
+snapshot/image identity before queueing, fetching or publishing. It updates
+images only, leaving price, stock and detail state untouched.
+
 Selected demand beyond queue capacity remains durable. Worker startup and
 the existing scheduled recovery refill it by owner; unselected cards are never
 fetched. Existing queued RQ tasks are checked before replacement, and Redis
@@ -108,6 +128,13 @@ internal failure text is exposed.
 Public requests cannot clear a future retry deadline when request metadata
 changes. Explicit owner corrections can re-arm the corrected product.
 
+Thumbnail refresh uses a separate read-only token-scoped batch GET. It accepts
+at most 50 visible, owner-matched product IDs and returns managed image URLs
+only. The browser checks currently visible missing-image cards in one batch
+every five seconds, stops after five minutes or any failed response, and never
+starts image/detail work from the GET. Applying a thumbnail does not change
+the current price, availability or Add state.
+
 ## Patrol and operations
 
 RecordCity patrol updates only matched, explicit JPY price/availability from
@@ -120,8 +147,9 @@ same owner; foreign-owned shops cannot make a catalog-only product eligible.
 Run the full CI suite, isolated Redis admission tests, Docker validation and
 split-worker startup checks before rollout. Redis tests only use a loopback
 test endpoint and unique test keys, never production Redis.
-The migration is additive; do not downgrade a populated schema. Application
-rollback must retain the `20260930_0024` revision file so old code can recognize
-the already-applied head. Verify legacy operation against that schema before
+The migrations are additive; do not downgrade a populated schema. Application
+rollback must retain every applied revision file, including `20260930_0024`
+and `20260930_0025`, so old code can recognize the already-applied head.
+Verify legacy operation against that schema before
 publishing any rollback ref. No new Render resources or environment changes
 are required for the gated release.

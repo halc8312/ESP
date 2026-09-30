@@ -333,6 +333,7 @@ def _register_blueprints(app: Flask) -> None:
     from routes.shops import shops_bp
     from routes.translation import translation_bp
     from routes.bg_removal import bg_removal_bp
+    from routes.internal_product_images import product_images_bp
     from routes.trash import trash_bp
 
     app.register_blueprint(admin_bp)
@@ -353,12 +354,15 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(api_bp)
     app.register_blueprint(translation_bp)
     app.register_blueprint(bg_removal_bp)
+    app.register_blueprint(product_images_bp)
 
     # Internal worker-to-web upload endpoint authenticates via HMAC, not
     # browser sessions; exempt it from CSRF so the RQ worker can POST the
     # processed PNG back. User-facing bg-removal routes remain protected.
     from routes.bg_removal import internal_upload_bg_result
     csrf.exempt(internal_upload_bg_result)
+    from routes.internal_product_images import internal_upload_product_image
+    csrf.exempt(internal_upload_product_image)
 
 
 def _register_backward_compat_aliases(app: Flask) -> None:
@@ -967,6 +971,11 @@ def _register_scheduler_jobs(app: Flask) -> None:
 
     def translation_recovery_job():
         with app.app_context():
+            try:
+                from services.product_thumbnail_jobs import recover_thumbnail_jobs
+                recover_thumbnail_jobs()
+            except Exception:
+                logging.getLogger("product_thumbnail_jobs").exception("Product thumbnail scheduled recovery failed")
             try:
                 from services.product_detail_jobs import recover_product_detail_jobs
                 recover_product_detail_jobs(limit=100)

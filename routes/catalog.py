@@ -14,7 +14,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import joinedload, subqueryload
 
 from database import SessionLocal, _session_factory
-from models import Shop, PriceList, PriceListItem, Product, ProductSnapshot, CatalogPageView, User
+from models import Shop, PriceList, PriceListItem, Product, ProductSnapshot, ProductThumbnailJob, CatalogPageView, User
 from services.exchange_rate_service import apply_safety_margin, get_exchange_rates
 from services.image_service import split_image_url_string
 from services.pricing_service import resolve_product_display_price
@@ -32,6 +32,8 @@ DETAIL_START_LIMIT = 20
 DETAIL_OWNER_START_LIMIT = 300
 DETAIL_POLL_WINDOW_SECONDS = 300
 DETAIL_POLL_LIMIT = 120
+THUMBNAIL_POLL_LIMIT = 90
+THUMBNAIL_BATCH_LIMIT = 50
 
 
 def _latest_snapshot(product):
@@ -454,6 +456,86 @@ def _detail_rate_limit(pricelist):
         response.headers["Retry-After"] = str(window)
         return response, 429
     return None
+
+
+@catalog_bp.route("/catalog/<token>/thumbnails", methods=["GET"])
+def catalog_thumbnails(token):
+    """Read image availability for a bounded visible batch; never start work."""
+    raw_ids = (request.args.get("product_ids") or "").split(",")
+    if not raw_ids or len(raw_ids) > THUMBNAIL_BATCH_LIMIT or any(
+        re.fullmatch(r"[1-9][0-9]{0,17}", value) is None for value in raw_ids
+    ):
+        return jsonify(error="Invalid image request."), 400
+    product_ids = list(dict.fromkeys(int(value) for value in raw_ids))
+    session_db = SessionLocal()
+    try:
+        pricelist = _pricelist_by_token(session_db, token)
+        if pricelist is None or pricelist.shop_id is not None and (
+            pricelist.shop is None or pricelist.shop.user_id != pricelist.user_id
+        ):
+            return jsonify(error="Not found"), 404
+        try:
+            count = get_rate_limiter().increment(
+                "catalog_thumbnail_poll", f"{token}:{get_client_ip(request)}", DETAIL_POLL_WINDOW_SECONDS,
+            )
+        except Exception:
+            return jsonify(error="Images are temporarily unavailable."), 503
+        if count > THUMBNAIL_POLL_LIMIT:
+            response = jsonify(error="Please wait before refreshing images.")
+            response.headers["Retry-After"] = str(DETAIL_POLL_WINDOW_SECONDS)
+            return response, 429
+        ranked_snapshots = select(
+            ProductSnapshot.id.label("snapshot_id"), ProductSnapshot.product_id.label("product_id"),
+            func.row_number().over(partition_by=ProductSnapshot.product_id,
+                order_by=(ProductSnapshot.scraped_at.desc(), ProductSnapshot.id.desc())).label("snapshot_rank"),
+        ).where(ProductSnapshot.product_id.in_(product_ids)).subquery()
+        # Read product scope, latest images and request state in one statement:
+        # a transfer between separate product/image reads must not expose the
+        # receiving owner's newly written snapshot to an old catalog token.
+        query = session_db.query(Product, ProductSnapshot, ProductThumbnailJob).join(
+            PriceListItem, PriceListItem.product_id == Product.id,
+        ).join(PriceList, PriceList.id == PriceListItem.price_list_id).join(
+            User, User.id == PriceList.user_id,
+        ).outerjoin(ranked_snapshots, (ranked_snapshots.c.product_id == Product.id) & (ranked_snapshots.c.snapshot_rank == 1)).outerjoin(
+            ProductSnapshot, ProductSnapshot.id == ranked_snapshots.c.snapshot_id,
+        ).outerjoin(ProductThumbnailJob, ProductThumbnailJob.product_id == Product.id).filter(
+            PriceListItem.price_list_id == pricelist.id,
+            PriceListItem.product_id.in_(product_ids), PriceListItem.visible.is_(True),
+            PriceList.token == token, PriceList.user_id == pricelist.user_id, PriceList.shop_id == pricelist.shop_id,
+            PriceList.is_active.is_(True), User.suspended_at.is_(None),
+            or_(PriceList.unpublish_at.is_(None), PriceList.unpublish_at > utc_now()),
+            Product.user_id == pricelist.user_id, Product.archived.is_(False), Product.deleted_at.is_(None),
+            or_(Product.shop_id.is_(None), Product.shop_id.in_(session_db.query(Shop.id).filter(Shop.user_id == pricelist.user_id))),
+        )
+        if pricelist.shop_id is not None:
+            query = query.filter(Product.shop_id == pricelist.shop_id)
+        rows = query.all()
+        products = {product.id: (product, snapshot, job) for product, snapshot, job in rows}
+        if set(products) != set(product_ids):
+            return jsonify(error="Not found"), 404
+        results = []
+        for product_id in product_ids:
+            product, snapshot, job = products[product_id]
+            urls = _public_catalog_image_urls(split_image_url_string(snapshot.image_urls if snapshot else None))
+            status = "ready" if urls else "unavailable"
+            if not urls and job is not None and snapshot is not None and (
+                job.state in ("pending", "queued", "running")
+                and job.user_id == product.user_id and job.shop_id == product.shop_id
+                and job.product_source_url == product.source_url
+                and job.source_snapshot_id == snapshot.id and job.source_image_url == snapshot.image_urls
+                and product.site == "recordcity"
+            ):
+                status = "pending"
+            results.append({"product_id": product_id, "status": status, "thumb_url": urls[0] if urls else ""})
+        response = jsonify(items=results)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except Exception as error:
+        # Remote source URLs and worker error details are never public output.
+        current_app.logger.warning("Catalog image refresh failed (%s)", type(error).__name__)
+        return jsonify(error="Images are temporarily unavailable."), 503
+    finally:
+        session_db.close()
 
 
 @catalog_bp.route("/catalog/<token>/products/<int:product_id>/details", methods=["GET", "POST"])

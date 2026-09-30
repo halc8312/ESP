@@ -157,6 +157,7 @@ class Product(Base):
 
     snapshots = relationship("ProductSnapshot", back_populates="product", cascade="all, delete-orphan")
     variants = relationship("Variant", back_populates="product", cascade="all, delete-orphan")
+    thumbnail_job = relationship("ProductThumbnailJob", back_populates="product", uselist=False, cascade="all, delete-orphan")
 
 
 
@@ -207,6 +208,32 @@ class ProductSnapshot(Base):
     image_urls = Column(Text)
 
     product = relationship("Product", back_populates="snapshots")
+
+
+class ProductThumbnailJob(Base):
+    """One durable, image-only demand per shallow product; never public."""
+    __tablename__ = "product_thumbnail_jobs"
+    __table_args__ = (Index("ix_product_thumbnail_jobs_state_retry", "state", "retry_at"),)
+
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    shop_id = Column(Integer, ForeignKey("shops.id"), nullable=True)
+    product_source_url = Column(String, nullable=False)
+    source_snapshot_id = Column(Integer, ForeignKey("product_snapshots.id", ondelete="CASCADE"), nullable=False)
+    source_image_url = Column(Text, nullable=False)
+    state = Column(String(16), nullable=False, default="pending", server_default="pending")
+    job_id = Column(String(64), nullable=True)
+    claim_token = Column(String(64), nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True)
+    retry_at = Column(DateTime, nullable=True)
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    dispatch_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    error_code = Column(String(32), nullable=True)
+    managed_image_url = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+    updated_at = Column(DateTime, nullable=False, default=utc_now)
+
+    product = relationship("Product", back_populates="thumbnail_job")
 
 
 class DescriptionTemplate(Base):

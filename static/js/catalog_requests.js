@@ -28,6 +28,151 @@
     const detailChecks = new Map();
     const detailPollDuration = 120000;
 
+    function startThumbnailRefresh() {
+        if (typeof config.thumbnail_url !== 'string') return;
+        let endpoint;
+        try {
+            endpoint = new URL(config.thumbnail_url, window.location.origin);
+            if (endpoint.origin !== window.location.origin || !endpoint.pathname.endsWith('/thumbnails')
+                || endpoint.search || endpoint.hash) return;
+        } catch (_error) {
+            return;
+        }
+        const interval = 5000;
+        const deadline = Date.now() + 300000;
+        const finished = new Set();
+        const lastChecked = new Map();
+        let requests = 0;
+        let stopped = false;
+        let timer, deadlineTimer, controller;
+
+        function stop() {
+            stopped = true;
+            window.clearTimeout(timer);
+            window.clearTimeout(deadlineTimer);
+            if (controller) controller.abort();
+            window.removeEventListener('pagehide', stop);
+        }
+
+        function missingCards() {
+            return Array.from(document.querySelectorAll('.product-card[data-product-id]')).filter(card => {
+                const id = Number(card.dataset.productId);
+                return Number.isSafeInteger(id) && id > 0 && items.has(id) && !finished.has(id)
+                    && !card.querySelector('.product-card-image');
+            });
+        }
+
+        function visible(card) {
+            if (document.hidden || card.hidden || card.style.display === 'none') return false;
+            if (typeof window.getComputedStyle === 'function') {
+                const style = window.getComputedStyle(card);
+                if (style.display === 'none' || style.visibility === 'hidden') return false;
+            }
+            if (typeof card.getBoundingClientRect === 'function') {
+                const rect = card.getBoundingClientRect();
+                const height = window.innerHeight || document.documentElement.clientHeight;
+                const width = window.innerWidth || document.documentElement.clientWidth;
+                return rect.bottom > rect.top && rect.right > rect.left && rect.bottom > 0
+                    && rect.right > 0 && rect.top < height && rect.left < width;
+            }
+            return true;
+        }
+
+        function managedImage(url) {
+            // Handoff filenames are plain managed paths. Reject absolute URLs,
+            // encodings, traversal, query strings and browser URL normalizations.
+            return typeof url === 'string' && /^\/media\/[A-Za-z0-9_./-]+\.(?:png|jpe?g|gif|webp)$/i.test(url)
+                && !url.split('/').some(part => part === '.' || part === '..');
+        }
+
+        function imageFields(item, url) {
+            const existing = Array.isArray(item.image_urls) ? item.image_urls.filter(managedImage) : [];
+            return {...item, thumb_url: url, image_urls: Array.from(new Set([url, ...existing]))};
+        }
+
+        function showImage(id, url) {
+            if (!managedImage(url)) return;
+            const item = items.get(id);
+            const card = document.querySelector('.product-card[data-product-id="' + id + '"]');
+            if (!item || !card || card.querySelector('.product-card-image')) return;
+            const placeholder = card.querySelector('.product-card-image-placeholder');
+            if (!placeholder) return;
+            const image = document.createElement('img');
+            image.className = 'product-card-image';
+            image.alt = itemTitle(item, id);
+            image.loading = 'lazy';
+            image.decoding = 'async';
+            image.addEventListener('error', () => image.replaceWith(placeholder), {once: true});
+            image.src = url;
+            placeholder.replaceWith(image);
+            // Never apply price, stock, detail status, or other response fields.
+            // Availability may have changed during this GET; retain its latest state.
+            items.set(id, imageFields(items.get(id), url));
+            if (typeof DETAIL_CACHE !== 'undefined' && DETAIL_CACHE[id]) {
+                DETAIL_CACHE[id] = imageFields(DETAIL_CACHE[id], url);
+            }
+        }
+
+        function schedule() {
+            if (stopped) return;
+            if (Date.now() >= deadline || requests >= 60 || !missingCards().length) {
+                stop();
+                return;
+            }
+            timer = window.setTimeout(poll, interval);
+        }
+
+        async function poll() {
+            if (stopped || Date.now() >= deadline) return stop();
+            // Rotate visible batches so the first 50 pending cards cannot starve
+            // later visible cards. Filtering and scrolling are rechecked each time.
+            const cards = missingCards().filter(visible).sort((a, b) =>
+                (lastChecked.get(Number(a.dataset.productId)) || 0)
+                - (lastChecked.get(Number(b.dataset.productId)) || 0)).slice(0, 50);
+            if (!cards.length) return schedule();
+            const ids = cards.map(card => Number(card.dataset.productId));
+            requests += 1;
+            ids.forEach(id => lastChecked.set(id, requests));
+            const requested = new Set(ids);
+            const url = new URL(endpoint.href);
+            url.searchParams.set('product_ids', ids.join(','));
+            controller = new AbortController();
+            const timeout = window.setTimeout(() => controller.abort(), Math.min(15000, deadline - Date.now()));
+            try {
+                const response = await fetch(url.pathname + url.search, {
+                    method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
+                    headers: {'Accept': 'application/json'}, signal: controller.signal
+                });
+                if (!response.ok) throw new Error('Thumbnail refresh unavailable');
+                const data = await response.json();
+                if (stopped || Date.now() >= deadline) return;
+                if (!data || !Array.isArray(data.items) || data.items.length > 50) throw new Error('Invalid thumbnails');
+                const returned = new Map();
+                data.items.forEach(row => {
+                    if (!row || !requested.has(row.product_id) || returned.has(row.product_id)
+                        || !['pending', 'ready', 'unavailable'].includes(row.status)) throw new Error('Invalid thumbnail');
+                    returned.set(row.product_id, row);
+                });
+                ids.forEach(id => {
+                    const row = returned.get(id);
+                    if (!row || row.status !== 'pending') finished.add(id);
+                    if (row && row.status === 'ready') showImage(id, row.thumb_url);
+                });
+            } catch (_error) {
+                // A failed or expired catalog must not trigger repeated requests.
+                stop();
+            } finally {
+                window.clearTimeout(timeout);
+                controller = null;
+                schedule();
+            }
+        }
+
+        window.addEventListener('pagehide', stop, {once: true});
+        deadlineTimer = window.setTimeout(stop, 300000);
+        schedule();
+    }
+
     function unchecked(item) {
         return item && (item.detail_status === 'none' || item.detail_status === 'pending');
     }
@@ -548,4 +693,5 @@
     }
     saveSelection();
     renderSelection();
+    startThumbnailRefresh();
 })();

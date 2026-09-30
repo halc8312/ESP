@@ -1068,6 +1068,7 @@
         'token': pricelist.token,
         'submit_url': url_for('catalog_requests.submit_request', token=pricelist.token),
         'details_url': url_for('catalog.catalog_product_details', token=pricelist.token, product_id=0),
+        'thumbnail_url': url_for('catalog.catalog_thumbnails', token=pricelist.token),
         'csrf_token': csrf_token(),
         'items': items
     } | tojson }}</script>

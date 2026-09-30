@@ -30,6 +30,13 @@ def _reset_sqlite_test_database_schema(target_engine):
 
 
 @pytest.fixture(autouse=True)
+def _keep_automatic_listing_thumbnails_off_the_network(monkeypatch):
+    # Listing saves now persist image demand and dispatch bounded batches.
+    # Tests explicitly exercising delivery replace this transport stub.
+    monkeypatch.setattr("services.product_thumbnail_jobs._dispatch_batch", lambda *args: None)
+
+
+@pytest.fixture(autouse=True)
 def _keep_selector_healing_out_of_the_repository(monkeypatch, tmp_path_factory):
     """
     Point the selector healer's output at a temporary directory.

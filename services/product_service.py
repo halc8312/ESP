@@ -447,6 +447,16 @@ def save_scraped_items_to_db(
         assert_current_job_active()
         session_db.commit()
 
+        if any(item.get("_listing_card") is True for item in items):
+            from services.product_thumbnail_jobs import enqueue_thumbnail_jobs
+
+            try:
+                enqueue_thumbnail_jobs(saved_product_ids, user_id)
+            except Exception as exc:
+                # Pending demand is durable and the worker's existing recovery
+                # scheduler refills it if the immediate queue call is unavailable.
+                logger.warning("Thumbnail queue unavailable error_type=%s", type(exc).__name__)
+
         if completion_translation_ids:
             from services.product_detail_jobs import _dispatch_translation
 
@@ -539,6 +549,17 @@ def _save_listing_card(session_db, item, *, user_id, site, shop_id, is_listed):
             product.is_listed = True
         # Even a pending card may now contain a verified sold observation or
         # manually edited inventory. Re-importing a list never changes it.
+        if product.detail_fetch_state in ("pending", "queued", "running", "failed"):
+            latest = session_db.query(ProductSnapshot).filter(
+                ProductSnapshot.product_id == product.id,
+            ).order_by(ProductSnapshot.scraped_at.desc(), ProductSnapshot.id.desc()).first()
+            image = _normalize_image_urls(item.get("image_urls"))[:1]
+            if latest is not None and image and latest.image_urls == image[0]:
+                from services.product_thumbnail_jobs import create_thumbnail_demand
+
+                # Explicit selection may rebind a shop, while only the same
+                # validated card image can create/rearm an older shallow row.
+                create_thumbnail_demand(session_db, product, latest)
         return product, False
 
     normalized = normalize_item_for_persistence(item)
@@ -560,33 +581,67 @@ def _save_listing_card(session_db, item, *, user_id, site, shop_id, is_listed):
         inventory_qty=_default_inventory_for_status(status), taxable=False, position=1,
     ))
     # Keep the source image internal without 300–500 synchronous downloads.
-    # Public views use their existing placeholder until selected detail jobs
-    # cache images. Thumbnail-only background jobs are a future release gate.
+    # Public views use their placeholder until the durable thumbnail job
+    # delivers the first image separately on the web service's disk.
     images = _normalize_image_urls(normalized["image_urls"])[:1]
-    session_db.add(ProductSnapshot(
+    snapshot = ProductSnapshot(
         product_id=product.id, scraped_at=now, title=product.last_title,
         price=product.last_price, status=status, description="",
         image_urls="|".join(images),
-    ))
+    )
+    session_db.add(snapshot)
+    session_db.flush()
+    from services.product_thumbnail_jobs import create_thumbnail_demand
+
+    create_thumbnail_demand(session_db, product, snapshot)
     return product, True
 
 
 def cache_deferred_detail_images(item, product_id, job_id):
-    """Cache a bounded set before taking DB locks, with request-scoped filenames."""
-    from services.image_service import cache_product_image
+    """Deliver a bounded set to the web disk before the final product write.
+
+    Deferred snapshots contain only managed images. An unavailable image may
+    leave a placeholder, while verified price/stock details still complete.
+    """
+    from services.bg_remover.image_fetch import build_image_fetch_headers
+    from services.image_service import ImageValidationError, _response_status, download_external_image
+    from services.marketplace_access import marketplace_access, observe_access_response
+    from services.product_image_delivery import deliver_image_bytes
     from services.scrape_job_runtime import assert_current_job_active
 
     urls = _normalize_image_urls(item.get("image_urls"))[:8]
     if not _IMAGE_CACHE_ENABLED:
-        return urls
+        return []
     cached = []
     for index, url in enumerate(urls):
         assert_current_job_active()
         if not url.startswith(("http://", "https://")):
-            cached.append(url)
+            # A marketplace page cannot choose another owner's media path.
             continue
-        local = cache_product_image(url, product_id, index, cache_namespace=job_id)
-        cached.append(local or url)
+        try:
+            # CDN requests share the owning marketplace's pacing and budget;
+            # exact image-host/DNS/redirect validation stays in image_service.
+            source_url = item.get("url")
+            with marketplace_access(source_url, timeout_seconds=30, consume_request=False) as parent:
+                def admit_hop(_current_url):
+                    return marketplace_access(source_url, timeout_seconds=30, parent_lease=parent)
+
+                def observe_hop(_current_url, response):
+                    observe_access_response(source_url, _response_status(response), headers={"Retry-After": response.headers.get("Retry-After")})
+
+                try:
+                    content, _ext = download_external_image(
+                        url, headers=build_image_fetch_headers(url),
+                        request_admission=admit_hop, response_observer=observe_hop,
+                    )
+                except ImageValidationError as exc:
+                    status = getattr(exc, "status_code", None)
+                    if status in (403, 429):
+                        observe_access_response(source_url, status, headers=getattr(exc, "response_headers", None))
+                    raise
+            cached.append(deliver_image_bytes(product_id, job_id, index, content))
+        except Exception as exc:
+            logger.warning("Deferred image delivery failed product_id=%s error_type=%s", product_id, type(exc).__name__)
     assert_current_job_active()
     return cached
 
@@ -657,6 +712,10 @@ def save_scraped_product_detail(session_db, product, item, *, cached_images=None
             ProductSnapshot.scraped_at.desc(), ProductSnapshot.id.desc(),
         ).first()
         images = _normalize_image_urls(previous.image_urls) if previous else []
+    if cached_images is not None:
+        # The shallow listing snapshot may still retain its private CDN URL.
+        # A verified deferred snapshot accepts only images hosted by the web.
+        images = [url for url in images if url.startswith("/media/")]
     session_db.add(ProductSnapshot(
         product_id=product.id, scraped_at=now, title=title, price=price,
         status=status, description=_normalize_text(normalized.get("description")),
