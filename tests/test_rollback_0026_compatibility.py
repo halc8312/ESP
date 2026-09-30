@@ -16,6 +16,9 @@ def test_rollback_metadata_and_bootstrap_recognize_extra_schema_without_new_hand
     with database.engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "20260930_0026"
         assert {"product_thumbnail_jobs", "catalog_request_notifications"}.issubset(inspect(connection).get_table_names())
+        batch_owner = next(column for column in inspect(connection).get_columns("product_thumbnail_jobs") if column["name"] == "batch_user_id")
+        assert batch_owner["nullable"] is True
+        assert any(foreign_key["referred_table"] == "product_snapshots" for foreign_key in inspect(connection).get_foreign_keys("product_thumbnail_jobs"))
         assert connection.execute(text("SELECT count(*) FROM product_thumbnail_jobs")).scalar_one() == 0
         assert connection.execute(text("SELECT count(*) FROM catalog_request_notifications")).scalar_one() == 0
 

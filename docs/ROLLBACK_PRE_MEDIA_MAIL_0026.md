@@ -81,4 +81,6 @@ PYTHONPATH=tests python -m pytest -p rollback_0026_plugin \
 旧single-webのロック判定テストは無関係な実巡回スレッドを起動し、後続テストへ状態が残るため除外します。
 同じロック判定とweb起動のDB bootstrapは、0026のfixture上でschedulerだけを止めた専用テストで確認します。
 2026-09-30 UTCの検証結果は233件成功、上記の旧ロック判定テスト1件除外でした。
+画像容量レビューで0025へnullableな `batch_user_id` が追加された後も、同じmigrationを保持し、
+head・列・外部キー・旧商品の保存・web起動を含む専用互換性4件が成功しています。
 SQLite上の互換性確認は、本番PostgreSQL・Redisでのreadiness成功や、本番への反映を示しません。

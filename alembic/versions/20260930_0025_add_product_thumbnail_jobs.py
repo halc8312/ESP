@@ -16,6 +16,8 @@ depends_on = None
 
 def upgrade():
     if "product_thumbnail_jobs" in sa.inspect(op.get_bind()).get_table_names():
+        if "batch_user_id" not in {column["name"] for column in sa.inspect(op.get_bind()).get_columns("product_thumbnail_jobs")}:
+            op.add_column("product_thumbnail_jobs", sa.Column("batch_user_id", sa.Integer(), nullable=True))
         return
     op.create_table(
         "product_thumbnail_jobs",
@@ -27,6 +29,7 @@ def upgrade():
         sa.Column("source_image_url", sa.Text(), nullable=False),
         sa.Column("state", sa.String(16), nullable=False, server_default="pending"),
         sa.Column("job_id", sa.String(64), nullable=True),
+        sa.Column("batch_user_id", sa.Integer(), nullable=True),
         sa.Column("claim_token", sa.String(64), nullable=True),
         sa.Column("lease_expires_at", sa.DateTime(), nullable=True),
         sa.Column("retry_at", sa.DateTime(), nullable=True),
