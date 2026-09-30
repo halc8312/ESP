@@ -33,6 +33,8 @@ from services.scrape_request import (
     classify_target_url,
     get_internal_search_limit,
     get_search_depth,
+    normalize_scrape_limit,
+    recordcity_listing_enabled,
 )
 from services.search_result_quality import (
     build_search_quality,
@@ -107,7 +109,18 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
     price_max = request_payload.get("price_max")
     sort = str(request_payload.get("sort") or "")
     category = request_payload.get("category")
-    limit = max(1, int(request_payload.get("limit") or 10))
+    target_kind = "search"
+    if target_url:
+        target_kind, site = classify_target_url(target_url)
+    acquisition_mode = (
+        "listing" if request_payload.get("acquisition_mode") == "listing"
+        and site == "recordcity" and target_kind == "search" and recordcity_listing_enabled()
+        else "detail"
+    )
+    limit = normalize_scrape_limit(
+        request_payload.get("limit"), site=site, target_kind=target_kind,
+        acquisition_mode=acquisition_mode,
+    )
     user_id = request_payload.get("user_id")
     persist_to_db = bool(request_payload.get("persist_to_db", True))
     shop_id = request_payload.get("shop_id")
@@ -147,10 +160,12 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                 "price_min": normalized_price_min, "price_max": normalized_price_max,
                 "sort": sort, "category": category, "limit": limit,
                 "site": "recordcity", "persist_to_db": persist_to_db, "shop_id": shop_id,
+                "acquisition_mode": acquisition_mode,
                 "search_quality": build_search_quality(
                     unique, requested_count=limit, duplicate_count=duplicates, site="recordcity",
                     progress=progress, excluded_count=excluded + price_excluded,
                     displayed_count=len(staged_items),
+                    acquisition_mode=acquisition_mode,
                 ),
             },
             {**progress, "items_count": len(staged_items), "requested_count": limit},
@@ -177,6 +192,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
             search_quality = build_search_quality(
                 scraped_items, requested_count=limit, duplicate_count=duplicates, site=target_site,
                 progress=result_progress,
+                acquisition_mode=acquisition_mode,
             )
             observation = inspect_search_quality(scraped_items, search_quality)
         else:
@@ -228,6 +244,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                 "site": site,
                 "persist_to_db": persist_to_db,
                 "shop_id": shop_id,
+                "acquisition_mode": acquisition_mode,
             }
 
         if target_url:
@@ -250,13 +267,20 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                 search_limit = get_internal_search_limit(limit)
                 search_depth = get_search_depth(target_site, search_limit)
                 scrape_started = True
-                scraped = search_fn(
-                    search_url=target_url,
-                    max_items=search_limit,
-                    max_scroll=search_depth,
-                    headless=True,
-                    **({"progress_callback": checkpoint} if target_site == "recordcity" else {}),
-                )
+                if acquisition_mode == "listing":
+                    scraped = recordcity_db.scrape_listing_result(
+                        search_url=target_url, max_items=limit,
+                        max_pages=get_search_depth("recordcity", limit),
+                        progress_callback=checkpoint,
+                    )
+                else:
+                    scraped = search_fn(
+                        search_url=target_url,
+                        max_items=search_limit,
+                        max_scroll=search_depth,
+                        headless=True,
+                        **({"progress_callback": checkpoint} if target_site == "recordcity" else {}),
+                    )
                 finalize(scraped, target_site)
             else:
                 scraper_map = {
@@ -338,13 +362,20 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
                 )
                 finalize(items, "snkrdunk")
             elif site == "recordcity":
-                items = recordcity_db.scrape_search_result(
-                    search_url=search_url,
-                    max_items=search_limit,
-                    max_scroll=search_depth,
-                    headless=True,
-                    progress_callback=checkpoint,
-                )
+                if acquisition_mode == "listing":
+                    items = recordcity_db.scrape_listing_result(
+                        search_url=search_url, max_items=limit,
+                        max_pages=get_search_depth("recordcity", limit),
+                        progress_callback=checkpoint,
+                    )
+                else:
+                    items = recordcity_db.scrape_search_result(
+                        search_url=search_url,
+                        max_items=search_limit,
+                        max_scroll=search_depth,
+                        headless=True,
+                        progress_callback=checkpoint,
+                    )
                 finalize(items, "recordcity")
             else:
                 observed_site = "mercari"
@@ -387,6 +418,7 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
         "site": site,
         "persist_to_db": persist_to_db,
         "shop_id": shop_id,
+        "acquisition_mode": acquisition_mode,
         **({"search_quality": search_quality} if search_quality is not None else {}),
     }
 

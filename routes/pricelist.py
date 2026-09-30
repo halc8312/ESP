@@ -5,7 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, session
+from flask import Blueprint, render_template, request, redirect, url_for, flash, session, current_app
 from flask_login import login_required, current_user
 from sqlalchemy.orm import subqueryload
 
@@ -542,6 +542,7 @@ def pricelist_add_products(pricelist_id):
         next_order = (max_order[0] + 1) if max_order else 0
 
         added = 0
+        added_product_ids = []
         for pid in product_ids:
             try:
                 pid_int = int(pid)
@@ -560,14 +561,28 @@ def pricelist_add_products(pricelist_id):
                         sort_order=next_order,
                     )
                     session_db.add(item)
+                    existing_product_ids.add(pid_int)
+                    added_product_ids.append(pid_int)
                     next_order += 1
                     added += 1
 
         if added > 0:
             pl.updated_at = utc_now()
             session_db.commit()
+            # Saving the list is independent of the slower detail read. The
+            # queue checks ownership and ignores legacy/completed products.
+            try:
+                from services.product_detail_jobs import enqueue_product_details
+                detail_jobs = enqueue_product_details(added_product_ids, current_user.id)
+            except Exception:
+                current_app.logger.exception("detail enqueue failed after pricelist registration")
+                detail_jobs = {"failed": len(added_product_ids), "queued": 0}
+            if detail_jobs.get("queued"):
+                flash(f"詳細情報を{detail_jobs['queued']}件、順番に取得します。", "info")
+            if detail_jobs.get("failed"):
+                flash("リストは保存しましたが、詳細情報の取得待ち登録に失敗しました。", "warning")
 
-        return redirect(url_for("pricelist.pricelist_items", pricelist_id=pl.id))
+        return redirect(url_for("pricelist.pricelist_items", pricelist_id=pricelist_id))
     except Exception:
         session_db.rollback()
         raise

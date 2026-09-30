@@ -38,6 +38,31 @@
     };
     var stepOrder = ["setup", "queued", "running", "review"];
 
+    function updateListingLimits() {
+        var enabled = config.dataset.recordcityListingEnabled === "true";
+        var siteSelect = document.getElementById("scrapeSite");
+        var urlInput = document.getElementById("scrapeTargetUrl");
+        var urlIsListing = false;
+        try {
+            var target = new URL(urlInput ? urlInput.value : "");
+            urlIsListing = target.protocol === "https:"
+                && ["recordcity.jp", "www.recordcity.jp"].indexOf(target.hostname) !== -1
+                && /^\/(?:[a-z]{2}\/)?catalog\/?$/.test(target.pathname);
+        } catch (_error) { /* The server reports invalid URLs at submission. */ }
+        [
+            [document.getElementById("scrapeLimit"), enabled && siteSelect && siteSelect.value === "recordcity"],
+            [document.getElementById("scrapeUrlLimit"), enabled && urlIsListing]
+        ].forEach(function (setting) {
+            var select = setting[0];
+            if (!select) { return; }
+            select.querySelectorAll("[data-listing-limit]").forEach(function (option) {
+                option.disabled = !setting[1];
+                option.hidden = !setting[1];
+            });
+            if (!setting[1] && Number(select.value) > 100) { select.value = "100"; }
+        });
+    }
+
     function getCsrfToken() {
         var csrfMeta = document.querySelector('meta[name="csrf-token"]');
         return csrfMeta ? String(csrfMeta.content || "").trim() : "";
@@ -255,7 +280,7 @@
     function buildStatusBadge(item) {
         var badge = document.createElement("span");
         badge.className = "scrape-preview-status-pill";
-        badge.textContent = item.status || "状態を確認できません";
+        badge.textContent = item._listing_card === true ? "詳細未取得・在庫未確認" : item.status || "状態を確認できません";
         if ((item.status || "").toLowerCase() === "unknown") {
             badge.classList.add("is-warning");
         }
@@ -314,6 +339,12 @@
                 + "件（取得率 " + Math.round(quality.acquisition_rate * 100) + "%）・重複除外後 " + quality.unique_count + "件・重複 " + quality.duplicate_count
                 + "件・" + (endLabels[quality.end_reason] || "終了理由未確認");
             previewMeta.appendChild(qualityText);
+        }
+
+        if (result.acquisition_mode === "listing") {
+            var detailNote = document.createElement("p");
+            detailNote.textContent = "一覧のタイトル・価格・画像を取得しました。説明・状態・追加画像は、登録した商品のみ順番に取得します。在庫は詳細取得後に確認します。";
+            previewMeta.appendChild(detailNote);
         }
 
         if (result.search_url) {
@@ -440,6 +471,17 @@
         var progress = data.context && data.context.progress;
         if (progress) {
             var phase = progress.phase === "listing" ? "一覧を確認中" : "詳細を確認中";
+            var waitLabels = {
+                site_interval: "サイトへのアクセス間隔を調整中",
+                site_busy: "同じサイトの読み取り完了を待っています",
+                site_cooldown: "サイト側の制限により待機中"
+            };
+            if (waitLabels[progress.wait_reason]) {
+                phase = waitLabels[progress.wait_reason];
+                if (progress.retry_after_seconds) {
+                    phase += "（約" + Math.ceil(Number(progress.retry_after_seconds)) + "秒）";
+                }
+            }
             var updated = new Date(progress.updated_at);
             var lastUpdate = isNaN(updated.getTime()) ? "" : "・最終進捗 " + updated.toLocaleTimeString("ja-JP");
             return phase + "：取得済み " + Number(progress.items_count || 0) + " / 希望 "
@@ -668,6 +710,16 @@
                 if (data.translation_jobs_enqueued > 0) {
                     flashParts.push("英訳を" + data.translation_jobs_enqueued + "件開始しました");
                 }
+                if (data.detail_jobs_enqueued > 0) {
+                    flashParts.push("詳細情報を" + data.detail_jobs_enqueued + "件、順番に取得します"
+                        + (registerPayload.translate ? "。英訳は詳細取得後に開始します" : ""));
+                }
+                if (!data.detail_jobs_enqueued && data.detail_pending_count > 0) {
+                    flashParts.push("詳細取得の待ち・処理中 " + data.detail_pending_count + "件");
+                }
+                if (data.detail_jobs_failed > 0) {
+                    flashParts.push("保存は完了しましたが、詳細取得の待ち登録に失敗した商品があります");
+                }
                 if (data.pricing_applied_count > 0) {
                     flashParts.push("利益ルール" + data.pricing_applied_count + "件に適用しました");
                 }
@@ -775,6 +827,16 @@
                     if (data.translation_jobs_enqueued > 0) {
                         messageParts.push("英訳を" + data.translation_jobs_enqueued + "件開始しました");
                     }
+                    if (data.detail_jobs_enqueued > 0) {
+                        messageParts.push("詳細情報を" + data.detail_jobs_enqueued + "件、順番に取得します"
+                            + (payload.translate ? "。英訳は詳細取得後に開始します" : ""));
+                    }
+                    if (!data.detail_jobs_enqueued && data.detail_pending_count > 0) {
+                        messageParts.push("詳細取得の待ち・処理中 " + data.detail_pending_count + "件");
+                    }
+                    if (data.detail_jobs_failed > 0) {
+                        messageParts.push("保存は完了しましたが、詳細取得の待ち登録に失敗した商品があります");
+                    }
                     if (data.pricing_applied_count > 0) {
                         messageParts.push("利益ルール" + data.pricing_applied_count + "件に適用しました");
                     }
@@ -820,6 +882,11 @@
             setActiveTab(button.dataset.scrapeTab || "url");
         });
     });
+
+    [document.getElementById("scrapeSite"), document.getElementById("scrapeTargetUrl")].forEach(function (input) {
+        if (input) { input.addEventListener("input", updateListingLimits); }
+    });
+    updateListingLimits();
 
     document.querySelectorAll(".scrape-form-compact").forEach(function (form) {
         // The "other site" reader renders a pre-filled manual add page rather

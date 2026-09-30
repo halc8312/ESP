@@ -1,6 +1,9 @@
 import json
 from unittest.mock import patch
 
+import pytest
+from services.scrape_safety import ScrapeBlockedError
+
 from services.patrol.offmall_patrol import OffmallPatrol
 from services.patrol.snkrdunk_patrol import SnkrdunkPatrol
 from services.patrol.surugaya_patrol import SurugayaPatrol
@@ -108,7 +111,7 @@ def test_surugaya_detail_marks_cloudflare_challenge_body_blocked(monkeypatch):
     assert result["_scrape_meta"]["strategy"] == "blocked"
 
 
-def test_surugaya_detail_uses_external_fetch_when_primary_blocked(monkeypatch):
+def test_surugaya_detail_stops_without_switching_route_when_primary_blocked(monkeypatch):
     blocked_html = """
     <html>
       <head><title>Just a moment...</title></head>
@@ -128,13 +131,15 @@ def test_surugaya_detail_uses_external_fetch_when_primary_blocked(monkeypatch):
     blocked_response = MockResponse(blocked_html, "https://www.suruga-ya.jp/product/detail/1", status_code=403)
     external_response = MockResponse(product_html, "https://www.suruga-ya.jp/product/detail/1", status_code=200)
     external_response.source = "test_external"
-    monkeypatch.setattr("services.scraping_client.fetch_surugaya_external", lambda url, timeout=60: external_response)
+    external_calls = []
+    monkeypatch.setattr(
+        "services.scraping_client.fetch_surugaya_external",
+        lambda url, timeout=60: external_calls.append(url) or external_response,
+    )
 
-    result = surugaya_db.scrape_item_detail(MockSession(blocked_response), "https://www.suruga-ya.jp/product/detail/1")
-
-    assert result["title"] == "External Surugaya Item"
-    assert result["price"] == 2980
-    assert result["status"] == "active"
+    with pytest.raises(ScrapeBlockedError):
+        surugaya_db.scrape_item_detail(MockSession(blocked_response), "https://www.suruga-ya.jp/product/detail/1")
+    assert external_calls == []
 
 
 def test_yahoo_detail_marks_ambiguous_inventory_unknown(monkeypatch):
@@ -364,7 +369,7 @@ def test_surugaya_patrol_marks_http_block_as_error():
     assert result.confidence == "low"
 
 
-def test_surugaya_patrol_uses_external_fetch_when_primary_blocked():
+def test_surugaya_patrol_does_not_switch_route_when_primary_blocked():
     blocked_html = """
     <html>
       <head><title>Just a moment...</title></head>
@@ -388,12 +393,13 @@ def test_surugaya_patrol_uses_external_fetch_when_primary_blocked():
     )()
     with patch("services.scraping_client.fetch_static", return_value=blocked_page), patch(
         "services.scraping_client.fetch_surugaya_external", return_value=external_page
-    ):
+    ) as external_fetch:
         result = SurugayaPatrol().fetch("https://www.suruga-ya.jp/product/detail/1")
 
-    assert result.price == 2980
-    assert result.status == "active"
-    assert result.price_source == "test_external"
+    assert result.price is None
+    assert result.status == "blocked"
+    assert result.error == "HTTP 403"
+    external_fetch.assert_not_called()
 
 
 def test_surugaya_patrol_marks_challenge_body_as_blocked():

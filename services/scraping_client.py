@@ -14,6 +14,7 @@ so existing curl_cffi-based code (surugaya_db.py) can be migrated with minimal c
 
 import asyncio
 import base64
+import contextvars
 import inspect
 import logging
 import os
@@ -23,6 +24,23 @@ from dataclasses import dataclass
 from urllib.parse import quote_plus, urlparse, urlunparse
 
 logger = logging.getLogger("scraping_client")
+
+
+def _bounded_transport_timeout(value, default=30):
+    try:
+        return min(120, max(1, float(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _validated_transport_target(url: str) -> tuple[str, str, str]:
+    """Classify and validate the target before any transport is dispatched."""
+    from services.scrape_request import classify_target_url
+    from services.scrape_safety import validate_marketplace_url
+
+    request_kind, site = classify_target_url(url)
+    kind = "detail" if request_kind == "item" else "search"
+    return validate_marketplace_url(url, site, kind=kind), site, kind
 
 
 @dataclass(frozen=True)
@@ -148,14 +166,34 @@ class _ScraplingSession:
 
     def __init__(self):
         from scrapling.engines.static import FetcherSession
-        self._fs = FetcherSession(impersonate="chrome", stealthy_headers=True)
+        # Scrapling 0.4.1's ``retries`` is the total number of attempts. Keep
+        # its internal loop to one; application retries acquire a new permit.
+        self._fs = FetcherSession(impersonate="chrome", stealthy_headers=True, retries=1)
         self._inner = self._fs.__enter__()
 
     def get(self, url: str, timeout: int = 30, **kwargs) -> _ScraplingResponse:
+        from services.marketplace_access import marketplace_access, observe_access_response
+        from services.scrape_safety import fetch_with_safe_redirects
+
+        normalized_url, site, kind = _validated_transport_target(url)
+        timeout = _bounded_transport_timeout(timeout)
         if "allow_redirects" in kwargs and "follow_redirects" not in kwargs:
             kwargs["follow_redirects"] = kwargs.pop("allow_redirects")
-        page = self._inner.get(url, timeout=timeout, **kwargs)
-        return _ScraplingResponse(page)
+        follow_redirects = kwargs.pop("follow_redirects", True)
+        kwargs.pop("retries", None)
+
+        def _fetch_once(current_url):
+            with marketplace_access(site):
+                page = self._inner.get(
+                    current_url, timeout=timeout, follow_redirects=False, retries=1, **kwargs
+                )
+                result = _ScraplingResponse(page)
+                observe_access_response(site, result)
+                return result
+
+        if not follow_redirects:
+            return _fetch_once(normalized_url)
+        return fetch_with_safe_redirects(_fetch_once, normalized_url, site, kind=kind)
 
 
 def get_scraping_session() -> _ScraplingSession:
@@ -178,8 +216,27 @@ def fetch_static(url: str, timeout: int = 30, **kwargs):
 
     Memory: ~5 MB per request (vs ~400 MB for Chrome).
     """
+    from services.marketplace_access import marketplace_access, observe_access_response
+    from services.scrape_safety import fetch_with_safe_redirects
     from scrapling import Fetcher
-    return Fetcher.get(url, stealthy_headers=True, timeout=timeout, **kwargs)
+
+    normalized_url, site, kind = _validated_transport_target(url)
+    timeout = _bounded_transport_timeout(timeout)
+    follow_redirects = kwargs.pop("follow_redirects", kwargs.pop("allow_redirects", True))
+    kwargs.pop("retries", None)
+
+    def _fetch_once(current_url):
+        with marketplace_access(site):
+            result = Fetcher.get(
+                current_url, stealthy_headers=True, timeout=timeout,
+                follow_redirects=False, retries=1, **kwargs,
+            )
+            observe_access_response(site, result)
+            return result
+
+    if not follow_redirects:
+        return _fetch_once(normalized_url)
+    return fetch_with_safe_redirects(_fetch_once, normalized_url, site, kind=kind)
 
 
 def _is_test_fetch_double(fetcher) -> bool:
@@ -224,10 +281,22 @@ def _safe_transport_origin(url: str) -> str:
     return urlunparse((parsed.scheme, netloc, "", "", "", ""))
 
 
-def _call_external_transport(source: str, operation):
+def _call_external_transport(source: str, operation, *, network_request=True):
     """Run a provider request without surfacing credential-bearing URLs."""
+    from services.marketplace_access import marketplace_access, observe_access_response
+    from services.scrape_safety import ScrapeFailure
+
     try:
-        return operation()
+        if not network_request:
+            return operation()
+        # The provider is a route to Surugaya, not an independent marketplace
+        # allowance. Every configured route shares the site's access budget.
+        with marketplace_access("surugaya"):
+            response = operation()
+            observe_access_response("surugaya", response)
+            return response
+    except ScrapeFailure:
+        raise
     except Exception as exc:
         raise RuntimeError(
             f"Surugaya external fetch via {source} failed "
@@ -273,6 +342,7 @@ def fetch_surugaya_external(url: str, timeout: int = 60) -> ExternalFetchRespons
 
     target_kind = "detail" if "/product/detail/" in url else "search"
     url = validate_marketplace_url(url, "surugaya", kind=target_kind)
+    timeout = _bounded_transport_timeout(timeout, 60)
 
     zyte_key = (os.environ.get("SURUGAYA_ZYTE_API_KEY") or "").strip()
     if zyte_key:
@@ -295,7 +365,7 @@ def fetch_surugaya_external(url: str, timeout: int = 60) -> ExternalFetchRespons
                 source="zyte",
                 transport_url="https://api.zyte.com",
             )
-        data = _call_external_transport("zyte", response.json)
+        data = _call_external_transport("zyte", response.json, network_request=False)
         html = str(data.get("browserHtml") or data.get("httpResponseBody") or "")
         if html:
             status_code = data.get("browserHtmlStatusCode") or data.get("statusCode") or 200
@@ -354,13 +424,16 @@ def fetch_surugaya_external(url: str, timeout: int = 60) -> ExternalFetchRespons
     if proxy_url:
         try:
             response = fetch_with_safe_redirects(
-                lambda current_url: requests.get(
-                    current_url,
-                    timeout=timeout,
-                    impersonate="chrome120",
-                    proxies={"http": proxy_url, "https": proxy_url},
-                    headers={"Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7"},
-                    allow_redirects=False,
+                lambda current_url: _call_external_transport(
+                    "proxy",
+                    lambda: requests.get(
+                        current_url,
+                        timeout=timeout,
+                        impersonate="chrome120",
+                        proxies={"http": proxy_url, "https": proxy_url},
+                        headers={"Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7"},
+                        allow_redirects=False,
+                    ),
                 ),
                 url,
                 "surugaya",
@@ -398,12 +471,35 @@ async def fetch_static_async(
     Retries are intentionally lightweight so call sites can fan out with
     `asyncio.gather` without turning transient failures into hard aborts.
     """
+    from services.marketplace_access import async_marketplace_access, observe_access_response
+    from services.scrape_safety import ScrapeFailure, fetch_with_safe_redirects_async
     from scrapling.fetchers import AsyncFetcher
+
+    normalized_url, site, kind = _validated_transport_target(url)
+    timeout = _bounded_transport_timeout(timeout)
+    follow_redirects = kwargs.pop("follow_redirects", kwargs.pop("allow_redirects", True))
+
+    async def _fetch_once(current_url):
+        async with async_marketplace_access(site):
+            result = await AsyncFetcher.get(
+                current_url, stealthy_headers=True, timeout=timeout,
+                follow_redirects=False, retries=1, **kwargs,
+            )
+            observe_access_response(site, result)
+            return result
 
     last_error = None
     for attempt in range(retries + 1):
         try:
-            return await AsyncFetcher.get(url, stealthy_headers=True, timeout=timeout, **kwargs)
+            if not follow_redirects:
+                return await _fetch_once(normalized_url)
+            return await fetch_with_safe_redirects_async(
+                _fetch_once, normalized_url, site, kind=kind,
+            )
+        except ScrapeFailure:
+            # Unsafe redirects, explicit blocks and shared cooldowns cannot be
+            # retried through a different transport in the same operation.
+            raise
         except Exception as exc:
             last_error = exc
             if attempt >= retries:
@@ -492,7 +588,8 @@ def run_coro_sync(coro):
         except Exception as exc:
             result_queue.put((False, exc))
 
-    thread = threading.Thread(target=_runner, daemon=True)
+    caller_context = contextvars.copy_context()
+    thread = threading.Thread(target=lambda: caller_context.run(_runner), daemon=True)
     thread.start()
     thread.join()
 
@@ -526,7 +623,7 @@ def fetch_dynamic(url: str, headless: bool = True, network_idle: bool = True, **
     request_kind, site = classify_target_url(url)
     kind = "detail" if request_kind == "item" else "search"
     normalized_url = validate_marketplace_url(url, site, kind=kind)
-    timeout = max(1, int(kwargs.pop("timeout", 30000) or 30000))
+    timeout = min(120000, max(1, int(kwargs.pop("timeout", 30000) or 30000)))
     wait_selector = str(kwargs.pop("wait_selector", "") or "")
     # Five seconds suits a page that is merely slow. A site that answers with a
     # bot challenge first has to run it and reload before the real markup

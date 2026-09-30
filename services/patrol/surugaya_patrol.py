@@ -135,7 +135,6 @@ class SurugayaPatrol(BasePatrol):
         try:
             from services.scraping_client import (
                 fetch_marketplace_static,
-                fetch_surugaya_external,
             )
             from services.scrape_safety import ScrapeBlockedError
 
@@ -147,59 +146,17 @@ class SurugayaPatrol(BasePatrol):
                     allowed_statuses=DELETED_HTTP_STATUSES,
                 )
             except ScrapeBlockedError as exc:
-                external_page = fetch_surugaya_external(url)
-                if external_page is None:
-                    message = str(exc)
-                    status_match = re.search(r"HTTP\s+(\d+)", message)
-                    if status_match:
-                        error = f"HTTP {status_match.group(1)}"
-                        reason = "blocked_http_status"
-                    else:
-                        error = "challenge_page"
-                        reason = "blocked_challenge_page"
-                    return PatrolResult(
-                        status="blocked",
-                        error=error,
-                        confidence="low",
-                        reason=reason,
-                    )
-                external_status = _response_status(external_page)
-                external_html = _body_text(external_page)
-                if _is_blocked_response(external_status, external_html):
-                    return _blocked_result(external_status, external_html)
-                if external_status is not None and external_status >= 400:
-                    return PatrolResult(
-                        status="error",
-                        error=f"HTTP {external_status}",
-                        confidence="low",
-                        reason="external_http_status",
-                    )
-                result = self._parse_html(external_html)
-                result.price_source = external_page.source
-                return result
+                # A confirmed block is terminal. Changing the route would
+                # ignore the site's shared pause and turn one patrol failure
+                # into repeated requests from alternate addresses.
+                return _blocked_result(getattr(exc, "status_code", None), "")
             missing_result = deleted_http_result(page)
             if missing_result is not None:
                 return missing_result
             response_status = _response_status(page)
             html = _body_text(page)
             if _is_blocked_response(response_status, html):
-                external_page = fetch_surugaya_external(url)
-                if external_page is None:
-                    return _blocked_result(response_status, html)
-                external_status = _response_status(external_page)
-                external_html = _body_text(external_page)
-                if _is_blocked_response(external_status, external_html):
-                    return _blocked_result(external_status, external_html)
-                if external_status is not None and external_status >= 400:
-                    return PatrolResult(
-                        status="error",
-                        error=f"HTTP {external_status}",
-                        confidence="low",
-                        reason="external_http_status",
-                    )
-                result = self._parse_html(external_html)
-                result.price_source = external_page.source
-                return result
+                return _blocked_result(response_status, html)
             if response_status is not None and response_status >= 400:
                 return PatrolResult(
                     status="error",

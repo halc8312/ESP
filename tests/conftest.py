@@ -55,6 +55,7 @@ def _keep_selector_healing_out_of_the_repository(monkeypatch, tmp_path_factory):
 def _reset_feature_flag_env(monkeypatch):
     for env_name in (
         "ENABLE_SHARED_BROWSER_RUNTIME",
+        "RECORDCITY_LISTING_ENABLED",
         "WARM_BROWSER_POOL",
         "BROWSER_POOL_WARM_SITES",
         "BROWSER_POOL_MAX_TASKS_BEFORE_RESTART",
@@ -105,6 +106,17 @@ def _reset_feature_flag_env(monkeypatch):
         "SESSION_COOKIE_SECURE",
     ):
         monkeypatch.delenv(env_name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _reset_marketplace_access(monkeypatch):
+    from services.marketplace_access import reset_marketplace_access_for_tests
+    for site in ("MERCARI", "RAKUMA", "SNKRDUNK", "RECORDCITY", "SURUGAYA", "YAHOO", "YAHUOKU", "OFFMALL"):
+        monkeypatch.setenv(f"{site}_ACCESS_INTERVAL_SECONDS", "0")
+        monkeypatch.delenv(f"{site}_ACCESS_CONCURRENCY", raising=False)
+    reset_marketplace_access_for_tests()
+    yield
+    reset_marketplace_access_for_tests()
 
 
 @pytest.fixture

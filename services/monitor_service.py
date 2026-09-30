@@ -7,7 +7,7 @@ import logging
 from datetime import timedelta
 from sqlalchemy import asc, func, or_
 from database import create_isolated_session
-from models import Product, Variant
+from models import Product, Variant, PriceList, PriceListItem
 from services.pricing_service import product_has_pricing_config, update_product_selling_price
 from services.scrape_result_policy import normalize_price_for_persistence, normalize_status_for_persistence
 from services.scrape_observation import classify_scrape_failure, record_observation_safely
@@ -22,6 +22,7 @@ from services.patrol.surugaya_patrol import SurugayaPatrol
 from services.patrol.offmall_patrol import OffmallPatrol
 from services.patrol.yahuoku_patrol import YahuokuPatrol
 from services.patrol.snkrdunk_patrol import SnkrdunkPatrol
+from services.patrol.recordcity_patrol import RecordCityPatrol
 
 logger = logging.getLogger("patrol")
 
@@ -30,6 +31,18 @@ _BROWSER_SITES = frozenset()
 
 # Maximum backoff in minutes for consecutive patrol failures
 _MAX_BACKOFF_MINUTES = 180
+
+
+def _monitored_visibility(session, now):
+    visible_list = session.query(PriceListItem.id).join(PriceList).filter(
+        PriceListItem.product_id == Product.id,
+        PriceListItem.visible.is_(True),
+        PriceList.user_id == Product.user_id,
+        PriceList.is_active.is_(True),
+        or_(PriceList.unpublish_at == None, PriceList.unpublish_at > now),
+        or_(PriceList.shop_id == None, PriceList.shop_id == Product.shop_id),
+    ).exists()
+    return or_(Product.is_listed.isnot(False), visible_list)
 
 
 class MonitorService:
@@ -48,6 +61,7 @@ class MonitorService:
         'offmall': OffmallPatrol(),
         'yahuoku': YahuokuPatrol(),
         'snkrdunk': SnkrdunkPatrol(),
+        'recordcity': RecordCityPatrol(),
     }
 
     # Mercari-specific: track consecutive soft-sold counts per product to
@@ -91,11 +105,12 @@ class MonitorService:
         A successful fetch, not this revalidation, clears the failure counter.
         """
         resumed = 0
+        now = utc_now()
         paused = session_db.query(Product).filter(
             Product.site.in_(list(MonitorService._patrols)),
             Product.patrol_paused_reason == "invalid_url",
             Product.archived != True,
-            Product.is_listed.isnot(False),
+            _monitored_visibility(session_db, now),
             Product.deleted_at == None,
         )
         for product in paused.yield_per(200):
@@ -161,9 +176,10 @@ class MonitorService:
             eligible_products = session_db.query(Product).filter(
                 Product.site.in_(list(MonitorService._patrols.keys())),
                 Product.archived != True,
-                Product.is_listed.isnot(False),
+                _monitored_visibility(session_db, now),
                 Product.deleted_at == None,
                 Product.patrol_paused_reason == None,
+                or_(Product.detail_fetch_state == None, Product.detail_fetch_state == "complete"),
                 or_(Product.next_patrol_at == None, Product.next_patrol_at <= now),
             )
             summary["eligible_count"] = eligible_products.count()

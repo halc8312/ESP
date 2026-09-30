@@ -60,7 +60,7 @@ def stub_listing(monkeypatch, site, text):
         return fetch(target_url)
 
     page.goto = goto
-    context = SimpleNamespace(new_page=AsyncMock(return_value=page), route=AsyncMock())
+    context = SimpleNamespace(new_page=AsyncMock(return_value=page), route=AsyncMock(), close=AsyncMock())
 
     async def run_page_task(site, factory, **kwargs):
         return await factory(page, context)

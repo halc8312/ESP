@@ -697,7 +697,7 @@ def _register_error_handlers(app: Flask) -> None:
         )
         message = "ページを開いたまま時間が経ったため、送信できませんでした。お手数ですが、もう一度お試しください。"
 
-        if request.endpoint == "catalog_requests.submit_request":
+        if request.endpoint in {"catalog_requests.submit_request", "catalog.catalog_product_details"}:
             return {
                 "error": "Your session expired. Please reload the catalog and try again.",
                 "code": "csrf_failed",
@@ -967,6 +967,11 @@ def _register_scheduler_jobs(app: Flask) -> None:
 
     def translation_recovery_job():
         with app.app_context():
+            try:
+                from services.product_detail_jobs import recover_product_detail_jobs
+                recover_product_detail_jobs(limit=100)
+            except Exception:
+                logging.getLogger("product_detail_jobs").exception("Product detail scheduled recovery failed")
             try:
                 from services.translator.suggestion_store import (
                     recover_expired_translation_suggestions,

@@ -19,12 +19,16 @@ links collected and the pages opened.
 import json
 import logging
 import re
-from urllib.parse import urljoin, urlparse
+import time
+from decimal import Decimal, InvalidOperation
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from services.scrape_safety import (
     ScrapeBlockedError,
     ScrapeFailure,
     ScrapeHttpError,
+    ScrapeSelectorDriftError,
+    SearchResult,
     UnsafeScrapeUrlError,
     is_usable_detail_result,
     raise_for_unsafe_detail_result,
@@ -35,6 +39,7 @@ from services.scrape_safety import (
     validate_marketplace_url,
 )
 from services.search_result_quality import search_item_identity
+from services.listing_cards import validate_listing_card
 
 logger = logging.getLogger(__name__)
 
@@ -546,3 +551,248 @@ def scrape_search_result(
             headless=headless,
             progress_callback=progress_callback,
         )
+
+
+# This shallow adapter intentionally recognizes only explicit schema.org
+# ItemList/Product data. No RecordCity-specific card DOM has been verified.
+# Keep its application feature gate disabled until real listing fixtures prove
+# compatibility; do not fall back to fetching every product's detail page.
+LISTING_MAX_ITEMS = 500
+LISTING_MAX_PAGES = 10
+LISTING_MAX_SECONDS = 180
+
+
+def _schema_type(node: dict, expected: str) -> bool:
+    values = node.get("@type", [])
+    if not isinstance(values, list):
+        values = [values]
+    return any(_schema_tail(value).lower() == expected.lower() for value in values)
+
+
+def _listing_price(value):
+    """Read an exact positive JPY amount, never numbers from arbitrary prose."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    text = str(value).strip()
+    if re.fullmatch(r"(?:[1-9]\d*|[1-9]\d{0,2}(?:,\d{3})+)(?:\.0+)?", text) is None:
+        return None
+    try:
+        amount = Decimal(text.replace(",", ""))
+        return int(amount) if amount.is_finite() and amount > 0 else None
+    except (ValueError, InvalidOperation, OverflowError):
+        return None
+
+
+def _listing_card_from_product(product: dict, base_url: str) -> dict | None:
+    if not _schema_type(product, "Product"):
+        return None
+    raw_url = product.get("url") or product.get("@id")
+    if not isinstance(raw_url, str):
+        return None
+    try:
+        url = validate_marketplace_url(urljoin(base_url, raw_url), SITE, kind="detail")
+    except (UnsafeScrapeUrlError, ValueError):
+        return None
+    source_id = _catalog_id(url)
+    sku = product.get("sku")
+    if sku is not None and str(sku) != source_id:
+        return None
+    offers = product.get("offers")
+    if isinstance(offers, list) and len(offers) == 1:
+        offers = offers[0]
+    if not isinstance(offers, dict) or offers.get("priceCurrency") != "JPY":
+        return None
+    if offers.get("@type") and not _schema_type(offers, "Offer"):
+        return None
+    images = _extract_images(product)
+    if not images:
+        return None
+    status = _infer_status(offers)
+    item = {
+        "_listing_card": True,
+        "url": url,
+        "source_id": source_id,
+        "title": product.get("name"),
+        "price": _listing_price(offers.get("price")),
+        "currency": "JPY",
+        "status": "sold" if status == "sold_out" else status,
+        "description": "",
+        "image_urls": images[:1],
+    }
+    return item if validate_listing_card(item, SITE) else None
+
+
+def _extract_listing_cards(page, base_url: str) -> tuple[list[dict], int]:
+    """Return bounded explicit list cards and the number of rejected entries.
+
+    A standalone Product or breadcrumb ItemList is not evidence of a product
+    listing. ItemList entries must identify Product nodes in their own scope.
+    """
+    cards = []
+    invalid_count = 0
+    inspected = 0
+    for node in _iter_json_ld(page):
+        if not _schema_type(node, "ItemList"):
+            continue
+        entries = node.get("itemListElement")
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            inspected += 1
+            if inspected > LISTING_MAX_ITEMS * 2:
+                return cards, invalid_count + 1
+            if not isinstance(entry, dict):
+                invalid_count += 1
+                continue
+            product = entry.get("item") if _schema_type(entry, "ListItem") else entry
+            if not isinstance(product, dict) or not _schema_type(product, "Product"):
+                # Breadcrumbs or links alone cannot become display cards.
+                continue
+            item = _listing_card_from_product(product, base_url)
+            if item is None:
+                invalid_count += 1
+            else:
+                cards.append(item)
+    return cards, invalid_count
+
+
+def _listing_page_identity(url: str) -> tuple:
+    parsed = urlparse(url)
+    return (parsed.path.rstrip("/"), tuple(sorted(parse_qsl(parsed.query, keep_blank_values=True))))
+
+
+def _listing_has_empty_evidence(page) -> bool:
+    # The shared legacy marker "0件" also matches "100件". A shallow adapter
+    # must not turn unsupported card markup into a verified empty result.
+    text = re.sub(r"\s+", " ", _page_text(page)).strip()
+    phrases = ("該当する商品がありません", "該当の商品がありません",
+               "検索結果がありません", "商品が見つかりませんでした")
+    empty = any(phrase in text for phrase in phrases) or bool(
+        re.search(r"(?:検索結果|該当商品|該当する商品|商品数)\s*(?:[:：=はが]\s*)?0\s*件", text)
+    )
+    if not empty:
+        return False
+    # A product link contradicts a zero-result assertion when its card shape
+    # was not understood. Retain uncertainty instead of silently hiding it.
+    return not any("/catalog/" in str(anchor.attrib.get("href", ""))
+                   for anchor in page.css("a[href]"))
+
+
+def _listing_next_url(page, current_url: str, original_url: str) -> str:
+    """Follow an explicit next link without dropping or changing filters."""
+    target = _find_next_page_url(page, current_url)
+    if not target:
+        return ""
+    original = urlparse(original_url)
+    parsed = urlparse(target)
+    if parsed.path.rstrip("/") != original.path.rstrip("/"):
+        raise ScrapeSelectorDriftError("RecordCityのページ送り先が検索条件と一致しません。")
+    original_pairs = parse_qsl(original.query, keep_blank_values=True)
+    next_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    filters = [(key, value) for key, value in original_pairs if key != "page"]
+    next_filters = [(key, value) for key, value in next_pairs if key != "page"]
+    original_by_key = {}
+    for key, value in filters:
+        original_by_key.setdefault(key, []).append(value)
+    next_by_key = {}
+    for key, value in next_filters:
+        next_by_key.setdefault(key, []).append(value)
+    if any(key not in original_by_key or values != original_by_key[key]
+           for key, values in next_by_key.items()):
+        raise ScrapeSelectorDriftError("RecordCityのページ送りで検索条件の変更を検出しました。")
+    page_values = [value for key, value in next_pairs if key == "page"]
+    if len(page_values) != 1 or not re.fullmatch(r"[1-9]\d*", page_values[0]):
+        raise ScrapeSelectorDriftError("RecordCityのページ送り番号を確認できませんでした。")
+    query = urlencode(filters + [("page", page_values[0])])
+    return validate_marketplace_url(urlunparse(parsed._replace(query=query, fragment="")), SITE, kind="search")
+
+
+def scrape_listing_result(
+    search_url: str,
+    max_items: int = 100,
+    max_pages: int = 6,
+    progress_callback=None,
+) -> list:
+    """Collect shallow cards with zero detail fetches and bounded page work.
+
+    The 180-second budget is checked before each page request. An in-flight
+    fetch retains the existing finite transport timeout. At most ten page
+    fetch calls occur, regardless of untrusted next links or caller limits.
+    Missing next links and unsupported markup never prove list exhaustion.
+    """
+    from services.recordcity_browser_fetch import recordcity_navigation_session
+
+    search_url = validate_marketplace_url(search_url, SITE, kind="search")
+    limit = min(LISTING_MAX_ITEMS, max(1, int(max_items)))
+    page_limit = min(LISTING_MAX_PAGES, max(1, int(max_pages)))
+    results, identities, seen_pages = [], set(), set()
+    duplicate_count = invalid_count = candidate_count = 0
+    pages_fetched = 0
+    end_reason = "unknown"
+    current_url = search_url
+    started = time.monotonic()
+
+    def checkpoint(phase):
+        if progress_callback is not None:
+            progress_callback(list(results), {
+                "phase": phase,
+                "pages_fetched": pages_fetched,
+                "candidates_count": candidate_count,
+                "processed_count": candidate_count,
+                "detail_error_count": 0,
+                "invalid_card_count": invalid_count,
+                "duplicate_count": duplicate_count,
+                "end_reason": end_reason,
+            })
+
+    with recordcity_navigation_session():
+        while current_url:
+            if time.monotonic() - started >= LISTING_MAX_SECONDS:
+                checkpoint("listing")
+                raise ScrapeFailure("RecordCityの一覧取得が制限時間に達しました。取得済み商品を確認してください。")
+            identity = _listing_page_identity(current_url)
+            if identity in seen_pages:
+                end_reason = "pagination_loop"
+                break
+            if pages_fetched >= page_limit:
+                end_reason = "page_limit"
+                break
+            page = _fetch_page(current_url, kind="search")
+            final_url = getattr(page, "url", "")
+            if final_url:
+                validate_marketplace_url(final_url, SITE, kind="search")
+                if _listing_page_identity(final_url) != identity:
+                    raise ScrapeSelectorDriftError("RecordCityの応答で検索条件の変更を検出しました。")
+            seen_pages.add(identity)
+            pages_fetched += 1
+            cards, invalid = _extract_listing_cards(page, current_url)
+            invalid_count += invalid
+            candidate_count += len(cards) + invalid
+            if not cards and invalid:
+                checkpoint("listing")
+                raise ScrapeSelectorDriftError("RecordCityの一覧商品に必要な表示情報を確認できませんでした。")
+            page_reason = require_search_outcome(
+                SITE, candidate_count=len(cards), text=_page_text(page)
+            )
+            if page_reason == "explicit_empty":
+                if not _listing_has_empty_evidence(page):
+                    raise ScrapeSelectorDriftError("RecordCityの一覧が0件という根拠を確認できませんでした。")
+                if not results and not invalid_count:
+                    end_reason = "explicit_empty"
+                    break
+            for item in cards:
+                item_identity = search_item_identity(item, site=SITE)
+                if item_identity in identities:
+                    duplicate_count += 1
+                    continue
+                identities.add(item_identity)
+                results.append(item)
+                if len(results) >= limit:
+                    end_reason = "requested_reached"
+                    break
+            checkpoint("listing")
+            if end_reason == "requested_reached":
+                break
+            current_url = _listing_next_url(page, current_url, search_url)
+        checkpoint("completed")
+    return SearchResult(results, end_reason=end_reason)

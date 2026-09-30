@@ -22,6 +22,10 @@ _POOL_LOCK = threading.RLock()
 _RUNTIMES: dict[str, SharedBrowserRuntime] = {}
 logger = logging.getLogger("browser_pool")
 
+
+def _marketplace_site(site: str) -> str:
+    return "recordcity" if str(site).startswith("recordcity_") else site
+
 _DEFAULT_LAUNCH_ARGS = (
     "--no-sandbox",
     "--disable-dev-shm-usage",
@@ -296,7 +300,7 @@ async def _execute_persistent_page_task(
         for script in init_scripts or ():
             await page.add_init_script(script)
         return await task_coro_factory(page, context)
-    except Exception:
+    except (Exception, asyncio.CancelledError):
         try:
             await page.close()
         except Exception:
@@ -351,6 +355,25 @@ async def run_browser_page_task(
     automation_backend: str = "playwright",
     channel: str | None = None,
 ):
+    from services.marketplace_access import async_marketplace_access
+
+    # Own the site before startup/profile restoration, and retain ownership
+    # through context/browser cleanup. Guarded navigations consume requests
+    # individually using this lease captured in their callback context.
+    async with async_marketplace_access(_marketplace_site(site), consume_request=False) as lease:
+        return await _run_browser_page_task_owned(
+            site, task_coro_factory, lease=lease, launch_args=launch_args,
+            headless=headless, context_options=context_options,
+            init_scripts=init_scripts, automation_backend=automation_backend,
+            channel=channel,
+        )
+
+
+async def _run_browser_page_task_owned(
+    site, task_coro_factory, *, lease, launch_args=None, headless=True,
+    context_options=None, init_scripts=None, automation_backend="playwright",
+    channel=None,
+):
     runtime = get_browser_runtime(
         site,
         launch_args=launch_args,
@@ -369,15 +392,14 @@ async def run_browser_page_task(
             channel=channel,
         )
 
-    future = runtime.submit(
+    return await _submit_owned_task(
+        runtime,
         lambda browser: _execute_page_task(
-            browser,
-            task_coro_factory,
-            context_options=context_options,
+            browser, task_coro_factory, context_options=context_options,
             init_scripts=init_scripts,
-        )
+        ),
+        lease,
     )
-    return await asyncio.wrap_future(future)
 
 
 async def run_persistent_browser_page_task(
@@ -398,6 +420,22 @@ async def run_persistent_browser_page_task(
     so ``close_browser_pool`` also drains it.  Existing marketplace callers
     continue through ``run_browser_page_task`` and retain fresh contexts.
     """
+    from services.marketplace_access import async_marketplace_access
+
+    async with async_marketplace_access(_marketplace_site(site), consume_request=False) as lease:
+        return await _run_persistent_browser_page_task_owned(
+            site, task_coro_factory, lease=lease, user_data_dir=user_data_dir,
+            launch_args=launch_args, headless=headless,
+            context_options=context_options, init_scripts=init_scripts,
+            automation_backend=automation_backend, channel=channel,
+        )
+
+
+async def _run_persistent_browser_page_task_owned(
+    site, task_coro_factory, *, lease, user_data_dir, launch_args=None,
+    headless=False, context_options=None, init_scripts=None,
+    automation_backend="patchright", channel="chrome",
+):
     persistent_options = dict(context_options or {})
     runtime = get_browser_runtime(
         site,
@@ -420,11 +458,43 @@ async def run_persistent_browser_page_task(
             channel=channel,
         )
 
-    future = runtime.submit(
+    return await _submit_owned_task(
+        runtime,
         lambda context: _execute_persistent_page_task(
-            context,
-            task_coro_factory,
-            init_scripts=init_scripts,
-        )
+            context, task_coro_factory, init_scripts=init_scripts,
+        ),
+        lease,
     )
-    return await asyncio.wrap_future(future)
+
+
+async def _submit_owned_task(runtime, operation, lease):
+    """Keep the public caller's lease until runtime cancellation is cleaned."""
+    started = threading.Event()
+    cleaned = threading.Event()
+
+    async def _operation(resource):
+        started.set()
+        try:
+            return await operation(resource)
+        finally:
+            cleaned.set()
+
+    future = runtime.submit(_operation)
+    try:
+        return await asyncio.shield(asyncio.wrap_future(future))
+    except asyncio.CancelledError:
+        future.cancel()
+        if started.is_set():
+            try:
+                deadline = asyncio.get_running_loop().time() + 10
+                while not cleaned.is_set() and asyncio.get_running_loop().time() < deadline:
+                    await asyncio.sleep(0.05)
+                if not cleaned.is_set():
+                    # Retain the token until expiry if the failed browser
+                    # cannot prove that its request has stopped.
+                    lease.abandon()
+            except asyncio.CancelledError:
+                if not cleaned.is_set():
+                    lease.abandon()
+                raise
+        raise

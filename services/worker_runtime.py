@@ -716,6 +716,13 @@ def run_worker(app: Flask) -> int:
                         "Translation startup recovery failed; worker startup will continue"
                     )
             backlog_after = get_job_backlog_snapshot()
+            try:
+                from services.product_detail_jobs import recover_product_detail_jobs
+                detail_recovery = recover_product_detail_jobs(limit=100)
+                logger.info("Product detail startup recovery complete: queued=%s pending=%s failed=%s",
+                    detail_recovery.get("queued", 0), detail_recovery.get("pending", 0), detail_recovery.get("failed", 0))
+            except Exception:
+                logger.exception("Product detail startup recovery failed; worker startup will continue")
             logger.info(
                 "Worker durable job backlog after startup reconcile: backlog=%s",
                 backlog_after,

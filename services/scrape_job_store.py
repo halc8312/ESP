@@ -11,12 +11,37 @@ from typing import Any, Optional
 from flask import current_app, has_app_context
 from sqlalchemy import or_
 
-from database import SessionLocal
-from models import ScrapeJob, ScrapeJobEvent
+from database import SessionLocal, create_isolated_session
+from models import ScrapeJob, ScrapeJobEvent, User
+from security_config import is_production_runtime
 from time_utils import utc_now
 
 
 SCRAPE_JOB_TERMINAL_STATUSES = frozenset({"completed", "failed"})
+
+
+class ScrapeQueueFull(RuntimeError):
+    """Admission is bounded across web processes before durable enqueue."""
+
+
+def _admit_scrape_job(session, user_id):
+    # The same first-user row serializes all web instances in PostgreSQL.
+    # A no-op UPDATE also obtains a write lock with SQLite in local tests.
+    first_user = session.query(User.id).order_by(User.id).first()
+    if first_user:
+        session.query(User).filter(User.id == first_user[0]).with_for_update().first()
+        session.query(User).filter(User.id == first_user[0]).update({User.id: User.id}, synchronize_session=False)
+    active = session.query(ScrapeJob).filter(ScrapeJob.status.in_(("queued", "running")))
+    production = is_production_runtime()
+    try:
+        owner_limit = int(os.environ.get("SCRAPE_MAX_ACTIVE_JOBS_PER_USER", 3 if production else 20))
+    except ValueError:
+        owner_limit = 3 if production else 20
+    owner_limit = max(1, min(20, owner_limit))
+    if active.count() >= (50 if production else 200):
+        raise ScrapeQueueFull("取得待ちのジョブが多いため、しばらくしてから再実行してください。")
+    if user_id is not None and active.filter(ScrapeJob.requested_by == user_id).count() >= owner_limit:
+        raise ScrapeQueueFull("実行中・待機中の取得が上限に達しています。完了後に再実行してください。")
 
 
 def _utcnow() -> datetime:
@@ -125,6 +150,7 @@ def create_job_record(
     try:
         record = session.query(ScrapeJob).filter_by(job_id=job_id).with_for_update().one_or_none()
         if record is None:
+            _admit_scrape_job(session, user_id)
             record = ScrapeJob(job_id=job_id, logical_job_id=job_id)
             session.add(record)
 
@@ -179,6 +205,31 @@ def mark_job_heartbeat(job_id: str) -> None:
             return
         record.updated_at = now
         session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def mark_job_wait(job_id: str, reason: str, retry_after_seconds: float) -> bool:
+    """A wait is a heartbeat, never product progress or a partial result."""
+    if reason not in {"", "site_interval", "site_busy", "site_cooldown"}:
+        raise ValueError("Unsupported wait reason")
+    session = SessionLocal()
+    try:
+        record = session.query(ScrapeJob).filter_by(job_id=job_id).with_for_update().one_or_none()
+        if record is None or record.status != "running":
+            return False
+        context = _json_loads(record.context_payload) or {}
+        progress = dict(context.get("progress") or {})
+        progress["wait_reason"] = reason
+        progress["retry_after_seconds"] = max(0, int(retry_after_seconds + 0.999))
+        context["progress"] = progress
+        record.context_payload = _json_dumps(context)
+        record.updated_at = _utcnow()
+        session.commit()
+        return True
     except Exception:
         session.rollback()
         raise
@@ -480,7 +531,9 @@ def _serialize_job_record(record: ScrapeJob) -> dict[str, Any]:
 
 
 def get_job_record(job_id: str, user_id: int | None = None) -> Optional[dict[str, Any]]:
-    session = SessionLocal()
+    # Runtime guards may run while product persistence owns SessionLocal.
+    # Closing a scoped reader there would roll back the caller's transaction.
+    session = create_isolated_session()
     try:
         query = session.query(ScrapeJob).filter_by(job_id=job_id)
         if user_id is not None:

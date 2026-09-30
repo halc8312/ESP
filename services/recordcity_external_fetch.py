@@ -363,12 +363,23 @@ def _call_provider(source: str, operation, *, body_collector=None):
 
 
 def _bounded_provider_call(source: str, operation):
+    from services.marketplace_access import marketplace_access, observe_access_response
+    from services.scrape_safety import ScrapeFailure
+
     collector = _BoundedBody()
-    response = _call_provider(
-        source,
-        lambda: operation(collector),
-        body_collector=collector,
-    )
+    with marketplace_access(_SITE):
+        response = _call_provider(
+            source,
+            lambda: operation(collector),
+            body_collector=collector,
+        )
+        try:
+            # Provider failures still enter the target site's cooldown. Keep
+            # their existing provider/target diagnostics instead of replacing
+            # them with an ambiguous generic marketplace error.
+            observe_access_response(_SITE, _response_status(response), headers=getattr(response, "headers", None))
+        except ScrapeFailure:
+            pass
     raw_length = _header_value(getattr(response, "headers", None), "content-length")
     if raw_length:
         try:
@@ -923,7 +934,7 @@ def fetch_recordcity_external(
         normalized_url,
         kind=kind,
         wait_selector=wait_selector,
-        timeout=max(1, int(timeout or 60)),
+        timeout=min(120, max(1, int(timeout or 60))),
     )
     return _validated_external_response(
         response,
@@ -997,6 +1008,15 @@ def _validate_external_page(
     kind: str,
     wait_selector: str,
 ) -> HtmlPageAdapter:
+    from services.marketplace_access import observe_access_response
+    from services.scrape_safety import ScrapeFailure
+
+    def _observe_failure():
+        try:
+            observe_access_response(_SITE, response.target_status, headers=response.target_headers, body=response.text)
+        except ScrapeFailure:
+            pass
+
     final_url = validate_marketplace_url(response.url, _SITE, kind=kind)
     action = ""
     if response.header_source == "target":
@@ -1024,6 +1044,7 @@ def _validate_external_page(
         or _looks_like_waf_captcha(html)
     )
     if captcha_seen:
+        _observe_failure()
         # Preserve provider/target attribution when the transport did not
         # expose authoritative target metadata.  A target header is explicit
         # even when the provider could not report the target status; a body
@@ -1072,6 +1093,7 @@ def _validate_external_page(
         or _looks_like_waf_challenge(html)
         or "request blocked" in html.lower()
     ):
+        _observe_failure()
         raise _provider_failure(
             response.source,
             "RC_EXTERNAL_BLOCK_SOURCE_AMBIGUOUS",
@@ -1083,6 +1105,7 @@ def _validate_external_page(
         or (authoritative_status and status == 202)
         or _looks_like_waf_challenge(html)
     ):
+        _observe_failure()
         raise ScrapeBlockedError(
             "レコードシティの外部取得で未解決のAWS WAF Challengeを検出しました"
             f"（reason=RC_EXTERNAL_WAF_CHALLENGE, source={response.source}, HTTP {status}, "
@@ -1090,6 +1113,7 @@ def _validate_external_page(
             status_code=status,
         )
     if (authoritative_status and status == 403) or "request blocked" in html.lower():
+        _observe_failure()
         raise ScrapeBlockedError(
             "レコードシティの外部取得が拒否されました"
             f"（reason=RC_EXTERNAL_WAF_BLOCK_403, source={response.source}, HTTP {status}）。",

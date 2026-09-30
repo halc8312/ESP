@@ -25,6 +25,12 @@
     let successReference = '';
     let lastFocused = null;
     const unavailableIds = new Set();
+    const detailChecks = new Map();
+    const detailPollDuration = 120000;
+
+    function unchecked(item) {
+        return item && (item.detail_status === 'none' || item.detail_status === 'pending');
+    }
 
     function createKey() {
         if (typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
@@ -154,6 +160,16 @@
             const entry = selection.find(selected => selected.product_id === id);
             const isAvailable = !unavailableIds.has(id) && itemLimit(item) > 0;
             const atLimit = !entry && selection.length >= maxItems;
+            const detailCheck = detailChecks.get(id);
+            if (unchecked(item)) {
+                const waiting = Boolean(detailCheck && detailCheck.retryAt > Date.now());
+                button.disabled = submitting || Boolean(detailCheck && detailCheck.active) || waiting;
+                button.classList.remove('is-added');
+                button.textContent = detailCheck && detailCheck.active ? 'Checking…'
+                    : waiting ? 'Check again later' : detailCheck ? 'Check again' : 'Check availability';
+                button.setAttribute('aria-label', 'Check availability of ' + itemTitle(item, id));
+                return;
+            }
             button.disabled = submitting || !isAvailable || atLimit;
             button.classList.toggle('is-added', Boolean(entry));
             button.textContent = !isAvailable ? 'Unavailable' : entry ? 'Added (' + entry.quantity + ')' : atLimit ? 'Limit reached' : 'Add';
@@ -282,11 +298,102 @@
         }
         const inStock = item && itemLimit(item) > 0;
         const stock = card.querySelector('.stock-badge');
-        stock.textContent = inStock ? 'In Stock' : 'Unavailable';
+        stock.textContent = unchecked(item) ? 'Stock not checked' : inStock ? 'In Stock' : 'Unavailable';
         stock.className = 'stock-badge ' + (inStock ? 'in-stock' : 'out-of-stock');
-        const quantity = card.querySelector('.stock-qty');
-        if (quantity) quantity.textContent = 'Qty: ' + (inStock ? item.stock : 0);
+        const availabilityLabel = card.querySelector('[data-availability-label]');
+        if (availabilityLabel) availabilityLabel.textContent = unchecked(item) ? 'Stock not checked' : inStock ? 'Available' : 'Unavailable';
+        let quantity = card.querySelector('.stock-qty');
+        if (!quantity && inStock) {
+            quantity = document.createElement('span');
+            quantity.className = 'stock-qty';
+            stock.parentNode.appendChild(quantity);
+        }
+        if (quantity) quantity.textContent = unchecked(item) ? '' : 'Qty: ' + (inStock ? item.stock : 0);
         if (typeof DETAIL_CACHE !== 'undefined') delete DETAIL_CACHE[id];
+    }
+
+    function applyAvailabilityItem(item, id) {
+        if (!item || item.product_id !== id) return;
+        items.set(id, item);
+        unavailableIds.delete(id);
+        const entry = selection.find(selected => selected.product_id === id);
+        if (entry && (entry.expected_price_jpy !== item.price || itemLimit(item) < entry.quantity)) {
+            entry.expected_price_jpy = item.price;
+            resetAttempt();
+            requireReconfirmation();
+        }
+        refreshCard(item, id);
+        renderSelection();
+    }
+
+    async function checkAvailability(id) {
+        if (submitting || !unchecked(items.get(id))) return;
+        const previous = detailChecks.get(id);
+        if (previous && (previous.active || previous.retryAt > Date.now())) return;
+        const state = {active: true, retryAt: 0};
+        detailChecks.set(id, state);
+        refreshControls();
+        announce('Checking availability of ' + itemTitle(items.get(id), id) + '.');
+        const deadline = Date.now() + detailPollDuration;
+        let method = 'POST';
+        try {
+            while (Date.now() < deadline) {
+                const controller = new AbortController();
+                const timeout = window.setTimeout(() => controller.abort(), 15000);
+                let response, data;
+                try {
+                    response = await fetch(config.details_url.replace('/products/0/details', '/products/' + id + '/details'), {
+                        method: method,
+                        credentials: 'same-origin',
+                        headers: {'Accept': 'application/json', 'X-CSRFToken': config.csrf_token},
+                        signal: controller.signal
+                    });
+                    data = await response.json().catch(() => ({}));
+                } finally {
+                    window.clearTimeout(timeout);
+                }
+                if (!response.ok) {
+                    const retry = Number(response.headers.get('Retry-After')) || Number(data.retry_after_seconds) || 30;
+                    state.retryAt = Date.now() + Math.max(3, Math.min(3600, retry)) * 1000;
+                    if (response.status === 404) {
+                        items.delete(id);
+                        unavailableIds.add(id);
+                        refreshCard(null, id);
+                    }
+                    throw new Error('Availability check unavailable');
+                }
+                applyAvailabilityItem(data.item, id);
+                if (data.status === 'ready') {
+                    announce(itemTitle(items.get(id), id) + ' is available. Review the current price and select Add.');
+                    return;
+                }
+                if (data.status === 'unavailable') {
+                    announce(itemTitle(items.get(id), id) + ' is unavailable.');
+                    return;
+                }
+                if (data.status !== 'pending') {
+                    state.retryAt = Date.now() + 30000;
+                    break;
+                }
+                const delay = Math.max(3, Math.min(3600, Number(data.retry_after_seconds) || 3)) * 1000;
+                if (Date.now() + delay >= deadline) {
+                    state.retryAt = Date.now() + delay;
+                    break;
+                }
+                await new Promise(resolve => window.setTimeout(resolve, delay));
+                method = 'GET';
+            }
+            announce('Availability is still being checked. Please check again shortly.');
+        } catch (_error) {
+            if (!state.retryAt) state.retryAt = Date.now() + 30000;
+            announce('Availability could not be confirmed yet. Please check again shortly.');
+        } finally {
+            state.active = false;
+            refreshControls();
+            if (state.retryAt > Date.now()) {
+                window.setTimeout(refreshControls, state.retryAt - Date.now() + 100);
+            }
+        }
     }
 
     function applyCatalogUpdate(currentItems) {
@@ -314,6 +421,10 @@
     document.querySelectorAll('[data-request-product-id]').forEach(button => {
         button.addEventListener('click', function () {
             const id = Number(button.dataset.requestProductId);
+            if (unchecked(items.get(id))) {
+                checkAvailability(id);
+                return;
+            }
             if (selection.some(entry => entry.product_id === id)) {
                 openDialog();
                 return;

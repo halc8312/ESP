@@ -131,25 +131,11 @@ def scrape_single_item(url: str, headless: bool = True):
 
 async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int):
     """Playwright async API を使用してラクマ検索結果をスクレイピングする。"""
-    from playwright.async_api import async_playwright
+    from services.browser_pool import run_browser_page_task
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-            ]
-        )
-        context = await browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-        )
-        pw_page = await context.new_page()
+    search_url = validate_marketplace_url(search_url, "rakuma", kind="search")
+
+    async def _listing_task(pw_page, context):
         blocked_urls = await install_navigation_guard(context, "rakuma", kind="search")
 
         try:
@@ -160,10 +146,8 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
             if isinstance(final_url, str) and final_url:
                 validate_marketplace_url(final_url, "rakuma", kind="search")
         except ScrapeFailure:
-            await browser.close()
             raise
         except Exception as e:
-            await browser.close()
             raise_for_blocked_navigation(blocked_urls, "rakuma")
             raise ScrapeHttpError(f"ラクマの検索ページを取得できませんでした: {e}") from e
 
@@ -216,8 +200,20 @@ async def _scrape_search_async(search_url: str, max_items: int, max_scroll: int)
             body_text = await pw_page.locator("body").inner_text(timeout=3000)
         except Exception:
             body_text = ""
-        await browser.close()
         raise_for_blocked_navigation(blocked_urls, "rakuma")
+        return hrefs, body_text
+
+    hrefs, body_text = await run_browser_page_task(
+        "rakuma", _listing_task, headless=True,
+        launch_args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        context_options={
+            "user_agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+        },
+    )
 
     print(f"DEBUG: Found {len(hrefs)} unique links on search page.")
 

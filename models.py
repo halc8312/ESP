@@ -140,6 +140,18 @@ class Product(Base):
     patrol_paused_reason = Column(String(32), nullable=True)
     patrol_paused_source_url = Column(String, nullable=True)
 
+    # NULL preserves legacy products' complete-detail semantics. List-only
+    # products opt into the deferred detail state machine explicitly.
+    detail_fetch_state = Column(String(16), nullable=True, index=True)
+    detail_job_id = Column(String(64), nullable=True)
+    detail_source_url = Column(String, nullable=True)
+    detail_scope_key = Column(String(64), nullable=True)
+    detail_lease_expires_at = Column(DateTime, nullable=True)
+    detail_retry_at = Column(DateTime, nullable=True)
+    detail_fail_count = Column(Integer, nullable=True)
+    detail_error_code = Column(String(64), nullable=True)
+    detail_translate_requested = Column(Boolean, nullable=True)
+
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now)
 

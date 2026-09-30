@@ -7,10 +7,21 @@ on:
 jobs:
   test-and-audit:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       APP_ENV: test
       DATABASE_URL: sqlite:///test_mercari.db
       SECRET_KEY: ci-test-secret-key-32-characters-minimum
+      MARKETPLACE_ACCESS_TEST_REDIS_URL: redis://localhost:6379/15
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

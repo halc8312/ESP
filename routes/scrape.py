@@ -24,11 +24,13 @@ from services.generic_product_fetch import (
 from services.pricing_service import update_product_selling_price
 from services.product_service import save_scraped_items_to_db
 from services.queue_backend import get_queue_backend
+from services.scrape_job_store import ScrapeQueueFull
 from services.scrape_request import (
     InvalidTargetUrl,
     build_scrape_job_context,
     build_scrape_task_request,
     classify_target_url,
+    recordcity_listing_enabled,
 )
 from services.translator import compute_source_hash
 from services.translator.suggestion_store import create_suggestion
@@ -122,6 +124,7 @@ def scrape_form():
             current_shop_id=current_shop_id,
             price_lists=price_lists,
             has_default_pricing_rule=has_default_pricing_rule,
+            recordcity_listing_enabled=recordcity_listing_enabled(),
         )
     except Exception:
         session_db.rollback()
@@ -243,14 +246,27 @@ def scrape_run():
     )
 
     queue = get_queue()
-    job_id = queue.enqueue(
-        site=site,
-        task_fn=task_fn,
-        user_id=current_user.id,
-        context=job_context,
-        request_payload=task_request,
-        mode="preview" if preview_mode else "persist",
-    )
+    try:
+        job_id = queue.enqueue(
+            site=site,
+            task_fn=task_fn,
+            user_id=current_user.id,
+            context=job_context,
+            request_payload=task_request,
+            mode="preview" if preview_mode else "persist",
+        )
+    except ScrapeQueueFull:
+        # The response reveals neither other owners' jobs nor queue totals.
+        # HTML submissions receive the same readable Japanese error.
+        response = current_app.response_class(
+            current_app.json.dumps({
+                "error": "実行中・待機中の商品取得が多いため、少し待ってから再実行してください。",
+                "kind": "queue_full",
+            }, ensure_ascii=False),
+            mimetype="application/json",
+        )
+        response.headers["Retry-After"] = "30"
+        return response, 429
 
     if preview_mode:
         return jsonify(
@@ -435,19 +451,42 @@ def _enqueue_translation_for_products(
             if product is None:
                 continue
 
+            # The complete source description must exist before creating a
+            # full translation suggestion. The detail worker keeps the user's
+            # translation request durable while this product is pending.
+            if getattr(product, "detail_fetch_state", None) in {"pending", "queued", "running", "failed"}:
+                continue
+
             title = (product.custom_title or product.last_title or "").strip()
             description = (product.custom_description or "").strip()
             if not description:
                 snap = (
                     session_db.query(ProductSnapshot)
                     .filter_by(product_id=product.id)
-                    .order_by(ProductSnapshot.scraped_at.desc())
+                    .order_by(ProductSnapshot.scraped_at.desc(), ProductSnapshot.id.desc())
                     .first()
                 )
                 if snap and snap.description:
                     description = str(snap.description).strip()
 
             if not title and not description:
+                continue
+
+            title_hash = compute_source_hash(title) or None
+            description_hash = compute_source_hash(description) or None
+            existing = session_db.query(TranslationSuggestion.id).filter(
+                TranslationSuggestion.product_id == product.id,
+                TranslationSuggestion.user_id == user_id,
+                TranslationSuggestion.scope == "full",
+                TranslationSuggestion.provider == provider,
+                TranslationSuggestion.auto_apply.is_(True),
+                TranslationSuggestion.status.in_(("queued", "running")),
+                TranslationSuggestion.source_title_hash == title_hash,
+                TranslationSuggestion.source_description_hash == description_hash,
+            ).first()
+            if existing is not None:
+                # A full-detail save may already have fulfilled the durable
+                # translation request. Changed source text still gets a job.
                 continue
 
             job_id = str(uuid.uuid4())
@@ -460,8 +499,8 @@ def _enqueue_translation_for_products(
                 provider=provider,
                 source_title=title or None,
                 source_description=description or None,
-                source_title_hash=compute_source_hash(title) or None,
-                source_description_hash=compute_source_hash(description) or None,
+                source_title_hash=title_hash,
+                source_description_hash=description_hash,
                 auto_apply=True,
             )
             session_db.commit()
@@ -492,6 +531,16 @@ def _run_translation_inline(job_id: str) -> None:
         execute_translation_job(job_id)
     except Exception:
         logger.exception("inline translation job %s failed", job_id)
+
+
+def _enqueue_details_for_registration(product_ids, user_id, *, shop_id, translate):
+    """Queue only saved shallow products; completed/legacy products are skipped."""
+    from services.product_detail_jobs import enqueue_product_details
+    try:
+        return enqueue_product_details(product_ids, user_id, shop_id=shop_id, translate=translate)
+    except Exception:
+        logger.exception("detail enqueue failed after registration")
+        return {"queued": 0, "failed": len(product_ids), "skipped": 0}
 
 
 def _apply_default_pricing(
@@ -580,6 +629,9 @@ def register_selected():
     pricing_flag = bool(payload.get("apply_pricing"))
     translation_jobs_enqueued = 0
     pricing_applied_count = 0
+    detail_jobs = _enqueue_details_for_registration(
+        product_ids, current_user.id, shop_id=queued_shop_id, translate=translate_flag,
+    )
 
     if product_ids and (translate_flag or pricing_flag):
         post_db = SessionLocal()
@@ -603,6 +655,9 @@ def register_selected():
             "rejected_count": save_summary.get("rejected_count", 0),
             "translation_jobs_enqueued": translation_jobs_enqueued,
             "pricing_applied_count": pricing_applied_count,
+            "detail_jobs_enqueued": detail_jobs.get("queued", 0),
+            "detail_jobs_failed": detail_jobs.get("failed", 0),
+            "detail_pending_count": detail_jobs.get("pending", 0),
         }
     )
 
@@ -729,6 +784,9 @@ def register_to_pricelist():
     pricing_flag = bool(payload.get("apply_pricing"))
     translation_jobs_enqueued = 0
     pricing_applied_count = 0
+    detail_jobs = _enqueue_details_for_registration(
+        product_ids, current_user.id, shop_id=queued_shop_id, translate=translate_flag,
+    )
 
     if product_ids and (translate_flag or pricing_flag):
         post_db = SessionLocal()
@@ -756,5 +814,8 @@ def register_to_pricelist():
             "price_list_url": url_for('pricelist.pricelist_items', pricelist_id=price_list_id_value),
             "translation_jobs_enqueued": translation_jobs_enqueued,
             "pricing_applied_count": pricing_applied_count,
+            "detail_jobs_enqueued": detail_jobs.get("queued", 0),
+            "detail_jobs_failed": detail_jobs.get("failed", 0),
+            "detail_pending_count": detail_jobs.get("pending", 0),
         }
     )
