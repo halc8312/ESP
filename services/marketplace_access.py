@@ -310,6 +310,13 @@ def _waiting(reason, seconds):
     report_current_job_wait(reason, seconds)
 
 
+def _with_retry_delay(error, seconds):
+    # Structured metadata lets background ledgers respect a shared pause
+    # without parsing a translated error message. Constructors stay unchanged.
+    error.retry_after_seconds = max(0, float(seconds))
+    return error
+
+
 @contextmanager
 def marketplace_access(site_or_url, timeout_seconds=120, consume_request=True, parent_lease=None):
     site, parent, store, interval, concurrency = _prepare(site_or_url, parent_lease)
@@ -327,7 +334,7 @@ def marketplace_access(site_or_url, timeout_seconds=120, consume_request=True, p
                 break
             _waiting(reason, wait)
             if reason == "site_cooldown":
-                raise ScrapeBlockedError(f"アクセスが制限されています。約{int(wait + 0.999)}秒後に再実行してください。")
+                raise _with_retry_delay(ScrapeBlockedError(f"アクセスが制限されています。約{int(wait + 0.999)}秒後に再実行してください。"), wait)
             if time.monotonic() + min(wait, 0.25) > deadline:
                 raise ScrapeBlockedError("サイトの共有アクセス制限により待機中です。後で再実行してください。")
             time.sleep(min(wait, 0.25))
@@ -387,7 +394,7 @@ async def async_marketplace_access(site_or_url, timeout_seconds=120, consume_req
                 break
             _waiting(reason, wait)
             if reason == "site_cooldown":
-                raise ScrapeBlockedError(f"アクセスが制限されています。約{int(wait + 0.999)}秒後に再実行してください。")
+                raise _with_retry_delay(ScrapeBlockedError(f"アクセスが制限されています。約{int(wait + 0.999)}秒後に再実行してください。"), wait)
             if time.monotonic() + min(wait, 0.25) > deadline:
                 raise ScrapeBlockedError("サイトの共有アクセス制限により待機中です。後で再実行してください。")
             await asyncio.sleep(min(wait, 0.25))
@@ -429,7 +436,7 @@ def observe_access_response(site_or_url, response_or_status, headers=None, body=
                 delay = 60
         delay = min(3600, max(60, delay))
         get_access_store().pause(site, delay)
-        raise ScrapeBlockedError("サイトの取得制限 (HTTP 429) により待機します。", status_code=429)
+        raise _with_retry_delay(ScrapeBlockedError("サイトの取得制限 (HTTP 429) により待機します。", status_code=429), delay)
     waf_action = str((headers or {}).get("x-amzn-waf-action") or "").lower()
     if not isinstance(response_or_status, int):
         waf_action = response_header(response_or_status, "x-amzn-waf-action").lower()
@@ -437,7 +444,7 @@ def observe_access_response(site_or_url, response_or_status, headers=None, body=
     waf_markers = ("awswafcaptcha", "window.gokuprops", "awswafintegration", "token.awswaf", "captcha.awswaf")
     if status in {401, 403} or waf_action in {"challenge", "captcha"} or _looks_blocked(text) or any(marker in text for marker in waf_markers):
         get_access_store().pause(site, 600)
-        raise ScrapeBlockedError(f"サイトのアクセス拒否 (HTTP {status}) を確認したため、取得を停止しました。", status_code=status)
+        raise _with_retry_delay(ScrapeBlockedError(f"サイトのアクセス拒否 (HTTP {status}) を確認したため、取得を停止しました。", status_code=status), 600)
     if status is not None and status >= 500:
         get_access_store().pause(site, 30)
-        raise ScrapeHttpError(f"取得先の一時障害 (HTTP {status}) により待機します。", status_code=status)
+        raise _with_retry_delay(ScrapeHttpError(f"取得先の一時障害 (HTTP {status}) により待機します。", status_code=status), 30)

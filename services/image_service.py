@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import socket
+from contextlib import nullcontext
 from io import BytesIO
 from urllib.parse import urljoin, urlparse, urlunparse
 
@@ -56,6 +57,12 @@ Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 class ImageValidationError(ValueError):
     """Raised when an image is missing, too large, or not a supported image."""
+
+    def __init__(self, message, *, status_code=None, retry_after=None):
+        super().__init__(message)
+        self.status_code = status_code
+        # Keep only the pacing header; never retain arbitrary response headers.
+        self.response_headers = {"Retry-After": str(retry_after)} if retry_after is not None else {}
 
 
 def split_image_url_string(pipe_separated: str | None) -> list[str]:
@@ -257,7 +264,12 @@ def validate_image_bytes(data: bytes, content_type: str | None = None) -> tuple[
     return format_ext, (width, height)
 
 
-def download_external_image(url: str, headers: dict | None = None) -> tuple[bytes, str]:
+def download_external_image(url: str, headers: dict | None = None, *, request_admission=None, response_observer=None) -> tuple[bytes, str]:
+    """Fetch guarded image bytes, optionally admitting/observing each HTTP hop.
+
+    Callbacks belong to the caller's owning marketplace. Legacy callers omit
+    them and retain their existing behavior and response validation.
+    """
     current_url = validate_image_url(url)
     request_headers = dict(headers or {})
     response = None
@@ -266,7 +278,25 @@ def download_external_image(url: str, headers: dict | None = None) -> tuple[byte
     total = 0
 
     for redirect_count in range(MAX_IMAGE_REDIRECTS + 1):
-        response = _open_pinned_image_response(current_url, request_headers)
+        try:
+            admission = request_admission(current_url) if request_admission is not None else nullcontext()
+            with admission:
+                try:
+                    response = _open_pinned_image_response(current_url, request_headers)
+                    if response_observer is not None:
+                        response_observer(current_url, response)
+                except BaseException:
+                    if response is not None:
+                        _close_image_response(response)
+                        response = None
+                    raise
+        except BaseException:
+            # Observer refusal or cancellation must close the open response
+            # before the owning lease is abandoned or another hop is attempted.
+            if response is not None:
+                _close_image_response(response)
+                response = None
+            raise
         status = _response_status(response)
         if status in {301, 302, 303, 307, 308}:
             location = str(response.headers.get("Location", "") or "").strip()
@@ -286,9 +316,10 @@ def download_external_image(url: str, headers: dict | None = None) -> tuple[byte
             current_url = next_url
             continue
         if status < 200 or status >= 300:
+            retry_after = response.headers.get("Retry-After")
             _close_image_response(response)
             response = None
-            raise ImageValidationError(f"Image download failed with HTTP {status}.")
+            raise ImageValidationError(f"Image download failed with HTTP {status}.", status_code=status, retry_after=retry_after)
         break
     else:  # pragma: no cover - loop always exits through return/raise
         raise ImageValidationError("Image redirect limit exceeded.")

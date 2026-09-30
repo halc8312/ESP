@@ -62,6 +62,22 @@ def test_download_external_image_enforces_streamed_size_limit(monkeypatch):
         download_external_image("https://img.example.com/test.png")
 
 
+def test_image_http_failure_retains_only_status_and_retry_after_for_shared_pacing(monkeypatch):
+    class Response:
+        status = 429
+        headers = {"Retry-After": "900", "Authorization": "private-value", "Set-Cookie": "private-cookie"}
+
+        def release_conn(self):
+            return None
+
+    monkeypatch.setattr(image_service, "_open_pinned_image_response", lambda *a, **k: Response())
+    with pytest.raises(ImageValidationError) as error:
+        download_external_image("https://files.recordcity.jp/image/record.png")
+    assert error.value.status_code == 429
+    assert error.value.response_headers == {"Retry-After": "900"}
+    assert "private-value" not in str(error.value) and "private-cookie" not in str(error.value)
+
+
 def test_validate_image_url_requires_https_exact_allowlisted_host(monkeypatch):
     monkeypatch.setenv("ALLOWED_IMAGE_HOSTS", "img.example.com")
 

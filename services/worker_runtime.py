@@ -717,6 +717,13 @@ def run_worker(app: Flask) -> int:
                     )
             backlog_after = get_job_backlog_snapshot()
             try:
+                from services.product_thumbnail_jobs import recover_thumbnail_jobs
+                thumbnail_recovery = recover_thumbnail_jobs()
+                logger.info("Product thumbnail startup recovery complete: batches=%s images=%s failed=%s",
+                    thumbnail_recovery.get("queued_batches", 0), thumbnail_recovery.get("queued_images", 0), thumbnail_recovery.get("failed", 0))
+            except Exception:
+                logger.exception("Product thumbnail startup recovery failed; worker startup will continue")
+            try:
                 from services.product_detail_jobs import recover_product_detail_jobs
                 detail_recovery = recover_product_detail_jobs(limit=100)
                 logger.info("Product detail startup recovery complete: queued=%s pending=%s failed=%s",
