@@ -155,8 +155,8 @@ def _extract_unique_price_from_page_text(page_text: str):
     return None
 
 
-def _iter_next_flight_records(page):
-    """Yield JSON records embedded by the Next.js App Router flight stream."""
+def _iter_keyed_next_flight_records(page):
+    """Read Flight JSON as data, retaining record IDs for explicit references."""
     for script in page.css("script"):
         raw = str(script.text or "").strip()
         if not raw.startswith(_NEXT_FLIGHT_PREFIX) or not raw.endswith(")"):
@@ -172,13 +172,126 @@ def _iter_next_flight_records(page):
         ):
             continue
         for line in flight_entry[1].splitlines():
-            _record_id, separator, payload = line.partition(":")
+            record_id, separator, payload = line.partition(":")
             if not separator or not payload:
                 continue
             try:
-                yield json.loads(payload)
+                yield record_id, json.loads(payload)
             except (TypeError, ValueError):
                 continue
+
+
+def _iter_next_flight_records(page):
+    """Yield JSON records embedded by the Next.js App Router flight stream."""
+    for _record_id, record in _iter_keyed_next_flight_records(page):
+        yield record
+
+
+def _flight_element_props(record):
+    if isinstance(record, list) and len(record) == 4 and record[0] == "$":
+        return record[3] if isinstance(record[3], dict) else None
+    return None
+
+
+def _apparel_id_matches(value, expected_id):
+    return type(value) in (int, str) and str(value) == expected_id
+
+
+def _extract_app_router_apparel_listing(page, url):
+    """Resolve only the observed parent-apparel props/reference contract.
+
+    Apparel sizes' ``quantity`` values do not describe bundle quantities.
+    The listing's explicit quantity_1 / 1個 variant is the single-item entity.
+    """
+    identity = _snkrdunk_url_identity(url)
+    if not identity or len(identity) != 2 or identity[0] != "apparels":
+        return None
+    canonicals = page.css("link[rel='canonical']")
+    if len(canonicals) != 1 or _snkrdunk_url_identity(
+        canonicals[0].attrib.get("href"), base_url=url
+    ) != identity:
+        return None
+    expected_id = identity[1]
+    records = {}
+    for record_id, record in _iter_keyed_next_flight_records(page):
+        if len(records) >= 2048:
+            return None
+        if record_id in records and records[record_id] != record:
+            return None
+        records[record_id] = record
+
+    candidates = []
+    for record in records.values():
+        props = _flight_element_props(record)
+        if not props or not _apparel_id_matches(props.get("apparelId"), expected_id):
+            continue
+        listings = props.get("listings")
+        if not isinstance(listings, list):
+            continue
+        apparel = props.get("apparelData")
+        if isinstance(apparel, str):
+            # Do not evaluate arbitrary Flight paths or recursively chase refs.
+            reference = re.fullmatch(r"\$([0-9a-f]+):props:apparelData", apparel)
+            source_props = _flight_element_props(records.get(reference[1])) if reference else None
+            if not source_props or not _apparel_id_matches(source_props.get("apparelId"), expected_id):
+                continue
+            apparel = source_props.get("apparelData")
+        if not isinstance(apparel, dict) or not _apparel_id_matches(apparel.get("id"), expected_id):
+            continue
+        if any(
+            apparel.get(key) and _snkrdunk_url_identity(apparel[key], base_url=url) != identity
+            for key in ("url", "productUrl")
+        ):
+            continue
+        candidates.append((apparel, listings))
+    if not candidates or any(candidate != candidates[0] for candidate in candidates[1:]):
+        return None
+    return candidates[0]
+
+
+def _parse_app_router_apparel_detail(page, url):
+    target = _extract_app_router_apparel_listing(page, url)
+    if not target:
+        return {}
+    apparel, listings = target
+    result = _empty_result(url, status="unknown")
+    field_sources = {}
+    result["title"] = str(apparel.get("name") or apparel.get("localizedName") or "").strip()
+    if not result["title"]:
+        return {}
+    field_sources["title"] = "app_router"
+
+    single_items = [
+        listing for listing in listings
+        if isinstance(listing, dict) and isinstance(listing.get("variant"), dict)
+        and listing["variant"].get("filterSizeID") == "quantity_1"
+        and listing["variant"].get("sizeName") == "1個"
+    ]
+    if len(single_items) == 1:
+        single = single_items[0]
+        price = single.get("minNewListingPrice")
+        count = single.get("newListingItemCount")
+        parent_count = apparel.get("listingCount")
+        if (
+            type(price) is int and price > 0
+            and type(count) is int and count > 0
+            and type(parent_count) is int and parent_count >= count
+        ):
+            result["price"] = price
+            result["status"] = "on_sale"
+            field_sources.update(price="app_router", status="app_router")
+    # Zero/missing single-item stock does not prove the whole parent is sold.
+    # Neither bid prices, other bundles, displayPrice nor page-wide buttons
+    # supplement this observed new-single-item inventory contract.
+    result["image_urls"] = _collect_image_urls(apparel.get("primaryMedia"))
+    if result["image_urls"]:
+        field_sources["images"] = "app_router"
+    result["description"] = _get_first_meta_content(
+        page, ["meta[name='description']", "meta[property='og:description']"]
+    )
+    if result["description"]:
+        field_sources["description"] = "meta"
+    return attach_extraction_trace(result, strategy="app_router", field_sources=field_sources)
 
 
 def _extract_app_router_sneaker_data(page, expected_sneaker_id: str = "") -> dict:
@@ -667,6 +780,9 @@ def _parse_detail_page(page, url: str) -> dict:
             return attach_extraction_trace(result, strategy="json_ld", field_sources=field_sources)
 
     if is_apparel:
+        apparel_result = _parse_app_router_apparel_detail(page, url)
+        if apparel_result:
+            return apparel_result
         # No verified target data: page-wide prices/buttons can belong to
         # recommendations or another used listing. Keep the last good record.
         return result
