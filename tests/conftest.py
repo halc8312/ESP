@@ -63,6 +63,11 @@ def _reset_feature_flag_env(monkeypatch):
     for env_name in (
         "ENABLE_SHARED_BROWSER_RUNTIME",
         "RECORDCITY_LISTING_ENABLED",
+        "CATALOG_REQUEST_NOTIFICATIONS_ENABLED",
+        "MAIL_ENABLED",
+        "MAIL_PROVIDER",
+        "MAIL_FROM",
+        "RESEND_API_KEY",
         "WARM_BROWSER_POOL",
         "BROWSER_POOL_WARM_SITES",
         "BROWSER_POOL_MAX_TASKS_BEFORE_RESTART",

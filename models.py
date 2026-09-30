@@ -719,3 +719,7 @@ class CatalogRequestItem(Base):
     quantity = Column(Integer, nullable=False)
 
     catalog_request = relationship("CatalogRequest", back_populates="items")
+
+
+# Register the separate notification schema for bootstrap/Alembic metadata.
+from models_mail import CatalogRequestNotification  # noqa: E402,F401

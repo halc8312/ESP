@@ -28,6 +28,18 @@ def _emit(payload):
 
 
 def register_mail_cli_commands(app):
+    @app.cli.command("catalog-notification-status")
+    @click.option("--user-id", type=click.IntRange(min=1), help="Limit counts to one owner; no addresses or message text are printed.")
+    def catalog_notification_status(user_id):
+        """Inspect local settings and outbox counts; never queue or send mail."""
+        from services.catalog_request_notifications import configuration_status, notification_counts
+        try:
+            _emit({"configuration": configuration_status(), "counts": notification_counts(user_id),
+                   "network_used": False, "receipt_verified": False})
+        except Exception:
+            _emit({"status": "unavailable", "network_used": False, "receipt_verified": False})
+            raise click.exceptions.Exit(1) from None
+
     @app.cli.command("mail-check")
     def mail_check():
         """Inspect local mail settings; never authenticate or send a message."""
