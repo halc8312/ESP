@@ -294,6 +294,28 @@ def _parse_app_router_apparel_detail(page, url):
     return attach_extraction_trace(result, strategy="app_router", field_sources=field_sources)
 
 
+def _supplement_apparel_inventory(page, url, result, field_sources):
+    """Fill absent inventory only when verified single-item evidence agrees.
+
+    An explicit sold observation is complete even without a price. A known
+    parent/aggregate price that differs from the single-item sell price cannot
+    borrow that single item's availability.
+    """
+    status = result.get("status", "unknown")
+    price = result.get("price")
+    if status == "sold" or (status == "on_sale" and price is not None):
+        return
+    flight = _parse_app_router_apparel_detail(page, url)
+    if flight.get("status") != "on_sale" or (price is not None and price != flight.get("price")):
+        return
+    if price is None:
+        result["price"] = flight["price"]
+        field_sources["price"] = "app_router"
+    if status == "unknown":
+        result["status"] = "on_sale"
+        field_sources["status"] = "app_router"
+
+
 def _extract_app_router_sneaker_data(page, expected_sneaker_id: str = "") -> dict:
     """Extract the target sneaker payload without evaluating page JavaScript."""
     expected = str(expected_sneaker_id or "").strip().lower()
@@ -777,9 +799,14 @@ def _parse_detail_page(page, url: str) -> dict:
             field_sources["status"] = status_source
 
         if result.get("title"):
+            if is_apparel:
+                _supplement_apparel_inventory(page, url, result, field_sources)
             return attach_extraction_trace(result, strategy="json_ld", field_sources=field_sources)
 
     if is_apparel:
+        if result.get("title"):
+            _supplement_apparel_inventory(page, url, result, field_sources)
+            return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
         apparel_result = _parse_app_router_apparel_detail(page, url)
         if apparel_result:
             return apparel_result

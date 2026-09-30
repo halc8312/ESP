@@ -205,3 +205,91 @@ def test_requested_parent_query_does_not_change_product_identity():
     page = _capture()
     result = _parse_detail_page(page, page.url + "/?slide=right")
     assert result["price"] == 12777 and result["status"] == "on_sale"
+
+
+def _legacy_target(*, source, price=None, status=None, url="https://snkrdunk.com/apparels/721913"):
+    if source == "json_ld":
+        product = {
+            "@type": "Product", "url": url, "name": "Legacy target title",
+            "description": "Legacy target description", "image": "https://cdn.snkrdunk.com/legacy.webp",
+            "offers": {"@type": "Offer"},
+        }
+        if price is not None:
+            product["offers"]["price"] = price
+        if status is not None:
+            product["offers"]["availability"] = "https://schema.org/" + status
+        return '<script type="application/ld+json">' + json.dumps(product) + "</script>"
+    item = {
+        "url": url, "name": "Legacy target title", "description": "Legacy target description",
+        "image": "https://cdn.snkrdunk.com/legacy.webp",
+    }
+    if price is not None:
+        item["price"] = price
+    if status is not None:
+        item["status"] = {"InStock": "on_sale", "OutOfStock": "sold"}[status]
+    return '<script id="__NEXT_DATA__" type="application/json">' + json.dumps({"props": {"pageProps": {"item": item}}}) + "</script>"
+
+
+@pytest.mark.parametrize("source", ["json_ld", "next_data"])
+@pytest.mark.parametrize("price,status", [(12777, None), (None, "InStock"), (None, None)])
+def test_verified_flight_supplements_only_missing_legacy_inventory(source, price, status):
+    result = _parse(_payloads(), extra=_legacy_target(source=source, price=price, status=status))
+    assert result["title"] == "Legacy target title"
+    assert result["description"] == "Legacy target description"
+    assert result["image_urls"] == ["https://cdn.snkrdunk.com/legacy.webp"]
+    assert result["price"] == 12777 and result["status"] == "on_sale"
+    fields = result["_scrape_meta"]["field_sources"]
+    assert fields["title"] == fields["description"] == fields["images"] == source
+    assert fields["price"] == ("app_router" if price is None else source)
+    assert fields["status"] == (source if status else "app_router")
+
+
+@pytest.mark.parametrize("source", ["json_ld", "next_data"])
+@pytest.mark.parametrize("price", [None, 12777, 26000])
+def test_explicit_legacy_sold_wins_even_without_price(source, price):
+    result = _parse(_payloads(), extra=_legacy_target(source=source, price=price, status="OutOfStock"))
+    assert result["title"] == "Legacy target title"
+    assert result["status"] == "sold" and result["price"] == price
+    assert "app_router" not in result["_scrape_meta"]["field_sources"].values()
+
+
+@pytest.mark.parametrize("source", ["json_ld", "next_data"])
+def test_price_conflict_cannot_mix_parent_legacy_price_with_single_item_flight_stock(source):
+    result = _parse(_payloads(), extra=_legacy_target(source=source, price=26000))
+    assert result["title"] == "Legacy target title"
+    assert result["price"] == 26000 and result["status"] == "unknown"
+    assert result["_scrape_meta"]["field_sources"]["price"] == source
+
+
+@pytest.mark.parametrize("source", ["json_ld", "next_data"])
+def test_complete_legacy_active_price_is_never_replaced_by_flight(source):
+    result = _parse(_payloads(), extra=_legacy_target(source=source, price=26000, status="InStock"))
+    assert result["title"] == "Legacy target title"
+    assert result["price"] == 26000 and result["status"] == "on_sale"
+    assert "app_router" not in result["_scrape_meta"]["field_sources"].values()
+
+
+@pytest.mark.parametrize("source", ["json_ld", "next_data"])
+@pytest.mark.parametrize("invalid_scope", ["canonical", "reference", "related_id"])
+def test_unverified_flight_does_not_erase_partial_legacy_fields(source, invalid_scope):
+    records = _payloads()
+    kwargs = {}
+    if invalid_scope == "canonical":
+        kwargs["canonical"] = "https://snkrdunk.com/apparels/300058"
+    elif invalid_scope == "reference":
+        records["51"][3]["apparelData"] = "$ff:props:apparelData"
+    else:
+        records["4e"][3]["apparelData"]["id"] = 300058
+    result = _parse(records, extra=_legacy_target(source=source, price=12777), **kwargs)
+    assert result["title"] == "Legacy target title"
+    assert result["image_urls"] == ["https://cdn.snkrdunk.com/legacy.webp"]
+    assert result["price"] == 12777 and result["status"] == "unknown"
+
+
+@pytest.mark.parametrize("source", ["json_ld", "next_data"])
+def test_partial_used_target_is_never_supplemented_with_parent_flight(source):
+    used_url = "https://snkrdunk.com/apparels/721913/used/123"
+    page = _page(_payloads(), extra=_legacy_target(source=source, price=12777, url=used_url))
+    result = _parse_detail_page(page, used_url)
+    assert result["title"] == "Legacy target title"
+    assert result["price"] == 12777 and result["status"] == "unknown"
