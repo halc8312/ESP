@@ -293,3 +293,12 @@ def test_partial_used_target_is_never_supplemented_with_parent_flight(source):
     result = _parse_detail_page(page, used_url)
     assert result["title"] == "Legacy target title"
     assert result["price"] == 12777 and result["status"] == "unknown"
+
+
+def test_verified_next_price_without_title_is_not_overwritten_by_flight():
+    payload = {"props": {"pageProps": {"item": {
+        "url": "https://snkrdunk.com/apparels/721913", "price": 26000,
+    }}}}
+    result = _parse(_payloads(), extra='<script id="__NEXT_DATA__">' + json.dumps(payload) + "</script>")
+    assert result["price"] == 26000 and result["status"] == "unknown"
+    assert result["_scrape_meta"]["field_sources"]["price"] == "next_data"

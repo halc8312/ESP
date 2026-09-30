@@ -804,7 +804,7 @@ def _parse_detail_page(page, url: str) -> dict:
             return attach_extraction_trace(result, strategy="json_ld", field_sources=field_sources)
 
     if is_apparel:
-        if result.get("title"):
+        if result.get("title") or field_sources:
             _supplement_apparel_inventory(page, url, result, field_sources)
             return attach_extraction_trace(result, strategy="next_data", field_sources=field_sources)
         apparel_result = _parse_app_router_apparel_detail(page, url)
