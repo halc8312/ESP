@@ -223,6 +223,9 @@ class ProductThumbnailJob(Base):
     source_image_url = Column(Text, nullable=False)
     state = Column(String(16), nullable=False, default="pending", server_default="pending")
     job_id = Column(String(64), nullable=True)
+    # A physical batch belongs to its captured owner until it drains or RQ
+    # confirms termination, even when the current product demand is rebound.
+    batch_user_id = Column(Integer, nullable=True)
     claim_token = Column(String(64), nullable=True)
     lease_expires_at = Column(DateTime, nullable=True)
     retry_at = Column(DateTime, nullable=True)

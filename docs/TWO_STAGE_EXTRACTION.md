@@ -102,9 +102,14 @@ and five globally. Each batch is bounded to 30 HTTP attempts and 300 seconds.
 Only admitted first image requests count toward the five image-attempt limit;
 cooldown or capacity denial retains the claim for later recovery without
 exhausting image attempts. Queue dispatch has its own five-attempt bound.
-Expired queued/running RQ batches remain in owner/global capacity until the
-old job is confirmed gone. Unknown or uninspected jobs are not reissued, and
-an expired running image-upload token is never renewed by recovery.
+Physical batch reservations retain their original owner and job ID through
+product, shop, source, snapshot or image changes, independently of demand
+state. Recovery probes them without requiring the old image to remain valid.
+Unknown or uninspected jobs are not reissued, and an expired running
+image-upload token is never renewed. Only confirmed queue termination or the
+owning worker's fully unwound synchronous I/O releases a reservation; normal
+completion refills the next fair batch immediately rather than waiting for
+the periodic recovery job.
 The thumbnail ledger checks owner, owned shop, product URL and exact current
 snapshot/image identity before queueing, fetching or publishing. It updates
 images only, leaving price, stock and detail state untouched.
@@ -134,6 +139,9 @@ only. The browser checks currently visible missing-image cards in one batch
 every five seconds, stops after five minutes or any failed response, and never
 starts image/detail work from the GET. Applying a thumbnail does not change
 the current price, availability or Add state.
+Delivered images also refresh the matching open Quick View. A later detail
+response may fill an empty gallery from independently cached managed images,
+without replacing its price, stock, description or existing gallery selection.
 
 ## Patrol and operations
 

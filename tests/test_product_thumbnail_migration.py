@@ -26,6 +26,7 @@ def test_thumbnail_migration_preserves_legacy_products_images_and_creates_no_dem
             assert connection.execute(text("SELECT last_price,last_status,detail_fetch_state FROM products WHERE id=1")).one() == (2600, "sold", None)
             assert connection.execute(text("SELECT image_urls,description FROM product_snapshots WHERE id=1")).one() == ("/media/kept.png", "Keep detailed description")
             assert connection.execute(text("SELECT COUNT(*) FROM product_thumbnail_jobs")).scalar_one() == 0
+            assert "batch_user_id" in {column["name"] for column in inspect(connection).get_columns("product_thumbnail_jobs")}
             assert {index["name"] for index in inspect(connection).get_indexes("product_thumbnail_jobs")} == {"ix_product_thumbnail_jobs_user_id", "ix_product_thumbnail_jobs_state_retry"}
     finally:
         engine.dispose()
@@ -44,6 +45,9 @@ def test_thumbnail_migration_is_repeatable_after_create_all_and_downgrades(monke
             migration.upgrade()
             migration.upgrade()
             assert "product_thumbnail_jobs" in inspect(connection).get_table_names()
+            connection.execute(text("ALTER TABLE product_thumbnail_jobs DROP COLUMN batch_user_id"))
+            migration.upgrade()
+            assert next(column for column in inspect(connection).get_columns("product_thumbnail_jobs") if column["name"] == "batch_user_id")["nullable"]
             migration.downgrade()
             assert "product_thumbnail_jobs" not in inspect(connection).get_table_names()
             assert "products" in inspect(connection).get_table_names()

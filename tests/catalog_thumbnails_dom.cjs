@@ -8,6 +8,7 @@ const vm = require('node:vm');
 const {webcrypto} = require('node:crypto');
 
 const source = fs.readFileSync(path.join(__dirname, '../static/js/catalog_requests.js'), 'utf8');
+const template = fs.readFileSync(path.join(__dirname, '../templates/catalog.html'), 'utf8');
 const camel = name => name.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
 
 class Element {
@@ -36,8 +37,12 @@ class Element {
             }
         };
     }
-    set innerHTML(_value) { throw new Error('HTML injection is not allowed in this DOM'); }
-    appendChild(node) { node.parentNode = this; this.children.push(node); return node; }
+    set innerHTML(value) {
+        if (value === '') { this.children = []; return; }
+        if (/^<span class=.*modal-loading.*Loading product details\.\.\.<\/span>$/.test(value)) return;
+        throw new Error('HTML injection is not allowed in this DOM');
+    }
+    appendChild(node) { node.parentNode = this; node.ownerDocument = this.ownerDocument; this.children.push(node); return node; }
     append(...nodes) { nodes.forEach(node => this.appendChild(node)); }
     replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
     replaceWith(node) {
@@ -65,7 +70,7 @@ class Element {
     }
     dispatch(name) { (this.events.get(name) || []).forEach(callback => callback({preventDefault() {}})); }
     getBoundingClientRect() { return this.rect; }
-    focus() {}
+    focus() { if (this.ownerDocument) this.ownerDocument.activeElement = this; }
     closest() { return null; }
     showModal() { this.open = true; }
     close() { this.open = false; this.dispatch('close'); }
@@ -120,12 +125,19 @@ const idsIn = url => new URL(url, 'https://catalog.example').searchParams.get('p
 const response = (data, status = 200) => ({ok: status === 200, status, headers: {get: () => null}, json: async () => data});
 const pendingResponse = url => response({items: idsIn(url).map(product_id => ({product_id, status: 'pending', thumb_url: ''}))});
 
-function setup({count = 1, thumbnailUrl = '/catalog/public-token/thumbnails', responder = pendingResponse, existingImage = false} = {}) {
+function setup({count = 1, thumbnailUrl = '/catalog/public-token/thumbnails', responder = pendingResponse, existingImage = false, quickView = false} = {}) {
     const clock = new Clock();
     const body = new Element('body');
     const controls = new Map();
     for (const match of source.matchAll(/byId\('([^']+)'\)/g)) {
         if (!controls.has(match[1])) { const node = new Element(); controls.set(match[1], node); body.appendChild(node); }
+    }
+    if (quickView) {
+        for (const id of ['productModal', 'modalMainImage', 'modalMainImagePlaceholder', 'modalThumbnails',
+            'modalTitle', 'modalTitleEn', 'modalPrice', 'modalStock', 'modalDescription']) {
+            if (!controls.has(id)) { const node = new Element(); controls.set(id, node); body.appendChild(node); }
+        }
+        body.appendChild(new Element('div', 'product-modal-content'));
     }
     const cards = [];
     const configItems = [];
@@ -152,10 +164,12 @@ function setup({count = 1, thumbnailUrl = '/catalog/public-token/thumbnails', re
     const document = {
         body, hidden: false, documentElement: {clientHeight: 800, clientWidth: 1200},
         getElementById: id => controls.get(id) || null,
-        createElement: tag => new Element(tag),
+        createElement: tag => { const node = new Element(tag); node.ownerDocument = document; return node; },
         querySelectorAll: selector => body.querySelectorAll(selector),
         querySelector: selector => body.querySelector(selector)
     };
+    function attachDocument(node) { node.ownerDocument = document; node.children.forEach(attachDocument); }
+    attachDocument(body);
     const events = new Map();
     const storage = new Map();
     const window = {
@@ -170,12 +184,27 @@ function setup({count = 1, thumbnailUrl = '/catalog/public-token/thumbnails', re
     const cache = {1: {product_id: 1, price: 1200, stock: 0, detail_status: 'pending', description: 'Retained details', image_urls: []}};
     class FakeDate extends Date { static now() { return clock.now; } }
     const context = vm.createContext({document, window, URL, AbortController, Date: FakeDate, Uint8Array,
-        DETAIL_CACHE: cache, fetch: (url, options) => {
+        DETAIL_CACHE: cache, CATALOG_TOKEN: 'public-token',
+        formatPriceFromJpy: price => '¥' + price, currentCurrency: () => 'JPY',
+        fetch: (url, options = {}) => {
             calls.push({url, options, at: clock.now});
             return Promise.resolve().then(() => responder(url, options));
         }});
+    if (quickView) {
+        const modalState = template.match(/let modalState = \{[\s\S]*?\n        \};/);
+        assert.ok(modalState, 'load the actual template modal state');
+        const thumbnailState = template.match(/const CATALOG_THUMBNAILS = new Map\(\);/);
+        assert.ok(thumbnailState, 'load the independent image-only delivery map');
+        const start = template.indexOf('        function getModalElements() {');
+        const end = template.indexOf('        function trapModalFocus(event) {', start);
+        assert.ok(start >= 0 && end > start, 'load actual quick view and gallery functions');
+        vm.runInContext(thumbnailState[0] + '\n' + modalState[0] + '\n' + template.slice(start, end), context, {filename: 'catalog.html'});
+    }
     vm.runInContext(source, context, {filename: 'catalog_requests.js'});
-    return {clock, cards, controls, calls, cache, document, events, storage};
+    return {clock, cards, controls, calls, cache, document, events, storage,
+        openQuickView: id => vm.runInContext(`openProductModal(${id})`, context),
+        closeQuickView: () => vm.runInContext('closeProductModal()', context),
+        modalState: () => vm.runInContext('modalState', context)};
 }
 
 test('no endpoint or no missing cards means no polling', async () => {
@@ -269,6 +298,120 @@ test('an unavailable thumbnail is terminal without changing the availability but
     await page.clock.advance(600000);
     assert.equal(page.calls.length, 1);
     assert.equal(page.cards[0].querySelector('[data-request-product-id]').textContent, 'Check availability');
+});
+
+test('actual open Quick View receives the thumbnail without replacing price, stock, quantity or details', async () => {
+    const item = {product_id: 1, title: 'Verified title', price: 1700, stock: 3, in_stock: true,
+        detail_status: 'complete', description_text: 'Keep these details', image_urls: []};
+    const page = setup({quickView: true, responder: url => url.endsWith('/product/1')
+        ? response(item) : response({items: [{product_id: 1, status: 'ready', thumb_url: '/media/delivered.png', price: 1, stock: 0}]})});
+    delete page.cache[1];
+    await page.openQuickView(1);
+    assert.equal(page.calls.length, 1);
+    assert.equal(page.controls.get('modalMainImagePlaceholder').style.display, 'flex');
+    const stock = page.controls.get('modalStock').children.slice();
+    await page.clock.advance(5000);
+    assert.match(page.calls[1].url, /thumbnails\?product_ids=1$/);
+    assert.equal(page.calls[1].options.method, 'GET');
+    assert.equal(page.controls.get('modalMainImage').src, '/media/delivered.png');
+    assert.equal(page.controls.get('modalMainImagePlaceholder').style.display, 'none');
+    assert.equal(page.modalState().productId, 1);
+    assert.equal(page.modalState().images[0], '/media/delivered.png');
+    assert.equal(page.controls.get('modalPrice').textContent, '¥1700');
+    assert.equal(page.controls.get('modalStock').children[0], stock[0]);
+    assert.equal(page.controls.get('modalStock').children[1], stock[1]);
+    assert.equal(stock[1].textContent, 'Qty: 3');
+    assert.equal(page.controls.get('modalDescription').textContent, 'Keep these details');
+    assert.equal(page.cards[0].querySelector('[data-request-product-id]').textContent, 'Check availability');
+});
+
+for (const detailImages of [[], ['/media/detail-photo.png']]) {
+    test(`thumbnail completion survives a slower initial Quick View response (${detailImages.length} existing photos)`, async () => {
+        let finishQuickView;
+        const page = setup({quickView: true, responder: url => url.endsWith('/product/1')
+            ? new Promise(resolve => { finishQuickView = resolve; })
+            : response({items: [{product_id: 1, status: 'ready', thumb_url: '/media/delivered.png'}]})});
+        delete page.cache[1];
+        const opening = page.openQuickView(1);
+        await flush();
+        await page.clock.advance(5000);
+        assert.equal(page.cards[0].querySelector('.product-card-image').src, '/media/delivered.png');
+        assert.equal(page.cache[1], undefined, 'a thumbnail must not masquerade as a fetched detail payload');
+        finishQuickView(response({product_id: 1, title: 'Verified title', price: 1700, stock: 3,
+            in_stock: true, detail_status: 'complete', description_text: 'Keep these details', image_urls: detailImages}));
+        await opening;
+        const expectedImage = detailImages[0] || '/media/delivered.png';
+        assert.equal(page.controls.get('modalMainImage').src, expectedImage);
+        assert.equal(page.controls.get('modalPrice').textContent, '¥1700');
+        assert.equal(page.controls.get('modalStock').children[1].textContent, 'Qty: 3');
+        assert.equal(page.controls.get('modalDescription').textContent, 'Keep these details');
+        assert.equal(page.cache[1].image_urls[0], expectedImage);
+        assert.equal(page.cache[1].price, 1700);
+        assert.equal(page.cache[1].stock, 3);
+        assert.equal(page.cache[1].detail_status, 'complete');
+        assert.equal(page.calls.length, 2);
+    });
+}
+
+test('refresh does not replace another product in the open Quick View', async () => {
+    const page = setup({count: 2, quickView: true, responder: () => response({items: [
+        {product_id: 1, status: 'ready', thumb_url: '/media/one.png'},
+        {product_id: 2, status: 'pending', thumb_url: ''}
+    ]})});
+    page.cache[2] = {product_id: 2, title: 'Second item', price: 2300, stock: 0, image_urls: ['/media/two.png']};
+    await page.openQuickView(2);
+    await page.clock.advance(5000);
+    assert.equal(page.modalState().productId, 2);
+    assert.equal(page.controls.get('modalMainImage').src, '/media/two.png');
+    assert.equal(page.modalState().images.length, 1);
+    assert.equal(page.controls.get('modalPrice').textContent, '¥2300');
+});
+
+test('a late thumbnail response cannot update a closed or switched Quick View', async () => {
+    for (const action of ['close', 'switch']) {
+        let finish;
+        const page = setup({count: 2, quickView: true, responder: () => new Promise(resolve => { finish = resolve; })});
+        page.cache[2] = {product_id: 2, title: 'Second item', price: 2300, image_urls: []};
+        await page.openQuickView(1);
+        await page.clock.advance(5000);
+        if (action === 'close') page.closeQuickView();
+        else await page.openQuickView(2);
+        finish(response({items: [{product_id: 1, status: 'ready', thumb_url: '/media/one.png'},
+            {product_id: 2, status: 'unavailable', thumb_url: ''}]}));
+        await flush();
+        assert.equal(page.modalState().images.length, 0);
+        assert.equal(page.controls.get('modalMainImagePlaceholder').style.display, 'flex');
+        assert.equal(page.controls.get('productModal').classList.contains('is-open'), action === 'switch');
+    }
+});
+
+test('delivered thumbnail preserves the selected gallery photo and keyboard focus', async () => {
+    const page = setup({quickView: true, responder: () => response({items: [{product_id: 1, status: 'ready', thumb_url: '/media/new.png'}]})});
+    page.cache[1].image_urls = ['/media/first.png', '/media/selected.png'];
+    await page.openQuickView(1);
+    const oldThumbnails = page.controls.get('modalThumbnails').querySelectorAll('.modal-thumbnail');
+    oldThumbnails[1].dispatch('click');
+    oldThumbnails[1].focus();
+    await page.clock.advance(5000);
+    const thumbnails = page.controls.get('modalThumbnails').querySelectorAll('.modal-thumbnail');
+    assert.equal(page.modalState().imageIndex, 1);
+    assert.equal(page.controls.get('modalMainImage').src, '/media/selected.png');
+    assert.equal(page.modalState().images.length, 3);
+    assert.equal(page.modalState().images[2], '/media/new.png');
+    assert.equal(thumbnails[1].classList.contains('is-active'), true);
+    assert.equal(page.document.activeElement, thumbnails[1]);
+});
+
+test('an already displayed thumbnail is not duplicated or reselected', async () => {
+    const page = setup({quickView: true, responder: () => response({items: [{product_id: 1, status: 'ready', thumb_url: '/media/first.png'}]})});
+    page.cache[1].image_urls = ['/media/first.png', '/media/selected.png'];
+    await page.openQuickView(1);
+    const selected = page.controls.get('modalThumbnails').querySelectorAll('.modal-thumbnail')[1];
+    selected.dispatch('click');
+    await page.clock.advance(5000);
+    assert.equal(page.modalState().images.length, 2);
+    assert.equal(page.controls.get('modalMainImage').src, '/media/selected.png');
+    assert.equal(page.controls.get('modalThumbnails').querySelectorAll('.modal-thumbnail')[1], selected);
 });
 
 for (const url of ['https://supplier.example/private.jpg', '//supplier.example/a.png', '/media/../private.png', '/media/%2e%2e/private.png', '/media/image.png?source=private', '/media/image.png#private', '/media/\\supplier/a.png', 'data:image/png;base64,AA']) {

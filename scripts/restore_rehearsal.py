@@ -41,15 +41,16 @@ def database_names():
     return f"esp_restore_source_{suffix}", f"esp_restore_target_{suffix}"
 
 
-def local_url(port, database_name):
-    if not 1 <= port <= 65535 or not re.fullmatch(r"esp_restore_(source|target)_[0-9a-f]{32}", database_name):
+def local_url(port, database_name, host="127.0.0.1"):
+    if host not in {"127.0.0.1", "::1"} or not 1 <= port <= 65535 or not re.fullmatch(r"esp_restore_(source|target)_[0-9a-f]{32}", database_name):
         raise RehearsalRefused("invalid_local_target")
-    return f"postgresql+psycopg://{CI_USER}:{CI_PASSWORD}@127.0.0.1:{port}/{database_name}?sslmode=disable"
+    address = f"[{host}]" if host == "::1" else host
+    return f"postgresql+psycopg://{CI_USER}:{CI_PASSWORD}@{address}:{port}/{database_name}?sslmode=disable"
 
 
 @contextmanager
-def synthetic_environment(pg_port, redis_port, database_name, images):
-    safe_url = local_url(pg_port, database_name)
+def synthetic_environment(pg_port, redis_port, database_name, images, pg_host="127.0.0.1"):
+    safe_url = local_url(pg_port, database_name, pg_host)
     if not 1 <= redis_port <= 65535:
         raise RehearsalRefused("invalid_local_target")
     previous = dict(os.environ)
@@ -115,6 +116,30 @@ def docker_command(arguments, **kwargs):
     if result.returncode:
         raise RehearsalRefused("local_docker_command_failed")
     return result
+
+
+def postgres_container_endpoint(container, pg_port):
+    """Bind SQL and container CLI work to the same inspected local endpoint."""
+    try:
+        inspected = json.loads(docker_command(["inspect", container], stdout=subprocess.PIPE).stdout)
+        if not isinstance(inspected, list) or len(inspected) != 1 or not isinstance(inspected[0], dict):
+            raise ValueError
+        info = inspected[0]
+        if info.get("Config", {}).get("Image") != "postgres:18":
+            raise RehearsalRefused("postgres18_container_required")
+        identity = info.get("Id")
+        bindings = info.get("NetworkSettings", {}).get("Ports", {}).get("5432/tcp")
+        if (not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{64}", identity)
+                or not isinstance(bindings, list) or not bindings):
+            raise ValueError
+        for binding in bindings:
+            if (not isinstance(binding, dict) or binding.get("HostIp") not in {"127.0.0.1", "::1"}
+                    or binding.get("HostPort") != str(pg_port)):
+                raise ValueError
+        host = "127.0.0.1" if any(binding["HostIp"] == "127.0.0.1" for binding in bindings) else "::1"
+        return identity, host
+    except (ValueError, TypeError, AttributeError):
+        raise RehearsalRefused("postgres_port_binding_required") from None
 
 
 def seed_database(engine, images):
@@ -246,9 +271,7 @@ def execute_rehearsal(container, pg_port, redis_port, revision=None):
     revision = revision or os.environ.get("GITHUB_SHA", "")
     if not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
         raise RehearsalRefused("release_sha_required")
-    image = docker_command(["inspect", "--format", "{{.Config.Image}}", container], stdout=subprocess.PIPE).stdout.decode().strip()
-    if image != "postgres:18":
-        raise RehearsalRefused("postgres18_container_required")
+    container, pg_host = postgres_container_endpoint(container, pg_port)
     for tool in ("pg_dump", "pg_restore"):
         version = docker_command(["exec", container, tool, "--version"], stdout=subprocess.PIPE).stdout.decode()
         if not re.search(r"PostgreSQL\) 18(?:\.|\s)", version):
@@ -257,7 +280,7 @@ def execute_rehearsal(container, pg_port, redis_port, revision=None):
     with tempfile.TemporaryDirectory(prefix="esp-synthetic-restore-") as work:
         work = Path(work)
         original_media, restored_media = work / "original" / "images", work / "restored" / "images"
-        with synthetic_environment(pg_port, redis_port, source, restored_media), loopback_only({pg_port, redis_port}):
+        with synthetic_environment(pg_port, redis_port, source, restored_media, pg_host), loopback_only({pg_port, redis_port}):
             import psycopg
             from psycopg import sql
             import redis
@@ -268,7 +291,7 @@ def execute_rehearsal(container, pg_port, redis_port, revision=None):
             redis_client = redis.Redis(host="127.0.0.1", port=redis_port, socket_timeout=5)
             if not redis_client.ping() or redis_client.dbsize() != 0:
                 raise RehearsalRefused("fresh_redis_required")
-            with psycopg.connect(host="127.0.0.1", port=pg_port, user=CI_USER, password=CI_PASSWORD,
+            with psycopg.connect(host=pg_host, port=pg_port, user=CI_USER, password=CI_PASSWORD,
                                  dbname="postgres", sslmode="disable", connect_timeout=5, autocommit=True) as admin:
                 if not 180000 <= int(admin.execute("SHOW server_version_num").fetchone()[0]) < 190000:
                     raise RehearsalRefused("postgres18_server_required")
@@ -276,8 +299,8 @@ def execute_rehearsal(container, pg_port, redis_port, revision=None):
                     # Plain CREATE fails if an existing name is encountered.
                     admin.execute(sql.SQL("CREATE DATABASE {} TEMPLATE template0").format(sql.Identifier(name)))
             print("Rehearsal stage: migrate_and_seed", file=sys.stderr, flush=True)
-            database.run_alembic_upgrade_for_database_url(local_url(pg_port, source), revision=HEAD)
-            source_engine = create_engine(local_url(pg_port, source))
+            database.run_alembic_upgrade_for_database_url(local_url(pg_port, source, pg_host), revision=HEAD)
+            source_engine = create_engine(local_url(pg_port, source, pg_host))
             seed_database(source_engine, original_media)
             expected = snapshot_database(source_engine)
             if any(data["count"] != 2 for data in expected.values()):
@@ -290,7 +313,7 @@ def execute_rehearsal(container, pg_port, redis_port, revision=None):
             with tarfile.open(media_archive, "w:gz") as archive:
                 archive.add(original_media, arcname="images")
             manifest = inspect_backup(dump, media_archive, revision)
-            target_engine = create_engine(local_url(pg_port, target))
+            target_engine = create_engine(local_url(pg_port, target, pg_host))
             with target_engine.connect() as connection:
                 objects = connection.execute(text("SELECT count(*) FROM pg_depend d JOIN pg_namespace n ON d.refclassid='pg_namespace'::regclass AND n.oid=d.refobjid WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname !~ '^pg_' ")).scalar_one()
                 schemas = connection.execute(text("SELECT count(*) FROM pg_namespace WHERE nspname NOT IN ('public','pg_catalog','information_schema') AND nspname !~ '^pg_' ")).scalar_one()
@@ -319,7 +342,7 @@ def execute_rehearsal(container, pg_port, redis_port, revision=None):
             database.engine = target_engine
             database._session_factory.configure(bind=target_engine)
             database.SessionLocal.configure(bind=target_engine)
-            os.environ["DATABASE_URL"] = local_url(pg_port, target)
+            os.environ["DATABASE_URL"] = local_url(pg_port, target, pg_host)
             print("Rehearsal stage: restored_application_and_tenants", file=sys.stderr, flush=True)
             application = verify_application(restored_media)
             if snapshot_database(target_engine) != expected:
