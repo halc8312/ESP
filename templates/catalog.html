@@ -318,12 +318,16 @@
         const SERVER_RATES = {{ server_rates | tojson }};
         const CATALOG_TOKEN = {{ pricelist.token| tojson }};
         const DETAIL_CACHE = {};
+        // Image delivery may finish before the first Quick View GET returns.
+        // Keep its image-only evidence separate from complete detail responses.
+        const CATALOG_THUMBNAILS = new Map();
         let RATES_FROM_JPY = {};
         let ratesReady = false;
         // The viewer's own choice always wins over the locale guess.
         let viewerCurrencyApplied = false;
         let viewerPickedCurrency = false;
         let modalState = {
+            productId: null,
             images: [],
             imageIndex: 0,
             lastFocused: null
@@ -719,14 +723,15 @@
             });
         }
 
-        function renderModalGallery(images, title) {
+        function renderModalGallery(images, title, selectedIndex = 0) {
             const elements = getModalElements();
             if (!elements.mainImage || !elements.placeholder || !elements.thumbnails) {
                 return;
             }
 
             modalState.images = Array.isArray(images) ? images.slice() : [];
-            modalState.imageIndex = 0;
+            modalState.imageIndex = Number.isInteger(selectedIndex)
+                ? Math.max(0, Math.min(selectedIndex, modalState.images.length - 1)) : 0;
             elements.thumbnails.innerHTML = '';
 
             if (!modalState.images.length) {
@@ -739,14 +744,14 @@
             elements.placeholder.style.display = 'none';
             elements.mainImage.hidden = false;
             elements.mainImage.dataset.title = title || 'product image';
-            elements.mainImage.src = modalState.images[0];
+            elements.mainImage.src = modalState.images[modalState.imageIndex];
             elements.mainImage.alt = title || 'product image';
 
             modalState.images.forEach(function (imageUrl, index) {
                 const thumb = document.createElement('img');
                 thumb.src = imageUrl;
                 thumb.alt = (title || 'product image') + ' ' + (index + 1);
-                thumb.className = 'modal-thumbnail' + (index === 0 ? ' is-active' : '');
+                thumb.className = 'modal-thumbnail' + (index === modalState.imageIndex ? ' is-active' : '');
                 thumb.tabIndex = 0;
                 thumb.addEventListener('click', function () {
                     showModalImage(index);
@@ -756,6 +761,13 @@
         }
 
         function renderProductModal(data) {
+            const deliveredThumbnail = CATALOG_THUMBNAILS.get(data.product_id);
+            if (deliveredThumbnail && (!Array.isArray(data.image_urls) || !data.image_urls.length)) {
+                data = {...data, thumb_url: deliveredThumbnail, image_urls: [deliveredThumbnail]};
+                // This is the real detail payload, with only missing image
+                // fields filled; never create a detail cache entry before GET.
+                DETAIL_CACHE[data.product_id] = data;
+            }
             const modal = document.getElementById('productModal');
             const shell = document.querySelector('.product-modal-content');
             const title = document.getElementById('modalTitle');
@@ -810,6 +822,7 @@
                 description.textContent = 'No description available.';
             }
 
+            modalState.productId = Number.isSafeInteger(data.product_id) ? data.product_id : null;
             renderModalGallery(data.image_urls || [], data.title || 'product image');
 
             modalState.lastFocused = document.activeElement;

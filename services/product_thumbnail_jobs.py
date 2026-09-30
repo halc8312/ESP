@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from urllib.parse import urlsplit
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import case, exists, func, or_, select
 
 from database import create_isolated_session
 from models import Product, ProductSnapshot, ProductThumbnailJob, Shop, User
@@ -98,15 +98,17 @@ def create_thumbnail_demand(session, product, snapshot):
     if current is None:
         current = ProductThumbnailJob(product_id=product.id, created_at=now)
         session.add(current)
+    elif current.job_id and current.batch_user_id is None:
+        current.batch_user_id = current.user_id
     current.user_id = product.user_id
     current.shop_id = product.shop_id
     current.product_source_url = product.source_url
     current.source_snapshot_id = snapshot.id
     current.source_image_url = image
     current.state = "pending"
-    current.job_id = None
+    # Rebinding demand cannot release an old queued/running physical batch.
+    # Keep its captured owner/ID/lease while clearing upload authorization.
     current.claim_token = None
-    current.lease_expires_at = None
     current.retry_at = None
     current.attempts = 0
     current.dispatch_attempts = 0
@@ -162,6 +164,20 @@ def _renew_queued_batch(job_id):
         session.close()
 
 
+def _release_batch_reservations(session, job_ids, *, batch_user_id=None):
+    """Release proven-gone or synchronously drained batches, never their URLs."""
+    query = session.query(ProductThumbnailJob).filter(ProductThumbnailJob.job_id.in_(job_ids))
+    if batch_user_id is not None:
+        query = query.filter(func.coalesce(ProductThumbnailJob.batch_user_id, ProductThumbnailJob.user_id) == batch_user_id)
+    return query.update({
+        ProductThumbnailJob.job_id: None, ProductThumbnailJob.batch_user_id: None,
+        ProductThumbnailJob.lease_expires_at: None,
+        ProductThumbnailJob.claim_token: case(
+            (ProductThumbnailJob.state == "complete", ProductThumbnailJob.claim_token), else_=None,
+        ),
+    }, synchronize_session=False)
+
+
 def _dispatch_batch(user_id, job_id):
     if resolve_queue_backend_name() == "rq":
         from redis import Redis
@@ -196,6 +212,7 @@ def _mark_batch_enqueue_failed(job_id):
                 ProductThumbnailJob.error_code: "enqueue_failed", ProductThumbnailJob.lease_expires_at: None,
                 ProductThumbnailJob.retry_at: now + timedelta(seconds=min(1800, 30 * 2 ** (attempts - 1))),
                 ProductThumbnailJob.updated_at: now}, synchronize_session=False)
+        _release_batch_reservations(session, [job_id])
         session.commit()
     finally:
         session.close()
@@ -209,10 +226,9 @@ def recover_thumbnail_jobs(*, limit_batches=GLOBAL_BATCH_LIMIT, user_id=None):
     try:
         now = utc_now()
         expired = session.query(ProductThumbnailJob.job_id).filter(
-            ProductThumbnailJob.state.in_(("queued", "running")),
             ProductThumbnailJob.job_id.is_not(None),
-            or_(ProductThumbnailJob.lease_expires_at.is_(None), ProductThumbnailJob.lease_expires_at <= now),
-            *_pending_scope_conditions(),
+            or_(ProductThumbnailJob.lease_expires_at.is_(None), ProductThumbnailJob.lease_expires_at <= now,
+                ProductThumbnailJob.state.in_(("complete", "failed"))),
         ).group_by(ProductThumbnailJob.job_id).order_by(func.min(ProductThumbnailJob.lease_expires_at), ProductThumbnailJob.job_id).limit(GLOBAL_BATCH_LIMIT).all()
     finally:
         session.close()
@@ -226,6 +242,7 @@ def recover_thumbnail_jobs(*, limit_batches=GLOBAL_BATCH_LIMIT, user_id=None):
     session = create_isolated_session()
     try:
         now = utc_now()
+        _release_batch_reservations(session, gone_batches)
         # A worker lost during its last permitted request cannot remain
         # displayed as running forever or acquire a sixth fetch attempt.
         exhausted = session.query(ProductThumbnailJob).filter(
@@ -234,7 +251,7 @@ def recover_thumbnail_jobs(*, limit_batches=GLOBAL_BATCH_LIMIT, user_id=None):
             or_(ProductThumbnailJob.attempts >= MAX_ATTEMPTS, ProductThumbnailJob.dispatch_attempts >= MAX_ATTEMPTS),
             *_pending_scope_conditions(),
         )
-        exhausted = exhausted.filter(or_(ProductThumbnailJob.job_id.is_(None), ProductThumbnailJob.job_id.in_(gone_batches)))
+        exhausted = exhausted.filter(ProductThumbnailJob.job_id.is_(None))
         exhausted.update({ProductThumbnailJob.state: "failed", ProductThumbnailJob.error_code: "attempts_exhausted",
             ProductThumbnailJob.lease_expires_at: None, ProductThumbnailJob.retry_at: None,
             ProductThumbnailJob.updated_at: now}, synchronize_session=False)
@@ -249,15 +266,12 @@ def recover_thumbnail_jobs(*, limit_batches=GLOBAL_BATCH_LIMIT, user_id=None):
         try:
             _lock_queue_admission(session)
             now = utc_now()
-            active = session.query(ProductThumbnailJob).filter(
-                ProductThumbnailJob.state.in_(("queued", "running")),
-                or_(ProductThumbnailJob.lease_expires_at > now,
-                    ProductThumbnailJob.job_id.is_not(None) & ~ProductThumbnailJob.job_id.in_(gone_batches)),
-                *_scope_conditions(),
-            )
+            # Physical reservations survive product/image/scope changes and
+            # complete/failed states until queue termination or worker drain.
+            active = session.query(ProductThumbnailJob).filter(ProductThumbnailJob.job_id.is_not(None))
             if active.with_entities(ProductThumbnailJob.job_id).distinct().count() >= GLOBAL_BATCH_LIMIT:
                 break
-            occupied = [row[0] for row in active.with_entities(ProductThumbnailJob.user_id).distinct().all()]
+            occupied = [row[0] for row in active.with_entities(func.coalesce(ProductThumbnailJob.batch_user_id, ProductThumbnailJob.user_id)).distinct().all()]
             eligible = session.query(ProductThumbnailJob).filter(
                 _recoverable(now), ProductThumbnailJob.attempts < MAX_ATTEMPTS,
                 ProductThumbnailJob.dispatch_attempts < MAX_ATTEMPTS,
@@ -267,10 +281,7 @@ def recover_thumbnail_jobs(*, limit_batches=GLOBAL_BATCH_LIMIT, user_id=None):
             # prove the work horse stopped. Uninspected batches also retain
             # capacity if their lease expires during the bounded queue probes.
             # An expired upload token is never revived by this reservation.
-            eligible = eligible.filter(or_(
-                ~ProductThumbnailJob.state.in_(("queued", "running")),
-                ProductThumbnailJob.job_id.is_(None), ProductThumbnailJob.job_id.in_(gone_batches),
-            ))
+            eligible = eligible.filter(ProductThumbnailJob.job_id.is_(None))
             if occupied:
                 eligible = eligible.filter(~ProductThumbnailJob.user_id.in_(occupied))
             if user_id is not None:
@@ -290,10 +301,12 @@ def recover_thumbnail_jobs(*, limit_batches=GLOBAL_BATCH_LIMIT, user_id=None):
             job_id = f"thumbnail-batch-{uuid.uuid4().hex}"
             changed = session.query(ProductThumbnailJob).filter(
                 ProductThumbnailJob.product_id.in_(product_ids), _recoverable(now),
+                ProductThumbnailJob.job_id.is_(None),
                 ProductThumbnailJob.user_id == owner, ProductThumbnailJob.attempts < MAX_ATTEMPTS,
                 ProductThumbnailJob.dispatch_attempts < MAX_ATTEMPTS,
                 *_pending_scope_conditions(),
             ).update({ProductThumbnailJob.state: "queued", ProductThumbnailJob.job_id: job_id,
+                ProductThumbnailJob.batch_user_id: owner,
                 ProductThumbnailJob.claim_token: None, ProductThumbnailJob.retry_at: None,
                 ProductThumbnailJob.lease_expires_at: now + timedelta(seconds=QUEUED_LEASE_SECONDS),
                 ProductThumbnailJob.updated_at: now}, synchronize_session=False)
@@ -573,9 +586,14 @@ def run_thumbnail_batch(user_id, batch_id):
             session.query(ProductThumbnailJob).filter(
                 ProductThumbnailJob.user_id == user_id, ProductThumbnailJob.job_id == batch_id,
                 ProductThumbnailJob.state == "queued", *_pending_scope_conditions(),
-            ).update({ProductThumbnailJob.state: "pending", ProductThumbnailJob.job_id: None,
-                ProductThumbnailJob.claim_token: None, ProductThumbnailJob.lease_expires_at: None,
+            ).update({ProductThumbnailJob.state: "pending",
+                ProductThumbnailJob.claim_token: None,
                 ProductThumbnailJob.updated_at: utc_now()}, synchronize_session=False)
+            # All marketplace reads, web ingress calls and per-image DB work
+            # are synchronous and have unwound before this final transaction.
+            # Release only this batch's immutable owner/ID reservation; a hard
+            # worker loss never reaches this fence and still needs RQ proof.
+            _release_batch_reservations(session, [batch_id], batch_user_id=user_id)
             session.commit()
         finally:
             session.close()

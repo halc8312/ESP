@@ -163,10 +163,16 @@ def test_explicit_shallow_reimport_rebinds_owned_shop_without_changing_details(d
     db_session.expire_all()
     assert summary["new_count"] == 0
     assert product.thumbnail_job.shop_id == shop.id and product.shop_id == shop.id
-    assert product.thumbnail_job.job_id != old_batch
+    assert product.thumbnail_job.job_id == old_batch
+    assert product.thumbnail_job.batch_user_id == owners[0].id
+    assert product.thumbnail_job.state == "pending"
     assert jobs._run_thumbnail(product.id, product.user_id, old_batch) == "stale"
     assert product.last_price == 1200 and product.variants[0].inventory_qty == 0
     assert product.detail_fetch_state == "pending" and len(product.snapshots) == 1
+    assert jobs.run_thumbnail_batch(owners[0].id, old_batch) == {"complete": 0, "failed": 0, "stale": 0}
+    db_session.expire_all()
+    assert product.thumbnail_job.job_id != old_batch
+    assert product.thumbnail_job.state == "queued"
 
 
 @pytest.mark.parametrize("drift", ["owner", "shop", "shop_owner", "source", "site", "deleted", "archived", "suspended", "snapshot", "image", "token", "lease"])
@@ -331,6 +337,41 @@ def test_batch_completion_refills_immediately_and_gives_waiting_owner_a_turn(db_
     db_session.expire_all()
     assert db_session.query(ProductThumbnailJob).filter_by(state="complete").count() == 10
     assert jobs.recover_thumbnail_jobs()["queued_batches"] == 0
+
+
+def test_rebinding_during_image_delivery_holds_capacity_until_worker_drains(db_session, factory, owners, courier, monkeypatch):
+    dispatched = []
+    monkeypatch.setattr(jobs, "_dispatch_batch", lambda *args: dispatched.append(args))
+    product = factory(owner=owners[0])[0]
+    old_owner = product.user_id
+    old_batch = queue_product(db_session, product)
+    waiting = []
+
+    def in_flight_delivery(product_id, token, index, content, *, kind):
+        assert product_id == product.id and kind == "thumbnail"
+        db_session.expire_all()
+        product.user_id = owners[1].id
+        assert jobs.create_thumbnail_demand(db_session, product, product.snapshots[0])
+        db_session.commit()
+        waiting.append(factory(owner=owners[0])[0])
+        assert product.thumbnail_job.job_id == old_batch
+        assert product.thumbnail_job.batch_user_id == old_owner
+        assert jobs.recover_thumbnail_jobs(user_id=old_owner)["queued_batches"] == 0
+        assert jobs.recover_thumbnail_jobs(user_id=product.user_id)["queued_batches"] == 0
+        assert len(dispatched) == 1
+        assert jobs.authorize_thumbnail_delivery(db_session, product.id, token) is None
+        db_session.rollback()
+        raise ValueError("stale_delivery")
+
+    monkeypatch.setattr("services.product_image_delivery.deliver_image_bytes", in_flight_delivery)
+    assert jobs.run_thumbnail_batch(old_owner, old_batch) == {"complete": 0, "failed": 0, "stale": 1}
+    db_session.expire_all()
+    assert len(dispatched) == 3
+    assert product.thumbnail_job.job_id != old_batch and product.thumbnail_job.state == "queued"
+    assert product.thumbnail_job.batch_user_id == product.user_id
+    assert waiting[0].thumbnail_job.state == "queued"
+    assert waiting[0].thumbnail_job.batch_user_id == old_owner
+    assert len(courier[0]) == 1 and courier[1] == []
 
 
 def test_recovery_excludes_stale_scope_before_batch_limit(db_session, factory, owners):

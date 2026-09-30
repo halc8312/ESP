@@ -90,6 +90,24 @@
             return {...item, thumb_url: url, image_urls: Array.from(new Set([url, ...existing]))};
         }
 
+        function refreshOpenGallery(id, url, title) {
+            const modal = byId('productModal');
+            if (!modal || !modal.classList.contains('is-open') || typeof modalState === 'undefined'
+                || modalState.productId !== id || typeof renderModalGallery !== 'function') return;
+            const images = Array.isArray(modalState.images) ? modalState.images.slice() : [];
+            if (images.includes(url)) return;
+            const thumbnails = byId('modalThumbnails');
+            const focusedIndex = thumbnails
+                ? Array.from(thumbnails.querySelectorAll('.modal-thumbnail')).indexOf(document.activeElement) : -1;
+            // Append to preserve the customer's currently selected photo. Only
+            // the gallery changes; the modal's prices, stock and content stay put.
+            renderModalGallery([...images, url], title, modalState.imageIndex);
+            if (focusedIndex >= 0) {
+                const focused = thumbnails.querySelectorAll('.modal-thumbnail')[focusedIndex];
+                if (focused) focused.focus();
+            }
+        }
+
         function showImage(id, url) {
             if (!managedImage(url)) return;
             const item = items.get(id);
@@ -105,12 +123,14 @@
             image.addEventListener('error', () => image.replaceWith(placeholder), {once: true});
             image.src = url;
             placeholder.replaceWith(image);
+            if (typeof CATALOG_THUMBNAILS !== 'undefined') CATALOG_THUMBNAILS.set(id, url);
             // Never apply price, stock, detail status, or other response fields.
             // Availability may have changed during this GET; retain its latest state.
             items.set(id, imageFields(items.get(id), url));
             if (typeof DETAIL_CACHE !== 'undefined' && DETAIL_CACHE[id]) {
                 DETAIL_CACHE[id] = imageFields(DETAIL_CACHE[id], url);
             }
+            refreshOpenGallery(id, url, itemTitle(item, id));
         }
 
         function schedule() {
