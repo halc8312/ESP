@@ -450,7 +450,7 @@ def _scrape_search_result_in_navigation_session(
 
     def checkpoint(phase):
         if progress_callback is not None:
-            progress_callback(list(results), {
+            return progress_callback(list(results), {
                 "phase": phase,
                 "pages_fetched": len(seen_pages),
                 "candidates_count": len(candidate_urls),
@@ -524,7 +524,12 @@ def _scrape_search_result_in_navigation_session(
             results.append(result)
         else:
             detail_error_count += 1
-        checkpoint("details")
+        # The job knows the user's filters and desired count. Its explicit
+        # completion signal avoids spending the remaining budget on internal
+        # overfetch after enough verified, publishable items are available.
+        if checkpoint("details") is True:
+            end_reason = "requested_reached"
+            break
 
     require_usable_details(
         SITE, candidate_count=len(candidate_urls), item_count=len(results)

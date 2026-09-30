@@ -69,6 +69,8 @@ Deadline checks occur at admission, finalization and immediately before the
 single persistence commit. Completed durable writes are not retroactively
 marked failed merely because the deadline passes after commit. Wait heartbeats
 do not change product progress timestamps or overwrite partial products.
+RecordCity's existing detail-first path stops its internal overfetch once the
+requested number of validated products survives the user's filters.
 
 ## Selected detail lifecycle
 
@@ -98,6 +100,8 @@ minutes. Unknown stock is labelled as unverified; a confirmed result refreshes
 price before the customer clicks Add again. Confirmed sold/deleted products
 hide Add even if old variant quantities remain. No source URL, site, cost or
 internal failure text is exposed.
+Public requests cannot clear a future retry deadline when request metadata
+changes. Explicit owner corrections can re-arm the corrected product.
 
 ## Patrol and operations
 
@@ -105,6 +109,8 @@ RecordCity patrol updates only matched, explicit JPY price/availability from
 one fetched page. Ambiguous stock/price retains last verified values and backs
 off. Eligible products include visible, active, unexpired owner-matched
 pricelists, including list-only products; unselected/deferred cards are excluded.
+Existing cross-shop catalogs remain eligible when both shops belong to that
+same owner; foreign-owned shops cannot make a catalog-only product eligible.
 
 Run the full CI suite, isolated Redis admission tests, Docker validation and
 split-worker startup checks before rollout. Redis tests only use a loopback

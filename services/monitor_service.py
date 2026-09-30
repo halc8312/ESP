@@ -7,7 +7,7 @@ import logging
 from datetime import timedelta
 from sqlalchemy import asc, func, or_
 from database import create_isolated_session
-from models import Product, Variant, PriceList, PriceListItem
+from models import Product, Variant, PriceList, PriceListItem, Shop
 from services.pricing_service import product_has_pricing_config, update_product_selling_price
 from services.scrape_result_policy import normalize_price_for_persistence, normalize_status_for_persistence
 from services.scrape_observation import classify_scrape_failure, record_observation_safely
@@ -34,13 +34,22 @@ _MAX_BACKOFF_MINUTES = 180
 
 
 def _monitored_visibility(session, now):
+    # Existing catalogs may include another shop's product owned by the same
+    # user. Validate both shop owners without requiring identical shop IDs.
+    owned_list_shop = session.query(Shop.id).filter(
+        Shop.id == PriceList.shop_id, Shop.user_id == Product.user_id,
+    ).correlate(PriceList, Product).exists()
+    owned_product_shop = session.query(Shop.id).filter(
+        Shop.id == Product.shop_id, Shop.user_id == Product.user_id,
+    ).correlate(Product).exists()
     visible_list = session.query(PriceListItem.id).join(PriceList).filter(
         PriceListItem.product_id == Product.id,
         PriceListItem.visible.is_(True),
         PriceList.user_id == Product.user_id,
         PriceList.is_active.is_(True),
         or_(PriceList.unpublish_at == None, PriceList.unpublish_at > now),
-        or_(PriceList.shop_id == None, PriceList.shop_id == Product.shop_id),
+        or_(PriceList.shop_id == None, owned_list_shop),
+        or_(Product.shop_id == None, owned_product_shop),
     ).exists()
     return or_(Product.is_listed.isnot(False), visible_list)
 

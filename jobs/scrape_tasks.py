@@ -170,6 +170,15 @@ def execute_scrape_job(request_payload: dict[str, Any]) -> dict[str, Any]:
             },
             {**progress, "items_count": len(staged_items), "requested_count": limit},
         )
+        if acquisition_mode == "detail" and len(staged_items) >= limit:
+            # Only RecordCity's legacy detail loop consumes this explicit
+            # signal. Count after exclusions/price filtering, and require every
+            # returned row to have verified identity/price/status before ending
+            # overfetch. Use the existing search-quality contract for that set.
+            return build_search_quality(
+                staged_items, requested_count=limit, site="recordcity",
+            )["completion_verified"]
+        return False
 
     def finalize(scraped_items, target_site, *, allow_empty=True):
         nonlocal items, excluded_count, new_count, updated_count
