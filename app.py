@@ -972,6 +972,11 @@ def _register_scheduler_jobs(app: Flask) -> None:
     def translation_recovery_job():
         with app.app_context():
             try:
+                from services.catalog_request_notifications import recover_request_notifications
+                recover_request_notifications(limit=20)
+            except Exception as error:
+                logging.getLogger("catalog_request_notifications").warning("Notification recovery failed (%s)", type(error).__name__)
+            try:
                 from services.product_thumbnail_jobs import recover_thumbnail_jobs
                 recover_thumbnail_jobs()
             except Exception:

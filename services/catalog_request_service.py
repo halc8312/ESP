@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import uuid
 
@@ -21,6 +22,7 @@ from services.rate_limit_service import get_rate_limiter
 MAX_ITEMS = 50
 REQUEST_LIMIT = 5
 REQUEST_WINDOW_SECONDS = 15 * 60
+logger = logging.getLogger(__name__)
 
 
 class CatalogRequestError(Exception):
@@ -203,7 +205,9 @@ def submit_catalog_request(session_db, token, raw_payload, client_ip):
         ) for item in payload["items"]],
     )
     session_db.add(catalog_request)
+    from services.catalog_request_notifications import create_request_notification, enqueue_request_notification
     try:
+        create_request_notification(session_db, catalog_request)
         session_db.commit()
     except IntegrityError:
         # The database uniqueness constraint also protects simultaneous retries.
@@ -214,4 +218,10 @@ def submit_catalog_request(session_db, token, raw_payload, client_ip):
         if existing is not None:
             return _retry_response(existing, payload_hash)
         raise
-    return {"ok": True, "reference": catalog_request.reference}, 201
+    request_id, reference = catalog_request.id, catalog_request.reference
+    # Queue availability never changes whether the customer's request was saved.
+    try:
+        enqueue_request_notification(request_id)
+    except Exception as error:
+        logger.warning("Notification enqueue unavailable after saved request (%s)", type(error).__name__)
+    return {"ok": True, "reference": reference}, 201

@@ -633,7 +633,13 @@ def recover_translation_suggestions_on_startup() -> dict[str, Any]:
         recover_expired_translation_suggestions,
     )
 
-    return recover_expired_translation_suggestions()
+    summary = recover_expired_translation_suggestions()
+    try:
+        from services.catalog_request_notifications import recover_request_notifications
+        recover_request_notifications(limit=20)
+    except Exception as error:
+        logger.warning("Notification startup recovery failed (%s)", type(error).__name__)
+    return summary
 
 
 def stop_worker_scheduler(app: Flask) -> bool:

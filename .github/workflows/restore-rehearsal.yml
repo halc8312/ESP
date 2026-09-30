@@ -1,0 +1,70 @@
+name: PostgreSQL 18 Restore Rehearsal
+
+on:
+  push:
+    paths:
+      - '.github/workflows/restore-rehearsal.yml'
+      - 'scripts/restore_rehearsal.py'
+      - 'scripts/backup_restore_plan.py'
+      - 'alembic/**'
+      - '*.py'
+      - 'routes/**'
+      - 'services/**'
+      - 'templates/**'
+      - 'requirements*.txt'
+  pull_request:
+    paths:
+      - '.github/workflows/restore-rehearsal.yml'
+      - 'scripts/restore_rehearsal.py'
+      - 'scripts/backup_restore_plan.py'
+      - 'alembic/**'
+      - '*.py'
+      - 'routes/**'
+      - 'services/**'
+      - 'templates/**'
+      - 'requirements*.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: esp_restore_ci
+          POSTGRES_PASSWORD: esp-restore-ci-only
+          POSTGRES_DB: postgres
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U esp_restore_ci -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 127.0.0.1:6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install pinned application dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Explicit synthetic dump and fresh local restore
+        run: >-
+          python scripts/restore_rehearsal.py --execute
+          --postgres-container '${{ job.services.postgres.id }}'
+          --revision '${{ github.sha }}'
+          --postgres-port 5432 --redis-port 6379
