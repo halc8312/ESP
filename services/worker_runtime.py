@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import socket
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -17,10 +19,11 @@ from typing import Any
 from flask import Flask
 from redis import Redis
 
-from app import get_scheduler_health_snapshot
+from app import get_scheduler_health_snapshot, _write_scheduler_heartbeat
 from database import ensure_additive_schema_ready
 from services.alerts import get_alert_dispatcher
 from services.rq_compat import import_rq_queue, import_rq_simple_worker
+from services.recovery_health import OwnedRecoveryExecutor, recovery_operation, run_recovery_phases
 from services.browser_pool import close_browser_pool, get_browser_pool_health, warm_browser_pool
 from services.repair_store import get_repair_queue_snapshot
 from services.repair_worker import process_pending_repair_candidates
@@ -87,6 +90,10 @@ _SCHEDULER_LIVE_EVENTS = frozenset(
         "patrol_failed",
         "translation_recovery_completed",
         "translation_recovery_failed",
+        "recovery_phase_started",
+        "recovery_phase_completed",
+        "recovery_phase_failed",
+        "recovery_batch_completed",
         "exchange_rate_refresh_completed",
         "scrape_health_review_completed",
         "scrape_health_review_failed",
@@ -342,10 +349,20 @@ def inspect_patrol_heartbeat(
             completed_at is None or failed_at >= completed_at
         ):
             return HEARTBEAT_FAILED
+        current_time = now or datetime.now(timezone.utc)
+        started_at = _parse_heartbeat_timestamp(payload.get("last_patrol_started_at", ""))
+        batch_timeout = payload.get("last_patrol_batch_timeout_seconds")
+        if started_at is not None and batch_timeout is not None and (completed_at is None or started_at > completed_at):
+            try:
+                deadline_seconds = float(batch_timeout)
+            except (TypeError, ValueError):
+                return HEARTBEAT_FAILED
+            if not math.isfinite(deadline_seconds) or deadline_seconds <= 0:
+                return HEARTBEAT_FAILED
+            if (current_time - started_at).total_seconds() > deadline_seconds:
+                return HEARTBEAT_STALE
         if completed_at is None:
             return HEARTBEAT_UNAVAILABLE
-
-        current_time = now or datetime.now(timezone.utc)
         age_seconds = (current_time - completed_at).total_seconds()
         if not (
             -_HEARTBEAT_FUTURE_SKEW_SECONDS
@@ -359,12 +376,12 @@ def inspect_patrol_heartbeat(
             return HEARTBEAT_FAILED
 
         counts: dict[str, int] = {}
-        for field in ("selected", "error", "eligible", "updated", "successful"):
+        for field in ("selected", "error", "eligible", "updated", "successful", "unprocessed", "discarded", "inconclusive"):
             raw_count = payload.get(f"last_patrol_{field}_count")
             # Older heartbeat writers did not include all summary counters.
             # Missing optional fields remain compatible; missing evidence does
             # not silently become a successful zero-error batch.
-            if raw_count is None and field in {"eligible", "updated", "successful"}:
+            if raw_count is None and field in {"eligible", "updated", "successful", "unprocessed", "discarded", "inconclusive"}:
                 continue
             if raw_count is None or not re.fullmatch(r"[0-9]+", raw_count):
                 return HEARTBEAT_FAILED
@@ -375,10 +392,14 @@ def inspect_patrol_heartbeat(
 
         selected_count = counts["selected"]
         error_count = counts["error"]
-        successful_count = counts.get("successful", selected_count - error_count)
+        unobserved_count = sum(counts.get(field, 0) for field in ("unprocessed", "discarded", "inconclusive"))
+        successful_count = counts.get("successful", selected_count - error_count - unobserved_count)
         if (
-            error_count > selected_count
+            successful_count < 0
+            or error_count > selected_count
             or successful_count + error_count > selected_count
+            or (any(field in counts for field in ("unprocessed", "discarded", "inconclusive"))
+                and successful_count + error_count + unobserved_count != selected_count)
             or counts.get("eligible", selected_count) < selected_count
             or counts.get("updated", 0) > selected_count
             or (status == "no_products" and selected_count != 0)
@@ -386,7 +407,7 @@ def inspect_patrol_heartbeat(
             return HEARTBEAT_FAILED
         if successful_count == 0:
             return HEARTBEAT_FAILED if error_count else HEARTBEAT_NO_OBSERVATIONS
-        if error_count > 0 or successful_count < selected_count:
+        if error_count > 0 or unobserved_count > 0 or successful_count < selected_count:
             return HEARTBEAT_DEGRADED
         return HEARTBEAT_OK
     except Exception as exc:
@@ -633,13 +654,50 @@ def recover_translation_suggestions_on_startup() -> dict[str, Any]:
         recover_expired_translation_suggestions,
     )
 
-    summary = recover_expired_translation_suggestions()
-    try:
-        from services.catalog_request_notifications import recover_request_notifications
-        recover_request_notifications(limit=20)
-    except Exception as error:
-        logger.warning("Notification startup recovery failed (%s)", type(error).__name__)
-    return summary
+    return recover_expired_translation_suggestions()
+
+
+def recover_features_on_startup(app: Flask, *, include_translation: bool) -> dict[str, Any]:
+    """Keep startup failures and empty scans visible for each feature."""
+    phases = {}
+    if include_translation:
+        phases["notification"] = lambda: recovery_operation("notification")()
+    phases["thumbnail"] = lambda: recovery_operation("thumbnail")()
+    phases["detail"] = lambda: recovery_operation("detail")()
+    if include_translation:
+        phases["translation"] = recover_translation_suggestions_on_startup
+    bounded = (
+        str(app.config.get("SCRAPE_QUEUE_BACKEND", "")).lower() == "rq"
+        and not app.config.get("TESTING", False)
+    )
+    ownership_lost = app.extensions.get("esp_scheduler_ownership_lost")
+    if ownership_lost is None:
+        ownership_lost = threading.Event()
+        app.extensions["esp_scheduler_ownership_lost"] = ownership_lost
+    cancelled = ownership_lost.is_set
+    batch_timeout = float(app.config.get("RECOVERY_BATCH_TIMEOUT_SECONDS", 240))
+    heartbeat_deadline = time.monotonic() + batch_timeout
+    result = run_recovery_phases(
+        phases,
+        heartbeat_writer=lambda **fields: _write_scheduler_heartbeat(app, _deadline=heartbeat_deadline if bounded else None, **fields),
+        executor=OwnedRecoveryExecutor(app.config, cancelled=cancelled) if bounded else None,
+        cancelled=cancelled,
+        phase_timeout_seconds=float(app.config.get("RECOVERY_PHASE_TIMEOUT_SECONDS", 60)),
+        total_timeout_seconds=batch_timeout,
+        phase_heartbeat_reserve_seconds=5 if bounded else 0,
+    )
+    for feature, outcome in result["features"].items():
+        if outcome["status"] in {"failed", "degraded", "quarantined"}:
+            logger.error(
+                "%s startup recovery failed; worker startup will continue: status=%s error_type=%s",
+                feature.capitalize(), outcome["status"], outcome.get("error_type", "RecoveryEnqueueFailure"),
+            )
+        else:
+            logger.info(
+                "%s startup recovery scan returned: status=%s counts=%s",
+                feature.capitalize(), outcome["status"], outcome.get("counts", {}),
+            )
+    return result
 
 
 def stop_worker_scheduler(app: Flask) -> bool:
@@ -658,6 +716,9 @@ def stop_worker_scheduler(app: Flask) -> bool:
 
     Stopping it here lets the process exit, which is what gets it replaced.
     """
+    ownership_lost = app.extensions.get("esp_scheduler_ownership_lost") if hasattr(app, "extensions") else None
+    if ownership_lost is not None:
+        ownership_lost.set()
     scheduler = app.extensions.get("esp_scheduler") if hasattr(app, "extensions") else None
     if scheduler is None or not app.extensions.get("esp_scheduler_started"):
         return False
@@ -709,33 +770,10 @@ def run_worker(app: Flask) -> int:
                         len(reconciled_job_ids),
                         ",".join(reconciled_job_ids[:10]),
                     )
-                try:
-                    translation_recovery = recover_translation_suggestions_on_startup()
-                    logger.info(
-                        "Translation startup recovery complete: recovered=%s enqueued=%s failed=%s",
-                        len(translation_recovery.get("recovered") or []),
-                        len(translation_recovery.get("enqueued") or []),
-                        len(translation_recovery.get("failed") or []),
-                    )
-                except Exception:
-                    logger.exception(
-                        "Translation startup recovery failed; worker startup will continue"
-                    )
+            recover_features_on_startup(
+                app, include_translation=runtime.settings.reconcile_stalled_jobs_on_startup,
+            )
             backlog_after = get_job_backlog_snapshot()
-            try:
-                from services.product_thumbnail_jobs import recover_thumbnail_jobs
-                thumbnail_recovery = recover_thumbnail_jobs()
-                logger.info("Product thumbnail startup recovery complete: batches=%s images=%s failed=%s",
-                    thumbnail_recovery.get("queued_batches", 0), thumbnail_recovery.get("queued_images", 0), thumbnail_recovery.get("failed", 0))
-            except Exception:
-                logger.exception("Product thumbnail startup recovery failed; worker startup will continue")
-            try:
-                from services.product_detail_jobs import recover_product_detail_jobs
-                detail_recovery = recover_product_detail_jobs(limit=100)
-                logger.info("Product detail startup recovery complete: queued=%s pending=%s failed=%s",
-                    detail_recovery.get("queued", 0), detail_recovery.get("pending", 0), detail_recovery.get("failed", 0))
-            except Exception:
-                logger.exception("Product detail startup recovery failed; worker startup will continue")
             logger.info(
                 "Worker durable job backlog after startup reconcile: backlog=%s",
                 backlog_after,
@@ -748,7 +786,7 @@ def run_worker(app: Flask) -> int:
                     backlog_after,
                 )
                 emit_backlog_operational_alert(backlog_after, backlog_after_issues, runtime.settings)
-        if runtime.settings.warm_browser_pool:
+        if runtime.settings.warm_browser_pool and not _as_bool(app.config.get("PATROL_SUPERVISED_FETCH_ENABLED", False)):
             warmed_result = warm_browser_pool()
             warmed_sites = list(warmed_result) if isinstance(warmed_result, (list, tuple)) else []
             logger.info(
@@ -767,8 +805,14 @@ def run_worker(app: Flask) -> int:
     finally:
         stop_worker_heartbeat(heartbeat_handle)
         stop_worker_scheduler(app)
-        pool_health = get_browser_pool_health()
-        if pool_health["runtimes"]:
-            logger.info("Worker browser pool closing: health=%s", pool_health)
-        close_browser_pool()
+        try:
+            if _as_bool(app.config.get("PATROL_SUPERVISED_FETCH_ENABLED", False)):
+                from services.patrol_supervisor import close_patrol_supervisor
+
+                close_patrol_supervisor()
+        finally:
+            pool_health = get_browser_pool_health()
+            if pool_health["runtimes"]:
+                logger.info("Worker browser pool closing: health=%s", pool_health)
+            close_browser_pool()
     return 0

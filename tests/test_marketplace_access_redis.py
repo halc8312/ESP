@@ -93,6 +93,24 @@ def test_lua_expiry_rejects_parent_and_wrong_owner_cannot_release_successor(redi
     assert second.client.ttl(second._keys("recordcity")[0]) > 0
 
 
+def test_lua_quarantine_survives_ttl_and_generation_clear_cannot_remove_successor(redis_stores):
+    first, second = redis_stores
+    assert admit(first, "old:token", lease_seconds=0.05) == (0, "")
+    first.quarantine("recordcity", "old:token")
+    time.sleep(0.08)
+    with pytest.raises(access.AccessLeaseLost):
+        admit(second, "next:token")
+    assert first.client.ttl(first._keys("recordcity")[3]) == -1
+    assert first.clear_generation_quarantine("recordcity", "other") == 0
+    assert first.clear_generation_quarantine("recordcity", "old") == 1
+    assert admit(second, "next:token") == (0, "")
+    second.quarantine("recordcity", "next:token")
+    first.clear_generation_quarantine("recordcity", "old")
+    first.release("recordcity", "old:token")
+    assert second.client.zscore(second._keys("recordcity")[0], "next:token") is not None
+    assert second.client.sismember(second._keys("recordcity")[3], "next:token")
+
+
 def test_lua_renew_extends_live_lease_and_keeps_owner_identity(redis_stores):
     first, second = redis_stores
     assert admit(first, "owner", lease_seconds=0.4) == (0, "")

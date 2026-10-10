@@ -150,6 +150,7 @@ def test_fetch_can_use_browser_pool(monkeypatch):
         "https://jp.mercari.com/item/xxx",
         network_idle=True,
         wait_selector="h1, [data-testid='price'], [data-testid='checkout-button']",
+        hydrate_images=False,
     )
     mock_fetch_dynamic.assert_not_called()
     assert result.success
