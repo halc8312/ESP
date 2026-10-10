@@ -101,6 +101,13 @@ replace those gates. The restricted local execution environment has no
 returned a truncated archive. The CI configuration supplies these resources;
 an unobserved CI run must not be reported as passed.
 
+The [Python 3.11 CI job for commit
+9ec8dc0](https://github.com/halc8312/ESP/actions/runs/38025003593/job/114133871246)
+completed on 2026-10-10: the PostgreSQL 18/Chromium/owned-process gate passed
+29 tests, the real Redis heartbeat gate passed one test, and the full suite
+passed 2,953 tests, all without skips. These executed CI gates do not replace
+the approved production observation and memory acceptance targets below.
+
 ## Approved rollout observation
 
 After approval, verify the old unsupervised worker generation and its browsers

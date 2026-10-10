@@ -18,6 +18,10 @@ from services.recovery_health import (
 )
 
 
+# An absolute tolerance keeps long-running monotonic clocks from relaxing budgets.
+CLOCK_TOLERANCE_SECONDS = 1e-9
+
+
 class Heartbeats:
     def __init__(self):
         self.payload = {"runtime_role": "worker"}
@@ -134,13 +138,16 @@ def test_batch_deadline_prevents_admission_of_later_phase():
     result = run_recovery_phases({"detail": lambda: {}, "translation": lambda: {}},
         heartbeat_writer=heartbeats.write, executor=executor,
         monotonic=lambda: clock[0], phase_timeout_seconds=2, total_timeout_seconds=2)
-    assert calls == [("detail", 2)]
+    assert [feature for feature, _allowance in calls] == ["detail"]
+    assert [allowance for _feature, allowance in calls] == pytest.approx(
+        [2], rel=0, abs=CLOCK_TOLERANCE_SECONDS)
     assert result["features"]["translation"]["error_type"] == "RecoveryTimeout"
 
 
-def test_phase_allowance_includes_started_heartbeat_and_reserves_completion():
-    started = time.monotonic()
+def test_phase_allowance_includes_started_heartbeat_and_reserves_completion(monkeypatch):
+    started = 1023.123456789
     clock = [started]
+    monkeypatch.setattr(recovery_health.time, "monotonic", lambda: clock[0])
     calls = []
     heartbeats = Heartbeats()
 
@@ -158,13 +165,16 @@ def test_phase_allowance_includes_started_heartbeat_and_reserves_completion():
         executor=executor, monotonic=lambda: clock[0], phase_timeout_seconds=60,
         total_timeout_seconds=240, phase_heartbeat_reserve_seconds=5)
     assert result["status"] == "ok"
-    assert calls == [("detail", 50)]
-    assert clock[0] == started + 60
+    assert [feature for feature, _allowance in calls] == ["detail"]
+    assert [allowance for _feature, allowance in calls] == pytest.approx(
+        [50], rel=0, abs=CLOCK_TOLERANCE_SECONDS)
+    assert clock[0] - started == pytest.approx(60, rel=0, abs=CLOCK_TOLERANCE_SECONDS)
 
 
-def test_saturated_four_phases_leave_full_aggregate_heartbeat_budget():
-    started = time.monotonic()
+@pytest.mark.parametrize("started", [0.0, 900.123456789, 1023.123456789])
+def test_saturated_four_phases_leave_full_aggregate_heartbeat_budget(started, monkeypatch):
     clock = [started]
+    monkeypatch.setattr(recovery_health.time, "monotonic", lambda: clock[0])
     allowances = []
     aggregate_started = []
 
@@ -172,7 +182,7 @@ def test_saturated_four_phases_leave_full_aggregate_heartbeat_budget():
         if fields["event"] == "recovery_batch_completed":
             aggregate_started.append(clock[0])
         clock[0] += 5
-        assert clock[0] <= started + 240
+        assert clock[0] - started <= 240 + CLOCK_TOLERANCE_SECONDS
 
     def executor(feature, operation, allowance):
         allowances.append((feature, allowance))
@@ -184,16 +194,21 @@ def test_saturated_four_phases_leave_full_aggregate_heartbeat_budget():
         phase_timeout_seconds=60, total_timeout_seconds=240,
         phase_heartbeat_reserve_seconds=5)
     assert result["status"] == "ok"
-    assert allowances == [("notification", 50), ("thumbnail", 50), ("detail", 50), ("translation", 45)]
-    assert aggregate_started == [started + 235]
-    assert clock[0] == started + 240
+    assert [feature for feature, _allowance in allowances] == [
+        "notification", "thumbnail", "detail", "translation"]
+    assert [allowance for _feature, allowance in allowances] == pytest.approx(
+        [50, 50, 50, 45], rel=0, abs=CLOCK_TOLERANCE_SECONDS)
+    assert [timestamp - started for timestamp in aggregate_started] == pytest.approx(
+        [235], rel=0, abs=CLOCK_TOLERANCE_SECONDS)
+    assert clock[0] - started == pytest.approx(240, rel=0, abs=CLOCK_TOLERANCE_SECONDS)
 
 
-def test_late_started_phases_cannot_spend_final_aggregate_reserve():
+def test_late_started_phases_cannot_spend_final_aggregate_reserve(monkeypatch):
     from services.operation_deadline import current_deadline
 
-    started = time.monotonic()
+    started = 1023.123456789
     clock = [started]
+    monkeypatch.setattr(recovery_health.time, "monotonic", lambda: clock[0])
     calls, writes = [], []
 
     def writer(**fields):
@@ -201,11 +216,12 @@ def test_late_started_phases_cannot_spend_final_aggregate_reserve():
         active_deadline = current_deadline()
         if fields["event"] == "recovery_batch_completed":
             assert active_deadline is None
-            assert clock[0] == started + 55
+            assert clock[0] - started == pytest.approx(55, rel=0, abs=CLOCK_TOLERANCE_SECONDS)
         else:
-            assert active_deadline == started + 55
+            assert active_deadline - started == pytest.approx(
+                55, rel=0, abs=CLOCK_TOLERANCE_SECONDS)
         clock[0] += 5
-        assert clock[0] <= started + 60
+        assert clock[0] - started <= 60 + CLOCK_TOLERANCE_SECONDS
 
     def saturate(feature, _operation, allowance):
         calls.append((feature, allowance))
@@ -216,8 +232,10 @@ def test_late_started_phases_cannot_spend_final_aggregate_reserve():
         heartbeat_writer=writer, executor=saturate, monotonic=lambda: clock[0],
         phase_timeout_seconds=60, total_timeout_seconds=60,
         phase_heartbeat_reserve_seconds=5)
-    assert calls == [("notification", 45)]
-    assert clock[0] == started + 60
+    assert [feature for feature, _allowance in calls] == ["notification"]
+    assert [allowance for _feature, allowance in calls] == pytest.approx(
+        [45], rel=0, abs=CLOCK_TOLERANCE_SECONDS)
+    assert clock[0] - started == pytest.approx(60, rel=0, abs=CLOCK_TOLERANCE_SECONDS)
     assert len(writes) == 3
     aggregate = writes[-1]
     assert aggregate["last_recovery_status"] == "degraded"

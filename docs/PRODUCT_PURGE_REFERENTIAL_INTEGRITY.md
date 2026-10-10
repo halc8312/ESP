@@ -91,8 +91,16 @@ transaction rollback, and a late worker result after deletion.
 
 The focused FK/trash/translation/deferred-detail/catalog-request suite passed
 213 tests locally on Python 3.12 with the repository's pinned SQLAlchemy and
-psycopg dependencies. The production image uses Python 3.11; the disposable
-PostgreSQL and production-version gates below are still required.
+psycopg dependencies. The production image uses Python 3.11. The initial
+local run could not execute the disposable PostgreSQL gates below.
+
+On 2026-10-10, the [Python 3.11 CI job for commit
+9ec8dc0](https://github.com/halc8312/ESP/actions/runs/38025003593/job/114133871246)
+executed all five PostgreSQL 18 concurrency tests successfully, with each
+test name recorded as PASSED. Its separate PostgreSQL/Chromium/process gate
+passed 29 tests without skips; its full suite passed 2,953 tests without
+skips. This is evidence from a disposable CI database, not a query of
+production product 1331 or its deployed constraint.
 
 The SQLite automatic result test observes the actual emitted SQL order and
 compiles the parent query using the PostgreSQL dialect, asserting
