@@ -10,7 +10,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:18
         env:
           POSTGRES_USER: esp_test
           POSTGRES_PASSWORD: isolated-ci-password
@@ -70,6 +70,13 @@ jobs:
         run: >-
           python -m pytest -v
           tests/test_heartbeat_transport.py::test_real_redis_atomic_owner_write_and_late_old_owner
+
+      - name: PostgreSQL 18, Chromium and owned-process integration
+        run: >-
+          python -m pytest -v
+          tests/test_trash_postgresql_concurrency.py
+          tests/test_patrol_supervisor.py
+          tests/test_mercari_browser_fetch.py::test_real_chromium_bounded_stream_preserves_spa_json_with_route_guard
 
       - name: Test
         run: python -m pytest -q -ra --durations=20
