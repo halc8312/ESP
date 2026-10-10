@@ -89,7 +89,7 @@ def _run_worker() -> int:
         }
     )
     scheduler_enabled = getattr(app, "config", {}).get("ENABLE_SCHEDULER", False)
-    scheduler_health = get_scheduler_health_snapshot(app) if hasattr(app, "extensions") else {}
+    scheduler_health = get_scheduler_health_snapshot(app, include_heartbeat=False) if hasattr(app, "extensions") else {}
     logger.info(
         "Worker app created: scheduler_enabled=%s scheduler_health=%s",
         scheduler_enabled,

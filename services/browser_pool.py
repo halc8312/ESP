@@ -6,12 +6,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import threading
+import time
 from typing import Any, Awaitable, Callable
 
 from services.browser_runtime import (
     BrowserRuntimeConfig,
+    BrowserCleanupUnverified,
     SharedBrowserRuntime,
+    bounded_browser_cleanup,
+    cleanup_timeout_seconds,
     get_async_playwright_factory,
     normalize_automation_backend,
 )
@@ -95,23 +100,23 @@ def _get_max_in_flight_tasks(site: str) -> int:
 def _get_max_tasks_before_restart(site: str) -> int:
     raw = os.environ.get(_site_env_name(site, "BROWSER_POOL_MAX_TASKS_BEFORE_RESTART")) or os.environ.get(
         "BROWSER_POOL_MAX_TASKS_BEFORE_RESTART",
-        "0",
+        "50",
     )
     try:
         return max(0, int(raw))
     except (TypeError, ValueError):
-        return 0
+        return 50
 
 
 def _get_max_runtime_seconds(site: str) -> float:
     raw = os.environ.get(_site_env_name(site, "BROWSER_POOL_MAX_RUNTIME_SECONDS")) or os.environ.get(
         "BROWSER_POOL_MAX_RUNTIME_SECONDS",
-        "0",
+        "900",
     )
     try:
         return max(0.0, float(raw))
     except (TypeError, ValueError):
-        return 0.0
+        return 900.0
 
 
 def _resolve_launch_args(site: str, launch_args: list[str] | tuple[str, ...] | None = None) -> tuple[str, ...]:
@@ -199,10 +204,14 @@ def warm_browser_pool(sites: list[str] | tuple[str, ...] | None = None) -> list[
 def close_browser_pool() -> None:
     with _POOL_LOCK:
         runtimes = list(_RUNTIMES.items())
-        _RUNTIMES.clear()
 
-    for _, runtime in runtimes:
-        runtime.close()
+    for site, runtime in runtimes:
+        # An unverified old runtime must not disappear from the registry and
+        # be replaced by a new one while its Chromium may still be running.
+        if runtime.close():
+            with _POOL_LOCK:
+                if _RUNTIMES.get(site) is runtime:
+                    _RUNTIMES.pop(site)
 
 
 def _get_warm_sites() -> list[str]:
@@ -237,7 +246,7 @@ async def _execute_page_task(
             await page.add_init_script(script)
         return await task_coro_factory(page, context)
     finally:
-        await context.close()
+        await bounded_browser_cleanup(context.close(), label="context.close")
 
 
 async def _run_with_temporary_browser(
@@ -251,7 +260,9 @@ async def _run_with_temporary_browser(
     channel: str | None = None,
 ):
     async_playwright = get_async_playwright_factory(automation_backend)
-    async with async_playwright() as playwright:
+    manager = async_playwright()
+    playwright = await manager.__aenter__()
+    try:
         launch_options: dict[str, Any] = {
             "headless": headless,
             "args": list(_DEFAULT_LAUNCH_ARGS if launch_args is None else launch_args),
@@ -267,7 +278,9 @@ async def _run_with_temporary_browser(
                 init_scripts=init_scripts,
             )
         finally:
-            await browser.close()
+            await bounded_browser_cleanup(browser.close(), label="temporary browser.close")
+    finally:
+        await bounded_browser_cleanup(manager.__aexit__(*sys.exc_info()), label="temporary playwright.stop")
 
 
 async def _execute_persistent_page_task(
@@ -301,10 +314,7 @@ async def _execute_persistent_page_task(
             await page.add_init_script(script)
         return await task_coro_factory(page, context)
     except (Exception, asyncio.CancelledError):
-        try:
-            await page.close()
-        except Exception:
-            pass
+        await bounded_browser_cleanup(page.close(), label="persistent page.close")
         raise
 
 
@@ -320,7 +330,9 @@ async def _run_with_temporary_persistent_context(
     channel: str | None = "chrome",
 ):
     async_playwright = get_async_playwright_factory(automation_backend)
-    async with async_playwright() as playwright:
+    manager = async_playwright()
+    playwright = await manager.__aenter__()
+    try:
         launch_options = dict(context_options or {})
         launch_options.update(
             {
@@ -341,7 +353,9 @@ async def _run_with_temporary_persistent_context(
                 init_scripts=init_scripts,
             )
         finally:
-            await context.close()
+            await bounded_browser_cleanup(context.close(), label="persistent context.close")
+    finally:
+        await bounded_browser_cleanup(manager.__aexit__(*sys.exc_info()), label="persistent playwright.stop")
 
 
 async def run_browser_page_task(
@@ -361,12 +375,16 @@ async def run_browser_page_task(
     # through context/browser cleanup. Guarded navigations consume requests
     # individually using this lease captured in their callback context.
     async with async_marketplace_access(_marketplace_site(site), consume_request=False) as lease:
-        return await _run_browser_page_task_owned(
-            site, task_coro_factory, lease=lease, launch_args=launch_args,
-            headless=headless, context_options=context_options,
-            init_scripts=init_scripts, automation_backend=automation_backend,
-            channel=channel,
-        )
+        try:
+            return await _run_browser_page_task_owned(
+                site, task_coro_factory, lease=lease, launch_args=launch_args,
+                headless=headless, context_options=context_options,
+                init_scripts=init_scripts, automation_backend=automation_backend,
+                channel=channel,
+            )
+        except BrowserCleanupUnverified:
+            lease.quarantine()
+            raise
 
 
 async def _run_browser_page_task_owned(
@@ -423,12 +441,16 @@ async def run_persistent_browser_page_task(
     from services.marketplace_access import async_marketplace_access
 
     async with async_marketplace_access(_marketplace_site(site), consume_request=False) as lease:
-        return await _run_persistent_browser_page_task_owned(
-            site, task_coro_factory, lease=lease, user_data_dir=user_data_dir,
-            launch_args=launch_args, headless=headless,
-            context_options=context_options, init_scripts=init_scripts,
-            automation_backend=automation_backend, channel=channel,
-        )
+        try:
+            return await _run_persistent_browser_page_task_owned(
+                site, task_coro_factory, lease=lease, user_data_dir=user_data_dir,
+                launch_args=launch_args, headless=headless,
+                context_options=context_options, init_scripts=init_scripts,
+                automation_backend=automation_backend, channel=channel,
+            )
+        except BrowserCleanupUnverified:
+            lease.quarantine()
+            raise
 
 
 async def _run_persistent_browser_page_task_owned(
@@ -474,27 +496,55 @@ async def _submit_owned_task(runtime, operation, lease):
 
     async def _operation(resource):
         started.set()
+        verified = True
         try:
             return await operation(resource)
+        except BrowserCleanupUnverified:
+            verified = False
+            raise
         finally:
-            cleaned.set()
+            if verified:
+                cleaned.set()
 
-    future = runtime.submit(_operation)
+    from services.operation_deadline import OperationDeadlineExceeded, remaining_seconds
+    from services.marketplace_access import AccessLeaseLost
     try:
-        return await asyncio.shield(asyncio.wrap_future(future))
-    except asyncio.CancelledError:
+        future = runtime.submit(_operation)
+    except BrowserCleanupUnverified:
+        lease.quarantine()
+        raise
+    try:
+        wrapped = asyncio.wrap_future(future)
+        while not wrapped.done():
+            if lease.lost.is_set():
+                raise AccessLeaseLost("Browser access ownership was lost")
+            remaining = remaining_seconds()
+            if remaining == 0:
+                raise OperationDeadlineExceeded("Browser operation deadline exceeded")
+            await asyncio.wait({wrapped}, timeout=0.1 if remaining is None else min(0.1, remaining))
+        return wrapped.result()
+    except BrowserCleanupUnverified:
+        lease.quarantine()
+        raise
+    except (asyncio.CancelledError, OperationDeadlineExceeded, AccessLeaseLost):
         future.cancel()
-        if started.is_set():
+        finished = getattr(future, "execution_finished", None)
+
+        def _verified():
+            if finished is not None and not finished.is_set():
+                return False
+            snapshot = getattr(runtime, "snapshot", lambda: {})()
+            if snapshot.get("quarantined"):
+                return False
+            return cleaned.is_set() or not started.is_set()
+
+        deadline = time.monotonic() + cleanup_timeout_seconds()
+        while not _verified() and time.monotonic() < deadline:
             try:
-                deadline = asyncio.get_running_loop().time() + 10
-                while not cleaned.is_set() and asyncio.get_running_loop().time() < deadline:
-                    await asyncio.sleep(0.05)
-                if not cleaned.is_set():
-                    # Retain the token until expiry if the failed browser
-                    # cannot prove that its request has stopped.
-                    lease.abandon()
+                await asyncio.sleep(0.05)
             except asyncio.CancelledError:
-                if not cleaned.is_set():
-                    lease.abandon()
-                raise
+                continue
+        if not _verified():
+            runtime.quarantine("Operation cleanup not verified before deadline")
+            lease.quarantine()
         raise

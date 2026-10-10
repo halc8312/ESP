@@ -6,6 +6,15 @@ import pytest
 import app as app_module
 
 
+_RECOVERY_OK = {
+    "recovery_notification": "no_pending",
+    "recovery_thumbnail": "no_pending",
+    "recovery_detail": "no_pending",
+    "recovery_translation": "no_pending",
+}
+_RECOVERY_UNAVAILABLE = {name: "unavailable" for name in _RECOVERY_OK}
+
+
 def test_healthz_returns_minimal_liveness_payload(client):
     response = client.get("/healthz")
 
@@ -92,6 +101,7 @@ def test_stack_readyz_reports_only_non_secret_dependency_states(client):
             "scheduler": "unavailable",
             "patrol": "unavailable",
             "scrape_monitor": "unavailable",
+            **_RECOVERY_UNAVAILABLE,
         },
         "runtime_role": "test",
         "queue_backend": "rq",
@@ -135,7 +145,7 @@ def _heartbeat_payload(
     runtime_role="worker",
     event="scheduler_started",
 ):
-    return {
+    payload = {
         "runtime_role": runtime_role,
         "recorded_at": recorded_at.isoformat().replace("+00:00", "Z"),
         "event": event,
@@ -149,6 +159,11 @@ def _heartbeat_payload(
             "+00:00", "Z"
         ),
     }
+    for feature in ("notification", "thumbnail", "detail", "translation"):
+        payload[f"last_recovery_{feature}_status"] = "no_pending"
+        payload[f"last_recovery_{feature}_completed_at"] = recorded_at.isoformat()
+        payload[f"last_recovery_{feature}_finished_at"] = recorded_at.isoformat()
+    return payload
 
 
 def test_readyz_requires_only_redis_for_rq_backend(client, monkeypatch):
@@ -203,6 +218,7 @@ def test_stack_readyz_requires_live_worker_and_scheduler_for_rq_backend(client, 
         "scheduler": "ok",
         "patrol": "ok",
         "scrape_monitor": "ok",
+        **_RECOVERY_OK,
     }
     assert redis_client.closed is True
 
@@ -238,6 +254,7 @@ def test_stack_readyz_reports_only_stale_state_for_expired_worker_heartbeat(clie
         "scheduler": "ok",
         "patrol": "ok",
         "scrape_monitor": "ok",
+        **_RECOVERY_OK,
     }
 
 
@@ -316,6 +333,7 @@ def test_patrol_evidence_is_separate_from_process_readiness(
         "scheduler": "ok",
         "patrol": expected,
         "scrape_monitor": "ok",
+        **_RECOVERY_OK,
     }
     # Render's process probe must not restart the web for scraper degradation.
     readiness = client.get("/readyz")
@@ -390,6 +408,7 @@ def test_stack_readyz_detects_stopped_scrape_monitor_despite_live_other_jobs(
         "scheduler": "ok",
         "patrol": "ok",
         "scrape_monitor": expected,
+        **_RECOVERY_OK,
     }
     assert client.get("/readyz").status_code == 200
 

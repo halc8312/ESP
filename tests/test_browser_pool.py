@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from concurrent.futures import Future
 
 import pytest
@@ -658,3 +659,174 @@ def test_get_browser_runtime_uses_recycle_policy_env(monkeypatch):
     assert health["runtimes"]["mercari"]["max_runtime_seconds"] == 900.0
 
     close_browser_pool()
+
+
+def test_recycle_defaults_are_enabled_but_explicit_zero_disables(monkeypatch):
+    monkeypatch.setenv("ENABLE_SHARED_BROWSER_RUNTIME", "1")
+    close_browser_pool()
+    runtime = get_browser_runtime("mercari")
+    assert runtime.config.max_tasks_before_restart == 50
+    assert runtime.config.max_runtime_seconds == 900
+    close_browser_pool()
+    monkeypatch.setenv("MERCARI_BROWSER_POOL_MAX_TASKS_BEFORE_RESTART", "0")
+    monkeypatch.setenv("MERCARI_BROWSER_POOL_MAX_RUNTIME_SECONDS", "0")
+    runtime = get_browser_runtime("mercari")
+    assert runtime.config.max_tasks_before_restart == 0
+    assert runtime.config.max_runtime_seconds == 0
+    close_browser_pool()
+
+
+def test_context_close_hang_is_not_reported_as_verified(monkeypatch):
+    from services.browser_runtime import BrowserCleanupUnverified
+
+    monkeypatch.setenv("BROWSER_CLEANUP_TIMEOUT_SECONDS", "0.02")
+
+    class Context:
+        closed = False
+
+        async def new_page(self):
+            return object()
+
+        async def close(self):
+            await asyncio.Event().wait()
+            self.closed = True
+
+    context = Context()
+
+    class Browser:
+        async def new_context(self, **_kwargs):
+            return context
+
+    with pytest.raises(BrowserCleanupUnverified, match="context.close"):
+        asyncio.run(browser_pool._execute_page_task(Browser(), lambda *_args: asyncio.sleep(0)))
+    assert context.closed is False
+
+
+def test_cancellation_during_context_close_waits_for_actual_close(monkeypatch):
+    monkeypatch.setenv("BROWSER_CLEANUP_TIMEOUT_SECONDS", "0.2")
+
+    async def scenario():
+        closing = asyncio.Event()
+        release = asyncio.Event()
+
+        class Context:
+            closed = False
+
+            async def new_page(self):
+                return object()
+
+            async def close(self):
+                closing.set()
+                await release.wait()
+                self.closed = True
+
+        context = Context()
+
+        class Browser:
+            async def new_context(self, **_kwargs):
+                return context
+
+        task = asyncio.create_task(browser_pool._execute_page_task(
+            Browser(), lambda *_args: asyncio.sleep(0, result="finished")))
+        await closing.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert not context.closed
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert context.closed
+
+    asyncio.run(scenario())
+
+
+def test_cancel_during_never_returning_close_keeps_site_and_runtime_quarantined(monkeypatch):
+    from services.browser_runtime import BrowserRuntimeConfig, SharedBrowserRuntime
+
+    monkeypatch.setenv("BROWSER_CLEANUP_TIMEOUT_SECONDS", "0.02")
+
+    async def scenario():
+        closing = asyncio.Event()
+
+        class Context:
+            closed = False
+
+            async def new_page(self):
+                return object()
+
+            async def close(self):
+                closing.set()
+                await asyncio.Event().wait()
+                self.closed = True
+
+        context = Context()
+
+        class Browser:
+            async def new_context(self, **_kwargs):
+                return context
+
+        class Lease:
+            lost = threading.Event()
+            quarantined = False
+
+            def quarantine(self):
+                self.quarantined = True
+
+        lease = Lease()
+        runtime = SharedBrowserRuntime(BrowserRuntimeConfig(site="mercari"))
+        runtime._loop = asyncio.get_running_loop()
+        runtime._browser = Browser()
+        monkeypatch.setattr(runtime, "start", lambda: None)
+        task = asyncio.create_task(browser_pool._submit_owned_task(
+            runtime,
+            lambda browser: browser_pool._execute_page_task(browser, lambda *_args: asyncio.sleep(0)),
+            lease,
+        ))
+        await closing.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert context.closed is False
+        assert lease.quarantined is True
+        assert runtime.snapshot()["quarantined"] is True
+        assert runtime._submit_permit.acquire(blocking=False) is False
+
+    asyncio.run(scenario())
+
+
+def test_cancellation_during_startup_does_not_release_lease_as_never_started(monkeypatch):
+    from services.browser_runtime import BrowserRuntimeConfig, SharedBrowserRuntime
+
+    monkeypatch.setenv("BROWSER_CLEANUP_TIMEOUT_SECONDS", "0.02")
+
+    async def scenario():
+        starting = asyncio.Event()
+        runtime = SharedBrowserRuntime(BrowserRuntimeConfig(site="mercari"))
+        runtime._loop = asyncio.get_running_loop()
+        monkeypatch.setattr(runtime, "start", lambda: None)
+
+        async def launch():
+            starting.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(runtime, "_launch_async", launch)
+
+        class Lease:
+            lost = threading.Event()
+            quarantined = False
+
+            def quarantine(self):
+                self.quarantined = True
+
+        lease = Lease()
+        task = asyncio.create_task(browser_pool._submit_owned_task(
+            runtime, lambda _browser: asyncio.sleep(0), lease))
+        await starting.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert lease.quarantined
+        assert runtime.snapshot()["quarantined"]
+
+    asyncio.run(scenario())

@@ -12,6 +12,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 import os
+from pathlib import Path
+import re
 import threading
 import time
 from urllib.parse import urlparse
@@ -36,6 +38,128 @@ class AccessLeaseLost(ScrapeFailure):
 _SITES = frozenset({"mercari", "rakuma", "snkrdunk", "recordcity", "surugaya", "yahoo", "yahuoku", "offmall"})
 _held: ContextVar[dict] = ContextVar("marketplace_access_leases", default={})
 _budget: ContextVar["RequestBudget | None"] = ContextVar("marketplace_request_budget", default=None)
+_process_generation: ContextVar[str | None] = ContextVar("marketplace_process_generation", default=None)
+_quarantined_generations: set[str] = set()
+_quarantine_lock = threading.Lock()
+_local_generation = None
+
+
+def _process_start_ticks(pid: int) -> int | None:
+    try:
+        return int(Path(f"/proc/{int(pid)}/stat").read_text().rsplit(")", 1)[1].split()[19])
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, IndexError) as exc:
+        raise AccessStoreUnavailable("旧プロセスの状態を確認できません。隔離状態を維持します。") from exc
+
+
+def _local_process_generation() -> str:
+    global _local_generation
+    pid = os.getpid()
+    with _quarantine_lock:
+        if _local_generation is None or not _local_generation.startswith((f"local-{pid}-", f"portable-{pid}-")):
+            ticks = _process_start_ticks(pid) if Path("/proc").is_dir() else None
+            _local_generation = (f"local-{pid}-{ticks}-{uuid.uuid4().hex}" if ticks is not None
+                                 else f"portable-{pid}-{uuid.uuid4().hex}")
+        return _local_generation
+
+
+def has_marketplace_generation_quarantine(generation: str) -> bool:
+    """Observe uncertainty even if a site adapter converted its exception."""
+    with _quarantine_lock:
+        return generation in _quarantined_generations
+
+
+@contextmanager
+def marketplace_process_generation(generation: str):
+    """Identify a supervisor-owned process tree, never a mutable global PID."""
+    generation = str(generation)
+    if not generation or ":" in generation:
+        raise ValueError("A nonempty generation without ':' is required")
+    token = _process_generation.set(generation)
+    try:
+        yield
+    finally:
+        _process_generation.reset(token)
+
+
+def _new_owner() -> str:
+    generation = _process_generation.get() or _local_process_generation()
+    return f"{generation}:{uuid.uuid4().hex}"
+
+
+def inspect_marketplace_quarantines(*, sites=None) -> dict:
+    """Private read-only operator API; do not expose ownership in public pages."""
+    store = get_access_store()
+    result = {}
+    for site in _checked_quarantine_sites(sites):
+        entries = []
+        for owner in store.inspect_quarantines(site):
+            generation = owner.partition(":")[0] if ":" in owner else None
+            local = re.fullmatch(r"local-(\d+)-(\d+)-[a-f0-9]{32}", generation or "")
+            entries.append({
+                "owner": owner,
+                "generation": generation,
+                "owner_process": {"pid": int(local[1]), "start_ticks": int(local[2])} if local else None,
+            })
+        result[site] = entries
+    return result
+
+
+@dataclass(frozen=True)
+class QuarantineStopProof:
+    generation: str
+    owner_identity: tuple[int, int]
+    resource_identities: tuple[tuple[int, int], ...]
+    evidence_reference: str
+
+
+def clear_marketplace_owner_quarantine(site, owner, *, proof: QuarantineStopProof):
+    """Explicit operator recovery after approved, verified resource termination.
+
+    The caller must supply the complete recorded tree and its evidence reference.
+    We independently reject any still-live recorded identity. Anonymous legacy
+    owners cannot be safely mapped here and remain quarantined.
+    """
+    generation, separator, _ = str(owner).partition(":")
+    local = re.fullmatch(r"local-(\d+)-(\d+)-[a-f0-9]{32}", generation)
+    if (not separator or not local or not isinstance(proof, QuarantineStopProof)
+            or proof.generation != generation or not isinstance(proof.evidence_reference, str)
+            or not proof.evidence_reference.strip()
+            or proof.owner_identity != (int(local[1]), int(local[2]))
+            or proof.owner_identity not in proof.resource_identities):
+        raise ValueError("Complete owner/resource termination proof is required")
+    for pid, ticks in proof.resource_identities:
+        if type(pid) is not int or type(ticks) is not int:
+            raise ValueError("Process identities require integer PID/start ticks")
+        if pid <= 0 or ticks <= 0 or _process_start_ticks(pid) == ticks:
+            raise AccessLeaseLost("旧取得プロセスの終了を確認できません。隔離状態を維持します。")
+    return get_access_store().clear_owner_quarantine(resolve_site(site), str(owner))
+
+
+def _checked_quarantine_sites(sites):
+    return tuple(sorted(_SITES if sites is None else {resolve_site(site) for site in sites}))
+
+
+def clear_marketplace_generation_quarantines(generation: str, *, sites=None, deadline=None) -> int:
+    """Only call after the supervisor has verified this entire tree is gone.
+
+    Clearing generation A does not release or change a later owner's lease or
+    quarantine. An unverifiable tree must remain blocked, even after lease TTL.
+    """
+    if not generation or ":" in str(generation):
+        raise ValueError("Invalid process generation")
+    store = get_access_store()
+    cleared = 0
+    for site in _checked_quarantine_sites(sites):
+        if deadline is not None and time.monotonic() >= deadline:
+            raise AccessStoreUnavailable("隔離解除の期限に達しました。未解除の隔離状態を維持します。")
+        cleared += store.clear_generation_quarantine(site, str(generation), deadline=deadline)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise AccessStoreUnavailable("隔離解除の期限内完了を確認できません。取得を再開しません。")
+    with _quarantine_lock:
+        _quarantined_generations.discard(str(generation))
+    return cleared
 
 
 def resolve_site(value: str) -> str:
@@ -88,6 +212,8 @@ def request_budget(max_requests=120, max_seconds=900):
 
 
 def _check_active(consume=False):
+    from services.operation_deadline import check_deadline
+    check_deadline()
     budget = _budget.get()
     if budget:
         budget.check(consume=consume)
@@ -112,6 +238,8 @@ class MemoryAccessStore:
         with self.lock:
             now = self.clock()
             state = self.states.setdefault(site, {"leases": {}, "next": 0.0, "pause": 0.0})
+            if state.get("quarantines"):
+                raise AccessLeaseLost("停止を確認できない旧取得処理があるため、取得を停止しています。")
             leases = state["leases"]
             for token, deadline in list(leases.items()):
                 if deadline <= now:
@@ -148,9 +276,41 @@ class MemoryAccessStore:
             state = self.states.setdefault(site, {"leases": {}, "next": 0.0, "pause": 0.0})
             state["pause"] = max(state["pause"], self.clock() + seconds)
 
+    def quarantine(self, site, owner):
+        with self.lock:
+            state = self.states.setdefault(site, {"leases": {}, "next": 0.0, "pause": 0.0})
+            state.setdefault("quarantines", set()).add(owner)
+
+    def inspect_quarantines(self, site):
+        with self.lock:
+            return sorted(self.states.get(site, {}).get("quarantines", set()))
+
+    def clear_owner_quarantine(self, site, owner):
+        with self.lock:
+            state = self.states.get(site, {})
+            quarantines = state.get("quarantines", set())
+            removed = int(owner in quarantines)
+            quarantines.discard(owner)
+            state.get("leases", {}).pop(owner, None)
+            return removed
+
+    def clear_generation_quarantine(self, site, generation, *, deadline=None):
+        with self.lock:
+            quarantines = self.states.get(site, {}).get("quarantines", set())
+            owned = {owner for owner in quarantines if owner.startswith(generation + ":")}
+            quarantines.difference_update(owned)
+            # The old process can no longer use its lease. Clear only its exact
+            # generation tokens; never touch successor tokens.
+            leases = self.states.get(site, {}).get("leases", {})
+            for owner in list(leases):
+                if owner.startswith(generation + ":"):
+                    del leases[owner]
+            return len(owned)
+
 
 _ACQUIRE_LUA = """
 local t=redis.call('TIME'); local now=tonumber(t[1])+tonumber(t[2])/1000000
+if redis.call('SCARD',KEYS[4])>0 then return {-1,4} end
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
 local parent=ARGV[6]
 if parent~='' and not redis.call('ZSCORE', KEYS[1], parent) then return {-1,3} end
@@ -179,6 +339,24 @@ local t=redis.call('TIME'); local now=tonumber(t[1])+tonumber(t[2])/1000000
 local deadline=math.max(tonumber(redis.call('GET',KEYS[1]) or 0),now+tonumber(ARGV[1]))
 redis.call('SET',KEYS[1],deadline,'EX',math.ceil(deadline-now)+60); return 1
 """
+_CLEAR_GENERATION_LUA = """
+local prefix=ARGV[1]..':'
+local removed=0
+for _,owner in ipairs(redis.call('SMEMBERS',KEYS[1])) do
+ if string.sub(owner,1,string.len(prefix))==prefix then
+  removed=removed+redis.call('SREM',KEYS[1],owner)
+ end
+end
+for _,owner in ipairs(redis.call('ZRANGE',KEYS[2],0,-1)) do
+ if string.sub(owner,1,string.len(prefix))==prefix then redis.call('ZREM',KEYS[2],owner) end
+end
+return removed
+"""
+_CLEAR_OWNER_LUA = """
+local removed=redis.call('SREM',KEYS[1],ARGV[1])
+redis.call('ZREM',KEYS[2],ARGV[1])
+return removed
+"""
 
 
 class RedisAccessStore:
@@ -191,11 +369,11 @@ class RedisAccessStore:
     def _keys(self, site):
         # Hash tag keeps the site-scoped transaction usable with Redis Cluster.
         prefix = f"esp:marketplace:{{{site}}}"
-        return [prefix + ":leases", prefix + ":next", prefix + ":pause"]
+        return [prefix + ":leases", prefix + ":next", prefix + ":pause", prefix + ":quarantines"]
 
     def acquire(self, site, owner, *, interval, concurrency, lease_seconds, consume, parent=None):
         try:
-            wait_ms, reason = self.client.eval(_ACQUIRE_LUA, 3, *self._keys(site), owner,
+            wait_ms, reason = self.client.eval(_ACQUIRE_LUA, 4, *self._keys(site), owner,
                 interval, concurrency, lease_seconds, int(consume), parent or "")
             if int(wait_ms) < 0:
                 raise AccessLeaseLost("取得処理のロックが失効しました。")
@@ -222,6 +400,53 @@ class RedisAccessStore:
             self.client.eval(_PAUSE_LUA, 1, self._keys(site)[2], seconds)
         except Exception:
             raise AccessStoreUnavailable("共有待機時間を保存できないため、取得を停止しました。") from None
+
+    def quarantine(self, site, owner):
+        try:
+            # No expiry: 180s lease expiration is not proof that Chromium died.
+            self.client.sadd(self._keys(site)[3], owner)
+        except Exception:
+            raise AccessStoreUnavailable("旧取得処理の停止を確認できず、隔離状態の保存にも失敗しました。") from None
+
+    def inspect_quarantines(self, site):
+        try:
+            return sorted(owner.decode() if isinstance(owner, bytes) else str(owner)
+                          for owner in self.client.smembers(self._keys(site)[3]))
+        except Exception:
+            raise AccessStoreUnavailable("取得処理の隔離状態を確認できません。") from None
+
+    def clear_owner_quarantine(self, site, owner):
+        try:
+            keys = self._keys(site)
+            return int(self.client.eval(_CLEAR_OWNER_LUA, 2, keys[3], keys[0], owner))
+        except Exception:
+            raise AccessStoreUnavailable("所有者指定の隔離解除を確認できません。") from None
+
+    def clear_generation_quarantine(self, site, generation, *, deadline=None):
+        dedicated = None
+        try:
+            keys = self._keys(site)
+            client = self.client
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise AccessStoreUnavailable("隔離解除の期限に達しました。")
+                import redis
+                options = dict(self.client.connection_pool.connection_kwargs)
+                # Never mutate the shared pool: other requests may be using it.
+                options["socket_timeout"] = min(2.0, remaining / 2)
+                options["socket_connect_timeout"] = min(2.0, remaining / 2)
+                options["retry_on_timeout"] = False
+                options.pop("retry", None)
+                pool = redis.ConnectionPool(connection_class=self.client.connection_pool.connection_class, **options)
+                dedicated = client = redis.Redis(connection_pool=pool)
+            return int(client.eval(_CLEAR_GENERATION_LUA, 2, keys[3], keys[0], generation))
+        except Exception:
+            raise AccessStoreUnavailable("停止済み取得プロセスの隔離解除を確認できません。") from None
+        finally:
+            if dedicated is not None:
+                dedicated.close()
+                dedicated.connection_pool.disconnect()
 
 
 _store = None
@@ -261,11 +486,23 @@ class AccessLease:
     stop: threading.Event = field(default_factory=threading.Event)
     renewal: threading.Thread | None = None
     abandoned: bool = False
+    quarantine_persisted: bool = False
 
     def abandon(self):
-        """Leave an uncertain in-flight operation fenced until lease expiry."""
+        """Compatibility alias: uncertainty must outlive the renewable lease."""
+        self.quarantine()
+
+    def quarantine(self):
+        """Persist a site fence before giving up ownership of an uncertain RPC."""
         self.abandoned = True
-        self.stop.set()
+        self.lost.set()
+        if ":" in self.owner:
+            with _quarantine_lock:
+                _quarantined_generations.add(self.owner.split(":", 1)[0])
+        self.store.quarantine(self.site, self.owner)
+        self.quarantine_persisted = True
+        # Keep renewing until close, so a failed quarantine write is not
+        # silently followed by voluntary lease expiration.
 
     def start(self):
         def renew():
@@ -277,6 +514,11 @@ class AccessLease:
         self.renewal.start()
 
     def close(self):
+        if self.abandoned and not self.quarantine_persisted:
+            # A Redis outage cannot be made safe by voluntarily dropping the
+            # lease. The supervisor must stop this process generation; retain
+            # any usable renewal until that hard stop rather than expiry alone.
+            return
         self.stop.set()
         if self.renewal:
             self.renewal.join(timeout=3)
@@ -320,7 +562,7 @@ def _with_retry_delay(error, seconds):
 @contextmanager
 def marketplace_access(site_or_url, timeout_seconds=120, consume_request=True, parent_lease=None):
     site, parent, store, interval, concurrency = _prepare(site_or_url, parent_lease)
-    lease = parent or AccessLease(site, uuid.uuid4().hex, store)
+    lease = parent or AccessLease(site, _new_owner(), store)
     deadline = time.monotonic() + min(120, max(0, timeout_seconds))
     token = None
     acquired = False
@@ -357,7 +599,7 @@ def marketplace_access(site_or_url, timeout_seconds=120, consume_request=True, p
 @asynccontextmanager
 async def async_marketplace_access(site_or_url, timeout_seconds=120, consume_request=True, parent_lease=None):
     site, parent, store, interval, concurrency = _prepare(site_or_url, parent_lease)
-    lease = parent or AccessLease(site, uuid.uuid4().hex, store)
+    lease = parent or AccessLease(site, _new_owner(), store)
     deadline = time.monotonic() + min(120, max(0, timeout_seconds))
     token = None
     acquired = False

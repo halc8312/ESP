@@ -23,8 +23,8 @@ def test_shared_browser_runtime_snapshot_reports_idle_then_closed():
     assert initial["restart_count"] == 0
     assert initial["submit_count"] == 0
     assert initial["max_in_flight_tasks"] == 2
-    assert initial["max_tasks_before_restart"] == 0
-    assert initial["max_runtime_seconds"] == 0.0
+    assert initial["max_tasks_before_restart"] == 50
+    assert initial["max_runtime_seconds"] == 900.0
     assert initial["active_tasks"] == 0
     assert initial["completed_tasks_since_launch"] == 0
     assert initial["thread_alive"] is False
@@ -276,3 +276,86 @@ def test_shared_browser_runtime_closes_cleanly_after_startup_failure(monkeypatch
     assert snapshot["state"] == "closed"
     assert snapshot["loop_running"] is False
     assert snapshot["thread_alive"] is False
+
+
+def test_cancelled_concurrent_future_does_not_return_slot_before_actual_cleanup(monkeypatch):
+    runtime = SharedBrowserRuntime(BrowserRuntimeConfig(site="mercari"))
+    monkeypatch.setattr(runtime, "start", lambda: None)
+
+    async def scenario():
+        runtime._loop = asyncio.get_running_loop()
+        runtime._browser = object()
+        started = asyncio.Event()
+        closing = asyncio.Event()
+        finish_close = asyncio.Event()
+
+        async def operation(_browser):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                closing.set()
+                await finish_close.wait()
+
+        future = runtime.submit(operation)
+        await started.wait()
+        assert future.cancel()
+        await closing.wait()
+        assert future.cancelled()
+        assert runtime.snapshot()["active_tasks"] == 1
+        assert runtime._submit_permit.acquire(blocking=False) is False
+        finish_close.set()
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert runtime.snapshot()["active_tasks"] == 0
+        assert runtime._submit_permit.acquire(blocking=False) is True
+        runtime._submit_permit.release()
+
+    asyncio.run(scenario())
+
+
+def test_cancel_before_runtime_task_starts_returns_slot_without_running_operation(monkeypatch):
+    runtime = SharedBrowserRuntime(BrowserRuntimeConfig(site="mercari"))
+    monkeypatch.setattr(runtime, "start", lambda: None)
+    effects = []
+
+    async def scenario():
+        runtime._loop = asyncio.get_running_loop()
+        runtime._browser = object()
+
+        async def operation(_browser):
+            effects.append("started")
+
+        future = runtime.submit(operation)
+        future.cancel()
+        await asyncio.sleep(0)
+        assert effects == []
+        assert runtime._submit_permit.acquire(blocking=False)
+        runtime._submit_permit.release()
+
+    asyncio.run(scenario())
+
+
+def test_unverified_cleanup_quarantines_runtime_and_keeps_slot(monkeypatch):
+    from services.browser_runtime import BrowserCleanupUnverified
+
+    runtime = SharedBrowserRuntime(BrowserRuntimeConfig(site="mercari"))
+    monkeypatch.setattr(runtime, "start", lambda: None)
+
+    async def scenario():
+        runtime._loop = asyncio.get_running_loop()
+        runtime._browser = object()
+
+        async def operation(_browser):
+            raise BrowserCleanupUnverified("context.close did not finish")
+
+        future = runtime.submit(operation)
+        with pytest.raises(BrowserCleanupUnverified):
+            await asyncio.wrap_future(future)
+        assert runtime.snapshot()["quarantined"] is True
+        assert runtime.snapshot()["state"] == "quarantined"
+        assert runtime._submit_permit.acquire(blocking=False) is False
+        with pytest.raises(BrowserCleanupUnverified):
+            runtime.submit(operation)
+
+    asyncio.run(scenario())

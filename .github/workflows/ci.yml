@@ -7,7 +7,21 @@ on:
 jobs:
   test-and-audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: esp_test
+          POSTGRES_PASSWORD: isolated-ci-password
+          POSTGRES_DB: esp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U esp_test -d esp_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
       redis:
         image: redis:7.4-alpine
         ports:
@@ -22,6 +36,9 @@ jobs:
       DATABASE_URL: sqlite:///test_mercari.db
       SECRET_KEY: ci-test-secret-key-32-characters-minimum
       MARKETPLACE_ACCESS_TEST_REDIS_URL: redis://localhost:6379/15
+      ESP_TEST_REDIS_URL: redis://localhost:6379/14
+      ESP_TEST_POSTGRES_URL: postgresql+psycopg://esp_test:isolated-ci-password@localhost:5432/esp_test
+      ESP_RUN_CHROMIUM_CAPTURE_INTEGRATION: "1"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -40,14 +57,29 @@ jobs:
       - name: Dependency consistency
         run: python -m pip check
 
+      - name: Install browser for local capture and owned-process integration
+        run: python -m playwright install --with-deps chromium
+
       - name: Dependency vulnerability audit
         run: |
           # argostranslate 1.11.0 currently hard-pins stanza==1.10.1.
           # Remove this ignore once argostranslate ships a fixed stanza dependency.
           python -m pip_audit -r requirements.txt --ignore-vuln CVE-2026-54499
 
+      - name: Heartbeat ownership integration
+        run: >-
+          python -m pytest -v
+          tests/test_heartbeat_transport.py::test_real_redis_atomic_owner_write_and_late_old_owner
+
+      - name: PostgreSQL 18, Chromium and owned-process integration
+        run: >-
+          python -m pytest -v
+          tests/test_trash_postgresql_concurrency.py
+          tests/test_patrol_supervisor.py
+          tests/test_mercari_browser_fetch.py::test_real_chromium_bounded_stream_preserves_spa_json_with_route_guard
+
       - name: Test
-        run: python -m pytest -q
+        run: python -m pytest -q -ra --durations=20
 
       - name: Production configuration smoke check
         env:

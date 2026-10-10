@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
+import re
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -32,6 +33,69 @@ def get_database_url() -> str:
     return normalize_database_url(os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL))
 
 
+def _positive_database_timeout(name: str, default: int) -> int:
+    """Reject accidentally disabled/invalid deadlines instead of using infinity."""
+    raw = os.environ.get(name, str(default))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a positive integer") from exc
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def postgres_timeout_connect_args(database_url: str) -> dict[str, object]:
+    """Bound driver connection and SQL phases independently of pool checkout.
+
+    Preserve explicit URL settings. ``pool_timeout`` bounds waiting for a pool
+    slot, not opening a socket/TLS/authentication or executing a statement.
+    These PostgreSQL settings are not passed to SQLite or other DBAPI drivers.
+    No connection strings, credentials or arbitrary URL options are logged.
+    """
+    url = make_url(normalize_database_url(database_url))
+    if url.get_backend_name() != "postgresql":
+        return {}
+    args: dict[str, object] = {}
+    if "connect_timeout" not in url.query:
+        args["connect_timeout"] = (
+            _positive_database_timeout("DB_CONNECT_TIMEOUT_SECONDS", 5)
+            if "DB_CONNECT_TIMEOUT_SECONDS" in os.environ
+            else _positive_database_timeout("PGCONNECT_TIMEOUT", 5)
+        )
+    else:
+        # psycopg/libpq treat zero as no timeout. A supplied value must still
+        # preserve the finite connection contract.
+        configured = url.query["connect_timeout"]
+        if isinstance(configured, tuple):
+            configured = configured[-1]
+        try:
+            if int(configured) <= 0:
+                raise ValueError
+        except (TypeError, ValueError) as exc:
+            raise ValueError("DATABASE_URL connect_timeout must be positive") from exc
+
+    options = url.query.get("options", os.environ.get("PGOPTIONS", ""))
+    if isinstance(options, tuple):
+        options = options[-1]
+    options = str(options)
+    additions: list[str] = []
+    for setting, env_name, default in (
+        ("statement_timeout", "DB_STATEMENT_TIMEOUT_MS", 15000),
+        ("lock_timeout", "DB_LOCK_TIMEOUT_MS", 5000),
+    ):
+        # Match both '-c setting=value' and '--setting=value' spellings, and
+        # preserve intentional per-deployment URL configuration verbatim.
+        if re.search(rf"(?:^|\s)(?:-c\s*|--){setting}\s*=", options):
+            continue
+        additions.append(
+            f"-c {setting}={_positive_database_timeout(env_name, default)}"
+        )
+    if additions:
+        args["options"] = " ".join([options, *additions]).strip()
+    return args
+
+
 def create_app_engine(database_url: str | None = None):
     resolved_url = normalize_database_url(database_url or get_database_url())
     try:
@@ -50,6 +114,7 @@ def create_app_engine(database_url: str | None = None):
         engine = create_engine(
             resolved_url,
             echo=False,
+            connect_args=postgres_timeout_connect_args(resolved_url),
             pool_pre_ping=True,
             pool_size=5,
             max_overflow=10,

@@ -27,6 +27,7 @@ from services.translator.base import TranslationError, TranslatorUnavailableErro
 from services.translator.suggestion_store import (
     apply_suggestion_to_product,
     get_suggestion_by_job_id,
+    lock_translation_product,
     mark_failed,
     mark_running,
     mark_succeeded,
@@ -128,6 +129,15 @@ def _persist_translation_result(
 
     session_db = create_isolated_session()
     try:
+        # Purge locks the Product then removes suggestions. Take the same
+        # parent-first order before mark_succeeded's child UPDATE; a deleted
+        # parent or missing suggestion makes this late result a harmless no-op.
+        pending = get_suggestion_by_job_id(job_id, session=session_db)
+        if pending is None or lock_translation_product(
+            session_db, product_id=pending.product_id, user_id=pending.user_id,
+        ) is None:
+            session_db.rollback()
+            return False
         stored = mark_succeeded(
             job_id,
             worker_token=worker_token,
@@ -139,6 +149,9 @@ def _persist_translation_result(
             session_db.rollback()
             return False
 
+        # The initial read is in this session's identity map; mark_succeeded
+        # uses a CAS bulk UPDATE with synchronize_session=False.
+        session_db.expire(pending)
         refreshed = get_suggestion_by_job_id(job_id, session=session_db)
         if refreshed is None:
             raise RuntimeError(
