@@ -6,10 +6,64 @@ import subprocess
 import sys
 import time
 import uuid
+from urllib.parse import urlsplit
 
 import pytest
 
 from services import heartbeat_transport as transport
+
+
+def _isolated_redis_test_url(raw_url):
+    """Allow integration writes/deletes only on unauthenticated loopback DB14."""
+    error = "ESP_TEST_REDIS_URL must target unauthenticated loopback Redis DB14 without query or fragment"
+    try:
+        parsed = urlsplit(raw_url)
+        valid = (
+            parsed.scheme == "redis"
+            and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+            and parsed.username is None and parsed.password is None
+            and parsed.path == "/14"
+            and parsed.port in {None, 6379}
+            and "?" not in raw_url and "#" not in raw_url
+            and not any(character.isspace() for character in raw_url)
+        )
+    except (TypeError, ValueError):
+        raise ValueError(error) from None
+    if not valid:
+        raise ValueError(error)
+    return raw_url
+
+
+@pytest.mark.parametrize("url", [
+    "redis://localhost:6379/14", "redis://127.0.0.1/14", "redis://[::1]:6379/14",
+])
+def test_isolated_redis_url_allows_loopback_test_database(url):
+    assert _isolated_redis_test_url(url) == url
+
+
+@pytest.mark.parametrize("url", [
+    "redis://production.example:6379/14", "redis://localhost:6379/0",
+    "redis://localhost:6379/15", "redis://localhost:6379", "redis://localhost:6379/014",
+    "redis://user@localhost:6379/14", "redis://:example@localhost:6379/14",
+    "redis://localhost:6379/14?db=0", "redis://localhost:6379/14?",
+    "redis://localhost:6379/14#fragment", "redis://localhost:6379/14#",
+    "rediss://localhost:6379/14", "redis://localhost:6380/14", "redis://local\nhost:6379/14",
+])
+def test_isolated_redis_url_rejects_unsafe_target_before_connecting(url, monkeypatch):
+    from redis import Redis
+
+    monkeypatch.setattr(Redis, "from_url", lambda *_args, **_kwargs: pytest.fail("unsafe URL reached Redis"))
+    with pytest.raises(ValueError, match="loopback Redis DB14"):
+        _isolated_redis_test_url(url)
+
+
+def test_real_redis_integration_rejects_unsafe_env_before_connection(monkeypatch):
+    from redis import Redis
+
+    monkeypatch.setenv("ESP_TEST_REDIS_URL", "redis://production.example:6379/14")
+    monkeypatch.setattr(Redis, "from_url", lambda *_args, **_kwargs: pytest.fail("unsafe integration target reached Redis"))
+    with pytest.raises(ValueError, match="loopback Redis DB14"):
+        test_real_redis_atomic_owner_write_and_late_old_owner()
 
 
 def request(**fields):
@@ -180,7 +234,7 @@ def test_real_linux_child_with_hung_dns_is_stopped(monkeypatch):
 def test_real_redis_atomic_owner_write_and_late_old_owner():
     from redis import Redis
 
-    url = os.environ["ESP_TEST_REDIS_URL"]
+    url = _isolated_redis_test_url(os.environ["ESP_TEST_REDIS_URL"])
     connection = Redis.from_url(url, socket_connect_timeout=2, socket_timeout=2)
     namespace = f"esp:test:heartbeat:{uuid.uuid4().hex}"
     owner, heartbeat = namespace + ":owner", namespace + ":value"

@@ -7,6 +7,7 @@ on:
 jobs:
   test-and-audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
@@ -35,6 +36,7 @@ jobs:
       DATABASE_URL: sqlite:///test_mercari.db
       SECRET_KEY: ci-test-secret-key-32-characters-minimum
       MARKETPLACE_ACCESS_TEST_REDIS_URL: redis://localhost:6379/15
+      ESP_TEST_REDIS_URL: redis://localhost:6379/14
       ESP_TEST_POSTGRES_URL: postgresql+psycopg://esp_test:isolated-ci-password@localhost:5432/esp_test
       ESP_RUN_CHROMIUM_CAPTURE_INTEGRATION: "1"
     steps:
@@ -64,8 +66,13 @@ jobs:
           # Remove this ignore once argostranslate ships a fixed stanza dependency.
           python -m pip_audit -r requirements.txt --ignore-vuln CVE-2026-54499
 
+      - name: Heartbeat ownership integration
+        run: >-
+          python -m pytest -v
+          tests/test_heartbeat_transport.py::test_real_redis_atomic_owner_write_and_late_old_owner
+
       - name: Test
-        run: python -m pytest -q
+        run: python -m pytest -q -ra --durations=20
 
       - name: Production configuration smoke check
         env:
