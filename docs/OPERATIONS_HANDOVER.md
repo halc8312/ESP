@@ -4,19 +4,21 @@
 
 ## 現在の構成
 
-2026-09-29の反映確認で使用した構成を記載する。実行前に同じRenderワークスペースとサービスIDを確認する。Blueprint上の論理名`esp-web`と、既存の実サービス名`ESP-1`は異なる。
+論理的な役割を示す。実サービス名・ID・契約プラン・権限者は受領側と共有する非公開の構成台帳で照合する。Blueprint上の名称と既存サービスの実名称が一致するとは限らない。
 
-| 対象 | 現在の識別情報・役割 |
+| 対象 | 役割と確認事項 |
 | --- | --- |
-| GitHub | `halc8312/ESP`。webとworkerへ同じ検証済みコミットを反映 |
-| Render workspace | `tea-d4nfak0gjchc73c3ensg` |
-| web | `ESP-1` / `srv-d4nn33khg0os739gc1f0`。HTTP・公開カタログ・画像保存 |
-| worker | `esp-worker` / `srv-d77fj5p5pdvs7399cmh0`。`tini -- python worker.py`、RQ・巡回・定期処理 |
-| PostgreSQL | `esp-postgres` / `dpg-d77finp5pdvs7399cjt0-a`。本番メジャーバージョン18 |
-| Redis/Valkey | 既存`esp-keyvalue`。共有キュー・ロック・heartbeat・アクセス制御。サービスIDは引き継ぎ時に確認 |
-| 画像 | webの永続ディスク、マウント`/var/data`、`IMAGE_STORAGE_PATH=/var/data/images`。確保容量・使用量はRenderで実測し、Blueprintの`sizeGB: 10`を実使用量として転記しない |
+| GitHub | webとworkerへ同じ検証済みコミットを反映 |
+| Render workspace | 対象環境・region・権限者を確認。他案件のサービスを含む環境へ一括で管理権限を渡さない |
+| web | HTTP・公開カタログ・画像保存 |
+| worker | `tini -- python worker.py`、RQ・巡回・定期処理 |
+| PostgreSQL | 本番の記録はmajor 18。復元前に実環境のmajorと接続先を再確認 |
+| Redis/Valkey | 共有キュー・ロック・heartbeat・アクセス制御 |
+| 画像 | webの永続ディスク。マウント `/var/data`、`IMAGE_STORAGE_PATH=/var/data/images`。確保容量・使用量は実測し、Blueprintの `sizeGB: 10` を実使用量として転記しない |
 
-`render.yaml`は分離構成の参照で、既存サービスを新規作成する指示ではない。`render.existing-web-addons.yaml`、`docs/RENDER_CUTOVER_RUNBOOK.md`、`docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md`には移行前の記述が残る。この運用では「分離構成が未稼働」「キューをinmemoryへ変更する」を適用しない。既存webの作り直し、DBの作り直し、ディスクの置き換えは通常の反映手順に含めない。
+`render.yaml` は分離構成の参照であり、既存リソースの再作成指示ではない。新しい専用環境の作成・移行は、対象・バックアップ・切替方法を確認して実施する。通常の反映は [RENDER_CUTOVER_RUNBOOK](RENDER_CUTOVER_RUNBOOK.md) に従う。single-webの資料を現在のworker・RQを無効化する指示として適用しない。
+
+構成一覧ではサービスごとに、実名称、プラン、DB/ディスクの確保容量と実使用量、環境変数の登録数、確認日時を記録する。Secretの値、接続URL、個人の連絡先は公開文書に入れない。
 
 ## 引き継ぐ設定名
 
@@ -212,4 +214,4 @@ python -m pytest tests/test_backup_restore_plan.py tests/test_restore_rehearsal.
 python scripts/restore_rehearsal.py
 ```
 
-この文書を作成した作業環境にはDocker／PostgreSQL CLIがなく、PG18復元CIはまだ実行していない。CIのrun URL、対象Git SHA、成功／失敗結果を確認して別途記録する。CIで架空データの復元が成功しても、本番バックアップの取得、実データの復元試験、移管完了、RPO/RTO達成の証拠とはしない。
+PG18復元CIの実施結果は、Actionsのrun URL、対象Git SHA、成功／失敗結果を確認して記録する。過去のrunの成功を新しいreleaseへ転用しない。CIで架空データの復元が成功しても、本番バックアップの取得、実データの復元試験、移管完了、RPO/RTO達成の証拠とはしない。

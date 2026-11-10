@@ -1,201 +1,57 @@
-# Render Cutover Runbook
+# Render 分離構成の確認手順
 
-> Historical migration plan. The split topology is now the operating baseline. Use [OPERATIONS_HANDOVER](OPERATIONS_HANDOVER.md) for current operations; do not apply the old single-web assumptions below to production.
+本番の基準は Web・worker・PostgreSQL・Redis/Valkey の分離構成です。通常の反映では既存Web・DB・画像ディスクを作り直しません。環境の台帳、バックアップ、復元、権限引き渡しは [OPERATIONS_HANDOVER](OPERATIONS_HANDOVER.md) を参照してください。
 
-This runbook is for `Arc 3 / Move C4`, when the first paid Render split is explicitly approved.
+## 構成ファイルの使い分け
 
-It does not replace the current single-web production path. Until cutover is approved, keep the existing Render Web Service on `SCRAPE_QUEUE_BACKEND=inmemory`.
+- [render.yaml](../render.yaml): 分離構成の参照定義。新しい専用環境ではリソース・プラン・ディスク・設定を確認して使用する。
+- [render.existing-web-addons.yaml](../render.existing-web-addons.yaml): 旧Webを維持した初回移行用の追加定義。Webを含まないため、既に分離済みの環境へ重ねて適用しない。
+- [SINGLE_WEB_REDEPLOY_RUNBOOK](SINGLE_WEB_REDEPLOY_RUNBOOK.md): single-webの互換確認用。現在のworkerやRQを無効にする指示として扱わない。
 
-## Goal
+Blueprintのプラン・容量は実環境の利用量を示しません。Dashboardで実サービス名、契約プラン、DBと画像ディスクの確保容量・使用量、環境変数の登録数を確認し、Secretの値を公開資料へ記載しないでください。
 
-Activate the dormant `render.yaml` safely, verify the first paid split locally first, and keep rollback to the current single-web production path simple.
+## web / worker の共有条件
 
-Expected first paid shape:
+| 設定 | 確認事項 |
+| --- | --- |
+| Git SHA・schema | 両サービスで同じ検証済みreleaseを使い、Alembic revisionと互換性を確認する |
+| `SECRET_KEY`, `BG_REMOVAL_INTERNAL_SECRET` | web/workerで同じ署名設定を使う。`sync: false`は同値の自動配布を保証しない |
+| `DATABASE_URL`, `REDIS_URL` | 同じDB・キュー・ロック・heartbeatを参照する |
+| `SCRAPE_QUEUE_BACKEND` | 分離構成では `rq`。一時回避として無断で `inmemory`へ切り替えない |
+| scheduler | Web側は無効。専用workerが定期処理を所有する |
+| `IMAGE_STORAGE_PATH` | Webの永続領域。workerの一時領域で代替しない |
+| `WEB_INTERNAL_HOST`, `WEB_INTERNAL_PORT` | DashboardのInternal接続先または `fromService.property: host` を使う。論理サービス名から実ホスト名を推定しない。内部ポートの既定値は8080 |
 
-- `esp-web`
-- `esp-worker`
-- `esp-keyvalue`
-- `esp-postgres`
+内部URLは `ESP_WEB_INTERNAL_URL` / `WEB_INTERNAL_URL` / `WEB_PUBLIC_URL` がhost・portより優先されます。古い明示URLが残っていないか確認します。内部アップロードの `401 invalid_signature` は共有Secret、名前解決失敗は実ホスト名、接続失敗はbind・ポート・同じregion/workspaceへの所属を確認します。
 
-The intended initial recurring cost stays aligned with the budget guardrail in `docs/BACKEND_RENEWAL_EXECUTION_PLAN.md`. Re-check Render pricing on the actual activation date before provisioning.
+Dockerfileは公開ポートと内部ポート8080へbindします。このプロジェクトの配線を維持してください。Renderのポート制限は変わるため、判断には [公式Private Network資料](https://render.com/docs/private-network) を使います。過去の「10000は常に内部通信不可」という前提を流用しません。
 
-## Local Gate
+## 反映前の確認
 
-Do not provision paid Render services until all of the following pass locally.
+新規ローカル・検証環境で、対象DBと設定を確認して実行します。
 
-1. `flask predeploy-check --target single-web`
-2. `flask schema-drift-check`
-3. `flask render-blueprint-audit`
-4. `flask render-budget-guardrail-audit`
-5. `flask render-dashboard-inputs`
-6. `flask render-local-split-checklist --blueprint-path render.yaml`
-7. `flask render-cutover-readiness --require-backend postgresql --apply-migrations --strict`
-8. `py -3 -m pytest tests -q`
-
-If you want the exact operator sequence in one payload, generate it with:
-
-```powershell
-flask render-cutover-checklist --base-url https://<esp-web-url> --username <smoke-user> --password <smoke-password>
+```bash
+flask --app app:create_cli_app render-blueprint-audit
+flask --app app:create_cli_app render-local-split-checklist --blueprint-path render.yaml
+flask --app app:create_cli_app render-local-split-readiness
+pytest tests/test_worker_entrypoint.py tests/test_worker_runtime.py -q
+pytest tests/test_bg_removal_routes.py tests/test_bg_remover_internals.py -q
 ```
 
-If `search-mercari-fixture` is advisory-only and reports `search_skeleton`, that is not a paid-cutover blocker by itself. It means the local search dump is not a rendered result page.
+次のコマンドはDBへmigrationを書き込みます。まず隔離したPostgreSQLで検証します。本番ではバックアップと実行担当・反映計画を確認したうえで実施してください。
 
-## Required Local Services
-
-Bring up the local stand-ins before the cutover gate.
-
-```powershell
-docker compose -f docker-compose.local.yml up -d
+```bash
+flask --app app:create_cli_app render-cutover-readiness --require-backend postgresql --apply-migrations --strict
 ```
 
-If you want the exact local split rehearsal contract in one payload, generate it with:
+通常CI・Docker検証・PG18復元CIの結果を対象SHAで確認します。Blueprintの差分が既存サービス・DB・ディスクの作り直しを含まないか確認します。コードpushだけでDashboardの設定も更新されたとはみなしません。
 
-```powershell
-flask render-local-split-checklist --blueprint-path render.yaml
-```
+## 反映後の確認と障害対応
 
-This checklist also reports whether the recommended local PostgreSQL and Redis endpoints are actually reachable before you run the stricter cutover gates.
+1. web/workerの同一SHA、schema、永続ディスクの維持を確認する。
+2. `/readyz`でDB/Redis、`/stack-readyz`でworker・scheduler・巡回完了・監視評価を確認する。後者をWeb再起動用health checkへ置き換えない。
+3. workerのRQ待受、巡回の成功・失敗・停止、滞留ジョブを確認する。
+4. 管理画面と公開カタログで画像・利用者分離・取得元非公開を確認する。
+5. [RecordCity設定](recordcity-waf-reachability.md)、[監視](SCRAPE_MONITORING_RUNBOOK.md)、[メール](RESEND_MAIL_RUNBOOK.md) を環境ごとに確認する。
 
-If you want to run the same rehearsal with the repo-pinned local PostgreSQL/Redis env defaults in one command, use:
-
-```powershell
-flask render-local-split-readiness
-```
-
-If you want the full operator bundle before the first paid activation, use:
-
-```powershell
-flask render-cutover-brief --base-url https://<esp-web-url> --username <smoke-user> --password <smoke-password>
-```
-
-Expected local equivalents:
-
-- PostgreSQL
-- Redis
-- Flask web app
-- `worker.py`
-
-## Render Service Mapping
-
-Use the dormant Blueprint in `render.yaml`.
-
-### Web
-
-- Service name: `esp-web`
-- Health check: `/readyz`（web自身に必須なDB/Redisのみ）
-- Full-stack check: `/stack-readyz`（live worker、worker role scheduler、patrol完了の heartbeat も含む）
-- Queue backend: `rq`
-- Scheduler: disabled on web
-- Image storage path: `/var/data/images`
-
-### Worker
-
-- Service name: `esp-worker`
-- Start command: `tini -- python worker.py`
-- Tini directly supervises Python; Python starts and stops the private Xvfb and keeps it alive through browser-pool cleanup.
-- Record City fetch route: `RECORDCITY_FETCH_PROVIDER=browser`, `RECORDCITY_BROWSER_PROFILE=persistent-chrome`（branded Chrome + persistent context。TCP listenなし。他サイトはheadlessのまま）
-- Record City production evidence: merge commit `10dfebe726c3d6873e10c76dc498f9d8e6392797`で、2026-09-04に通常UIのキーワード検索→詳細抽出が成功。旧`headful` / fresh-context構成へ戻さず、詳細は`docs/recordcity-waf-reachability.md`を参照する。
-- Scheduler owner: enabled on exactly one worker（patrol、trash purge、translation lease recovery）
-- Shared browser runtime: enabled
-
-### Data Stores
-
-- Key Value: `esp-keyvalue`
-- Postgres: `esp-postgres`
-
-## Secret Env Vars
-
-These stay manual and must be filled in when the Blueprint is applied.
-
-- `esp-web`: `SECRET_KEY`, `SELECTOR_ALERT_WEBHOOK_URL`
-- `esp-worker`: `SECRET_KEY`, `SELECTOR_ALERT_WEBHOOK_URL`, `OPERATIONAL_ALERT_WEBHOOK_URL`
-
-## Managed Env Wiring
-
-These should stay managed by the Blueprint and should not be copied by hand from a local shell.
-
-- `DATABASE_URL`
-- `REDIS_URL`
-- `SCRAPE_QUEUE_BACKEND`
-- `WEB_SCHEDULER_MODE`
-- `SCHEMA_BOOTSTRAP_MODE`
-- `IMAGE_STORAGE_PATH`
-- `WORKER_ENABLE_SCHEDULER`
-- `SCHEDULER_HEARTBEAT_ENABLED`
-- `SCHEDULER_HEARTBEAT_KEY`
-- `SCHEDULER_HEARTBEAT_FRESHNESS_SECONDS`
-- `WORKER_HEARTBEAT_ENABLED`
-- `WORKER_HEARTBEAT_KEY_PREFIX`
-- `WORKER_HEARTBEAT_INTERVAL_SECONDS`
-- `WORKER_HEARTBEAT_TTL_SECONDS`
-- `WORKER_HEARTBEAT_FRESHNESS_SECONDS`
-- `WARM_BROWSER_POOL`
-- `ENABLE_SHARED_BROWSER_RUNTIME`
-- `BROWSER_POOL_WARM_SITES`
-- `RECORDCITY_BROWSER_PROFILE`（worker: `persistent-chrome`）
-- `RECORDCITY_FETCH_PROVIDER`（worker: `browser`）
-- `MERCARI_USE_BROWSER_POOL_DETAIL`
-- `MERCARI_PATROL_USE_BROWSER_POOL`
-- `SNKRDUNK_USE_BROWSER_POOL_DYNAMIC`
-- `WORKER_RECONCILE_STALLED_JOBS_ON_STARTUP`
-- `WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP`
-- `WORKER_SELECTOR_REPAIR_LIMIT`
-- `SELECTOR_REPAIR_MIN_SCORE`
-- `SELECTOR_REPAIR_MIN_CANARIES`
-- `WORKER_BACKLOG_WARN_COUNT`
-- `WORKER_BACKLOG_WARN_AGE_SECONDS`
-
-## Manual Non-Secret Env Vars
-
-These stay manual because they are deployment-specific and should not be hardcoded into the Blueprint.
-
-- `SELECTOR_REPAIR_CANARY_URLS_MERCARI_DETAIL`
-- `SELECTOR_REPAIR_CANARY_URLS_SNKRDUNK_DETAIL`
-
-## Safe Activation Order
-
-1. Leave the current single-web production service unchanged.
-2. Re-run the local gate immediately before provisioning.
-3. Import/sync `render.yaml` without pointing it at the current single-web service.
-4. Fill secret env vars.
-5. Fill selector repair canary URL env vars on `esp-worker`.
-6. Keep `WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP=0` for the first paid split deploy.
-7. Provision `esp-postgres` and `esp-keyvalue`.
-8. Deploy `esp-worker` first, compare its startup logs against `flask render-worker-postdeploy-checklist --blueprint-path render.yaml`, and wait for worker, scheduler, and patrol heartbeats.
-9. Deploy `esp-web`, confirm `/healthz` reports the expected runtime role, confirm `/readyz` returns `200`, and verify `/stack-readyz` after the worker is live.
-10. Run `flask render-postdeploy-smoke --base-url https://<esp-web-url> --retries 4 --retry-delay-seconds 2`.
-11. Run `flask process-selector-repairs --limit 1 --dry-run`.
-12. If a smoke user already exists, rerun with `--username <smoke-user> --password <smoke-password>`. If it does not exist yet, add `--ensure-user` so authenticated `/scrape` and `/api/scrape/jobs` are checked too.
-13. Run one preview scrape smoke.
-14. Run one persist scrape smoke.
-15. Confirm status polling, result page rendering, and one persisted product path.
-16. Only after those checks pass, consider a manual `flask process-selector-repairs --candidate-id <id> --apply` or enabling startup automation.
-
-## First Render Checks
-
-After provisioning, verify at minimum:
-
-- `esp-web` health check stays green
-- `esp-worker` starts and remains healthy
-- `SCRAPE_QUEUE_BACKEND=rq`
-- `WEB_SCHEDULER_MODE=disabled` on web
-- `WORKER_ENABLE_SCHEDULER=1` only on the intended worker
-- `/readyz` reports `database=ok` and `redis=ok`; worker/scheduler loss must not recycle a healthy web process
-- `/stack-readyz` reports `database=ok`, `redis=ok`, `worker=ok`, `scheduler=ok`, and `patrol=ok`
-- `WORKER_PROCESS_SELECTOR_REPAIRS_ON_STARTUP=0` on the first deploy
-- `SELECTOR_REPAIR_MIN_SCORE=90`
-- `SELECTOR_REPAIR_MIN_CANARIES=2`
-- `/login`, `/scrape`, `/api/scrape/jobs` do not return `500`
-- authenticated `/api/scrape/jobs` does not return `500` or redirect back to `/login`
-- Redis-backed queue jobs move from `queued` to `completed`
-- One real scrape job reaches `/api/scrape/status/<job_id>` and `/scrape/result/<job_id>`
-
-## Rollback
-
-If any first-cutover check fails:
-
-1. Stop using the new Render services for operator workflows.
-2. Keep the existing single-web production service as the live fallback.
-3. Do not mutate the legacy single-web service into `rq` mode.
-4. Fix the issue locally first.
-5. Re-run `render-cutover-readiness --strict` before trying the paid split again.
+コードを戻す場合はDBの前方互換性を確認します。通常の障害対応でDBを逆migrationしたり、古いdumpで本番を上書きしたりしません。selector修復の適用、メール送信、外部有料providerの有効化は通常の反映にまとめず、それぞれ対象と影響を確認します。

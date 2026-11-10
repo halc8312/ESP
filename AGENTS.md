@@ -56,4 +56,7 @@ flask render-cutover-readiness --require-backend postgresql --apply-migrations -
 ## More context
 
 - Start with `README.md`.
-- For operator workflows, start with `docs/README.md` and `docs/OPERATIONS_HANDOVER.md`. `docs/RENDER_CUTOVER_RUNBOOK.md` is a historical initial-migration plan; `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` is for legacy single-web compatibility checks.
+- For operator workflows, start with `docs/README.md` and `docs/OPERATIONS_HANDOVER.md`. `docs/RENDER_CUTOVER_RUNBOOK.md` covers the split deployment checks; `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` is for legacy single-web compatibility checks.
+
+- For module responsibilities and validation, use `docs/ARCHITECTURE.md`. Track delivery gaps in `docs/DELIVERY_STATUS.md`.
+- Run migration-writing checks against an isolated database first; do not run them against production as a read-only audit.

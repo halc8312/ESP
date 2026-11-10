@@ -19,6 +19,7 @@ ESP は、国内の仕入れサイトから商品を取り込み、価格・画�
 | 確認すること | 資料 |
 | --- | --- |
 | 本番構成、設定名、バックアップ・復元 | [運用引き継ぎ](docs/OPERATIONS_HANDOVER.md) |
+| 初回納品の残作業・確認項目 | [納品確認一覧](docs/DELIVERY_STATUS.md) |
 | 2段階取得の実装範囲・制約 | [2段階取得](docs/TWO_STAGE_EXTRACTION.md) |
 | Render の構成定義 | [render.yaml](render.yaml) |
 | 開発上の制約・テスト方針 | [AGENTS.md](AGENTS.md) |
@@ -69,7 +70,7 @@ flask --app app:create_cli_app create-user
 flask --app app:create_cli_app run --host 127.0.0.1 --port 5000
 ```
 
-設定項目の例は [.env.example](.env.example) にあります。`.env`の値が自動で読み込まれるとは限らないため、実行環境に設定してください。旧補助スクリプト `create_test_user.py` と `cleanup_db.py` は誤操作防止のため実行を停止します。
+設定項目の例は [.env.example](.env.example) にあります。`.env`の値が自動で読み込まれるとは限らないため、実行環境に設定してください。アカウントは上記のCLIで作成し、開発用の使い捨てDBで確認してください。
 
 ```bash
 # CIと同じテスト対象。外部サイトでの実動作を保証するものではありません。
@@ -78,7 +79,7 @@ pytest tests -q
 
 コードは `routes/`、`services/`、`models.py`、画面は `templates/` と `static/`、検証は `tests/` にあります。`llama.cpp/` は、このアプリの通常の変更対象に含めません。
 
-開発にはAIコーディング支援を利用しています。開発時の指針は [AGENTS.md](AGENTS.md)、過去の説明は [旧README](docs/archive/README_20260930.md) を参照してください。
+開発にはAIコーディング支援を利用しています。構成と検証は [開発資料](docs/ARCHITECTURE.md)、開発時の指針は [AGENTS.md](AGENTS.md) を参照してください。
 
 ## ライセンス
 
