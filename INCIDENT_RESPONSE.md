@@ -1,95 +1,26 @@
-# Incident Response: Repository Data Exposure
+# Repository Data Exposure Response
 
-## Confirmed Exposure
+## Recorded exposure and current limits
 
-The repository contained tracked runtime and generated files including:
+Historical revisions included runtime SQLite files (including `mercari.db` and backups), generated HTML, scrape reports, and product exports. The database artifacts included account records and password hashes. Deleting the current files does not remove their older Git objects, PR diffs, cached copies, or clones.
 
-- `mercari.db`
-- `mercari.db.backup`
-- `dump.html`
-- `mercari_page_dump.html`
-- `mercari_page_dump_live.html`
-- `scrape_test_results.json`
-- `scraping_test_report.json`
-- `shopify_products.csv`
-- `shopify_products (9).csv`
-- `out.txt`
+The 2026-11-10 review did not establish that production credentials or customer records were present, but it also did not establish that old test credentials were never reused. Keep original artifacts restricted. Record paths, dates, affected categories, and remediation status without publishing password hashes, tokens, or account details.
 
-Local inspection confirmed `mercari.db` contained user records and password hashes, and generated CSV/JSON/HTML files contained real scraped product URLs, descriptions, and external image URLs.
+## Containment and verification
 
-## Immediate Containment Checklist
+1. Determine which environments, accounts, tokens, and secrets were affected. Treat any exposed usable credential as compromised.
+2. Reset affected or reused passwords. Revoke and reissue exposed API keys and catalog tokens where applicable. If session-signing material was exposed or reused, rotate it consistently across web and worker and verify old sessions no longer authenticate.
+3. Check deployment artifacts, logs, backups, and image build contexts for copied data. Keep evidence outside the public repository with restricted access.
+4. Verify that runtime data and environment files are excluded from Git and Docker build contexts. Preserve intentional synthetic test fixtures.
+5. Scan the current tree and relevant historical branches/PRs. A clean current tree is not proof of clean history, and deleting a file does not revoke a credential.
+6. Record what was verified, what was rotated, the time, responsible operator, and remaining uncertainty in the private incident record.
 
-1. Stop treating any exposed database content as private.
-2. Rotate `SECRET_KEY` for every deployed environment.
-3. Invalidate all existing Flask sessions after rotating `SECRET_KEY`.
-4. Reset passwords for any accounts that existed in exposed DB files.
-5. Review public catalog tokens and regenerate any that should not remain valid.
-6. Review deploy logs and object storage for copied DB/dump artifacts.
-7. Confirm `.gitignore` blocks future DB/dump/report artifacts.
-8. Run a fresh secret scan before pushing.
+## History remediation
 
-## Git History Cleanup
+History rewriting affects commit IDs, branches, open PRs, forks, clones, and deployment references. It is a separate coordinated operation after credential containment and a reviewed path/ref inventory. Do not force-push a mirror or delete review history as an ordinary documentation cleanup.
 
-History rewriting is destructive and requires coordination with all clones and deployments. Prepare locally, review, then force-push only after approval.
+When sensitive historical objects require removal, use GitHub's current sensitive-data-removal procedure, coordinate with repository collaborators, and contact GitHub Support for cached views when necessary. Verify all affected refs and copies afterwards; do not claim complete removal solely from a clean default branch.
 
-Recommended `git-filter-repo` flow:
+## Recovery checks
 
-```bash
-python -m pip install git-filter-repo
-git clone --mirror https://github.com/halc8312/ESP.git ESP-clean.git
-cd ESP-clean.git
-git filter-repo --invert-paths \
-  --path mercari.db \
-  --path mercari.db.backup \
-  --path dump.html \
-  --path mercari_page_dump.html \
-  --path mercari_page_dump_live.html \
-  --path scrape_test_results.json \
-  --path scraping_test_report.json \
-  --path "shopify_products.csv" \
-  --path "shopify_products (9).csv" \
-  --path out.txt
-git log --all --name-only --pretty=format: -- "*.db" "*.backup" "*.html" "*.json" "*.csv" "out.txt" | sort -u
-git push --force --mirror
-```
-
-After force-push:
-
-```bash
-git for-each-ref --format="delete %(refname)" refs/original | git update-ref --stdin
-git reflog expire --expire=now --all
-git gc --prune=now --aggressive
-```
-
-Ask GitHub Support to purge cached views if sensitive files remain visible through cached diffs or forks.
-
-## Secret and Session Rotation
-
-Generate a new secret:
-
-```bash
-python - <<'PY'
-import secrets
-print(secrets.token_urlsafe(48))
-PY
-```
-
-Set `SECRET_KEY` in Render or the deployment environment, redeploy, and verify that old session cookies no longer authenticate. Because Flask session cookies are signed by `SECRET_KEY`, rotating it invalidates existing sessions.
-
-## Redis/Valkey Setup
-
-Production now fails closed without `REDIS_URL` or `VALKEY_URL`. Provision a shared Redis/Valkey instance and set one of:
-
-```bash
-REDIS_URL=redis://USER:PASSWORD@HOST:PORT/0
-VALKEY_URL=redis://USER:PASSWORD@HOST:PORT/0
-```
-
-## Post-Cleanup Verification
-
-```bash
-git log --all --name-only --pretty=format: -- "*.db" "*.sqlite" "*.sqlite3" "*.backup" "*.bak" "*.html" "*.json" "*.csv" | sort -u
-git grep -n -I -e "dev-secret-key-change-this" -e "SECRET_KEY" -- .
-python -m pip_audit -r requirements.txt
-python -m pytest -q
-```
+Confirm authentication, user isolation, web/worker signing, image access, queue ownership, and monitoring after any rotation. Do not use production data or secrets in public CI. Follow [OPERATIONS_HANDOVER](docs/OPERATIONS_HANDOVER.md) for isolated restore testing and [SECURITY](SECURITY.md) for production controls.

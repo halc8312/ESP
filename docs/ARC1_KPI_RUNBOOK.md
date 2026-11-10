@@ -27,7 +27,7 @@ This runbook is intentionally designed to stay low-cost:
 
 Use:
 
-- `[scripts/arc1_kpi_probe.py](/f:/ESP-main/ESP-main/scripts/arc1_kpi_probe.py)`
+- `[scripts/arc1_kpi_probe.py](../scripts/arc1_kpi_probe.py)`
 
 The probe measures:
 

@@ -26,6 +26,7 @@ sdist/
 
 # === Virtual environments ===
 venv/
+.venv/
 env/
 ENV/
 .Python
@@ -35,6 +36,17 @@ ENV/
 *.db-shm
 *.db-wal
 *.db.backup
+*.sqlite
+*.sqlite3
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+*.backup
+*.bak
 
 # === HTML dumps / debug artifacts ===
 dump.html
@@ -53,29 +65,7 @@ out.txt
 
 # === Documentation (not needed at runtime) ===
 docs/
-knowledge/
 *.md
-
-# === Debug / one-off scripts (not imported by app) ===
-analyze_dump.py
-parse_dump.py
-parse_mercari_html.py
-save_mercari_html.py
-find_mercari_url.py
-get_live_mercari.py
-get_active_mercari_from_db.py
-inspect_db.py
-cleanup_db.py
-env_check.py
-debug_snkrdunk.py
-debug_yahoo_repro.py
-debug_yahoo_store.py
-verify_fix.py
-verify_isolation.py
-verify_register.py
-simple_test.py
-add_patrol_fail_count.py
-run_tests_windows_hack.py
 
 # === Test files (not needed in production image) ===
 test_*.py
@@ -100,5 +90,34 @@ render*.yaml
 # === Gemini settings ===
 .gemini/
 
-# === Agent configs ===
+# === Local agent configs ===
 .agent
+.agents
+
+# === Secrets and local test caches ===
+.env
+.env.*
+**/.env
+**/.env.*
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.db-wal
+**/*.db-shm
+**/*.db-journal
+**/*.sqlite-wal
+**/*.sqlite-shm
+**/*.sqlite-journal
+**/*.sqlite3-wal
+**/*.sqlite3-shm
+**/*.sqlite3-journal
+**/*.backup
+**/*.bak
+gha-creds-*.json
+**/gha-creds-*.json
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
+coverage.xml
