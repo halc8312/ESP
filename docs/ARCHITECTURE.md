@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Web | `wsgi.py`, `app.py`, `routes/` | 認証、管理画面、公開カタログ、画像配信、内部画像アップロード |
 | worker | `worker.py`, `services/worker_runtime.py`, `jobs/` | RQの抽出・画像処理、巡回、定期処理の所有 |
-| 永続データ | `models.py`, `migrations/` | 利用者・ショップ・商品・価格表・依頼・ジョブ。schema変更はAlembicで管理 |
+| 永続データ | `models.py`, `alembic/` | 利用者・ショップ・商品・価格表・依頼・ジョブ。schema変更はAlembicで管理 |
 | 取得 | サイト別 `*_db.py`, `services/patrol/`, `services/marketplace_access.py` | URLと商品同一性の検証、抽出、価格・在庫の巡回、サイト別共有制限 |
 | 画像・翻訳 | `services/image_service.py`, `services/bg_remover/`, `services/translator/` | 画像検証・保存、背景除去、翻訳。外部APIを使う設定は別途管理 |
 | 画面 | `templates/`, `static/` | 管理画面・公開ページ・ブラウザ側の操作 |
