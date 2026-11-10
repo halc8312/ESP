@@ -39,6 +39,13 @@ wheels/
 *.bak
 *.db-shm
 *.db-wal
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 
 # Scraping dumps and generated verification artifacts
 dump*.html

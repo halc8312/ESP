@@ -57,6 +57,21 @@ jobs:
           echo "=== Largest files in context ==="
           find . -not -path './.git/*' -type f -exec du -h {} + | sort -rh | head -15
 
+      - name: Seed harmless build-context exclusion fixtures
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          for directory in (Path('.'), Path('context-smoke/nested')):
+              directory.mkdir(parents=True, exist_ok=True)
+              names = ['.env', '.env.production']
+              names += [f'context-smoke.{extension}{suffix}'
+                        for extension in ('db', 'sqlite', 'sqlite3')
+                        for suffix in ('', '-wal', '-shm', '-journal')]
+              for name in names:
+                  with (directory / name).open('x') as fixture:
+                      fixture.write('harmless build-context exclusion sentinel\n')
+          PY
+
       - name: Build Docker image
         uses: docker/build-push-action@v7
         with:
@@ -74,6 +89,20 @@ jobs:
           echo ""
           echo "=== Image layer details ==="
           docker history esp-test:ci --no-trunc --format "table {{.Size}}\t{{.CreatedBy}}" | head -20
+
+      - name: Smoke test - Local environment and database files excluded
+        run: |
+          docker run --rm --network none esp-test:ci python -c "
+          from pathlib import Path
+          for directory in (Path('/app'), Path('/app/context-smoke/nested')):
+              names = ['.env', '.env.production']
+              names += [f'context-smoke.{extension}{suffix}'
+                        for extension in ('db', 'sqlite', 'sqlite3')
+                        for suffix in ('', '-wal', '-shm', '-journal')]
+              for name in names:
+                  assert not (directory / name).exists(), f'Unexpected build-context file: {name}'
+          print('Root and nested environment/database files excluded')
+          "
 
       - name: Smoke test - Python imports
         run: |
