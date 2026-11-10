@@ -1,6 +1,6 @@
 # ESP Agent Guide
 
-This repository is primarily edited by AI coding agents such as Claude Code and Codex.
+Project-specific guidance for contributors and coding assistants.
 
 ## Scope
 

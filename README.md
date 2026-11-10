@@ -79,7 +79,7 @@ pytest tests -q
 
 コードは `routes/`、`services/`、`models.py`、画面は `templates/` と `static/`、検証は `tests/` にあります。`llama.cpp/` は、このアプリの通常の変更対象に含めません。
 
-開発にはAIコーディング支援を利用しています。構成と検証は [開発資料](docs/ARCHITECTURE.md)、開発時の指針は [AGENTS.md](AGENTS.md) を参照してください。
+構成と検証は [開発資料](docs/ARCHITECTURE.md)、開発時の指針は [AGENTS.md](AGENTS.md) を参照してください。
 
 ## ライセンス
 
