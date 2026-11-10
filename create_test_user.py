@@ -1,33 +1,17 @@
-from app import create_cli_app
-from database import SessionLocal
-from models import User
+"""Retired development helper; importing this module never connects to a DB."""
+
+import sys
+
 
 def create_admin():
-    app = create_cli_app()
-    with app.app_context():
-        session = SessionLocal()
-        try:
-            username = "admin"
-            password = "TestUserPassword123"
-            
-            existing = session.query(User).filter_by(username=username).first()
-            if existing:
-                print(f"User {username} already exists.")
-                # Reset password to be sure
-                existing.set_password(password)
-                print(f"Password reset for {username}.")
-            else:
-                user = User(username=username)
-                user.set_password(password)
-                session.add(user)
-                print(f"User {username} created.")
-            
-            session.commit()
-        except Exception as e:
-            print(f"Error: {e}")
-            session.rollback()
-        finally:
-            session.close()
+    print(
+        "This fixed-password helper is retired. Select an isolated development "
+        "database and use: flask --app app:create_cli_app create-user. "
+        "Existing accounts are never reset by this script.",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
 
 if __name__ == "__main__":
     create_admin()

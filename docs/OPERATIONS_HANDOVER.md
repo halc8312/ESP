@@ -14,7 +14,7 @@
 | worker | `esp-worker` / `srv-d77fj5p5pdvs7399cmh0`。`tini -- python worker.py`、RQ・巡回・定期処理 |
 | PostgreSQL | `esp-postgres` / `dpg-d77finp5pdvs7399cjt0-a`。本番メジャーバージョン18 |
 | Redis/Valkey | 既存`esp-keyvalue`。共有キュー・ロック・heartbeat・アクセス制御。サービスIDは引き継ぎ時に確認 |
-| 画像 | webの既存10GBディスク、マウント`/var/data`、`IMAGE_STORAGE_PATH=/var/data/images` |
+| 画像 | webの永続ディスク、マウント`/var/data`、`IMAGE_STORAGE_PATH=/var/data/images`。確保容量・使用量はRenderで実測し、Blueprintの`sizeGB: 10`を実使用量として転記しない |
 
 `render.yaml`は分離構成の参照で、既存サービスを新規作成する指示ではない。`render.existing-web-addons.yaml`、`docs/RENDER_CUTOVER_RUNBOOK.md`、`docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md`には移行前の記述が残る。この運用では「分離構成が未稼働」「キューをinmemoryへ変更する」を適用しない。既存webの作り直し、DBの作り直し、ディスクの置き換えは通常の反映手順に含めない。
 

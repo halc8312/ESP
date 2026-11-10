@@ -32,9 +32,10 @@ The legacy non-preview RQ full-save path still has a worker-local image cache.
 The standard preview-then-register UI caches on the web process. This release
 does not claim to repair historical images or every legacy full-save API path.
 
-SNKRDUNK apparel IDs 300058 and 721913 still require actual successful page
-HTML/structured data before extending the target-matched parser. No guessed
-price or stock fix is included.
+PR #187 added target-matched Next.js Flight parsing for SNKRDUNK apparel,
+with coverage for IDs 300058 and 721913. Unrelated product payloads remain
+excluded. This parser change does not establish successful live patrol for
+every registered product or enable RecordCity listing extraction.
 
 ## Active shared controls
 

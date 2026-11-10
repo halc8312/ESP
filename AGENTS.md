@@ -51,9 +51,9 @@ flask render-cutover-readiness --require-backend postgresql --apply-migrations -
 ## Current feature reality
 
 - Implemented: compacted list/edit/extract UI, public pricelist layouts, Quick View, search, theme persistence, shop-bound logo display, product image upload, search-URL extraction (auto-detect item vs search URL), preview filtering (× exclude) with pricelist-only registration (`is_listed=False`), translation workflow (auto-translate on registration with `auto_apply`, manual review/apply, Argos/OpenAI backends), default pricing rule on registration.
-- Not yet implemented or still pending specification: image background removal, pricelist category filter, PayPal/simple EC.
+- Not yet implemented or still pending specification: PayPal/simple EC; verify category-filter scope against the current UI before promising it. Background removal has an implemented route/backend, but its production configuration and output still need environment-specific verification.
 
 ## More context
 
 - Start with `README.md`.
-- For operator workflows, read `docs/RENDER_CUTOVER_RUNBOOK.md` first and use `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` only for legacy single-web compatibility checks.
+- For operator workflows, start with `docs/README.md` and `docs/OPERATIONS_HANDOVER.md`. `docs/RENDER_CUTOVER_RUNBOOK.md` is a historical initial-migration plan; `docs/SINGLE_WEB_REDEPLOY_RUNBOOK.md` is for legacy single-web compatibility checks.

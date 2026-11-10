@@ -3,8 +3,8 @@
 Scope = 4 features changed in this PR. Adversarial: every step has a concrete pass/fail value such that a broken implementation would produce a different observable.
 
 Server: `http://localhost:5000` (already running).
-User: `tester / TestPass123!` (1 shop, 3 products, 1 pricelist).
-Catalog public token: `769c196f49ad572a0733bf955a1acdcf` (layout currently `grid` — switch to `list` via pricelist edit before catalog tests).
+User: a dedicated local test account with a newly generated password (1 shop, 3 products, 1 pricelist).
+Catalog public token: `<LOCAL_TEST_CATALOG_TOKEN>` (layout currently `grid` — switch to `list` via pricelist edit before catalog tests).
 
 DB baseline (pre-test snapshot):
 - Pricing rule 1: margin=30%, shipping=500, fee=100
@@ -16,7 +16,7 @@ DB baseline (pre-test snapshot):
 
 ## Test 1 — Catalog `list` layout (5-column high-density rows)
 
-**Setup**: PriceList layout currently is `grid`. Switch to `list` first via owner UI: `/pricelist/<id>/edit`, change `layout` to `list`, save. Then visit `/catalog/769c196f49ad572a0733bf955a1acdcf?layout=list`.
+**Setup**: PriceList layout currently is `grid`. Switch to `list` first via owner UI: `/pricelist/<id>/edit`, change `layout` to `list`, save. Then visit `/catalog/<LOCAL_TEST_CATALOG_TOKEN>?layout=list`.
 
 ### 1.1 Desktop (≥1000px)
 - Maximize browser ⇒ window width ≥ 1280px.

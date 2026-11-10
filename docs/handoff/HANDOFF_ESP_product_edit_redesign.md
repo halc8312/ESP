@@ -79,7 +79,7 @@ PR #99 は CI green / E2E 全 24 アサーション PASS 済。**ユーザーが
 - カタログ B モック: `/home/ubuntu/attachments/zip_extracted/260322修正/カタログB.html` (high-density list)
 - 商品編集モック (古): `/home/ubuntu/attachments/zip_extracted/260322修正/商品編集.html`
 
-引き継ぎ先 AI が VM 内のこれらにアクセスできない場合は、**ユーザーに再添付を依頼**してください (ユーザーは halc8312 / tatsuki.n.0605@gmail.com)。
+引き継ぎ先 AI が VM 内のこれらにアクセスできない場合は、**ユーザーに再添付を依頼**してください (ユーザーは halc8312 / 連絡先は非公開の引き継ぎ台帳を参照)。
 
 ### Devin が作った参考ドキュメント (読むと早い)
 - `/home/ubuntu/260322_gap_analysis.md` … 初回ギャップ分析

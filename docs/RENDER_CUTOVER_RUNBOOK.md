@@ -1,5 +1,7 @@
 # Render Cutover Runbook
 
+> Historical migration plan. The split topology is now the operating baseline. Use [OPERATIONS_HANDOVER](OPERATIONS_HANDOVER.md) for current operations; do not apply the old single-web assumptions below to production.
+
 This runbook is for `Arc 3 / Move C4`, when the first paid Render split is explicitly approved.
 
 It does not replace the current single-web production path. Until cutover is approved, keep the existing Render Web Service on `SCRAPE_QUEUE_BACKEND=inmemory`.
