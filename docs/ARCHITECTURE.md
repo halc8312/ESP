@@ -44,3 +44,15 @@ CIでは依存パッケージ監査、通常テスト、Docker起動、PG18の�
 UI変更では商品編集と手動追加の両方を確認し、デスクトップ・モバイル、画像の追加・削除・並び替え、保存、キーボード操作、ブラウザのエラーも確認します。翻訳欄や編集欄の更新が入力中の値を壊さないことを確認してください。
 
 外部サイトの実動作、メール受信、本番復旧はCIと別に記録します。fixtureの出典は必要に応じて `tests/fixtures/` の説明を保持します。`llama.cpp/` は通常のアプリ変更の対象外です。
+
+## 検証ツールと生成物
+
+通常の回帰テストは `pytest tests -q` で実行します。CSV出力は `tests/test_pre_arc_checklist.py` と `tests/test_e2e_routes.py` が実際のアプリの出力を検証します。
+
+外部サイトへ接続する診断は、対象URL・件数を決めて個別に実行します。
+
+- [一覧URLの受け入れ確認](../scripts/live_search_acceptance.py): `--target SITE=URL` で対象を指定します。対応する7サイト用であり、RecordCityの2段階取得を検証するものではありません。
+- [Mercariの通信診断](../scripts/mercari_network_probe.py): `--url` で対象を指定します。`--include-raw` は生の応答を含むため、診断結果を公開しないでください。
+- RecordCityの設定・診断は [RecordCity運用](recordcity-waf-reachability.md) を参照してください。
+
+`config/scraping_selectors.json` と `config/element_fingerprints.json` はアプリが読み込む設定です。`config/heal_history.jsonl` は実行時に追記・作成されるログ、`output/` は診断結果の出力先であり、どちらもGit・Dockerイメージに含めません。通常テストではselectorの書き込み先を一時ディレクトリへ切り替えます。

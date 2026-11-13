@@ -59,6 +59,8 @@ search_dump.html
 *.csv
 
 # === Test result artifacts ===
+/config/heal_history.jsonl
+/output/
 scrape_test_results.json
 scraping_test_report.json
 out.txt
@@ -116,6 +118,8 @@ render*.yaml
 gha-creds-*.json
 **/gha-creds-*.json
 .pytest_cache/
+.pytest_tmp/
+.tmp_pytest/
 .mypy_cache/
 .ruff_cache/
 .coverage*
