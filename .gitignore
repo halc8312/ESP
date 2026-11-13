@@ -48,6 +48,8 @@ wheels/
 *.sqlite3-journal
 
 # Scraping dumps and generated verification artifacts
+/config/heal_history.jsonl
+/output/
 dump*.html
 *_dump*.html
 *_test.html
@@ -59,6 +61,7 @@ e2e_test_results_*/
 test_db_patchset_*.sqlite
 tests/.tmp/
 .pytest_tmp/
+.tmp_pytest/
 !tests/fixtures/**/*.html
 pytest_test.log
 test_stdout.log

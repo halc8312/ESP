@@ -43,8 +43,8 @@ def _keep_selector_healing_out_of_the_repository(monkeypatch, tmp_path_factory):
 
     Several scraping tests feed the healer a small HTML fixture that matches
     none of the real selectors. It heals, and then writes what it learned to
-    config/scraping_selectors.json and config/heal_history.jsonl — the tracked
-    files the application ships. Running the suite therefore edited the
+    config/scraping_selectors.json (tracked application configuration) and
+    config/heal_history.jsonl (a generated audit log). Running the suite edited the
     repository, once replacing Surugaya's description selector with
     "html > body > div" at a match score of 60 and putting it first in the
     list. Redirecting the paths keeps a test run from touching them.
