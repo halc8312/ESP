@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 import time
-from concurrent.futures import Future
+from concurrent.futures import Future, InvalidStateError
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
@@ -15,6 +16,52 @@ from typing import Any, Awaitable, Callable
 logger = logging.getLogger("browser_runtime")
 
 _SUPPORTED_AUTOMATION_BACKENDS = frozenset({"playwright", "patchright"})
+
+
+class BrowserCleanupUnverified(RuntimeError):
+    """Browser resources may still be active; their admission must stay fenced."""
+
+
+def cleanup_timeout_seconds() -> float:
+    try:
+        return min(30.0, max(0.01, float(os.environ.get("BROWSER_CLEANUP_TIMEOUT_SECONDS", "10"))))
+    except (TypeError, ValueError):
+        return 10.0
+
+
+async def bounded_browser_cleanup(awaitable, *, label: str, timeout: float | None = None):
+    """Wait for actual cleanup completion, even when its caller is cancelled.
+
+    asyncio.wait_for is unsuitable here: cancellation-ignoring browser RPCs can
+    make its own cancellation wait unbounded. A pending RPC is deliberately
+    reported as unverified, never as a closed context. The owning supervisor
+    must kill/reap the process generation before clearing its quarantine.
+    """
+    task = asyncio.ensure_future(awaitable)
+    deadline = asyncio.get_running_loop().time() + (cleanup_timeout_seconds() if timeout is None else timeout)
+    cancelled = False
+    while not task.done():
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            task.cancel()
+            # Retrieve a late exception without claiming that the RPC stopped.
+            task.add_done_callback(lambda completed: None if completed.cancelled() else completed.exception())
+            raise BrowserCleanupUnverified(f"Timed out verifying {label}")
+        try:
+            await asyncio.wait({task}, timeout=remaining)
+        except asyncio.CancelledError:
+            # Repeated caller cancellation must not interrupt ownership cleanup.
+            cancelled = True
+            continue
+    if task.cancelled():
+        raise BrowserCleanupUnverified(f"Cancelled before verifying {label}")
+    try:
+        result = task.result()
+    except Exception as exc:
+        raise BrowserCleanupUnverified(f"Failed to verify {label}") from exc
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
 
 
 def normalize_automation_backend(value: str | None) -> str:
@@ -47,8 +94,8 @@ class BrowserRuntimeConfig:
     startup_timeout_seconds: float = 60.0
     restart_attempts: int = 1
     max_in_flight_tasks: int = 1
-    max_tasks_before_restart: int = 0
-    max_runtime_seconds: float = 0.0
+    max_tasks_before_restart: int = 50
+    max_runtime_seconds: float = 900.0
     # When set, the runtime owns Chromium's one persistent BrowserContext
     # instead of an incognito-capable Browser.  Callers that do not opt in keep
     # the existing Browser/new_context lifecycle unchanged.
@@ -77,9 +124,12 @@ class SharedBrowserRuntime:
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._playwright = None
+        self._playwright_manager = None
         self._browser = None
         self._startup_error: BaseException | None = None
         self._closed = False
+        self._quarantined = False
+        self._tasks: set[asyncio.Task] = set()
         self._state = "idle"
         self._last_started_at: float | None = None
         self._last_submit_at: float | None = None
@@ -94,27 +144,29 @@ class SharedBrowserRuntime:
 
     def start(self) -> None:
         with self._lock:
+            if self._quarantined:
+                raise BrowserCleanupUnverified(f"Browser runtime for {self.config.site} is quarantined")
             if self._closed:
                 raise RuntimeError(f"Browser runtime for {self.config.site} is closed")
-            if self._thread is not None and self._thread.is_alive():
-                return
+            if self._thread is None or not self._thread.is_alive():
+                self._ready_event.clear()
+                self._startup_error = None
+                self._state = "starting"
+                self._thread = threading.Thread(
+                    target=self._thread_main,
+                    name=f"browser-runtime-{self.config.site}",
+                    daemon=True,
+                )
+                self._thread.start()
 
-            self._ready_event.clear()
-            self._startup_error = None
-            self._state = "starting"
-            self._thread = threading.Thread(
-                target=self._thread_main,
-                name=f"browser-runtime-{self.config.site}",
-                daemon=True,
-            )
-            self._thread.start()
-
-        if not self._ready_event.wait(timeout=self.config.startup_timeout_seconds):
-            with self._lock:
-                self._state = "error"
-                self._last_error = f"Timed out starting browser runtime for {self.config.site}"
-            raise TimeoutError(f"Timed out starting browser runtime for {self.config.site}")
+        from services.operation_deadline import remaining_seconds
+        timeout = remaining_seconds(self.config.startup_timeout_seconds)
+        if not self._ready_event.wait(timeout=max(0.0, timeout)):
+            self.quarantine(f"Timed out starting browser runtime for {self.config.site}")
+            raise BrowserCleanupUnverified(f"Timed out starting browser runtime for {self.config.site}")
         if self._startup_error is not None:
+            if self._quarantined:
+                raise BrowserCleanupUnverified(f"Startup cleanup unverified for {self.config.site}") from self._startup_error
             with self._lock:
                 self._state = "error"
                 self._last_error = str(self._startup_error)
@@ -124,38 +176,96 @@ class SharedBrowserRuntime:
         self.start()
         if self._loop is None:
             raise RuntimeError(f"Browser runtime for {self.config.site} has no event loop")
-        acquired = self._submit_permit.acquire(timeout=self.config.startup_timeout_seconds)
+        with self._lock:
+            if self._quarantined:
+                raise BrowserCleanupUnverified(f"Browser runtime for {self.config.site} is quarantined")
+        from services.operation_deadline import remaining_seconds
+        acquired = self._submit_permit.acquire(timeout=max(0.0, remaining_seconds(self.config.startup_timeout_seconds)))
         if not acquired:
             raise TimeoutError(f"Timed out waiting for browser runtime slot for {self.config.site}")
 
         with self._lock:
+            if self._quarantined:
+                self._submit_permit.release()
+                raise BrowserCleanupUnverified(f"Browser runtime for {self.config.site} is quarantined")
             self.submit_count += 1
             self._last_submit_at = time.time()
             self._state = "busy"
 
-        try:
-            future = asyncio.run_coroutine_threadsafe(self._run_with_restart(coro_factory), self._loop)
-        except Exception:
-            self._submit_permit.release()
-            raise
+        future = Future()
+        # Unlike Future.done(), this is set only once the actual asyncio Task
+        # has stopped (or was cancelled before any Task/resources were started).
+        future.execution_finished = threading.Event()
+        loop = self._loop
 
-        def _release_permit(_future: Future) -> None:
-            try:
-                self._submit_permit.release()
-            except ValueError:
-                pass
+        def _release_permit() -> None:
             with self._lock:
+                if self._quarantined:
+                    self._state = "quarantined"
+                    return
+                self._submit_permit.release()
                 if self._closed:
                     self._state = "closed"
                 elif self._browser is not None:
-                    self._state = "ready"
+                    self._state = "busy" if self._active_tasks else "ready"
                 else:
                     self._state = "idle"
 
-        future.add_done_callback(_release_permit)
+        def _enqueue() -> None:
+            # No coroutine/resources started if the caller cancelled while the
+            # callback was queued. Otherwise only the *asyncio Task* finishing
+            # can return this slot, not Future.cancel() in the calling thread.
+            if future.cancelled():
+                future.execution_finished.set()
+                _release_permit()
+                return
+            task = loop.create_task(self._run_with_restart(coro_factory))
+            self._tasks.add(task)
+
+            def _cancel(completed):
+                if completed.cancelled():
+                    try:
+                        loop.call_soon_threadsafe(task.cancel)
+                    except RuntimeError:
+                        self.quarantine("Event loop stopped before cancellation was verified")
+
+            def _done(completed):
+                self._tasks.discard(completed)
+                future.execution_finished.set()
+                _release_permit()
+                if completed.cancelled():
+                    future.cancel()
+                else:
+                    error = completed.exception()
+                    if not future.done():
+                        try:
+                            if error is None:
+                                future.set_result(completed.result())
+                            else:
+                                future.set_exception(error)
+                        except InvalidStateError:
+                            # Cancellation in the caller thread can race this
+                            # completion; the actual Task already returned its
+                            # permit above and its exception was retrieved.
+                            pass
+
+            future.add_done_callback(_cancel)
+            task.add_done_callback(_done)
+
+        try:
+            loop.call_soon_threadsafe(_enqueue)
+        except Exception:
+            self._submit_permit.release()
+            raise
         return future
 
-    def close(self) -> None:
+    def quarantine(self, reason: str) -> None:
+        with self._lock:
+            self._quarantined = True
+            self._state = "quarantined"
+            self._last_error = str(reason)
+
+    def close(self) -> bool:
         with self._lock:
             self._closed = True
             self._state = "closing"
@@ -170,16 +280,21 @@ class SharedBrowserRuntime:
                 # taking the snapshot above.
                 pass
         if thread is not None:
-            thread.join(timeout=5.0)
+            thread.join(timeout=cleanup_timeout_seconds() + 1)
+        if thread is not None and thread.is_alive():
+            self.quarantine("Runtime thread did not finish cleanup")
+            return False
 
         with self._lock:
             self._thread = None
             self._loop = None
-            self._state = "closed"
+            self._state = "quarantined" if self._quarantined else "closed"
+            return not self._quarantined
 
     async def _launch_async(self) -> None:
         async_playwright = get_async_playwright_factory(self.config.automation_backend)
-        self._playwright = await async_playwright().start()
+        self._playwright_manager = async_playwright()
+        self._playwright = await self._playwright_manager.start()
         browser_type = getattr(self._playwright, self.config.browser_name)
         launch_options: dict[str, Any] = {
             "headless": self.config.headless,
@@ -203,29 +318,32 @@ class SharedBrowserRuntime:
                 **launch_options,
             )
         with self._lock:
-            self._state = "ready"
+            self._state = "quarantined" if self._quarantined else "ready"
             self._last_started_at = time.time()
-            self._last_error = None
+            if not self._quarantined:
+                self._last_error = None
             self._completed_tasks_since_launch = 0
 
     async def _shutdown_async(self) -> None:
         browser = self._browser
         playwright = self._playwright
-        self._browser = None
-        self._playwright = None
-
-        if browser is not None:
-            try:
-                await browser.close()
-            except Exception:
-                pass
-        if playwright is not None:
-            try:
-                await playwright.stop()
-            except Exception:
-                pass
+        manager = self._playwright_manager
+        try:
+            if browser is not None:
+                await bounded_browser_cleanup(browser.close(), label="browser.close")
+                self._browser = None
+            if playwright is not None:
+                await bounded_browser_cleanup(playwright.stop(), label="playwright.stop")
+                self._playwright = None
+                self._playwright_manager = None
+            elif manager is not None:
+                await bounded_browser_cleanup(manager.__aexit__(None, None, None), label="partial playwright startup.stop")
+                self._playwright_manager = None
+        except BrowserCleanupUnverified as exc:
+            self.quarantine(str(exc))
+            raise
         with self._lock:
-            if not self._closed and self._state != "restarting":
+            if not self._closed and not self._quarantined and self._state != "restarting":
                 self._state = "idle"
 
     async def _restart_async(self) -> None:
@@ -254,6 +372,7 @@ class SharedBrowserRuntime:
     async def _run_with_restart(self, coro_factory: Callable[[Any], Awaitable[Any]]) -> Any:
         last_error: BaseException | None = None
         attempts = max(0, int(self.config.restart_attempts))
+        operation_started = False
         with self._lock:
             self._active_tasks += 1
             self._state = "busy"
@@ -276,7 +395,11 @@ class SharedBrowserRuntime:
 
                     if self._browser is None:
                         await self._launch_async()
+                    operation_started = True
                     return await coro_factory(self._browser)
+                except BrowserCleanupUnverified as exc:
+                    self.quarantine(str(exc))
+                    raise
                 except Exception as exc:
                     last_error = exc
                     with self._lock:
@@ -296,12 +419,21 @@ class SharedBrowserRuntime:
             if last_error is not None:
                 raise last_error
             raise RuntimeError(f"Unknown browser runtime failure for {self.config.site}")
+        except asyncio.CancelledError:
+            if not operation_started:
+                # Cancellation during launch/recycle cannot be mistaken for an
+                # operation that never created resources. Fail closed until
+                # its process generation is stopped by the supervisor.
+                self.quarantine("Startup or recycle cancelled before resource cleanup was verified")
+            raise
         finally:
             with self._lock:
                 self._active_tasks = max(0, self._active_tasks - 1)
                 self._completed_tasks_since_launch += 1
                 self._last_completed_at = time.time()
-                if self._closed:
+                if self._quarantined:
+                    self._state = "quarantined"
+                elif self._closed:
                     self._state = "closed"
                 elif self._browser is not None:
                     self._state = "busy" if self._active_tasks > 0 else "ready"
@@ -327,7 +459,7 @@ class SharedBrowserRuntime:
                 loop.close()
             with self._lock:
                 self._startup_error = exc
-                self._state = "error"
+                self._state = "quarantined" if self._quarantined else "error"
                 self._last_error = str(exc)
                 if self._loop is loop:
                     self._loop = None
@@ -339,8 +471,18 @@ class SharedBrowserRuntime:
         try:
             loop.run_forever()
         finally:
-            loop.run_until_complete(self._shutdown_async())
-            loop.close()
+            try:
+                for task in list(self._tasks):
+                    task.cancel()
+                if self._tasks:
+                    _, pending = loop.run_until_complete(asyncio.wait(self._tasks, timeout=cleanup_timeout_seconds()))
+                    if pending:
+                        self.quarantine("Runtime operations remain after cancellation")
+                loop.run_until_complete(self._shutdown_async())
+            except BrowserCleanupUnverified:
+                logger.error("Browser cleanup unverified: site=%s", self.config.site)
+            finally:
+                loop.close()
             with self._lock:
                 if self._loop is loop:
                     self._loop = None
@@ -352,6 +494,7 @@ class SharedBrowserRuntime:
                 "automation_backend": self.config.automation_backend,
                 "channel": self.config.channel,
                 "state": self._state,
+                "quarantined": self._quarantined,
                 "headless": bool(self.config.headless),
                 "restart_count": int(self.restart_count),
                 "submit_count": int(self.submit_count),
@@ -362,7 +505,7 @@ class SharedBrowserRuntime:
                 "completed_tasks_since_launch": int(self._completed_tasks_since_launch),
                 "thread_alive": bool(self._thread is not None and self._thread.is_alive()),
                 "loop_running": bool(self._loop is not None and self._loop.is_running()),
-                "browser_ready": self._browser is not None,
+                "browser_ready": self._browser is not None and not self._quarantined,
                 "persistent_context": self.config.persistent_user_data_dir is not None,
                 "last_started_at": self._last_started_at,
                 "last_submit_at": self._last_submit_at,

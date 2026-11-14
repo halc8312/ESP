@@ -100,6 +100,7 @@ class MercariPatrol(BasePatrol):
                         url,
                         network_idle=True,
                         wait_selector=self._WAIT_SELECTOR,
+                        hydrate_images=False,
                     )
                 else:
                     page = fetch_dynamic(

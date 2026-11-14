@@ -4,6 +4,8 @@ These scrapers only fetch price and stock data for efficient monitoring.
 """
 from abc import ABC, abstractmethod
 from typing import Optional, List, Dict
+from contextlib import contextmanager
+from contextvars import ContextVar
 import logging
 
 from services.scrape_alerts import report_patrol_result
@@ -12,6 +14,17 @@ from services.scrape_safety import response_status
 logger = logging.getLogger("patrol")
 
 DELETED_HTTP_STATUSES = frozenset({404, 410})
+_reporting_suppressed = ContextVar("patrol_reporting_suppressed", default=False)
+
+
+@contextmanager
+def suppress_patrol_reporting():
+    """Fetch subprocesses return evidence; the accepting parent reports it."""
+    token = _reporting_suppressed.set(True)
+    try:
+        yield
+    finally:
+        _reporting_suppressed.reset(token)
 
 
 class PatrolResult:
@@ -108,5 +121,6 @@ class BasePatrol(ABC):
             return None
 
     def _finalize_result(self, site: str, url: str, result: PatrolResult, *, page_type: str = "patrol_detail") -> PatrolResult:
-        report_patrol_result(site, url, result, page_type=page_type)
+        if not _reporting_suppressed.get():
+            report_patrol_result(site, url, result, page_type=page_type)
         return result

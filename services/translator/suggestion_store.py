@@ -31,6 +31,33 @@ def _session_from_kwarg(session: Optional[Session]) -> tuple[Session, bool]:
     return SessionLocal(), True
 
 
+def lock_translation_product(session: Session, *, product_id: int, user_id: int) -> Optional[Product]:
+    """Lock the live owned parent before writing a suggestion or Product.
+
+    Purge locks Product before deleting its children. All translation paths
+    that touch both rows use the same order to avoid child/parent deadlocks
+    and prevent late automatic application to a trashed Product.
+    """
+    return (
+        session.query(Product)
+        .filter(Product.id == product_id, Product.user_id == user_id,
+                Product.deleted_at.is_(None))
+        .with_for_update()
+        .one_or_none()
+    )
+
+
+def _live_owned_product_exists():
+    return (
+        Product.__table__.select()
+        .with_only_columns(Product.id)
+        .where(Product.id == TranslationSuggestion.product_id,
+               Product.user_id == TranslationSuggestion.user_id,
+               Product.deleted_at.is_(None))
+        .exists()
+    )
+
+
 def create_suggestion(
     *,
     job_id: str,
@@ -51,6 +78,8 @@ def create_suggestion(
 
     session_db, owns_session = _session_from_kwarg(session)
     try:
+        if lock_translation_product(session_db, product_id=product_id, user_id=user_id) is None:
+            raise ValueError("translation requires a live owned product")
         now = utc_now()
         row = TranslationSuggestion(
             job_id=job_id,
@@ -138,6 +167,7 @@ def mark_running(
             session_db.query(TranslationSuggestion)
             .filter(
                 TranslationSuggestion.job_id == job_id,
+                _live_owned_product_exists(),
                 _recoverable_claim_filter(now, stale_cutoff),
             )
             .update(
@@ -380,6 +410,7 @@ def recover_expired_translation_suggestions(
         candidates = (
             session_db.query(TranslationSuggestion.job_id)
             .filter(
+                _live_owned_product_exists(),
                 or_(
                     and_(
                         TranslationSuggestion.status == "running",
@@ -539,6 +570,14 @@ def apply_suggestion_to_product(
     """
     from services.rich_text import normalize_rich_text
 
+    # Parent first: a purge holds this same Product lock before touching any
+    # suggestion. Never hold a child write lock and then wait on its parent.
+    product = lock_translation_product(
+        session, product_id=suggestion.product_id, user_id=suggestion.user_id,
+    )
+    if product is None:
+        return {}
+
     # Claim the suggestion before touching Product.  A concurrent rejection
     # either commits first and makes this UPDATE a no-op, or waits and observes
     # ``applied``.  Product changes and the claim share one transaction.
@@ -557,26 +596,6 @@ def apply_suggestion_to_product(
         )
     )
     if claimed_count != 1:
-        session.expire(suggestion)
-        return {}
-
-    product = (
-        session.query(Product)
-        .filter_by(id=suggestion.product_id, user_id=suggestion.user_id)
-        .one_or_none()
-    )
-    if product is None:
-        (
-            session.query(TranslationSuggestion)
-            .filter(
-                TranslationSuggestion.id == suggestion.id,
-                TranslationSuggestion.status == "applied",
-            )
-            .update(
-                {TranslationSuggestion.status: "succeeded"},
-                synchronize_session=False,
-            )
-        )
         session.expire(suggestion)
         return {}
 
@@ -641,6 +660,7 @@ def apply_suggestion_to_product(
             .filter(
                 Product.id == product.id,
                 Product.user_id == product.user_id,
+                Product.deleted_at.is_(None),
                 matches_expected(value_column, expected_value),
                 matches_expected(source_hash_column, expected_source_hash),
                 manual_column.is_(expected_manually_edited),

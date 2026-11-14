@@ -1300,7 +1300,15 @@ def _production_browser_settings() -> dict:
             "レコードシティのheadfulブラウザを起動できません"
             "（reason=RC_HEADFUL_DISPLAY_UNAVAILABLE）。"
         )
-    return copy.deepcopy(settings)
+    resolved = copy.deepcopy(settings)
+    if normalized == "persistent-chrome":
+        # Supervised patrol generations own their own profile. Reusing the
+        # retained RQ browser's directory would collide with Chrome's singleton
+        # lock even while the marketplace operation lease is idle.
+        resolved["persistent_user_data_dir"] = str(
+            os.environ.get("RECORDCITY_PERSISTENT_PROFILE_DIR") or _PERSISTENT_CHROME_PROFILE_DIR
+        )
+    return resolved
 
 
 def _cookie_values_match(left: list[dict], right: list[dict]) -> bool:

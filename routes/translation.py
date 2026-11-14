@@ -59,7 +59,8 @@ _ALLOWED_SCOPES = {"title", "description", "full"}
 def _load_owned_product(session_db, product_id: int) -> Product | None:
     product = (
         session_db.query(Product)
-        .filter(Product.id == product_id, Product.user_id == current_user.id)
+        .filter(Product.id == product_id, Product.user_id == current_user.id,
+                Product.deleted_at.is_(None))
         .one_or_none()
     )
     return product
@@ -257,7 +258,8 @@ def apply_translation_suggestion(job_id: str):
 
         product = (
             session_db.query(Product)
-            .filter_by(id=suggestion.product_id, user_id=current_user.id)
+            .filter(Product.id == suggestion.product_id, Product.user_id == current_user.id,
+                    Product.deleted_at.is_(None))
             .one_or_none()
         )
         if product is None:

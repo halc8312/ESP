@@ -2,13 +2,16 @@
 Trash routes - Soft delete with recovery and purge.
 """
 from datetime import timedelta
+import logging
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from flask_login import login_required, current_user
 from database import SessionLocal
-from models import Product, Variant, ProductSnapshot, ProductThumbnailJob
+from models import ImageProcessingJob, Product, ProductThumbnailJob
+from services.product_purge import ProductPurgeOwnershipError, purge_locked_trashed_product
 from time_utils import utc_now
 
 trash_bp = Blueprint('trash', __name__)
+logger = logging.getLogger(__name__)
 
 
 def _lock_trashed_product(session_db, product_id, *, user_id=None, cutoff=None):
@@ -32,16 +35,22 @@ def _lock_trashed_product(session_db, product_id, *, user_id=None, cutoff=None):
 def _has_thumbnail_reservation(session_db, product_id):
     # Physical work outlives its mutable capture, state and upload lease.
     # Purging snapshots would cascade away the only durable reservation.
-    return session_db.query(ProductThumbnailJob.product_id).filter(
+    thumbnail_reserved = session_db.query(ProductThumbnailJob.product_id).filter(
         ProductThumbnailJob.product_id == product_id,
         ProductThumbnailJob.job_id.is_not(None),
+    ).first() is not None
+    if thumbnail_reserved:
+        return True
+    # A background-removal upload can also outlive its initial DB read.
+    # Preserve queued/running rows until that physical work has finished.
+    return session_db.query(ImageProcessingJob.id).filter(
+        ImageProcessingJob.product_id == product_id,
+        ImageProcessingJob.status.in_(("queued", "running")),
     ).first() is not None
 
 
 def _purge_product(session_db, product):
-    session_db.query(Variant).filter_by(product_id=product.id).delete()
-    session_db.query(ProductSnapshot).filter_by(product_id=product.id).delete()
-    session_db.delete(product)
+    purge_locked_trashed_product(session_db, product)
 
 
 @trash_bp.route('/trash')
@@ -145,19 +154,27 @@ def trash_purge():
         
         count = 0
         blocked = 0
+        mismatched = 0
         for product_id in ids:
             product = _lock_trashed_product(session_db, int(product_id), user_id=current_user.id)
             if product:
                 if _has_thumbnail_reservation(session_db, product.id):
                     blocked += 1
                     continue
-                _purge_product(session_db, product)
+                try:
+                    _purge_product(session_db, product)
+                except ProductPurgeOwnershipError:
+                    mismatched += 1
+                    logger.warning("Product purge blocked by dependent owner mismatch product_id=%s", product.id)
+                    continue
                 count += 1
         
         session_db.commit()
         flash(f'{count}件を完全に削除しました', 'success')
         if blocked:
             flash(f'{blocked}件は画像処理中のため削除できません。画像処理が終了してから再試行してください。', 'warning')
+        if mismatched:
+            flash(f'{mismatched}件は関連データの所有者が一致しないため削除できません。管理者にご連絡ください。', 'warning')
         return redirect(url_for('trash.trash_list'))
     except Exception:
         session_db.rollback()
@@ -181,7 +198,11 @@ def purge_old_trash():
             product = _lock_trashed_product(session_db, product_id, cutoff=cutoff)
             if product is None or _has_thumbnail_reservation(session_db, product.id):
                 continue
-            _purge_product(session_db, product)
+            try:
+                _purge_product(session_db, product)
+            except ProductPurgeOwnershipError:
+                logger.warning("Automatic product purge blocked by dependent owner mismatch product_id=%s", product.id)
+                continue
             count += 1
         
         session_db.commit()

@@ -1486,3 +1486,20 @@ def test_proxy_browser_probe_passes_credentials_only_to_context(monkeypatch):
 def test_browser_proxy_options_reject_unsafe_or_unsupported_shapes(proxy_url):
     with pytest.raises(ValueError, match="RECORDCITY_PROXY_URL"):
         recordcity_fetch._browser_proxy_options(proxy_url)
+
+
+def test_supervised_persistent_profile_directory_is_resolved_at_call_time(monkeypatch):
+    from services import recordcity_browser_fetch as fetcher
+
+    monkeypatch.setenv("RECORDCITY_BROWSER_PROFILE", "persistent-chrome")
+    monkeypatch.setenv("DISPLAY", ":99")
+    monkeypatch.setenv("RECORDCITY_PERSISTENT_PROFILE_DIR", "/tmp/esp-owned-generation-one")
+    first = fetcher._production_browser_settings()
+    monkeypatch.setenv("RECORDCITY_PERSISTENT_PROFILE_DIR", "/tmp/esp-owned-generation-two")
+    second = fetcher._production_browser_settings()
+    assert first["persistent_user_data_dir"] == "/tmp/esp-owned-generation-one"
+    assert second["persistent_user_data_dir"] == "/tmp/esp-owned-generation-two"
+    assert (
+        fetcher._PRODUCTION_BROWSER_PROFILES["persistent-chrome"]["persistent_user_data_dir"]
+        == fetcher._PERSISTENT_CHROME_PROFILE_DIR
+    )

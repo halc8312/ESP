@@ -37,6 +37,10 @@ from services.worker_runtime import (
 @pytest.fixture(autouse=True)
 def _stub_translation_startup_recovery(monkeypatch):
     monkeypatch.setattr(
+        "services.worker_runtime.OwnedRecoveryExecutor",
+        lambda _config, **_kwargs: lambda _feature, operation, _timeout: operation(),
+    )
+    monkeypatch.setattr(
         "services.worker_runtime.recover_translation_suggestions_on_startup",
         lambda: {"recovered": [], "enqueued": [], "failed": []},
     )
@@ -236,6 +240,9 @@ def test_translation_recovery_scheduler_job_runs_every_five_minutes_and_contains
     assert recovery_job["trigger"] == "interval"
     assert recovery_job["minutes"] == 5
     assert recovery_job["replace_existing"] is True
+    monkeypatch.setattr("services.catalog_request_notifications.recover_request_notifications", lambda **kwargs: {"considered": 0, "enqueued": 0})
+    monkeypatch.setattr("services.product_thumbnail_jobs.recover_thumbnail_jobs", lambda: {"failed": 0})
+    monkeypatch.setattr("services.product_detail_jobs.recover_product_detail_jobs", lambda **kwargs: {"failed": 0})
 
     monkeypatch.setattr(
         "services.translator.suggestion_store.recover_expired_translation_suggestions",
@@ -247,24 +254,22 @@ def test_translation_recovery_scheduler_job_runs_every_five_minutes_and_contains
     )
     recovery_job["func"]()
 
-    assert captured["heartbeats"][-1] == {
-        "event": "translation_recovery_completed",
-        "last_translation_recovery_completed_at": captured["heartbeats"][-1][
-            "last_translation_recovery_completed_at"
-        ],
-        "last_translation_recovery_recovered_count": 1,
-        "last_translation_recovery_enqueued_count": 1,
-        "last_translation_recovery_failed_count": 0,
-    }
+    assert captured["heartbeats"][-1]["event"] == "recovery_batch_completed"
+    assert captured["heartbeats"][-1]["last_recovery_status"] == "ok"
+    translation = next(item for item in captured["heartbeats"] if "last_recovery_translation_completed_at" in item)
+    assert translation["last_recovery_translation_recovered_count"] == 1
+    assert translation["last_recovery_translation_enqueued_count"] == 1
+    assert translation["last_recovery_translation_failed_count"] == 0
 
     monkeypatch.setattr(
         "services.translator.suggestion_store.recover_expired_translation_suggestions",
         lambda: (_ for _ in ()).throw(RuntimeError("recovery failed")),
     )
-    with caplog.at_level("ERROR", logger="app_runtime"):
+    with caplog.at_level("WARNING", logger="app_runtime"):
         recovery_job["func"]()
 
-    assert captured["heartbeats"][-1]["event"] == "translation_recovery_failed"
+    assert captured["heartbeats"][-1]["last_recovery_status"] == "degraded"
+    assert any(item.get("last_recovery_translation_status") == "failed" for item in captured["heartbeats"])
     assert "scheduler will continue" in caplog.text
 
 
@@ -572,7 +577,7 @@ class FakeRedisFactory:
     connection = None
 
     @classmethod
-    def from_url(cls, url):
+    def from_url(cls, url, **kwargs):
         cls.redis_url = url
         return cls.connection
 
@@ -1327,6 +1332,7 @@ def test_build_worker_runtime_uses_queue_and_worker_imports(monkeypatch):
             "REDIS_URL": "redis://localhost:6379/2",
             "RQ_BURST": True,
             "WARM_BROWSER_POOL": True,
+            "PATROL_SUPERVISED_FETCH_ENABLED": False,
         }
     )
 

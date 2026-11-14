@@ -8,6 +8,7 @@ import socket
 import tempfile
 import threading
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -160,11 +161,7 @@ def _serialize_scheduler_heartbeat_value(value: Any) -> str:
     return str(value)
 
 
-def _write_scheduler_heartbeat(app: Flask, **fields: Any) -> None:
-    redis_client = _get_scheduler_heartbeat_connection(app)
-    if redis_client is None:
-        return
-
+def _write_scheduler_heartbeat(app: Flask, *, _deadline: float | None = None, **fields: Any) -> None:
     key = _get_scheduler_heartbeat_key(app)
     payload = {
         "recorded_at": _utc_iso_now(),
@@ -173,11 +170,91 @@ def _write_scheduler_heartbeat(app: Flask, **fields: Any) -> None:
         "pid": os.getpid(),
         **fields,
     }
+    if (app.config.get("ESP_RUNTIME_ROLE") == "worker"
+            and str(app.config.get("SCRAPE_QUEUE_BACKEND", "")).lower() == "rq"
+            and not app.config.get("TESTING")):
+        # Native DNS may block beyond Redis socket_timeout. The production
+        # scheduler must never perform that I/O in its own job thread.
+        if not _as_bool(app.config.get("SCHEDULER_HEARTBEAT_ENABLED", False)):
+            app.extensions["esp_scheduler_heartbeat_error"] = "disabled"
+            return
+        redis_url = str(app.config.get("REDIS_URL") or "").strip()
+        if not redis_url:
+            app.extensions["esp_scheduler_heartbeat_error"] = "missing_redis_url"
+            return
+        request = {
+            "redis_url": redis_url, "heartbeat_key": key,
+            "mapping": {name: _serialize_scheduler_heartbeat_value(value) for name, value in payload.items()},
+        }
+        handle = app.extensions.get("esp_scheduler_lock_handle")
+        owned = isinstance(handle, _RedisSchedulerLockHandle)
+        if isinstance(handle, _RedisSchedulerLockHandle):
+            token = handle.owner_token
+            if token is None:
+                app.extensions["esp_scheduler_heartbeat_error"] = "ownership_token_missing"
+                app.extensions.setdefault("esp_scheduler_ownership_lost", threading.Event()).set()
+                return
+            request.update(lock_key=handle.lock_key, owner_token_hex=(token.encode() if isinstance(token, str) else token).hex())
+            # Publish this process's startup recovery evidence only after it
+            # has acquired ownership. An unowned startup cannot overwrite an
+            # existing scheduler's shared feature health.
+            request["mapping"] = {
+                **app.extensions.get("esp_scheduler_pending_recovery_heartbeat", {}),
+                **request["mapping"],
+            }
+        else:
+            key = request["heartbeat_key"] = f"{key}:candidate:{socket.gethostname()}:{os.getpid()}"
+        from services.heartbeat_transport import bounded_write
+        from services.operation_deadline import current_deadline
+        scoped_deadline = current_deadline()
+        if scoped_deadline is not None:
+            _deadline = scoped_deadline if _deadline is None else min(_deadline, scoped_deadline)
+        timeout = 5.0 if _deadline is None else min(5.0, max(0.0, _deadline - time.monotonic()))
+        result = bounded_write(request, timeout_seconds=timeout)
+        status = result["status"]
+        app.extensions["esp_scheduler_heartbeat_key"] = key
+        app.extensions["esp_scheduler_heartbeat_error"] = None if status == "written" else result.get("error_type", status)
+        if status == "written":
+            if owned:
+                app.extensions.pop("esp_scheduler_pending_recovery_heartbeat", None)
+            else:
+                app.extensions.setdefault("esp_scheduler_pending_recovery_heartbeat", {}).update({
+                    name: value for name, value in request["mapping"].items() if name.startswith("last_recovery_")
+                })
+        if status in {"ownership_lost", "quarantined", "cancelled"}:
+            app.extensions.setdefault("esp_scheduler_ownership_lost", threading.Event()).set()
+        if status != "written":
+            logger.warning("Owned scheduler heartbeat unavailable: status=%s error_type=%s", status, result.get("error_type", ""))
+        return
+    redis_client = _get_scheduler_heartbeat_connection(app)
+    if redis_client is None:
+        return
     try:
-        redis_client.hset(
-            key,
-            mapping={name: _serialize_scheduler_heartbeat_value(value) for name, value in payload.items()},
-        )
+        mapping = {name: _serialize_scheduler_heartbeat_value(value) for name, value in payload.items()}
+        handle = app.extensions.get("esp_scheduler_lock_handle")
+        if isinstance(handle, _RedisSchedulerLockHandle):
+            if handle.owner_token is None:
+                raise RuntimeError("Scheduler ownership token unavailable")
+            # Fence the write atomically: an expired owner's late completion
+            # must never overwrite a successor's shared health record.
+            arguments = [handle.owner_token]
+            for name, value in mapping.items():
+                arguments.extend((name, value))
+            written = redis_client.eval(
+                "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end "
+                "for i=2,#ARGV,2 do redis.call('HSET',KEYS[2],ARGV[i],ARGV[i+1]) end "
+                "return 1",
+                2, handle.lock_key, key, *arguments,
+            )
+            if not written:
+                app.extensions["esp_scheduler_heartbeat_error"] = "ownership_lost"
+                return
+        else:
+            # Startup/retry diagnostics are not evidence from the active
+            # scheduler. Keep candidates out of the shared owner's record.
+            if app.extensions.get("esp_scheduler_start_attempted") and _should_try_redis_scheduler_lock(app):
+                key = f"{key}:candidate:{socket.gethostname()}:{os.getpid()}"
+            redis_client.hset(key, mapping=mapping)
         app.extensions["esp_scheduler_heartbeat_key"] = key
         app.extensions["esp_scheduler_heartbeat_error"] = None
     except Exception as exc:
@@ -216,6 +293,22 @@ def _read_scheduler_heartbeat(app: Flask) -> dict[str, str] | None:
         redis_client.close()
 
 
+def _scheduler_stop_reserve() -> float:
+    from services.patrol_supervisor import patrol_cleanup_budget
+    return max(15.0, patrol_cleanup_budget()) + 5.0
+
+
+def _scheduler_operation_cancelled(app: Flask) -> bool:
+    lost = app.extensions.get("esp_scheduler_ownership_lost")
+    if lost is not None and lost.is_set():
+        return True
+    expires_at = app.extensions.get("esp_scheduler_lease_expires_monotonic")
+    # Reserve the validated hard-stop budget plus polling/network margin. A
+    # healthy renewal advances this conservative local deadline. Redis calls
+    # themselves have finite socket limits, and cannot suspend this watchdog.
+    return expires_at is not None and time.monotonic() >= float(expires_at) - _scheduler_stop_reserve()
+
+
 def _record_scheduler_lock_status(
     app: Flask,
     *,
@@ -240,7 +333,7 @@ def _as_positive_float(value: Any, default: float, minimum: float) -> float:
     return max(minimum, parsed)
 
 
-def get_scheduler_health_snapshot(app: Flask) -> dict[str, Any]:
+def get_scheduler_health_snapshot(app: Flask, *, include_heartbeat: bool = True) -> dict[str, Any]:
     scheduler = app.extensions.get("esp_scheduler")
     job_ids: list[str] = []
     job_lookup_error = None
@@ -253,7 +346,7 @@ def get_scheduler_health_snapshot(app: Flask) -> dict[str, Any]:
         except Exception as exc:
             job_lookup_error = type(exc).__name__
 
-    heartbeat = _read_scheduler_heartbeat(app)
+    heartbeat = _read_scheduler_heartbeat(app) if include_heartbeat else None
     return {
         "enabled": _as_bool(app.config.get("ENABLE_SCHEDULER", False)),
         "started": bool(app.extensions.get("esp_scheduler_started", False)),
@@ -469,6 +562,9 @@ def _register_health_route(app: Flask) -> None:
             app.config.get("SCRAPE_QUEUE_BACKEND", "inmemory") or "inmemory"
         ).strip().lower()
         if queue_backend == "rq":
+            if include_stack:
+                from services.recovery_health import RECOVERY_FEATURES
+                checks.update({f"recovery_{feature}": "unavailable" for feature in RECOVERY_FEATURES})
             redis_client = None
             redis_url = str(app.config.get("REDIS_URL", "") or "").strip()
             if not redis_url:
@@ -546,6 +642,19 @@ def _register_health_route(app: Flask) -> None:
                             key=str(app.config.get("SCHEDULER_HEARTBEAT_KEY") or "esp:scheduler:heartbeat"),
                             freshness_seconds=900,
                         )
+                        from services.recovery_health import (
+                            RECOVERY_HEALTHY_STATES, inspect_recovery_heartbeats,
+                        )
+                        recovery_checks = inspect_recovery_heartbeats(
+                            redis_client,
+                            key=_get_scheduler_heartbeat_key(app),
+                            freshness_seconds=_read_positive_int_config(
+                                app, "RECOVERY_HEARTBEAT_FRESHNESS_SECONDS", 900,
+                            ),
+                        )
+                        checks.update(recovery_checks)
+                        if any(value not in RECOVERY_HEALTHY_STATES for value in recovery_checks.values()):
+                            ready = False
                         if any(
                             checks[name] != "ok"
                             for name in ("worker", "scheduler", "patrol", "scrape_monitor")
@@ -761,6 +870,15 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
                 "1200",
             ),
             "PATROL_BATCH_SIZE": os.environ.get("PATROL_BATCH_SIZE", "50"),
+            "PATROL_SUPERVISED_FETCH_ENABLED": os.environ.get(
+                "PATROL_SUPERVISED_FETCH_ENABLED",
+                "1" if runtime_role == "worker" and os.environ.get("SCRAPE_QUEUE_BACKEND", "inmemory") == "rq" else "0",
+            ),
+            "PATROL_ITEM_TIMEOUT_SECONDS": os.environ.get("PATROL_ITEM_TIMEOUT_SECONDS", "120"),
+            "PATROL_BATCH_TIMEOUT_SECONDS": os.environ.get("PATROL_BATCH_TIMEOUT_SECONDS", "780"),
+            "RECOVERY_PHASE_TIMEOUT_SECONDS": os.environ.get("RECOVERY_PHASE_TIMEOUT_SECONDS", "60"),
+            "RECOVERY_BATCH_TIMEOUT_SECONDS": os.environ.get("RECOVERY_BATCH_TIMEOUT_SECONDS", "240"),
+            "RECOVERY_HEARTBEAT_FRESHNESS_SECONDS": os.environ.get("RECOVERY_HEARTBEAT_FRESHNESS_SECONDS", "900"),
             "WORKER_HEARTBEAT_ENABLED": os.environ.get("WORKER_HEARTBEAT_ENABLED", "0"),
             "WORKER_HEARTBEAT_KEY_PREFIX": os.environ.get(
                 "WORKER_HEARTBEAT_KEY_PREFIX",
@@ -799,6 +917,10 @@ def create_app(runtime_role: str = "base", config_overrides: dict[str, Any] | No
     configure_app_security(app)
     if config_overrides:
         app.config.update(config_overrides)
+    if not (config_overrides and "PATROL_SUPERVISED_FETCH_ENABLED" in config_overrides) and "PATROL_SUPERVISED_FETCH_ENABLED" not in os.environ:
+        app.config["PATROL_SUPERVISED_FETCH_ENABLED"] = runtime_role == "worker" and str(
+            app.config.get("SCRAPE_QUEUE_BACKEND", "inmemory")
+        ).lower() == "rq" and not app.config.get("TESTING")
     if runtime_role == "web" and not (config_overrides and "ENABLE_SCHEDULER" in config_overrides):
         app.config["ENABLE_SCHEDULER"] = _resolve_web_scheduler_enabled(app)
 
@@ -858,11 +980,21 @@ def _register_scheduler_jobs(app: Flask) -> None:
             limit = _read_positive_int_config(app, "PATROL_BATCH_SIZE", 50)
             started_at = _utc_iso_now()
             started_monotonic = time.monotonic()
+            run_id = uuid.uuid4().hex
+            batch_timeout = _read_positive_int_config(app, "PATROL_BATCH_TIMEOUT_SECONDS", 780)
+            supervised = _as_bool(app.config.get("PATROL_SUPERVISED_FETCH_ENABLED", False))
+            cancelled = lambda: _scheduler_operation_cancelled(app)
+            if cancelled():
+                raise RuntimeError("Scheduler ownership lost")
             _write_scheduler_heartbeat(
                 app,
+                _deadline=started_monotonic + batch_timeout,
                 event="patrol_started",
                 last_patrol_started_at=started_at,
                 last_patrol_limit=limit,
+                last_patrol_run_id=run_id,
+                last_patrol_active=True,
+                last_patrol_batch_timeout_seconds=batch_timeout,
             )
             logger.info(
                 "Scheduler patrol run started: runtime_role=%s limit=%s",
@@ -870,15 +1002,43 @@ def _register_scheduler_jobs(app: Flask) -> None:
                 limit,
             )
             try:
-                summary = MonitorService.check_stale_products(limit=limit) or {}
+                if supervised:
+                    from services.patrol_supervisor import get_supervised_patrol_runner
+                    lock_handle = app.extensions.get("esp_scheduler_lock_handle")
+                    scheduler_ownership = None
+                    if isinstance(lock_handle, _RedisSchedulerLockHandle):
+                        owner_token = lock_handle.owner_token
+                        if owner_token is None:
+                            raise RuntimeError("Scheduler ownership token unavailable")
+                        if isinstance(owner_token, str):
+                            owner_token = owner_token.encode()
+                        scheduler_ownership = {
+                            "lock_key": lock_handle.lock_key,
+                            "owner_token_hex": owner_token.hex(),
+                            "redis_url": str(app.config.get("REDIS_URL") or ""),
+                        }
+                    summary = get_supervised_patrol_runner().run_batch(
+                        limit=limit,
+                        deadline=started_monotonic + batch_timeout - 5,
+                        item_timeout=_read_positive_int_config(app, "PATROL_ITEM_TIMEOUT_SECONDS", 120),
+                        cancelled=cancelled,
+                        scheduler_ownership=scheduler_ownership,
+                    ) or {}
+                else:
+                    summary = MonitorService.check_stale_products(limit=limit) or {}
+                if cancelled():
+                    raise RuntimeError("Scheduler ownership lost before completion")
             except Exception as exc:
                 duration_seconds = round(time.monotonic() - started_monotonic, 3)
                 _write_scheduler_heartbeat(
                     app,
+                    _deadline=started_monotonic + batch_timeout,
                     event="patrol_failed",
                     last_patrol_failed_at=_utc_iso_now(),
                     last_patrol_duration_seconds=duration_seconds,
                     last_patrol_error=type(exc).__name__,
+                    last_patrol_active=False,
+                    last_patrol_run_id=run_id,
                 )
                 logger.exception(
                     "Scheduler patrol run failed: runtime_role=%s duration_seconds=%s",
@@ -890,10 +1050,13 @@ def _register_scheduler_jobs(app: Flask) -> None:
             duration_seconds = round(time.monotonic() - started_monotonic, 3)
             _write_scheduler_heartbeat(
                 app,
+                _deadline=started_monotonic + batch_timeout,
                 event="patrol_completed",
                 last_patrol_completed_at=_utc_iso_now(),
                 last_patrol_duration_seconds=duration_seconds,
                 last_patrol_status=summary.get("status", "completed"),
+                last_patrol_active=False,
+                last_patrol_run_id=run_id,
                 last_patrol_eligible_count=summary.get("eligible_count", ""),
                 last_patrol_selected_count=summary.get("selected_count", ""),
                 last_patrol_successful_count=summary.get(
@@ -902,6 +1065,11 @@ def _register_scheduler_jobs(app: Flask) -> None:
                 ),
                 last_patrol_updated_count=summary.get("updated_count", ""),
                 last_patrol_error_count=summary.get("error_count", ""),
+                last_patrol_attempted_count=summary.get("attempted_count", ""),
+                last_patrol_unprocessed_count=summary.get("unprocessed_count", 0),
+                last_patrol_discarded_count=summary.get("discarded_count", 0),
+                last_patrol_inconclusive_count=summary.get("inconclusive_count", 0),
+                last_patrol_abort_reason=summary.get("abort_reason", ""),
                 last_patrol_site_counts=summary.get("site_counts", {}),
             )
             log_patrol_summary = (
@@ -971,51 +1139,29 @@ def _register_scheduler_jobs(app: Flask) -> None:
 
     def translation_recovery_job():
         with app.app_context():
-            try:
-                from services.catalog_request_notifications import recover_request_notifications
-                recover_request_notifications(limit=20)
-            except Exception as error:
-                logging.getLogger("catalog_request_notifications").warning("Notification recovery failed (%s)", type(error).__name__)
-            try:
-                from services.product_thumbnail_jobs import recover_thumbnail_jobs
-                recover_thumbnail_jobs()
-            except Exception:
-                logging.getLogger("product_thumbnail_jobs").exception("Product thumbnail scheduled recovery failed")
-            try:
-                from services.product_detail_jobs import recover_product_detail_jobs
-                recover_product_detail_jobs(limit=100)
-            except Exception:
-                logging.getLogger("product_detail_jobs").exception("Product detail scheduled recovery failed")
-            try:
-                from services.translator.suggestion_store import (
-                    recover_expired_translation_suggestions,
-                )
-
-                summary = recover_expired_translation_suggestions()
-                _write_scheduler_heartbeat(
-                    app,
-                    event="translation_recovery_completed",
-                    last_translation_recovery_completed_at=_utc_iso_now(),
-                    last_translation_recovery_recovered_count=len(
-                        summary.get("recovered") or []
-                    ),
-                    last_translation_recovery_enqueued_count=len(
-                        summary.get("enqueued") or []
-                    ),
-                    last_translation_recovery_failed_count=len(
-                        summary.get("failed") or []
-                    ),
-                )
-            except Exception as exc:
-                _write_scheduler_heartbeat(
-                    app,
-                    event="translation_recovery_failed",
-                    last_translation_recovery_failed_at=_utc_iso_now(),
-                    last_translation_recovery_error=type(exc).__name__,
-                )
-                logger.exception(
-                    "Scheduled translation recovery failed; scheduler will continue"
-                )
+            from services.recovery_health import (
+                RECOVERY_FEATURES, OwnedRecoveryExecutor,
+                recovery_operation, run_recovery_phases,
+            )
+            cancelled = lambda: _scheduler_operation_cancelled(app)
+            if cancelled():
+                return
+            use_owned_child = str(app.config.get("SCRAPE_QUEUE_BACKEND", "inmemory")).lower() == "rq" and not app.config.get("TESTING")
+            recovery_timeout = _read_positive_int_config(app, "RECOVERY_BATCH_TIMEOUT_SECONDS", 240)
+            heartbeat_deadline = time.monotonic() + recovery_timeout
+            outcomes = run_recovery_phases(
+                {feature: recovery_operation(feature) for feature in RECOVERY_FEATURES},
+                heartbeat_writer=lambda **fields: _write_scheduler_heartbeat(app, _deadline=heartbeat_deadline, **fields),
+                executor=OwnedRecoveryExecutor(app.config, cancelled=cancelled) if use_owned_child else None,
+                phase_timeout_seconds=_read_positive_int_config(app, "RECOVERY_PHASE_TIMEOUT_SECONDS", 60),
+                phase_heartbeat_reserve_seconds=5 if use_owned_child else 0,
+                total_timeout_seconds=recovery_timeout,
+                cancelled=cancelled,
+            )
+            if outcomes["status"] != "ok":
+                logger.warning("Scheduled recovery partially failed: features=%s; scheduler will continue", {
+                    name: result["status"] for name, result in outcomes["features"].items()
+                })
 
     scheduler.add_job(
         id="patrol_job",
@@ -1079,6 +1225,8 @@ class _FileSchedulerLockHandle:
 class _RedisSchedulerLockHandle:
     def __init__(self, lock, stop_event: threading.Event, renew_thread: threading.Thread):
         self.lock = lock
+        self.lock_key = getattr(lock, "name", "esp:scheduler:lock")
+        self.owner_token = getattr(getattr(lock, "local", None), "token", None)
         self.stop_event = stop_event
         self.renew_thread = renew_thread
 
@@ -1132,11 +1280,17 @@ def _try_acquire_redis_scheduler_lock(app: Flask):
         return False
 
     ttl_seconds = max(30, int(app.config.get("SCHEDULER_LOCK_TTL_SECONDS", 120) or 120))
-    renew_every_seconds = max(10.0, ttl_seconds / 3)
+    if ttl_seconds <= 2 * _scheduler_stop_reserve():
+        _record_scheduler_lock_status(app, backend="redis", acquired=False,
+                                      reason="ttl_insufficient_for_cleanup")
+        logger.warning("Scheduler lock TTL cannot cover renewal and owned cleanup: ttl_seconds=%s", ttl_seconds)
+        return False
+    renew_every_seconds = max(1.0, ttl_seconds / 4)
     lock_key = str(app.config.get("SCHEDULER_LOCK_KEY", "esp:scheduler:lock") or "esp:scheduler:lock")
     try:
-        connection = Redis.from_url(redis_url)
+        connection = Redis.from_url(redis_url, socket_connect_timeout=2, socket_timeout=2, retry_on_timeout=False)
         lock = connection.lock(lock_key, timeout=ttl_seconds, blocking=False, thread_local=False)
+        acquisition_started = time.monotonic()
         acquired = lock.acquire(blocking=False)
         lock_ttl_seconds = None
         stale_cleared = False
@@ -1159,6 +1313,7 @@ def _try_acquire_redis_scheduler_lock(app: Flask):
                         stale_lock_reason,
                     )
             if lock_ttl_seconds == -2 or stale_cleared:
+                acquisition_started = time.monotonic()
                 acquired = lock.acquire(blocking=False)
                 lock_ttl_seconds = None if acquired else connection.ttl(lock_key)
         if not acquired:
@@ -1190,6 +1345,7 @@ def _try_acquire_redis_scheduler_lock(app: Flask):
         return False
 
     _record_scheduler_lock_status(app, backend="redis", acquired=True, stale_cleared=stale_cleared)
+    app.extensions["esp_scheduler_lease_expires_monotonic"] = acquisition_started + ttl_seconds
     logger.info(
         "Scheduler Redis lock acquired: runtime_role=%s lock_key=%s ttl_seconds=%s",
         app.config.get("ESP_RUNTIME_ROLE", "base"),
@@ -1202,9 +1358,21 @@ def _try_acquire_redis_scheduler_lock(app: Flask):
     def renew_loop() -> None:
         while not stop_event.wait(renew_every_seconds):
             try:
+                renewal_started = time.monotonic()
                 lock.extend(ttl_seconds, replace_ttl=True)
+                app.extensions["esp_scheduler_lease_expires_monotonic"] = renewal_started + ttl_seconds
             except Exception as exc:
                 _record_scheduler_lock_status(app, backend="redis", acquired=False, reason=type(exc).__name__)
+                app.extensions.setdefault("esp_scheduler_ownership_lost", threading.Event()).set()
+                # Stop admitting jobs immediately; the supervised fetch loop
+                # observes ownership loss and reaps its owned process.
+                scheduler = app.extensions.get("esp_scheduler")
+                if scheduler is not None and app.extensions.get("esp_scheduler_started"):
+                    try:
+                        scheduler.shutdown(wait=False)
+                    except Exception:
+                        logger.exception("Scheduler shutdown after ownership loss failed")
+                    app.extensions["esp_scheduler_started"] = False
                 logger.warning(
                     "Scheduler Redis lock renewal failed: runtime_role=%s lock_key=%s error=%s",
                     app.config.get("ESP_RUNTIME_ROLE", "base"),
@@ -1441,12 +1609,15 @@ def start_scheduler(app: Flask, *, schedule_retry: bool = True) -> bool:
             _schedule_scheduler_lock_retry(app)
         return False
 
+    app.extensions.setdefault("esp_scheduler_ownership_lost", threading.Event()).clear()
+    app.extensions["esp_scheduler_lock_handle"] = lock_handle
     try:
         _register_scheduler_jobs(app)
         scheduler.start()
     except Exception as exc:
         if lock_handle is not None:
             lock_handle.close()
+        app.extensions.pop("esp_scheduler_lock_handle", None)
         _write_scheduler_heartbeat(
             app,
             event="scheduler_start_failed",
@@ -1475,7 +1646,7 @@ def start_scheduler(app: Flask, *, schedule_retry: bool = True) -> bool:
     logger.info(
         "Scheduler started: runtime_role=%s health=%s",
         app.config.get("ESP_RUNTIME_ROLE", "base"),
-        get_scheduler_health_snapshot(app),
+        get_scheduler_health_snapshot(app, include_heartbeat=False),
     )
     return True
 
@@ -1505,7 +1676,7 @@ def initialize_app_runtime(app: Flask) -> Flask:
             logger.warning(
                 "Scheduler enabled but not started: runtime_role=%s health=%s",
                 app.config.get("ESP_RUNTIME_ROLE", "base"),
-                get_scheduler_health_snapshot(app),
+                get_scheduler_health_snapshot(app, include_heartbeat=False),
             )
 
     app.extensions["esp_runtime_initialized"] = True

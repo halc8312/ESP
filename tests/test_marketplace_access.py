@@ -87,6 +87,70 @@ def test_expired_owner_cannot_renew_reenter_or_release_successor():
     assert admit(store, "third", interval=0)[1] == "site_busy"
 
 
+def test_unverified_generation_blocks_admission_after_lease_expiry_and_clear_is_owned(monkeypatch):
+    clock = Clock()
+    store = access.MemoryAccessStore(clock)
+    monkeypatch.setattr(access, "get_access_store", lambda: store)
+    assert admit(store, "old:token", interval=0) == (0, "")
+    lease = access.AccessLease("recordcity", "old:token", store)
+    lease.quarantine()
+    assert access.has_marketplace_generation_quarantine("old")
+    lease.close()
+    clock.now += 181
+    with pytest.raises(access.AccessLeaseLost):
+        admit(store, "successor:token", interval=0)
+    assert access.clear_marketplace_generation_quarantines("wrong") == 0
+    with pytest.raises(access.AccessLeaseLost):
+        admit(store, "successor:token", interval=0)
+    assert access.clear_marketplace_generation_quarantines("old") == 1
+    assert not access.has_marketplace_generation_quarantine("old")
+    assert admit(store, "successor:token", interval=0) == (0, "")
+    store.quarantine("recordcity", "successor:token")
+    access.clear_marketplace_generation_quarantines("old")
+    lease.close()
+    assert "successor:token" in store.states["recordcity"]["leases"]
+    assert "successor:token" in store.states["recordcity"]["quarantines"]
+
+
+def test_supervisor_generation_scopes_new_owner_identity():
+    assert access._new_owner().startswith(("local-", "portable-"))
+    with access.marketplace_process_generation("owned-generation"):
+        assert access._new_owner().startswith("owned-generation:")
+    assert access._new_owner().startswith(("local-", "portable-"))
+
+
+def test_operator_inspection_is_read_only_and_recovery_requires_stopped_complete_tree(monkeypatch):
+    store = access.MemoryAccessStore()
+    monkeypatch.setattr(access, "get_access_store", lambda: store)
+    generation = "local-998001-12345-" + "a" * 32
+    owner = generation + ":token"
+    store.quarantine("recordcity", owner)
+    inspection = access.inspect_marketplace_quarantines(sites=["recordcity"])
+    assert inspection["recordcity"] == [{"owner": owner, "generation": generation,
+                                         "owner_process": {"pid": 998001, "start_ticks": 12345}}]
+    assert store.inspect_quarantines("recordcity") == [owner]
+    proof = access.QuarantineStopProof(generation, (998001, 12345), ((998001, 12345), (998002, 45678)), "approved-restart-event")
+    monkeypatch.setattr(access, "_process_start_ticks", lambda pid: 45678 if pid == 998002 else None)
+    with pytest.raises(access.AccessLeaseLost):
+        access.clear_marketplace_owner_quarantine("recordcity", owner, proof=proof)
+    monkeypatch.setattr(access, "_process_start_ticks", lambda _pid: None)
+    assert access.clear_marketplace_owner_quarantine("recordcity", owner, proof=proof) == 1
+    successor = "successor:token"
+    store.quarantine("recordcity", successor)
+    assert access.clear_marketplace_owner_quarantine("recordcity", owner, proof=proof) == 0
+    assert store.inspect_quarantines("recordcity") == [successor]
+
+
+def test_operator_recovery_rejects_anonymous_owner_or_missing_evidence(monkeypatch):
+    proof = access.QuarantineStopProof("legacy", (1, 1), ((1, 1),), "event")
+    with pytest.raises(ValueError):
+        access.clear_marketplace_owner_quarantine("mercari", "anonymous-uuid", proof=proof)
+    generation = "local-998001-12345-" + "a" * 32
+    missing = access.QuarantineStopProof(generation, (998001, 12345), ((998001, 12345),), "")
+    with pytest.raises(ValueError):
+        access.clear_marketplace_owner_quarantine("mercari", generation + ":token", proof=missing)
+
+
 def test_live_owner_renewal_prevents_early_replacement():
     clock = Clock()
     store = access.MemoryAccessStore(clock)
