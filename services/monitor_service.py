@@ -356,7 +356,8 @@ class MonitorService:
                                 MonitorService._apply_backoff(product, session_db)
                                 error_count += 1
                                 add_result(product_site, "error_count", classify_scrape_failure(
-                                    reason, default="unknown_status" if unknown_status else "missing_price"
+                                    reason, reason=result.reason,
+                                    default="unknown_status" if unknown_status else "missing_price"
                                     if active_missing_price else "invalid_result"))
                                 continue
 

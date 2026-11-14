@@ -57,6 +57,21 @@ jobs:
           echo "=== Largest files in context ==="
           find . -not -path './.git/*' -type f -exec du -h {} + | sort -rh | head -15
 
+      - name: Seed harmless build-context exclusion fixtures
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          for directory in (Path('.'), Path('context-smoke/nested')):
+              directory.mkdir(parents=True, exist_ok=True)
+              names = ['.env', '.env.production']
+              names += [f'context-smoke.{extension}{suffix}'
+                        for extension in ('db', 'sqlite', 'sqlite3')
+                        for suffix in ('', '-wal', '-shm', '-journal')]
+              for name in names:
+                  with (directory / name).open('x') as fixture:
+                      fixture.write('harmless build-context exclusion sentinel\n')
+          PY
+
       - name: Build Docker image
         uses: docker/build-push-action@v7
         with:
@@ -75,6 +90,20 @@ jobs:
           echo "=== Image layer details ==="
           docker history esp-test:ci --no-trunc --format "table {{.Size}}\t{{.CreatedBy}}" | head -20
 
+      - name: Smoke test - Local environment and database files excluded
+        run: |
+          docker run --rm --network none esp-test:ci python -c "
+          from pathlib import Path
+          for directory in (Path('/app'), Path('/app/context-smoke/nested')):
+              names = ['.env', '.env.production']
+              names += [f'context-smoke.{extension}{suffix}'
+                        for extension in ('db', 'sqlite', 'sqlite3')
+                        for suffix in ('', '-wal', '-shm', '-journal')]
+              for name in names:
+                  assert not (directory / name).exists(), f'Unexpected build-context file: {name}'
+          print('Root and nested environment/database files excluded')
+          "
+
       - name: Smoke test - Python imports
         run: |
           docker run --rm esp-test:ci python -c "
@@ -83,6 +112,28 @@ jobs:
           import playwright; print('playwright OK')
           import patchright; print('patchright OK')
           print('All critical imports OK')
+          "
+
+      - name: Smoke test - Background removal without network
+        timeout-minutes: 3
+        run: |
+          docker run --rm --network none -e OMP_NUM_THREADS=1 esp-test:ci python -c "
+          import io
+          from PIL import Image, ImageDraw
+          from services.bg_remover.rembg_backend import RembgBackgroundRemover
+          source = Image.new('RGB', (96, 96), 'white')
+          ImageDraw.Draw(source).rectangle((24, 24, 72, 72), fill='red')
+          payload = io.BytesIO()
+          source.save(payload, format='PNG')
+          remover = RembgBackgroundRemover(model_name='u2netp', max_input_dimension=64)
+          result = remover.remove_background(payload.getvalue())
+          assert isinstance(result, bytes)
+          with Image.open(io.BytesIO(result)) as output:
+              output.load()
+              assert output.format == 'PNG'
+              assert output.mode == 'RGBA'
+              assert output.size == (64, 64)
+          print('Background removal with baked CPU model OK')
           "
 
       - name: Smoke test - Patchright persistent Chrome under Xvfb

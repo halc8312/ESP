@@ -1,5 +1,7 @@
 # Single-Web Redeploy Runbook
 
+> Legacy single-web compatibility guide. Production uses the split topology described in [OPERATIONS_HANDOVER](OPERATIONS_HANDOVER.md). The historical wording below does not describe current production.
+
 This runbook is for the current Render production shape: one Web Service running on `SCRAPE_QUEUE_BACKEND=inmemory`.
 
 Use it for routine UI / DOM / parser fixes while the paid split (`web + worker + postgres + key value`) is still dormant.

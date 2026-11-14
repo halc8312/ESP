@@ -6,8 +6,8 @@ gha-creds-*.json
 
 # Environment variables
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # Python
 __pycache__/
@@ -39,8 +39,17 @@ wheels/
 *.bak
 *.db-shm
 *.db-wal
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 
 # Scraping dumps and generated verification artifacts
+/config/heal_history.jsonl
+/output/
 dump*.html
 *_dump*.html
 *_test.html
@@ -52,6 +61,7 @@ e2e_test_results_*/
 test_db_patchset_*.sqlite
 tests/.tmp/
 .pytest_tmp/
+.tmp_pytest/
 !tests/fixtures/**/*.html
 pytest_test.log
 test_stdout.log
@@ -80,3 +90,12 @@ env/
 # Temporary files
 /tmp/
 tests/__pycache__/
+
+# Local test and coverage caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml

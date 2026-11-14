@@ -10,8 +10,16 @@ from services.scrape_result_policy import (
 
 logger = logging.getLogger(__name__)
 
+# Only exact, operational failure codes may be taken from an adapter. Some
+# adapters put exception text or URLs in reason, so never persist it verbatim.
+_ADAPTER_FAILURE_REASONS = frozenset({
+    "invalid_url", "unsupported_route", "access_blocked", "captcha", "rate_limited",
+    "fetch_error", "invalid_result", "missing_price", "unknown_status",
+    "persistence_error", "timeout", "configuration_error",
+})
 
-def classify_scrape_failure(error, *, default="fetch_error") -> str:
+
+def classify_scrape_failure(error, *, reason=None, default="fetch_error") -> str:
     """Persist a small reason vocabulary, never exception text or source URLs."""
     text = str(error or "").lower()
     if "captcha" in text:
@@ -20,6 +28,8 @@ def classify_scrape_failure(error, *, default="fetch_error") -> str:
         return "rate_limited"
     if any(term in text for term in ("waf", "blocked", "challenge", "アクセスが制限")):
         return "access_blocked"
+    if isinstance(reason, str) and reason in _ADAPTER_FAILURE_REASONS:
+        return reason
     return default
 
 

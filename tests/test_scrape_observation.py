@@ -6,7 +6,8 @@ from jobs import scrape_tasks
 from models import Product, User
 from services.monitor_service import MonitorService
 from services.patrol.base_patrol import PatrolResult
-from services.scrape_observation import inspect_scraped_items, record_observation_safely
+from services.patrol.recordcity_patrol import RecordCityPatrol
+from services.scrape_observation import classify_scrape_failure, inspect_scraped_items, record_observation_safely
 from time_utils import utc_now
 
 
@@ -149,6 +150,21 @@ def test_fetch_error_reason_is_redacted(task_observations, monkeypatch):
     assert "secret-value" not in repr(task_observations)
 
 
+@pytest.mark.parametrize("error,reason,expected", [
+    ("RecordCity missing_price", "missing_price", "missing_price"),
+    ("RecordCity unknown_status", "unknown_status", "unknown_status"),
+    ("private connection", "timeout", "timeout"),
+    ("private connection", "https://private.example/?token=secret-value", "unknown_status"),
+    ("private connection", "missing_price secret-value", "unknown_status"),
+    ("private connection", ["missing_price"], "unknown_status"),
+    ("CAPTCHA secret-value", "missing_price", "captcha"),
+    ("HTTP 429", "missing_price", "rate_limited"),
+    ("WAF challenge", "missing_price", "access_blocked"),
+])
+def test_failure_reason_keeps_only_known_adapter_codes(error, reason, expected):
+    assert classify_scrape_failure(error, reason=reason, default="unknown_status") == expected
+
+
 def test_persistence_failure_is_not_a_success(task_observations, monkeypatch):
     monkeypatch.setattr(scrape_tasks, "scrape_search_result", lambda **kw: [_item()])
     def fail(*args, **kw):
@@ -243,6 +259,28 @@ def test_active_patrol_missing_high_confidence_price_not_healthy(db_session, mon
     assert summary["successful_count"] == 0
     assert summary["error_count"] == 1
     assert patrol_observations[0]["reason"] == "missing_price"
+
+
+def test_recordcity_unknown_status_retains_missing_price_failure(db_session, monkeypatch, patrol_observations):
+    product = _product(db_session, url="https://www.recordcity.jp/ja/catalog/4343712")
+    product.site = "recordcity"
+    db_session.commit()
+    patrol = RecordCityPatrol()
+    monkeypatch.setattr(patrol, "fetch", lambda url: patrol._uncertain("missing_price"))
+    monkeypatch.setattr(MonitorService, "_patrols", {"recordcity": patrol})
+
+    summary = MonitorService.check_stale_products()
+
+    assert summary["selected_count"] == summary["error_count"] == 1
+    assert summary["successful_count"] == summary["updated_count"] == 0
+    assert summary["site_results"]["recordcity"]["reason"] == "missing_price"
+    assert patrol_observations == [dict(site="recordcity", route="patrol", outcome="failure",
+                                       reason="missing_price", success_count=0, error_count=1)]
+    db_session.refresh(product)
+    assert product.last_price == 1000
+    assert product.last_status == "on_sale"
+    assert product.patrol_fail_count == 1
+    assert product.next_patrol_at is not None
 
 
 def test_empty_patrol_makes_no_site_success_claim(db_session, patrol_observations):
